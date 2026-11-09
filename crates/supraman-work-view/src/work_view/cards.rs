@@ -20,7 +20,7 @@ pub struct Card {
     pub item_id: String,
     pub url: Option<String>,
     pub call: String,
-    pub run: Option<ItemRef>,
+    pub(crate) run: Option<ItemRef>,
 }
 
 impl Card {
@@ -39,7 +39,7 @@ impl Card {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Group {
-    pub key: String,
+    pub(crate) key: String,
     pub caption: String,
     pub cards: Vec<Card>,
 }
@@ -56,7 +56,7 @@ impl Sections {
     }
 }
 
-pub fn badge(kind: &str) -> String {
+pub(crate) fn badge(kind: &str) -> String {
     match kind {
         "blocker_finding" => "blocker".into(),
         "done_unverified" => "not verified".into(),

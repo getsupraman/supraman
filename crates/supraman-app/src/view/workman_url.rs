@@ -8,7 +8,7 @@ use supraman_workman::{Auth, AuthStatus};
 
 use super::{FleetView, stale_tabs};
 use crate::work_view::WorkHub;
-use crate::workman_setup::WorkmanStatus;
+use supraman_workman::status::WorkmanStatus;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Switch {

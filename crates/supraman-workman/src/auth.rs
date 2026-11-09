@@ -2,13 +2,13 @@
 //! rule 5 and `14-agent-launch.md` "Minting with OAuth". No token is ever in a message, a log line, a plain-text file
 //! or a `Debug` output.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
@@ -140,6 +140,12 @@ struct Tokens {
 impl Auth {
     pub fn open(home: &Path) -> Arc<Self> {
         Arc::new(Self::with_store(home, default_store(home)).with_server_json(supraman_core::paths::workman_server_json()))
+    }
+
+    pub fn shared(home: &Path) -> Arc<Self> {
+        static AUTHS: OnceLock<Mutex<HashMap<PathBuf, Arc<Auth>>>> = OnceLock::new();
+        let mut auths = AUTHS.get_or_init(Mutex::default).lock().unwrap_or_else(|e| e.into_inner());
+        auths.entry(home.to_path_buf()).or_insert_with(|| Auth::open(home)).clone()
     }
 
     pub fn with_store(home: &Path, store: Arc<dyn SecretStore>) -> Self {

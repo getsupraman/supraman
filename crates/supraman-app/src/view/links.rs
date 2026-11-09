@@ -4,16 +4,10 @@ use std::path::{Path, PathBuf};
 
 use gpui::Context;
 use supraman_term::MaybeNavigationTarget;
-use supraman_ui::open;
+use supraman_ui::open::{self, Link};
 use util::paths::PathWithPosition;
 
 use super::FleetView;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Link {
-    Url(String),
-    Path(PathBuf),
-}
 
 /// What a Ctrl+click on `target` opens, or why it opens nothing; a `file:` URL is its path, a path loses its `:line:column`.
 pub fn link_target(target: &MaybeNavigationTarget) -> Result<Link, String> {

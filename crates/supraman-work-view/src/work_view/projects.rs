@@ -10,7 +10,7 @@ use super::state::closed;
 pub type RepoOf = fn(&Path) -> Option<MintRepo>;
 
 /// Each folder's repo keys; runs git, so never on the UI thread.
-pub fn folder_keys(folders: &[PathBuf], repo_of: RepoOf) -> Vec<(&'static str, String)> {
+pub(crate) fn folder_keys(folders: &[PathBuf], repo_of: RepoOf) -> Vec<(&'static str, String)> {
     let mut keys = Vec::new();
     for found in folders.iter().filter_map(|f| repo_of(f)) {
         for key in repo::keys(found.remote.as_deref(), Some(&found.root)) {
@@ -22,19 +22,19 @@ pub fn folder_keys(folders: &[PathBuf], repo_of: RepoOf) -> Vec<(&'static str, S
     keys
 }
 
-pub fn bound(overview: &Overview, keys: &[(&str, String)]) -> Vec<OverviewProject> {
+pub(crate) fn bound(overview: &Overview, keys: &[(&str, String)]) -> Vec<OverviewProject> {
     overview.projects.iter().filter(|p| p.archived_at.is_none() && repo::binds(&p.repos, keys)).cloned().collect()
 }
 
-pub fn active(project: &OverviewProject) -> impl Iterator<Item = &OverviewRun> {
+pub(crate) fn active(project: &OverviewProject) -> impl Iterator<Item = &OverviewRun> {
     project.runs.iter().filter(|r| !closed(r.item.status))
 }
 
-pub fn closed_runs(project: &OverviewProject) -> impl Iterator<Item = &OverviewRun> {
+pub(crate) fn closed_runs(project: &OverviewProject) -> impl Iterator<Item = &OverviewRun> {
     project.runs.iter().filter(|r| closed(r.item.status))
 }
 
-pub fn no_project_message(workspace: &str, keys: &[(&str, String)]) -> String {
+pub(crate) fn no_project_message(workspace: &str, keys: &[(&str, String)]) -> String {
     if keys.is_empty() {
         return format!("None of {workspace}'s folders is a git repo, so no Workman project is bound to it.");
     }

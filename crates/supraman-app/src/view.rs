@@ -21,7 +21,8 @@ use supraman_term::{
     terminal_settings::{AlternateScroll, CursorShape},
 };
 use supraman_ui::nudge::{self, Nudge, Nudged};
-use supraman_ui::open;
+use supraman_ui::open::{self, Link};
+use supraman_ui::timeline;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::text_input::{InputEvent, TextInput};
 use supraman_ui::hover_card;
@@ -49,7 +50,8 @@ use crate::supervise::{self, RelayStatus, Report, Supervision};
 use crate::tab_card;
 use crate::transcripts_load::TranscriptsLoad;
 use crate::work_view::{LiveSession, WorkHub, WorkInbox, WorkView};
-use crate::workman_setup::{self, WorkmanStatus};
+use crate::workman_setup;
+use supraman_workman::status::WorkmanStatus;
 
 mod delete;
 pub(crate) mod details;
@@ -75,7 +77,6 @@ mod workman_url;
 pub(crate) mod workspace_dialog;
 pub(crate) mod writes;
 
-pub use links::Link;
 #[cfg(test)]
 use {links::{link_target, missing}, supraman_term::MaybeNavigationTarget};
 
@@ -463,10 +464,6 @@ struct Poller {
     snapshot: Option<(u64, Vec<Workspace>, Vec<Session>)>,
     first: bool,
     store: Option<Arc<dyn supraman_core::secret::SecretStore>>,
-}
-
-pub(crate) fn timeline(phase: &str, took: Duration) {
-    log::info!("startup {phase}: {} ms (at +{:.0} ms)", took.as_millis(), supraman_ui::ms_since_start(Instant::now()));
 }
 
 impl Poller {
@@ -1174,7 +1171,7 @@ impl FleetView {
                 if alive.is_err() {
                     return;
                 }
-                recheck.wait(&executor, workman_setup::RECHECK_EVERY).await;
+                recheck.wait(&executor, supraman_workman::status::RECHECK_EVERY).await;
             }
         })
         .detach();

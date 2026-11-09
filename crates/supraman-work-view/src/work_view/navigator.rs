@@ -10,7 +10,7 @@ use supraman_workman::{OverviewRun, Rollup};
 use super::projects::{active, closed_runs};
 use super::*;
 
-pub fn done_total(r: &Rollup) -> String {
+pub(crate) fn done_total(r: &Rollup) -> String {
     format!("{}/{}", r.done, r.counted())
 }
 

@@ -18,23 +18,23 @@ pub const HOUSEKEEPING_KEY: &str = "inbox-housekeeping";
 /// Per workspace: row key (`kind:item`) → the row's `since` when dismissed; see [`Dismissed::prune`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct Dismissed(BTreeMap<String, BTreeMap<String, String>>);
+pub(crate) struct Dismissed(BTreeMap<String, BTreeMap<String, String>>);
 
 impl Dismissed {
-    pub fn load(home: Option<&Path>) -> (JsonStore<Self>, Option<String>) {
+    pub(crate) fn load(home: Option<&Path>) -> (JsonStore<Self>, Option<String>) {
         JsonStore::load(home.map(|h| h.join(DISMISSED_FILE)), "every Workman inbox row shows")
     }
 
-    pub fn hides(&self, workspace: &str, row: &InboxRow) -> bool {
+    pub(crate) fn hides(&self, workspace: &str, row: &InboxRow) -> bool {
         self.0.get(workspace).and_then(|keys| keys.get(&row.key)) == Some(&row.since)
     }
 
-    pub fn dismiss(&mut self, workspace: &str, row: &InboxRow) {
+    pub(crate) fn dismiss(&mut self, workspace: &str, row: &InboxRow) {
         self.0.entry(workspace.to_string()).or_default().insert(row.key.clone(), row.since.clone());
     }
 
     /// Only after a successful read of `workspace`'s inbox.
-    pub fn prune(&mut self, workspace: &str, rows: &[InboxRow]) -> bool {
+    pub(crate) fn prune(&mut self, workspace: &str, rows: &[InboxRow]) -> bool {
         let Some(keys) = self.0.get_mut(workspace) else { return false };
         let before = keys.len();
         keys.retain(|key, since| rows.iter().any(|r| &r.key == key && &r.since == since));
@@ -45,7 +45,7 @@ impl Dismissed {
         changed
     }
 
-    pub fn retain_workspaces(&mut self, workspaces: &[String]) -> bool {
+    pub(crate) fn retain_workspaces(&mut self, workspaces: &[String]) -> bool {
         let before = self.0.len();
         self.0.retain(|w, _| workspaces.contains(w));
         self.0.len() != before
@@ -53,13 +53,13 @@ impl Dismissed {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Touched {
+pub(crate) enum Touched {
     Workspaces(Vec<String>),
     /// No run, or a run the last overview did not list: every inbox, and the overview again.
     All { overview: bool },
 }
 
-pub fn touched(event: &StreamEvent, run_project: &HashMap<String, String>, projects: &HashMap<String, Vec<ItemRef>>) -> Touched {
+pub(crate) fn touched(event: &StreamEvent, run_project: &HashMap<String, String>, projects: &HashMap<String, Vec<ItemRef>>) -> Touched {
     match event.run_id.as_deref() {
         None => Touched::All { overview: false },
         Some(run) => match run_project.get(run) {
@@ -162,9 +162,9 @@ pub struct WorkInbox {
     inboxes: HashMap<String, Inbox>,
     /// Run id → project id, from the last overview.
     run_project: HashMap<String, String>,
-    pub dismissed: JsonStore<Dismissed>,
+    pub(crate) dismissed: JsonStore<Dismissed>,
     pending: Option<Plan>,
-    pub failures: HashMap<String, String>,
+    pub(crate) failures: HashMap<String, String>,
     pub notice: Option<String>,
     pub reads: u64,
     pub applied: u64,
@@ -174,7 +174,7 @@ pub struct WorkInbox {
     flash: Option<Task<()>>,
 }
 
-pub const FLASH: Duration = Duration::from_millis(1200);
+pub(crate) const FLASH: Duration = Duration::from_millis(1200);
 
 struct GlobalInbox(Entity<WorkInbox>);
 
@@ -193,7 +193,7 @@ impl WorkInbox {
 
     /// An inbox reading through `hub`, kept nowhere: a test's.
     #[cfg(test)]
-    pub fn for_test(hub: Entity<WorkHub>, cx: &mut App) -> Entity<WorkInbox> {
+    pub(crate) fn for_test(hub: Entity<WorkHub>, cx: &mut App) -> Entity<WorkInbox> {
         cx.new(|cx| Self::new(hub, None, cx))
     }
 
@@ -370,7 +370,7 @@ impl WorkInbox {
             let (overview, answers) = cx.background_executor().spawn(async move { read(&client, asks, overview, repo_of) }).await;
             this.update(cx, |this, cx| {
                 if this.applied == 0 {
-                    crate::view::timeline("workman inbox done", began.elapsed());
+                    supraman_ui::timeline("workman inbox done", began.elapsed());
                 }
                 this.applied += 1;
                 this.apply(overview, answers, cx);

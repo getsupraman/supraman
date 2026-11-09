@@ -12,6 +12,7 @@ mod http;
 pub mod model;
 pub mod repo;
 pub mod secret;
+pub mod status;
 mod stream;
 pub mod updates;
 

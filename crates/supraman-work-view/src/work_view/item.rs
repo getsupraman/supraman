@@ -18,7 +18,7 @@ pub struct FleetLink {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ItemState {
+pub(crate) enum ItemState {
     Loading,
     Ready(Box<ItemPage>),
     Failed(String),
@@ -27,11 +27,11 @@ pub enum ItemState {
 /// The item the detail shows: the selected row, else the run.
 pub struct OpenItem {
     pub id: String,
-    pub state: ItemState,
+    pub(crate) state: ItemState,
 }
 
 impl OpenItem {
-    pub fn page(&self) -> Option<&ItemPage> {
+    pub(crate) fn page(&self) -> Option<&ItemPage> {
         match &self.state {
             ItemState::Ready(page) => Some(page),
             _ => None,
@@ -39,14 +39,14 @@ impl OpenItem {
     }
 }
 
-pub fn run_of(page: &ItemPage) -> Option<&str> {
+pub(crate) fn run_of(page: &ItemPage) -> Option<&str> {
     if page.item.kind == "run" {
         return Some(page.item.id.as_str());
     }
     page.path.iter().rev().find(|p| p.kind == "run").map(|p| p.id.as_str())
 }
 
-pub fn item_to_reload(event: &StreamEvent, open: &OpenItem) -> bool {
+pub(crate) fn item_to_reload(event: &StreamEvent, open: &OpenItem) -> bool {
     if event.item_id.as_deref() == Some(open.id.as_str()) {
         return true;
     }
@@ -56,13 +56,13 @@ pub fn item_to_reload(event: &StreamEvent, open: &OpenItem) -> bool {
     }
 }
 
-pub fn attach_target<'a>(claim: &Claim, live: &'a [LiveSession]) -> Option<&'a LiveSession> {
+pub(crate) fn attach_target<'a>(claim: &Claim, live: &'a [LiveSession]) -> Option<&'a LiveSession> {
     let sid = claim.session.as_ref()?.claude_session_id.as_deref().filter(|s| !s.is_empty())?;
     live.iter().find(|s| s.claude_session_id == sid)
 }
 
 impl WorkView {
-    pub fn show_detail(&mut self, id: String, cx: &mut Context<Self>) {
+    pub(crate) fn show_detail(&mut self, id: String, cx: &mut Context<Self>) {
         if self.item.as_ref().is_some_and(|open| open.id == id) {
             return;
         }

@@ -17,7 +17,8 @@ use theme::ActiveTheme as _;
 use supraman_ui::hit::HitTargets;
 use supraman_ui::text_input::{InputEvent, TextInput};
 use crate::view::{Cli, FleetView, REFRESH_EVERY};
-use crate::workman_setup::{RECHECK_EVERY, ServerCheck, WorkmanStatus};
+use crate::workman_setup::ServerCheck;
+use supraman_workman::status::{RECHECK_EVERY, WorkmanStatus};
 
 pub mod gitman;
 

@@ -11,17 +11,17 @@ use supraman_workman::{JournalEvent, JournalQuery};
 use super::actions::COPY_SIDE;
 use super::*;
 
-pub const SHOWN: usize = 150;
+pub(crate) const SHOWN: usize = 150;
 
 #[derive(Default)]
-pub struct Activity {
-    pub events: Vec<JournalEvent>,
-    pub error: Option<String>,
-    pub loaded: bool,
+pub(crate) struct Activity {
+    pub(crate) events: Vec<JournalEvent>,
+    pub(crate) error: Option<String>,
+    pub(crate) loaded: bool,
     reading: bool,
     again: bool,
     pending: bool,
-    pub reads: u64,
+    pub(crate) reads: u64,
 }
 
 fn read(client: &Client, projects: &[String]) -> Result<Vec<JournalEvent>, String> {
@@ -37,7 +37,7 @@ fn read(client: &Client, projects: &[String]) -> Result<Vec<JournalEvent>, Strin
 }
 
 /// Days newest first, each day's events as given (newest first): the day's heading and its events.
-pub fn by_day(events: &[JournalEvent]) -> Vec<(String, Vec<&JournalEvent>)> {
+pub(crate) fn by_day(events: &[JournalEvent]) -> Vec<(String, Vec<&JournalEvent>)> {
     let mut days: Vec<(String, Vec<&JournalEvent>)> = Vec::new();
     for e in events {
         let day = rfc3339_ms(&e.at).map(time::day).unwrap_or_default();
@@ -49,14 +49,14 @@ pub fn by_day(events: &[JournalEvent]) -> Vec<(String, Vec<&JournalEvent>)> {
     days
 }
 
-pub fn sentence(e: &JournalEvent) -> String {
+pub(crate) fn sentence(e: &JournalEvent) -> String {
     match e.summary.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         Some(summary) => summary.to_string(),
         None => [e.kind.as_str(), e.item.as_ref().map_or("", |i| i.qualified_ref.as_str())].join(" ").trim().to_string(),
     }
 }
 
-pub fn actor(e: &JournalEvent) -> String {
+pub(crate) fn actor(e: &JournalEvent) -> String {
     e.session.as_ref().map(|s| s.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| e.actor.clone())
 }
 

@@ -15,7 +15,7 @@ use super::projects::{active, closed_runs};
 use super::state::StateKey;
 use super::*;
 
-pub const NEEDS_SHOWN: usize = 5;
+pub(crate) const NEEDS_SHOWN: usize = 5;
 /// Wide enough for the longest word of a tile's label, so a label wraps between words only.
 const TILE_MIN: f32 = 120.;
 
@@ -23,17 +23,17 @@ fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
-pub fn open_of(r: &Rollup) -> u32 {
+pub(crate) fn open_of(r: &Rollup) -> u32 {
     r.open + r.in_progress + r.review + r.blocked
 }
 
-pub fn sentence(projects: &[OverviewProject], needs: usize) -> String {
+pub(crate) fn sentence(projects: &[OverviewProject], needs: usize) -> String {
     let tasks: u32 = projects.iter().map(|p| open_of(&p.rollup)).sum();
     let needs = if needs == 1 { "1 thing needs you".to_string() } else { format!("{needs} things need you") };
     format!("{} open across {}. {needs}.", plural(tasks as usize, "task", "tasks"), plural(projects.len(), "project", "projects"))
 }
 
-pub fn as_of(at: &str, now: i64) -> String {
+pub(crate) fn as_of(at: &str, now: i64) -> String {
     match rfc3339_ms(at) {
         Some(ms) => format!("As of {}", time::near(ms, now)),
         None => String::new(),
@@ -41,7 +41,7 @@ pub fn as_of(at: &str, now: i64) -> String {
 }
 
 /// The tiles the read API gives: Workman's honesty counters (every project of the server) and the bound projects' open tasks.
-pub fn tiles(honesty: &Honesty, tasks_open: u32) -> Vec<(u32, &'static str, bool)> {
+pub(crate) fn tiles(honesty: &Honesty, tasks_open: u32) -> Vec<(u32, &'static str, bool)> {
     vec![
         (honesty.done_unverified, "closed without independent proof", false),
         (honesty.forced, "forced closures", honesty.forced > 0),
@@ -51,7 +51,7 @@ pub fn tiles(honesty: &Honesty, tasks_open: u32) -> Vec<(u32, &'static str, bool
 }
 
 /// Within the hour in minutes, as the web says it; later its time here.
-pub fn lease(expires_at: &str, expired: bool, now: i64) -> String {
+pub(crate) fn lease(expires_at: &str, expired: bool, now: i64) -> String {
     match rfc3339_ms(expires_at) {
         Some(at) if expired || at <= now => "lease ended".into(),
         Some(at) if at - now <= 3_600_000 => format!("lease ends in {}m", (at - now + 59_999) / 60_000),
@@ -60,7 +60,7 @@ pub fn lease(expires_at: &str, expired: bool, now: i64) -> String {
     }
 }
 
-pub fn claim_facts(claim: &Claim, now: i64) -> Vec<String> {
+pub(crate) fn claim_facts(claim: &Claim, now: i64) -> Vec<String> {
     let mut out = vec![claim.role.clone(), claim.item.qualified_ref.clone()];
     out.extend(claim.tree.clone().or_else(|| claim.session.as_ref().and_then(|s| s.tree.clone())));
     out.push(lease(&claim.expires_at, claim.expired, now));
@@ -68,25 +68,25 @@ pub fn claim_facts(claim: &Claim, now: i64) -> Vec<String> {
     out
 }
 
-pub fn working_now<'a>(overview: &'a Overview, projects: &[OverviewProject]) -> Vec<&'a Claim> {
+pub(crate) fn working_now<'a>(overview: &'a Overview, projects: &[OverviewProject]) -> Vec<&'a Claim> {
     let runs: HashSet<&str> = projects.iter().flat_map(|p| p.runs.iter().map(|r| r.item.id.as_str())).collect();
     overview.working_now.iter().filter(|c| c.run.as_ref().is_some_and(|r| runs.contains(r.id.as_str()))).collect()
 }
 
-pub fn runs_line(project: &OverviewProject) -> String {
+pub(crate) fn runs_line(project: &OverviewProject) -> String {
     format!("{} open, {} closed", active(project).count(), closed_runs(project).count())
 }
 
-pub fn run_open(run: &OverviewRun) -> String {
+pub(crate) fn run_open(run: &OverviewRun) -> String {
     format!("{} open", open_of(&run.rollup))
 }
 
-pub const LEGEND: [(StateKey, &str); 6] =
+pub(crate) const LEGEND: [(StateKey, &str); 6] =
     [(StateKey::Proven, "Verified"), (StateKey::Claimed, "Done, not verified"), (StateKey::Doing, "In progress"), (StateKey::Stop, "Blocked"), (StateKey::Wait, "Waiting"), (StateKey::Idle, "Open")];
 
 impl WorkView {
     /// The Needs you cards of this workspace's Inbox rows, as the sidebar sorts them.
-    pub fn needs_cards(&self, cx: &App) -> Vec<Card> {
+    pub(crate) fn needs_cards(&self, cx: &App) -> Vec<Card> {
         let Some(inbox) = &self.inbox else { return Vec::new() };
         let rows: Vec<(&str, &InboxRow)> = inbox.read(cx).rows().into_iter().filter(|(w, _)| *w == self.workspace).collect();
         let live: Vec<String> = self.link.live.borrow().iter().map(|s| s.name.clone()).collect();

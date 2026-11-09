@@ -1,19 +1,16 @@
-//! One [`Auth`] per Supraman home, shared by the read API, the mints and Settings.
+//! One [`Auth`] per Supraman home ([`Auth::shared`]), shared by the read API, the mints and Settings.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use supraman_workman::Auth;
 
-static AUTHS: OnceLock<Mutex<HashMap<PathBuf, Arc<Auth>>>> = OnceLock::new();
 static HTTP_BROWSER: AtomicBool = AtomicBool::new(false);
 static ISSUERS: Mutex<Vec<(PathBuf, String)>> = Mutex::new(Vec::new());
 
 pub fn auth(home: &Path) -> Arc<Auth> {
-    let mut auths = AUTHS.get_or_init(Mutex::default).lock().unwrap_or_else(|e| e.into_inner());
-    auths.entry(home.to_path_buf()).or_insert_with(|| Auth::open(home)).clone()
+    Auth::shared(home)
 }
 
 pub fn use_http_browser() {

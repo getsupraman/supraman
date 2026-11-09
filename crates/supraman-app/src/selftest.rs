@@ -948,7 +948,7 @@ async fn loading_until_listed(view: &Entity<FleetView>, cx: &mut AsyncWindowCont
                 return Some(Err(format!("the loading line went while {:?} still loaded", v.loading(cx))));
             }
             (v.loaded && !shown).then(|| {
-                let done = v.sessions_read && v.refreshes > 0 && v.transcripts.read() && !matches!(v.workman, crate::workman_setup::WorkmanStatus::Checking);
+                let done = v.sessions_read && v.refreshes > 0 && v.transcripts.read() && !matches!(v.workman, supraman_workman::status::WorkmanStatus::Checking);
                 if done { Ok(()) } else { Err("loaded before the poll, the tick, the transcripts and Workman were all done".to_string()) }
             })
         })

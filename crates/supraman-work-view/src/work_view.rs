@@ -5,16 +5,16 @@ mod actions;
 mod activity;
 pub mod cards;
 mod detail;
-pub mod find;
+pub(crate) mod find;
 mod inbox;
 mod item;
 mod layout;
 mod navigator;
-pub mod overview;
+pub(crate) mod overview;
 mod projects;
 mod prompts;
 mod run_list;
-pub mod state;
+pub(crate) mod state;
 #[cfg(test)]
 mod tests;
 
@@ -35,17 +35,18 @@ use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::menu::ContextMenu;
 use supraman_ui::placeholder::placeholder;
 use supraman_ui::toast::ToastSlot;
-use crate::view::Link;
-use crate::workman_setup::WorkmanStatus;
+use supraman_ui::open::Link;
+use supraman_workman::status::WorkmanStatus;
 
-pub use actions::RowAction;
-pub use detail::DetailTab;
+pub(crate) use actions::RowAction;
+pub(crate) use detail::DetailTab;
 pub use inbox::{DISMISSED_FILE, HOUSEKEEPING_KEY, WorkInbox, dismiss_key_of, row_key_of};
-pub use item::{FleetLink, ItemState, LiveSession, OpenItem};
+pub use item::{FleetLink, LiveSession};
+pub(crate) use item::{ItemState, OpenItem};
 pub use projects::RepoOf;
-pub use state::Filter;
+pub(crate) use state::Filter;
 
-pub const DEBOUNCE: Duration = Duration::from_millis(300);
+pub(crate) const DEBOUNCE: Duration = Duration::from_millis(300);
 
 fn after_debounce<T: 'static>(cx: &mut Context<T>, then: impl FnOnce(&mut T, &mut Context<T>) + 'static) {
     cx.spawn(async move |this, cx| {
@@ -55,7 +56,7 @@ fn after_debounce<T: 'static>(cx: &mut Context<T>, then: impl FnOnce(&mut T, &mu
     .detach();
 }
 
-pub enum Access<'a> {
+pub(crate) enum Access<'a> {
     Starting,
     Ready(&'a Client),
     Unconfigured(&'a str),
@@ -74,7 +75,7 @@ pub struct WorkHub {
     lost: Option<String>,
 }
 
-pub enum HubEvent {
+pub(crate) enum HubEvent {
     Configured,
     Changed(StreamEvent),
     /// Connected again after a loss: frames may have been missed.
@@ -111,7 +112,7 @@ impl WorkHub {
 
     /// A hub reading through `client` at once, with no stream: a test's.
     #[cfg(test)]
-    pub fn ready(client: Client, cx: &mut App) -> Entity<WorkHub> {
+    pub(crate) fn ready(client: Client, cx: &mut App) -> Entity<WorkHub> {
         cx.new(|_| WorkHub { home: None, state: HubState::Ready(client), _stream: None, lost: None })
     }
 
@@ -127,7 +128,7 @@ impl WorkHub {
         }
     }
 
-    pub fn access(&self) -> Access<'_> {
+    pub(crate) fn access(&self) -> Access<'_> {
         match &self.state {
             HubState::Starting => Access::Starting,
             HubState::Ready(client) => Access::Ready(client),
@@ -191,7 +192,7 @@ impl WorkHub {
 /// No network call: the bearer is asked for at each read.
 fn load_client(home: Option<PathBuf>) -> Result<Client, String> {
     let home = home.ok_or_else(|| "No Supraman home (set SUPRAMAN_HOME or APPDATA), so no settings.toml.".to_string())?;
-    let auth = crate::signin::auth(&home);
+    let auth = supraman_workman::Auth::shared(&home);
     let url = auth.configured_origin().map_err(|e| WorkmanStatus::NotSetUp { why: e.to_string() }.message().unwrap_or_default())?;
     match auth.status(&url) {
         AuthStatus::SignedIn { .. } => Ok(Client::with_source(url.as_str(), auth.bearer_for(&url))),
@@ -209,7 +210,7 @@ fn read_failed(e: supraman_workman::Error) -> String {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Shown {
+pub(crate) enum Shown {
     Loading,
     Message(String),
     Ready,
@@ -244,27 +245,27 @@ pub struct WorkView {
     repo_of: RepoOf,
     hub: Entity<WorkHub>,
     hits: HitTargets,
-    pub shown: Shown,
+    pub(crate) shown: Shown,
     keys: Option<Vec<(&'static str, String)>>,
     overview: Option<Overview>,
     pub projects: Vec<OverviewProject>,
-    pub page: Page,
+    pub(crate) page: Page,
     page_chosen: bool,
     pub boards: HashMap<String, BoardState>,
     closed_open: HashSet<String>,
     pub selected: Option<String>,
-    pub filter: Filter,
+    pub(crate) filter: Filter,
     pub item: Option<OpenItem>,
-    pub detail_tab: DetailTab,
-    pub prompts: prompts::Prompts,
+    pub(crate) detail_tab: DetailTab,
+    pub(crate) prompts: prompts::Prompts,
     briefs: HashMap<String, Result<String, String>>,
-    pub toast: ToastSlot,
+    pub(crate) toast: ToastSlot,
     menu: Option<ContextMenu<RowAction>>,
     focus: FocusHandle,
-    pub detail_focused: bool,
-    pub layout: layout::Layout,
+    pub(crate) detail_focused: bool,
+    pub(crate) layout: layout::Layout,
     link: FleetLink,
-    pub open_link_with: fn(&Link, &mut App),
+    pub(crate) open_link_with: fn(&Link, &mut App),
     inbox: Option<Entity<WorkInbox>>,
     overview_pending: bool,
     boards_pending: HashSet<String>,
@@ -274,10 +275,10 @@ pub struct WorkView {
     pub item_reads: u64,
     list_scroll: ScrollHandle,
     detail_scroll: ScrollHandle,
-    pub activity: activity::Activity,
-    pub palette: Option<Entity<supraman_ui::palette::Palette<find::Found>>>,
+    pub(crate) activity: activity::Activity,
+    pub(crate) palette: Option<Entity<supraman_ui::palette::Palette<find::Found>>>,
     palette_sub: Option<Subscription>,
-    pub search_reads: u64,
+    pub(crate) search_reads: u64,
     /// What every relative time here is measured from: `now_ms`, or a fixture's fixed time.
     pub now: fn() -> i64,
 }
@@ -358,7 +359,7 @@ impl WorkView {
 
     /// A view over `hub`: a test's.
     #[cfg(test)]
-    pub fn for_test(opening: Opening, hub: Entity<WorkHub>, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn for_test(opening: Opening, hub: Entity<WorkHub>, cx: &mut Context<Self>) -> Self {
         Self::new(opening, hub, cx)
     }
 
@@ -396,21 +397,21 @@ impl WorkView {
         self.read_item(cx);
     }
 
-    pub fn shown_run(&self) -> Option<&str> {
+    pub(crate) fn shown_run(&self) -> Option<&str> {
         match &self.page {
             Page::Run(id) => Some(id.as_str()),
             _ => None,
         }
     }
 
-    pub fn board(&self) -> Option<&Board> {
+    pub(crate) fn board(&self) -> Option<&Board> {
         match self.boards.get(self.shown_run()?) {
             Some(BoardState::Ready(board)) => Some(board),
             _ => None,
         }
     }
 
-    pub fn client(&mut self, cx: &mut Context<Self>) -> Option<Client> {
+    pub(crate) fn client(&mut self, cx: &mut Context<Self>) -> Option<Client> {
         match self.hub.read(cx).access() {
             Access::Starting => None,
             Access::Ready(client) => Some(client.clone()),
@@ -422,7 +423,7 @@ impl WorkView {
         }
     }
 
-    pub fn web_base(&self, cx: &App) -> Option<String> {
+    pub(crate) fn web_base(&self, cx: &App) -> Option<String> {
         match self.hub.read(cx).access() {
             Access::Ready(client) => Some(supraman_core::url::origin(client.base())),
             _ => None,
@@ -547,7 +548,7 @@ impl WorkView {
         }
     }
 
-    pub fn open_run(&mut self, run: String, cx: &mut Context<Self>) {
+    pub(crate) fn open_run(&mut self, run: String, cx: &mut Context<Self>) {
         self.page_chosen = true;
         if self.shown_run() != Some(run.as_str()) {
             self.page = Page::Run(run.clone());
@@ -562,14 +563,14 @@ impl WorkView {
         self.show_detail(run, cx);
     }
 
-    pub fn toggle_closed(&mut self, project: &str, cx: &mut Context<Self>) {
+    pub(crate) fn toggle_closed(&mut self, project: &str, cx: &mut Context<Self>) {
         if !self.closed_open.remove(project) {
             self.closed_open.insert(project.to_string());
         }
         cx.notify();
     }
 
-    pub fn set_filter(&mut self, filter: Filter, cx: &mut Context<Self>) {
+    pub(crate) fn set_filter(&mut self, filter: Filter, cx: &mut Context<Self>) {
         self.filter = filter;
         if self.selected.as_ref().is_some_and(|id| !self.listed().iter().any(|r| &r.item.id == id)) {
             self.clear_selection(cx);
@@ -577,7 +578,7 @@ impl WorkView {
         cx.notify();
     }
 
-    pub fn listed(&self) -> Vec<&supraman_workman::BoardRow> {
+    pub(crate) fn listed(&self) -> Vec<&supraman_workman::BoardRow> {
         self.board().map(|b| state::listed(b, self.filter)).unwrap_or_default()
     }
 
@@ -588,7 +589,7 @@ impl WorkView {
         cx.notify();
     }
 
-    pub fn clear_selection(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn clear_selection(&mut self, cx: &mut Context<Self>) {
         self.selected = None;
         self.detail_focused = false;
         if let Some(run) = self.shown_run().map(str::to_string) {
@@ -670,7 +671,7 @@ impl WorkView {
         true
     }
 
-    pub fn needs_you(&self, cx: &App) -> usize {
+    pub(crate) fn needs_you(&self, cx: &App) -> usize {
         self.inbox.as_ref().map_or(0, |inbox| inbox.read(cx).rows().iter().filter(|(w, _)| *w == self.workspace).count())
     }
 }

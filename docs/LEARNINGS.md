@@ -5951,3 +5951,18 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   and the `sizes()` fixture are behind the crate's `test-support` feature, enabled in the app's dev-dependencies.
 - **`image` is a normal dependency** of the crate (the diff viewer's decoders): a `--tests` check of the crate alone
   passed with it as a dev-dependency and the app's build then failed.
+
+## 2026-11-09 — dev-speed/3 work_view in its own crate (dv-workview)
+
+- **The same move as dev-speed/2**: `supraman-work-view`'s `lib.rs` is `pub mod work_view;` and the app's root holds
+  `use supraman_work_view::work_view;`, so every path and test filter stays. A one-line Work tab edit tests in 8 s
+  instead of 46 s (DEVELOPING.md's Timings).
+- **What crossed back, each to its owner**: `Link` to `supraman_ui::open`, `timeline` beside `ms_since_start` in
+  `supraman_ui`, `WorkmanStatus` and `RECHECK_EVERY` with their words to `supraman_workman::status` (`detect` and
+  `check_server` stay in the app's `workman_setup`, their tests use `test_auth`), and the one `Auth` per home to
+  `Auth::shared`, which `signin::auth` and the hub both call.
+- **The surface is wider than the brief's list**: the selftests read the view's and the inbox's fields (read counters,
+  `selected`, `item`, `now`, `notice`, `scroll`) and the sidebar paints `cards::Sections`/`Group`/`Card`, so those
+  are `pub`; no `#[cfg(test)]` item is reached from the app, so the crate has no `test-support` feature.
+- **A measure script must not restore with `git checkout --`** after a `git mv`: the index holds the moved file as it
+  was before the edits, so the checkout silently reverted them; copy the file aside and back instead.
