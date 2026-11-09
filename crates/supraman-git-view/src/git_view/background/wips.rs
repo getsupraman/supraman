@@ -19,7 +19,7 @@ use crate::git_view::GitView;
 pub(crate) struct Wips {
     read: Option<Result<Arc<[WorktreeWip]>, String>>,
     #[cfg(test)]
-    pub(super) reads: usize,
+    pub(crate) reads: usize,
 }
 
 impl Wips {
@@ -29,6 +29,15 @@ impl Wips {
         match &self.read {
             Some(Ok(all)) => all.iter().filter(|w| path_key(w.path()) != key).cloned().collect(),
             _ => Vec::new(),
+        }
+    }
+
+    /// The worktree at `path`, as last read.
+    pub(crate) fn get(&self, path: &Path) -> Option<&WorktreeWip> {
+        let key = path_key(path);
+        match &self.read {
+            Some(Ok(all)) => all.iter().find(|w| path_key(w.path()) == key),
+            _ => None,
         }
     }
 
@@ -67,6 +76,9 @@ fn job(key: &str, cx: &App) -> Step<(Writer, Vec<PathBuf>)> {
     let views = bg.views(key);
     if views.is_empty() {
         return Step::End;
+    }
+    if !bg.worktree_wips() {
+        return Step::Skip;
     }
     let writers: Vec<_> = views.iter().filter_map(|v| v.read(cx).remote.read(cx).writer().cloned()).collect();
     let Some(first) = writers.first() else { return Step::Skip };
@@ -112,6 +124,6 @@ fn read_into(key: &str, read: Result<Arc<[WorktreeWip]>, String>, cx: &mut App) 
         cx.notify();
     });
     for view in views {
-        view.update(cx, |_, cx: &mut Context<GitView>| cx.notify());
+        view.update(cx, |v, cx: &mut Context<GitView>| v.worktrees_read(cx));
     }
 }

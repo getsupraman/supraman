@@ -135,7 +135,7 @@ fn paint_edge(window: &mut Window, bounds: Bounds<Pixels>, e: &Edge, colour: Hsl
     });
 }
 
-/// A commit's circle with its author's initials, ringed in its lane; a merge's smaller dot; the WIP row's
+/// A commit's circle with its author's initials, ringed in its lane; a merge's smaller dot; a WIP row's
 /// dashed hollow ring; a stash's dashed square round its glyph.
 fn node(row: &GraphRow, palette: &Palette) -> AnyElement {
     let colour = row.row.colour;
@@ -150,7 +150,7 @@ fn node(row: &GraphRow, palette: &Palette) -> AnyElement {
         .flex()
         .items_center()
         .justify_center();
-    if row.wip() {
+    if row.wip() || row.worktree().is_some() {
         return at.border_2().border_dashed().border_color(lane).bg(palette.background).into_any_element();
     }
     if row.stash().is_some() {

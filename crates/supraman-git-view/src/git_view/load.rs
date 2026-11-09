@@ -8,13 +8,13 @@ use gpui::SharedString;
 use supraman_core::Settings;
 use super::ref_panel::{self, Walk};
 use super::splice::{self, Loaded};
-use supraman_gitman::{ChangeKind, Commit, EntryKind, FIRST_PAGE, Head, History, Layout, Located, NEXT_PAGE, Refs, Repo, Row, Stash, Status};
+use supraman_gitman::{ChangeKind, Commit, EntryKind, FIRST_PAGE, Head, History, Layout, Located, NEXT_PAGE, Refs, Repo, Row, Stash, Status, WorktreeRow};
 
 /// One row of the graph, its texts ready to paint.
 #[derive(Debug, Clone)]
 pub(crate) struct GraphRow {
     pub(crate) row: Row,
-    /// Empty on the WIP row.
+    /// Empty on the WIP row and a worktree's.
     pub(crate) sha: SharedString,
     pub(crate) summary: SharedString,
     /// The body's start, on one line.
@@ -30,7 +30,16 @@ pub(crate) struct GraphRow {
 
 impl GraphRow {
     pub(crate) fn wip(&self) -> bool {
-        self.row.sha.is_none()
+        self.row.sha.is_none() && self.row.worktree.is_none()
+    }
+
+    pub(crate) fn commit(&self) -> bool {
+        self.row.sha.is_some()
+    }
+
+    /// The other worktree whose WIP row this is.
+    pub(crate) fn worktree(&self) -> Option<&Path> {
+        self.row.worktree()
     }
 
     pub(crate) fn stash(&self) -> Option<&Arc<Stash>> {
@@ -171,18 +180,18 @@ pub(crate) fn first(home: Option<&Path>, folder: &Path, walk: &Walk) -> Result<F
     let Located::Found(git) = located else { unreachable!() };
     let repo = Repo::new(git, folder);
     let dirs = supraman_gitman::dirs(&repo).map_err(|e| Problem::Failed(e.to_string()))?;
-    read(repo.with_dirs(dirs), walk, None).map_err(Problem::Failed)
+    read(repo.with_dirs(dirs), walk, None, &[]).map_err(Problem::Failed)
 }
 
-/// The refs, the status and the first page of `repo` walked as `walk` says, laid out afresh, and the commits
-/// `loaded` below it laid out again after it when the walk below is the same.
-pub(crate) fn read(repo: Repo, walk: &Walk, loaded: Option<&Loaded>) -> Result<First, String> {
+/// The refs, the status and the first page of `repo` walked as `walk` says, laid out afresh with the WIP rows of
+/// `worktrees`, and the commits `loaded` below it laid out again after it when the walk below is the same.
+pub(crate) fn read(repo: Repo, walk: &Walk, loaded: Option<&Loaded>, worktrees: &[WorktreeRow]) -> Result<First, String> {
     let failed = |e: supraman_gitman::GitError| e.to_string();
     let _index = supraman_gitman::write::refresh_lock(&repo);
     let refs = supraman_gitman::refs(&repo).map_err(failed)?;
     let status = supraman_gitman::status_first(&repo).map_err(failed)?;
     let walked = ref_panel::without(&refs, walk);
-    let layout = Layout::new(&walked, dirty(&status));
+    let layout = Layout::new(&walked, dirty(&status)).with_worktrees(worktrees);
     let tips = ref_panel::tips(&walked, walk);
     let mut walker = History::start(&repo, &tips, 0).map_err(failed)?;
     let history = walker.page(FIRST_PAGE).map_err(failed)?;
@@ -230,7 +239,7 @@ pub(crate) fn next(repo: &Repo, tips: &[String], skip: usize, layout: Layout, wa
     Ok((page, walker))
 }
 
-fn graph_row(row: Row, commit: Option<&Commit>) -> GraphRow {
+pub(crate) fn graph_row(row: Row, commit: Option<&Commit>) -> GraphRow {
     let Some(c) = commit else {
         return GraphRow { row, sha: "".into(), summary: "".into(), body: "".into(), initials: "".into(), author: "".into(), time_ms: 0, merge: false, parents: Vec::new() };
     };

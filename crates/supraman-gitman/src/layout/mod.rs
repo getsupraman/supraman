@@ -8,6 +8,7 @@ mod lanes;
 mod tests;
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub use groups::{RefGroup, RefKind, RefLabel};
@@ -20,7 +21,7 @@ use lanes::Lanes;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
-    /// `None` on the WIP row.
+    /// `None` on the WIP row and a worktree's.
     pub sha: Option<String>,
     pub lane: usize,
     pub colour: usize,
@@ -34,6 +35,8 @@ pub struct Row {
     pub detached_head: bool,
     /// The stash whose index commit the row is.
     pub stash: Option<Arc<Stash>>,
+    /// The other worktree whose work in progress the row is.
+    pub worktree: Option<Arc<Path>>,
 }
 
 impl Row {
@@ -46,6 +49,17 @@ impl Row {
     pub fn more(&self) -> usize {
         self.refs.len().saturating_sub(1)
     }
+
+    pub fn worktree(&self) -> Option<&Path> {
+        self.worktree.as_deref()
+    }
+}
+
+/// Another worktree's WIP row, laid out directly above its HEAD commit's row.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct WorktreeRow {
+    pub head: String,
+    pub path: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +77,8 @@ pub struct Layout {
     handed: HashMap<String, Handed>,
     /// Each stash by its index commit, the newest of those sharing one.
     stashes: Arc<HashMap<String, Arc<Stash>>>,
+    /// The worktrees' WIP rows by their HEAD commit.
+    worktrees: Arc<HashMap<String, Vec<Arc<Path>>>>,
     wip: bool,
     rows: usize,
     none: Arc<[RefGroup]>,
@@ -77,7 +93,17 @@ impl Layout {
         }
         let refs = RefIndex::new(refs);
         let wip = wip && refs.head.is_some();
-        Layout { lanes: Lanes::default(), refs: Arc::new(refs), handed: HashMap::new(), stashes: Arc::new(stashes), wip, rows: 0, none: Arc::from([]) }
+        Layout { lanes: Lanes::default(), refs: Arc::new(refs), handed: HashMap::new(), stashes: Arc::new(stashes), worktrees: Arc::default(), wip, rows: 0, none: Arc::from([]) }
+    }
+
+    /// With a WIP row for each of `worktrees`, each above its HEAD's row, on its own lane, its edge dashed.
+    pub fn with_worktrees(mut self, worktrees: &[WorktreeRow]) -> Layout {
+        let mut by_head: HashMap<String, Vec<Arc<Path>>> = HashMap::new();
+        for w in worktrees {
+            by_head.entry(w.head.clone()).or_default().push(Arc::from(w.path.as_path()));
+        }
+        self.worktrees = Arc::new(by_head);
+        self
     }
 
     /// The rows of the next page; pages laid out in turn give the rows of laying them out at once.
@@ -94,6 +120,12 @@ impl Layout {
             rows.push(self.row(None, placed, None));
         }
         for (sha, parents) in commits {
+            for path in self.worktrees.get(sha).cloned().unwrap_or_default() {
+                let placed = self.lanes.place("", &[sha], true, true);
+                let mut row = self.row(None, placed, None);
+                row.worktree = Some(path);
+                rows.push(row);
+            }
             let stash = self.stashes.get(sha).cloned();
             let placed = self.lanes.place(sha, parents, stash.is_some(), stash.is_some());
             let ghost = if stash.is_some() { None } else { self.ghost(sha, parents) };
@@ -108,7 +140,7 @@ impl Layout {
         self.rows += 1;
         let refs = sha.as_ref().and_then(|s| self.refs.groups.get(s)).cloned().unwrap_or_else(|| self.none.clone());
         let detached_head = sha.is_some() && sha == self.refs.detached;
-        Row { sha, lane: placed.lane, colour: placed.lane % LANE_COLOURS, edges: placed.edges, max_lane: placed.max_lane, refs, ghost, detached_head, stash: None }
+        Row { sha, lane: placed.lane, colour: placed.lane % LANE_COLOURS, edges: placed.edges, max_lane: placed.max_lane, refs, ghost, detached_head, stash: None, worktree: None }
     }
 
     /// A commit with branch refs hands them to its parents; one with no refs takes the best it was handed and

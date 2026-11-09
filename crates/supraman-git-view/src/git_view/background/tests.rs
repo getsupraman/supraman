@@ -95,7 +95,7 @@ fn fetches(f: &Fixture, cx: &mut VisualTestContext) -> usize {
 #[gpui::test]
 fn a_tab_fetches_on_open_on_activation_and_each_interval_never_during_a_push_and_not_at_interval_0(cx: &mut TestAppContext) {
     let f = Fixture::copy();
-    start(None, BackgroundSettings { fetch_every_minutes: Some(1), maintenance: Some(false) }, cx);
+    start(None, BackgroundSettings { fetch_every_minutes: Some(1), maintenance: Some(false), ..Default::default() }, cx);
     let cx = window(cx);
     let first = advance_origin(&f, 1);
     let view = open(&f.dir, None, occupancy::Live::default(), cx);
@@ -131,7 +131,7 @@ fn a_tab_fetches_on_open_on_activation_and_each_interval_never_during_a_push_and
     drop(pull);
 
     let fifth = advance_origin(&f, 5);
-    cx.update(|_, cx| apply(BackgroundSettings { fetch_every_minutes: Some(0), maintenance: Some(false) }, cx));
+    cx.update(|_, cx| apply(BackgroundSettings { fetch_every_minutes: Some(0), maintenance: Some(false), ..Default::default() }, cx));
     cx.run_until_parked();
     tick(MINUTE * 10, cx);
     view.update(cx, |v, cx| v.set_shown(false, cx));
@@ -139,7 +139,7 @@ fn a_tab_fetches_on_open_on_activation_and_each_interval_never_during_a_push_and
     cx.run_until_parked();
     assert_ne!(tracking(&f), fifth, "interval 0 is off: no interval, no activation fetch");
 
-    cx.update(|_, cx| apply(BackgroundSettings { fetch_every_minutes: Some(2), maintenance: Some(false) }, cx));
+    cx.update(|_, cx| apply(BackgroundSettings { fetch_every_minutes: Some(2), maintenance: Some(false), ..Default::default() }, cx));
     cx.run_until_parked();
     assert_eq!(tracking(&f), fifth, "a new interval applies to the open tab at once");
 }
@@ -147,7 +147,7 @@ fn a_tab_fetches_on_open_on_activation_and_each_interval_never_during_a_push_and
 #[gpui::test]
 fn tabs_of_one_repository_share_one_schedule_ended_with_the_last_and_a_failure_names_its_remote(cx: &mut TestAppContext) {
     let f = Fixture::copy();
-    start(None, BackgroundSettings { fetch_every_minutes: Some(1), maintenance: Some(false) }, cx);
+    start(None, BackgroundSettings { fetch_every_minutes: Some(1), maintenance: Some(false), ..Default::default() }, cx);
     let cx = window(cx);
     let main = open(&f.dir, None, occupancy::Live::default(), cx);
     let side = open(&f.worktree, None, occupancy::Live::default(), cx);
@@ -195,7 +195,7 @@ fn maintenance_runs_once_per_hour_after_a_tab_opens_and_a_restart_does_not_run_i
     let home = tempfile::tempdir().unwrap();
     let dirs = dirs_of(&f.dir, &f);
     clear(&dirs);
-    start(Some(home.path()), BackgroundSettings { fetch_every_minutes: Some(0), maintenance: None }, cx);
+    start(Some(home.path()), BackgroundSettings { fetch_every_minutes: Some(0), maintenance: None, ..Default::default() }, cx);
     let cx = window(cx);
     let view = open(&f.dir, Some(home.path()), occupancy::Live::default(), cx);
     tick(AFTER - Duration::from_secs(1), cx);
@@ -218,7 +218,7 @@ fn maintenance_runs_once_per_hour_after_a_tab_opens_and_a_restart_does_not_run_i
     NOW.set(NOW.get() + 1000);
     cx.update(|_, cx| {
         let mut bg = Background::new(Some(home.path().to_path_buf()));
-        bg.settings = Some(BackgroundSettings { fetch_every_minutes: Some(0), maintenance: None });
+        bg.settings = Some(BackgroundSettings { fetch_every_minutes: Some(0), maintenance: None, ..Default::default() });
         bg.heavy = Arc::new(held);
         bg.clock = now;
         cx.set_global(bg);
@@ -233,7 +233,7 @@ fn maintenance_waits_while_a_session_works_there_an_index_is_locked_or_a_heavy_j
     let f = Fixture::copy();
     let dirs = dirs_of(&f.dir, &f);
     clear(&dirs);
-    start(None, BackgroundSettings { fetch_every_minutes: Some(0), maintenance: None }, cx);
+    start(None, BackgroundSettings { fetch_every_minutes: Some(0), maintenance: None, ..Default::default() }, cx);
     let cx = window(cx);
     let live = occupancy::Live::default();
     live.set(vec![("fm-alpha".into(), f.worktree.join("src"))]);
@@ -252,12 +252,12 @@ fn maintenance_waits_while_a_session_works_there_an_index_is_locked_or_a_heavy_j
     tick(RETRY, cx);
     assert!(!graph(&dirs), "a build or selftest holds the heavy-job lock");
 
-    cx.update(|_, cx| apply(BackgroundSettings { fetch_every_minutes: Some(0), maintenance: Some(false) }, cx));
+    cx.update(|_, cx| apply(BackgroundSettings { fetch_every_minutes: Some(0), maintenance: Some(false), ..Default::default() }, cx));
     cx.update(|_, cx| cx.global_mut::<Background>().heavy = Arc::new(held));
     tick(RETRY * 3, cx);
     assert!(!graph(&dirs), "turned off");
 
-    cx.update(|_, cx| apply(BackgroundSettings { fetch_every_minutes: Some(0), maintenance: Some(true) }, cx));
+    cx.update(|_, cx| apply(BackgroundSettings { fetch_every_minutes: Some(0), maintenance: Some(true), ..Default::default() }, cx));
     cx.run_until_parked();
     assert!(graph(&dirs), "turned on, it runs at the next look");
 }
@@ -279,7 +279,7 @@ fn the_other_worktrees_are_read_on_open_activation_the_fetch_tick_and_a_refresh_
     for n in 0..4 {
         f.git(&["worktree", "add", "-q", "-b", &format!("extra{n}"), &f.temp.path().join(format!("extra{n}")).to_string_lossy(), f.sha("second")]);
     }
-    start(None, BackgroundSettings { fetch_every_minutes: Some(1), maintenance: Some(false) }, cx);
+    start(None, BackgroundSettings { fetch_every_minutes: Some(1), maintenance: Some(false), ..Default::default() }, cx);
     let cx = window(cx);
     let main = open(&f.dir, None, occupancy::Live::default(), cx);
     assert_eq!(reads(&main, cx), 1, "read as the tab opened");
@@ -314,7 +314,7 @@ fn the_other_worktrees_are_read_on_open_activation_the_fetch_tick_and_a_refresh_
     cx.run_until_parked();
     assert_eq!(reads(&main, cx), 5, "the next refresh reads");
 
-    cx.update(|_, cx| apply(BackgroundSettings { fetch_every_minutes: Some(0), maintenance: Some(false) }, cx));
+    cx.update(|_, cx| apply(BackgroundSettings { fetch_every_minutes: Some(0), maintenance: Some(false), ..Default::default() }, cx));
     cx.run_until_parked();
     tick(IDLE + MINUTE, cx);
     assert_eq!(reads(&main, cx), 5, "with the fetch off, no tick and no timer of its own");

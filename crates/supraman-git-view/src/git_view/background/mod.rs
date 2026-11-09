@@ -112,6 +112,11 @@ impl Background {
         .detach();
     }
 
+    /// Unread settings show the rows: `[gitman] worktree_wip` is on by default.
+    fn worktree_wips(&self) -> bool {
+        self.settings.is_none_or(|s| s.worktree_wips())
+    }
+
     fn fetch_every(&self) -> Option<Duration> {
         let minutes = self.settings?.fetch_every();
         (minutes > 0).then(|| Duration::from_secs(u64::from(minutes) * 60))
@@ -129,11 +134,38 @@ pub fn apply(settings: BackgroundSettings, cx: &mut App) {
         return;
     }
     let bg = cx.global_mut::<Background>();
+    let rows_turned = bg.worktree_wips() != settings.worktree_wips();
     bg.settings = Some(settings);
     for schedule in bg.repos.values() {
         schedule.fetch.wake();
         schedule.maintain.wake();
+        if rows_turned {
+            schedule.wip.wake();
+        }
     }
+    if !rows_turned {
+        return;
+    }
+    let bg = cx.global::<Background>();
+    let views: Vec<_> = bg.repos.keys().flat_map(|key| bg.views(key)).collect();
+    for view in views {
+        view.update(cx, |v, cx| v.worktrees_read(cx));
+    }
+}
+
+/// The background on for a test of the tab, with `settings`, no home and its heavy-job lock free.
+#[cfg(test)]
+pub(crate) fn start_for_test(settings: BackgroundSettings, cx: &mut App) {
+    ON.set(true);
+    let mut bg = Background::new(None);
+    bg.settings = Some(settings);
+    bg.heavy = Arc::new(|| Some(Box::new(()) as Box<dyn std::any::Any + Send>));
+    cx.set_global(bg);
+}
+
+/// Whether the graph shows the other worktrees' WIP rows: `[gitman] worktree_wip`, on without a background.
+pub(crate) fn worktree_wips(cx: &App) -> bool {
+    cx.try_global::<Background>().is_none_or(Background::worktree_wips)
 }
 
 /// The repository `writer` writes to, followed by the tab `view` until it closes; its first tab fetches now.

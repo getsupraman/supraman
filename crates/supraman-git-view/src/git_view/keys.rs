@@ -125,7 +125,7 @@ impl GitView {
             Some(Selected::Wip) => self.wip_panel.read(cx).file_order(),
             Some(Selected::Commit(sha)) => self.panel.read(cx).file_order(&sha),
             Some(Selected::Stash(stash)) => self.panel.read(cx).file_order(&stash.sha),
-            None => Vec::new(),
+            Some(Selected::Worktree(_)) | None => Vec::new(),
         }
     }
 

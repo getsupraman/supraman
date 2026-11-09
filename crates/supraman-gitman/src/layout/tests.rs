@@ -388,3 +388,44 @@ fn layout_edges_of_the_20k_fixture_and_a_wide_history_stay_as_painted() {
     let rows = Layout::new(&no_refs(), false).extend(&wide(10_000, 40));
     assert_eq!(edge_digest(&rows), (408_466, 5_191_816_325_844_784_470), "forty lanes");
 }
+
+#[test]
+fn layout_puts_a_worktree_row_above_its_head_on_a_lane_of_its_own_its_edge_dashed() {
+    let mut refs = no_refs();
+    refs.head = Head::Branch { name: "main".into(), sha: Some("c".into()) };
+    let worktrees = [WorktreeRow { head: "b".into(), path: "w/one".into() }, WorktreeRow { head: "gone".into(), path: "w/two".into() }];
+    let rows = Layout::new(&refs, true).with_worktrees(&worktrees).extend(&[commit("c", &["b"]), commit("b", &["a"]), commit("a", &[])]);
+    let order: Vec<(Option<&str>, Option<&std::path::Path>)> = rows.iter().map(|r| (r.sha.as_deref(), r.worktree())).collect();
+    assert_eq!(order, [(None, None), (Some("c"), None), (None, Some(std::path::Path::new("w/one"))), (Some("b"), None), (Some("a"), None)], "no row for a HEAD not loaded");
+    assert_eq!(
+        shape(&rows),
+        vec![
+            (0, vec![(S, 0, 0)]),
+            (0, vec![(E, 0, 0), (S, 0, 0)]),
+            (1, vec![(P, 0, 0), (S, 1, 1)]),
+            (0, vec![(E, 0, 0), (E, 1, 0), (S, 0, 0)]),
+            (0, vec![(E, 0, 0)]),
+        ],
+        "the commit keeps its child's lane"
+    );
+    assert!(rows[2].edges().filter(|e| e.kind == S).all(|e| e.dashed));
+    assert_eq!(rows[2].colour, 1);
+}
+
+#[test]
+fn layout_of_a_worktree_on_a_tip_takes_the_lane_down_into_its_head() {
+    let worktrees = [WorktreeRow { head: "x".into(), path: "w/a".into() }, WorktreeRow { head: "x".into(), path: "w/b".into() }];
+    let commits: Vec<Commit> = [commit("x", &["a"]), commit("a", &[])].into();
+    let rows = Layout::new(&no_refs(), false).with_worktrees(&worktrees).extend(&commits);
+    assert_eq!(rows.iter().filter(|r| r.worktree.is_some()).count(), 2, "one row per worktree on one commit");
+    assert_eq!(shape(&rows), vec![(0, vec![(S, 0, 0)]), (1, vec![(P, 0, 0), (S, 1, 1)]), (0, vec![(E, 0, 0), (E, 1, 0), (S, 0, 0)]), (0, vec![(E, 0, 0)])]);
+}
+
+#[test]
+fn layout_of_a_worktree_on_a_lower_free_lane_leaves_its_head_on_its_childs_lane() {
+    let worktrees = [WorktreeRow { head: "b".into(), path: "w/a".into() }];
+    let commits: Vec<Commit> = [commit("q", &["r"]), commit("y", &["b"]), commit("r", &[]), commit("b", &[])].into();
+    let rows = Layout::new(&no_refs(), false).with_worktrees(&worktrees).extend(&commits);
+    let lanes: Vec<(Option<&str>, usize)> = rows.iter().map(|r| (r.sha.as_deref(), r.lane)).collect();
+    assert_eq!(lanes, [(Some("q"), 0), (Some("y"), 1), (Some("r"), 0), (None, 0), (Some("b"), 1)]);
+}
