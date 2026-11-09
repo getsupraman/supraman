@@ -59,7 +59,7 @@ impl FleetView {
         saved
     }
 
-    fn saved_tab(&self, tab: &Tab, cx: &App) -> Option<SavedTab> {
+    pub(super) fn saved_tab(&self, tab: &Tab, cx: &App) -> Option<SavedTab> {
         let title = tab.title.clone();
         let named = |sid: &str| self.sessions.iter().chain(&self.closed).find(|s| s.session_id == sid).map(|s| s.name.clone()).filter(|n| !n.is_empty());
         Some(match &tab.kind {
@@ -117,21 +117,8 @@ impl FleetView {
             if !settings.reopen_tabs {
                 return None;
             }
-            let (mut saved, notice) = saved_tabs::load(&home);
-            if let Some(dir) = &claude_dir {
-                saved.tabs = saved.tabs.into_iter().map(|t| t.followed(|sid| supraman_claude::newest_in(dir, sid))).collect();
-            }
-            let has_transcript = |sid: &str, cwd: &Path| claude_dir.as_deref().is_some_and(|dir| find_transcript(dir, sid, Some(cwd)).is_some());
-            let world = World {
-                sessions: &sessions,
-                now: now_ms(),
-                workspaces: &workspaces,
-                resume_on_click: settings.resume_tabs_on_click,
-                is_dir: &|p| p.is_dir(),
-                is_file: &|p| p.is_file(),
-                has_transcript: &has_transcript,
-            };
-            let plans = saved.tabs.iter().map(|t| (t.title().to_string(), saved_tabs::plan(t, &world))).collect();
+            let (saved, notice) = saved_tabs::load(&home);
+            let plans = plan_tabs(saved.tabs, &sessions, &workspaces, claude_dir.as_deref(), settings.resume_tabs_on_click);
             Some((plans, saved.active, notice))
         });
         cx.spawn(async move |this, cx| {
@@ -174,6 +161,34 @@ impl FleetView {
         }
         log::info!("reopened {} tabs, {} not", opened.len(), gone.len());
         cx.notify();
+    }
+
+    /// Ctrl+Alt+T: the last tab closed in this run, planned as a start reopens its tabs.
+    pub(super) fn reopen_closed(&mut self, cx: &mut Context<Self>) {
+        let Some(saved) = self.pop_closed() else {
+            self.pane_toast.show_why("No closed tab to reopen.".into(), |v: &mut Self| &mut v.pane_toast, cx);
+            return;
+        };
+        let home = self.home.clone();
+        let sessions = self.sessions.clone();
+        let workspaces: Vec<String> = self.workspaces.iter().map(|w| w.name.clone()).collect();
+        let claude_dir = self.claude_dir.clone();
+        let planned = cx.background_executor().spawn(async move {
+            let resume_on_click = home.as_deref().and_then(|h| Settings::load(h).ok()).unwrap_or_default().sessions.resume_tabs_on_click;
+            plan_tabs(vec![saved], &sessions, &workspaces, claude_dir.as_deref(), resume_on_click).pop()
+        });
+        cx.spawn(async move |this, cx| {
+            let Some((title, plan)) = planned.await else { return };
+            this.update(cx, |this, cx| match plan {
+                Ok(reopen) => {
+                    let id = this.open_reopened(reopen, cx);
+                    this.activate_tab(id, cx);
+                }
+                Err(why) => this.pane_toast.show_why(format!("{title} not reopened: {why}"), |v: &mut Self| &mut v.pane_toast, cx),
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn open_reopened(&mut self, reopen: Reopen, cx: &mut Context<Self>) -> u64 {
@@ -265,6 +280,31 @@ impl FleetView {
         self.tabs_saved = None;
         self.reopen_tabs(cx);
     }
+}
+
+/// Each tab followed to its newest session and planned against the sessions and folders now; blocking.
+fn plan_tabs(
+    tabs: Vec<SavedTab>,
+    sessions: &[supraman_claude::Session],
+    workspaces: &[String],
+    claude_dir: Option<&Path>,
+    resume_on_click: bool,
+) -> Vec<(String, Result<Reopen, String>)> {
+    let tabs: Vec<SavedTab> = match claude_dir {
+        Some(dir) => tabs.into_iter().map(|t| t.followed(|sid| supraman_claude::newest_in(dir, sid))).collect(),
+        None => tabs,
+    };
+    let has_transcript = |sid: &str, cwd: &Path| claude_dir.is_some_and(|dir| find_transcript(dir, sid, Some(cwd)).is_some());
+    let world = World {
+        sessions,
+        now: now_ms(),
+        workspaces,
+        resume_on_click,
+        is_dir: &|p| p.is_dir(),
+        is_file: &|p| p.is_file(),
+        has_transcript: &has_transcript,
+    };
+    tabs.iter().map(|t| (t.title().to_string(), saved_tabs::plan(t, &world))).collect()
 }
 
 pub(super) fn kind_of(saved: &SavedTab) -> Option<tab_card::Kind> {

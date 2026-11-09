@@ -1050,6 +1050,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let hotkeys = step("7e", crate::selftest_tabs::run(view, cx)).await?;
     println!("step 7e: {hotkeys}");
 
+    let tab_keys = step("7f", crate::selftest_tab_keys::run(view, cx)).await?;
+    println!("step 7f: {tab_keys}");
+
     let shells = step("7s", crate::selftest_shells::run(view, &home(), cx)).await?;
     println!("step 7s: {shells}");
 
