@@ -1,9 +1,10 @@
 //! A repository's background work while a Git tab shows it (docs/research/gitkraken-12.6.1.md §4 part B, §7): one
 //! schedule per common git dir, shared by every tab and worktree of the repository and dropped with its last tab.
 //! It fetches every remote silently when a tab opens, each time one becomes the active tab and every
-//! `[gitman] fetch_every_minutes`, and runs `git maintenance` ([`maintain`]).
+//! `[gitman] fetch_every_minutes`, runs `git maintenance` ([`maintain`]) and reads the other worktrees ([`wips`]).
 
 mod maintain;
+mod wips;
 
 #[cfg(test)]
 mod tests;
@@ -22,6 +23,8 @@ use supraman_gitman::BackgroundSettings;
 use supraman_ui::nudge::{self, Nudge, Nudged};
 
 use super::GitView;
+
+pub(crate) use wips::{Wips, refresh as refresh_wips, wips};
 
 /// How long a loop sleeps with nothing due: its schedule's tabs and a settings change wake it sooner.
 const IDLE: Duration = Duration::from_secs(24 * 3600);
@@ -42,10 +45,12 @@ struct Schedule {
     tabs: Vec<(EntityId, Tab)>,
     fetch: Nudge,
     maintain: Nudge,
+    wip: Nudge,
+    wips: Entity<Wips>,
     failures: BTreeMap<String, Failure>,
     #[cfg(test)]
     fetches: usize,
-    _loops: [Task<()>; 2],
+    _loops: [Task<()>; 3],
 }
 
 /// A guard that keeps a build, a test or a selftest from overlapping the job that holds it; `None` while one runs.
@@ -150,11 +155,14 @@ pub(super) fn join(view: &GitView, writer: &Writer, cx: &mut Context<GitView>) {
     let tab = Tab { view: cx.weak_entity(), _released: released };
     if let Some(schedule) = cx.global_mut::<Background>().repos.get_mut(&key) {
         schedule.tabs.push((id, tab));
+        schedule.wip.wake();
         return;
     }
     let (fetch, fetching) = nudge::nudge();
     let (maintain, maintaining) = nudge::nudge();
+    let (wip, reading) = nudge::nudge();
     fetch.wake();
+    wip.wake();
     let loops = [
         cx.spawn({
             let key = key.clone();
@@ -164,11 +172,17 @@ pub(super) fn join(view: &GitView, writer: &Writer, cx: &mut Context<GitView>) {
             let key = key.clone();
             async move |_, cx| maintain::run_loop(key, maintaining, cx).await
         }),
+        cx.spawn({
+            let key = key.clone();
+            async move |_, cx| wips::run_loop(key, reading, cx).await
+        }),
     ];
     let schedule = Schedule {
         tabs: vec![(id, tab)],
         fetch,
         maintain,
+        wip,
+        wips: cx.new(|_| Wips::default()),
         failures: BTreeMap::new(),
         #[cfg(test)]
         fetches: 0,
@@ -190,11 +204,12 @@ fn left(key: &str, id: EntityId, cx: &mut App) {
     }
 }
 
-/// The tab `id` became the active tab: its repository fetches now.
+/// The tab `id` became the active tab: its repository fetches and reads its worktrees now.
 pub(super) fn shown(id: EntityId, cx: &mut App) {
     let Some(bg) = cx.try_global::<Background>() else { return };
     for schedule in bg.repos.values().filter(|s| s.tabs.iter().any(|(t, _)| *t == id)) {
         schedule.fetch.wake();
+        schedule.wip.wake();
     }
 }
 
@@ -250,15 +265,19 @@ fn fetch_job(key: &str, cx: &App) -> Step<FetchJob> {
 async fn fetch_loop(key: String, mut nudged: Nudged, cx: &mut AsyncApp) {
     let executor = cx.background_executor().clone();
     loop {
-        let every = cx.update(|cx| cx.try_global::<Background>().and_then(Background::fetch_every)).unwrap_or(IDLE);
-        nudged.wait(&executor, every).await;
-        let job = match cx.update(|cx| fetch_job(&key, cx)) {
+        let every = cx.update(|cx| cx.try_global::<Background>().and_then(Background::fetch_every));
+        let ticked = !nudged.wait(&executor, every.unwrap_or(IDLE)).await && every.is_some();
+        match cx.update(|cx| fetch_job(&key, cx)) {
             Step::End => return,
-            Step::Skip => continue,
-            Step::Run(job) => job,
-        };
-        let fetched = executor.spawn(async move { job.writer.try_run_watched(LockSet::fetch(), |s| remote::background_fetch(s, &job.remotes, job.prune)) }).await;
-        cx.update(|cx| fetched_into(&key, fetched, cx));
+            Step::Skip => {}
+            Step::Run(job) => {
+                let fetched = executor.spawn(async move { job.writer.try_run_watched(LockSet::fetch(), |s| remote::background_fetch(s, &job.remotes, job.prune)) }).await;
+                cx.update(|cx| fetched_into(&key, fetched, cx));
+            }
+        }
+        if ticked {
+            cx.update(|cx| cx.try_global::<Background>().and_then(|bg| bg.repos.get(&key)).map(|s| s.wip.wake()));
+        }
     }
 }
 

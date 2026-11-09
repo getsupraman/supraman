@@ -99,9 +99,14 @@ pub fn refs(repo: &Repo) -> Result<Refs, GitError> {
         Some(b) => Head::Branch { name: refs.branches[b].name.clone(), sha: Some(refs.branches[b].sha.clone()) },
         None => head(repo)?,
     };
-    refs.worktrees = repo.read(&["worktree", "list", "--porcelain", "-z"], None, |out| Ok(parse_worktrees(out)))?;
+    refs.worktrees = worktrees(repo)?;
     refs.stashes = crate::stashes(repo)?;
     Ok(refs)
+}
+
+/// `worktree list`: the repository's own checkout first.
+pub fn worktrees(repo: &Repo) -> Result<Vec<Worktree>, GitError> {
+    repo.read(&["worktree", "list", "--porcelain", "-z"], None, |out| Ok(parse_worktrees(out)))
 }
 
 /// HEAD on no listed branch: detached, or on a branch with no commit yet.
