@@ -600,3 +600,74 @@ fn needs_you_brings_the_inbox_to_its_top_and_highlights_it_for_a_moment(cx: &mut
     cx.run_until_parked();
     assert!(!inbox.read_with(cx, |i, _| i.flashing()));
 }
+
+fn bound(inbox: &Entity<WorkInbox>, folder: &str, cx: &mut VisualTestContext) -> Binding {
+    let task = inbox.update(cx, |i, cx| i.bind_folder(folder.into(), cx));
+    let slot = Rc::new(RefCell::new(None));
+    let put = slot.clone();
+    cx.update(|_, cx| cx.spawn(async move |_| *put.borrow_mut() = Some(task.await)).detach());
+    cx.run_until_parked();
+    slot.take().expect("the binding is read")
+}
+
+fn overview_reads(fake: &FakeWorkman) -> usize {
+    fake.seen().into_iter().filter(|s| s.target == "/api/v1/overview").count()
+}
+
+#[gpui::test]
+fn a_folder_binds_the_project_of_its_repo_through_the_kept_overview(cx: &mut TestAppContext) {
+    let Opened { fake, inbox, cx, .. } = open(cx);
+    let before = overview_reads(&fake);
+    assert!(matches!(bound(&inbox, "alpha", cx), Binding::Project(p) if p.id == PA), "alpha's remote binds pa");
+    assert!(matches!(bound(&inbox, "beta", cx), Binding::Project(p) if p.id == PB), "beta's root binds pb");
+    assert_eq!(bound(&inbox, "plain", cx), Binding::Unbound, "no repo, no project");
+    assert_eq!(overview_reads(&fake), before, "the Inbox's overview is used, never read again");
+}
+
+#[gpui::test]
+fn without_a_kept_overview_a_folder_is_bound_by_one_read_and_unreachable_workman_says_why(cx: &mut TestAppContext) {
+    let Opened { fake, cx, .. } = open(cx);
+    let hub = cx.update(|_, cx| WorkHub::ready(Client::new(fake.base(), "fake-test-reader"), cx));
+    let fresh = cx.update(|_, cx| WorkInbox::of_repos(hub, repo_of, cx));
+    let before = overview_reads(&fake);
+    assert!(matches!(bound(&fresh, "beta", cx), Binding::Project(p) if p.id == PB));
+    assert!(matches!(bound(&fresh, "alpha", cx), Binding::Project(p) if p.id == PA));
+    assert_eq!(overview_reads(&fake), before + 1, "read once, then kept");
+    let closed = cx.update(|_, cx| WorkHub::ready(Client::new(&supraman_workman::fake::closed_base(), "fake-test-reader"), cx));
+    let unreachable = cx.update(|_, cx| WorkInbox::of_repos(closed, repo_of, cx));
+    match bound(&unreachable, "alpha", cx) {
+        Binding::Unavailable(why) => assert!(!why.is_empty(), "Workman's words"),
+        other => panic!("an unreachable Workman is unavailable, not {other:?}"),
+    }
+}
+
+#[gpui::test]
+fn show_project_lands_on_its_first_active_run_else_the_overview(cx: &mut TestAppContext) {
+    let Opened { view, inbox, cx, .. } = open(cx);
+    view.update(cx, |v, cx| v.show_project(PB.into(), cx));
+    settle(&view, cx);
+    assert_eq!(view.read_with(cx, |v, _| v.page.clone()), Page::Run(RB.into()));
+    view.update(cx, |v, cx| v.show_project(PC.into(), cx));
+    settle(&view, cx);
+    assert_eq!(view.read_with(cx, |v, _| v.page.clone()), Page::Overview, "a project the workspace does not bind lands on the Overview");
+    let hub = view.read_with(cx, |v, _| v.hub.clone());
+    let opening = Opening {
+        workspace: "w".into(),
+        folders: folders(),
+        home: None,
+        hits: HitTargets::default(),
+        link: FleetLink { live: Rc::new(RefCell::new(Vec::new())), attach: Rc::new(|_, _, _| {}) },
+        open_link_with: record,
+        repo_of,
+    };
+    let fresh = cx.update(|_, cx| {
+        cx.new(|cx| {
+            let mut v = WorkView::for_test(opening, hub, cx);
+            v.inbox = Some(inbox.clone());
+            v.show_project(PB.into(), cx);
+            v
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(fresh.read_with(cx, |v, _| v.page.clone()), Page::Run(RB.into()), "asked before its projects were bound, it lands once they are");
+}
