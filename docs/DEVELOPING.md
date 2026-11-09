@@ -37,10 +37,24 @@ what each costs. The release itself is docs/RELEASE.md.
   nothing (and says so on stderr) when no crate changed: a bare `cargo test` would then test the whole workspace.
 - The `unit` profile (`Cargo.toml`) is `release` with the workspace members incremental in 256 codegen units; the
   dependencies stay as in `release`. Tests run as fast as under `release` (the suite's test time is the same, ~4 min
-  summed); only the members' compile changes. Its artifacts live in `target\unit` (18 GB with its three dependency variants, beside `release`'s 28 GB).
+  summed); only the members' compile changes. Its artifacts live in `target\unit`: 48 GB on 2026-11-10 with its
+  three dependency variants, 23 GB of it `incremental\` (one `<crate>-<hash>` folder per member, target kind and
+  feature set, never collected); 40 GB once heavy-lock had removed the 116 members' unfinalized sessions (below).
 - `-p <crate>`, `cargo test --workspace` and `cargo build --workspace` unify the dependencies' features differently
   (dev-dependencies count for tests), so the first run of each kind builds its own variant of ~70 dependencies (7 to
   11 min, once per profile); every variant stays, so later runs build only what changed.
+- So a gate builds the changed members twice: its `test -p …` and its `build --workspace` are two feature sets, and
+  no order or flag shares them. Measured 2026-11-10 after touching `supraman-work-view/src/work_view/state.rs`, two
+  rounds each, cargo's `Finished` (the test step `--no-run`, `-p supraman-work-view -p supraman-app`):
+
+  | Order | first step | second step | the second recompiles |
+  |---|---|---|---|
+  | `test -p …`, then `build --workspace` (the gate) | 29.5 s, 22.7 s | 23.9 s, 23.3 s | supraman-work-view, supraman-app |
+  | `test -p …`, then `build --workspace --all-targets` | 23.9 s, 24.7 s | 27.8 s, 23.5 s | those, sm and term-spike |
+  | `build --workspace`, then `test -p …` | 24.1 s, 22.0 s | 24.9 s, 22.5 s | supraman-work-view, supraman-app |
+
+  `--all-targets` saves nothing and builds two more members, so the gate stays as it is: the second build costs about
+  one member edit's compile (~23 s here), and it is the one that writes the `target\unit\supraman.exe` the selftest runs.
 - The controller creates the unit worktree once (`git worktree add P:\Projects\LarchSys\AutoWork.worktrees\unit
   -b <first unit> master`); each later unit starts there with `git switch -c <unit> master` once the last one merged.
 
@@ -50,6 +64,25 @@ what each costs. The release itself is docs/RELEASE.md.
 another checkout. `debug` and `release` share the marker `target\.last-workspace` (older copies of the script on
 other branches read it); any other profile keeps its own, `target\unit\.last-workspace`. So the main checkout's release
 builds leave the unit worktree's `target\unit` alone, and the unit worktree never cleans while every unit runs in it.
+
+After every cargo run it wraps, heavy-lock also removes `target\<profile>\incremental\<crate>-<hash>\` of each
+workspace member whose newest session folder is still `s-…-working`, and says so on stderr, one line per crate. Rustc
+ends a session by renaming that folder; Windows Defender scanning a file in it makes the rename fail ("did not
+finalize incremental compilation session directory …: Access is denied", about a third of the members' sessions), and
+the crate's next build then starts from an older session: the LNK2019s on a member's `.llvm.*` and `drop_in_place`
+symbols (docs/research/refactor4-audit.md L-1, L-2). With the folder gone, that next build compiles the crate in full
+(seconds to a minute), never the whole target. A folder some process still holds a file in is kept (it says so) and
+removed by a later run. Count `-working` folders, not those notes: cargo replays a fresh crate's old notes on every
+build (L-3).
+
+When a run fails with an LNK2019 or LNK2001 whose symbols name a member's crate (`_ZN15supraman_gitman…`,
+`supraman_ui..table..`), heavy-lock runs `cargo clean --profile <p> -p <those members>` and the same command once more,
+and says so; it never retries twice. Dot-sourced (`. scripts/heavy-lock.ps1`), the script only defines its functions:
+`$run = Get-CargoRun cargo @('build')` then `Find-LinkMembers (Get-Content saved.log) $run.linked` names the members a
+saved log's link errors hold.
+
+A Defender exclusion for `P:\Projects\LarchSys\AutoWork\target` would stop the failed renames at their source and
+spare every object file a scan; it needs an administrator (the audit's Q1).
 
 ## rust-lld is not used
 
