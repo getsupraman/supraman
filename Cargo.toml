@@ -9,6 +9,16 @@ license = "GPL-3.0-or-later"
 [profile.release]
 debug = "line-tables-only"
 
+# A unit's inner loop and gate (docs/DEVELOPING.md): the members incremental in many codegen units, the dependencies as release.
+[profile.unit]
+inherits = "release"
+incremental = true
+codegen-units = 256
+
+[profile.unit.package."*"]
+incremental = false
+codegen-units = 16
+
 # Copied from Zed's root Cargo.toml @ 03efd49220ba06703d04f9c4732fdf814f9c523c.
 # Git dependencies do not inherit the upstream workspace's patches; these are the
 # ones the gpui + supraman-term dependency tree actually resolves against.
