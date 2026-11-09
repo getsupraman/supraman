@@ -5935,3 +5935,19 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   return address in the scanner, `ff 15` before it, the slot's value 0x140000000 on disk). Left out.
 - **A test's orphan holds a piped harness**: the crashed app tests left a `git.exe` (a temp test repo) alive with the
   pipe of `cargo test … | while read`; write a measured run's output to a file, not a pipe.
+
+## 2026-11-09 — dev-speed/2 git_view in its own crate (dv-gitview)
+
+- **A pure move keeps its paths**: `supraman-git-view`'s `lib.rs` is `pub mod git_view;`, and the app's root holds
+  `use supraman_git_view::git_view;`, so every `crate::git_view::…` path on both sides and every test filter
+  (`git_view::columns`) stays as it was. work_view can move the same way.
+- **A lib hides dead code**: in the bin every `pub` item was checked for use; in a lib a `pub` item never warns. Every
+  `pub` in git_view became `pub(crate)` and only what the app names is `pub` again (ARCHITECTURE.md's crate table),
+  so the dead-code warnings still see the crate.
+- **What crossed back**: `view/occupancy.rs`'s `Live` moved into the crate (`occupancy::Live`, its `set` only; the
+  poll filters the live sessions with `fleet::is_alive`), the views call `supraman_ui::themes::secondary` with the
+  theme's colours instead of the app's wrapper, and the selftests' light theme is `supraman_ui::themes::selftest_light::LIGHT`.
+  The one test that opens a Git tab among the app's tabs and saved tabs is `view/git_tab_tests.rs`; `GitView::open`
+  and the `sizes()` fixture are behind the crate's `test-support` feature, enabled in the app's dev-dependencies.
+- **`image` is a normal dependency** of the crate (the diff viewer's decoders): a `--tests` check of the crate alone
+  passed with it as a dev-dependency and the app's build then failed.

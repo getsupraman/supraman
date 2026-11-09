@@ -1,0 +1,30 @@
+[package]
+name = "supraman-git-view"
+version = "0.1.14"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[features]
+# What the app's tests and selftests reach of the Git tab: `GitView::open` without the app's sessions.
+test-support = []
+
+[dependencies]
+collections = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c" }
+futures = "0.3.34"
+image = { version = "0.25", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "webp"] }
+gpui = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c", default-features = false }
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.151"
+supraman-core = { path = "../supraman-core" }
+supraman-editor = { path = "../supraman-editor" }
+supraman-gitman = { path = "../supraman-gitman" }
+supraman-ui = { path = "../supraman-ui" }
+theme = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c" }
+
+[dev-dependencies]
+gpui = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c", default-features = false, features = ["test-support"] }
+supraman-gitman = { path = "../supraman-gitman", features = ["test-support"] }
+supraman-term = { path = "../supraman-term" }
+tempfile = "3.27.0"

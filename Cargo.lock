@@ -8602,6 +8602,7 @@ dependencies = [
  "supraman-claude",
  "supraman-core",
  "supraman-editor",
+ "supraman-git-view",
  "supraman-gitman",
  "supraman-supervisor",
  "supraman-term",
@@ -8704,6 +8705,26 @@ dependencies = [
  "tree-sitter-vb-dotnet",
  "tree-sitter-xml",
  "zed_actions",
+]
+
+[[package]]
+name = "supraman-git-view"
+version = "0.1.14"
+dependencies = [
+ "collections",
+ "futures",
+ "gpui",
+ "image",
+ "log",
+ "serde",
+ "serde_json",
+ "supraman-core",
+ "supraman-editor",
+ "supraman-gitman",
+ "supraman-term",
+ "supraman-ui",
+ "tempfile",
+ "theme",
 ]
 
 [[package]]

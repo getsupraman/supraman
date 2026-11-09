@@ -68,6 +68,8 @@ and the time holding the lock (compile and tests); each step run twice, the seco
 | Step | `release` | `unit` |
 |---|---|---|
 | One-line edit in `crates/supraman-app/src/git_view`, then `cargo test -p supraman-app git_view::columns` | 2 m 28 s compile, 2 m 33 s in all | 1 m 03 s compile, 1 m 07 s in all |
+| One-line edit in `crates/supraman-git-view/src/git_view` (its own crate since dev-speed/2), then `cargo test -p supraman-git-view git_view::columns` | — | 21 s compile, 28 s in all |
+| The same edit, then `cargo build -p supraman-app` (the crate, then the app compiled against it) | — | 51 s compile, 52 s in all |
 | `cargo test --workspace` after that edit | 2 m 13 s compile, 7 m 08 s in all | 1 m 02 s compile, 4 m 58 s in all |
 | First `cargo test --workspace --no-run` after moving between two worktree paths | 6 m 41 s | 6 m 54 s |
 | The same in one unit worktree after a branch switch that changed supraman-gitman and supraman-app | — | 34 s |

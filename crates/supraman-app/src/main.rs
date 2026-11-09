@@ -57,7 +57,6 @@ mod transcripts_load;
 mod tray;
 mod updates;
 mod view;
-mod git_view;
 mod work_view;
 mod workman_setup;
 
@@ -71,6 +70,7 @@ use gpui::{AnyWindowHandle, App, AppContext as _, Bounds, SharedString, Titlebar
 use crate::instance::Acquired;
 use crate::tray::{Command, Tray};
 use crate::view::FleetView;
+use supraman_git_view::git_view;
 
 thread_local! {
     /// Dropped after the event loop, so the icon leaves the notification area with the process.
