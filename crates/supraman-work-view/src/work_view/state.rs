@@ -12,7 +12,7 @@ const LEAF: [&str; 6] = ["task", "followup", "subtask", "spike", "question", "in
 const EMPTY_COUNTED: [&str; 2] = ["phase", "feature"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StateKey {
+pub(crate) enum StateKey {
     Gone,
     Stop,
     Doing,
@@ -23,7 +23,7 @@ pub enum StateKey {
 }
 
 impl StateKey {
-    pub fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             StateKey::Gone => "gone",
             StateKey::Stop => "stop",
@@ -36,7 +36,7 @@ impl StateKey {
     }
 
     /// The legend: Verified success, Done not verified warning, In progress info, Blocked error, Waiting a ring, Open muted.
-    pub fn mark(self, cx: &App) -> Mark {
+    pub(crate) fn mark(self, cx: &App) -> Mark {
         let (s, c) = (cx.theme().status(), cx.theme().colors());
         match self {
             StateKey::Proven => Mark::Filled(s.success),
@@ -49,33 +49,33 @@ impl StateKey {
         }
     }
 
-    pub fn color(self, cx: &App) -> Hsla {
+    pub(crate) fn color(self, cx: &App) -> Hsla {
         self.mark(cx).color()
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct State {
-    pub key: StateKey,
-    pub label: String,
+pub(crate) struct State {
+    pub(crate) key: StateKey,
+    pub(crate) label: String,
 }
 
-pub struct Input<'a> {
-    pub kind: &'a str,
-    pub status: ItemStatus,
-    pub resolution: Option<ItemResolution>,
-    pub claim_expired: bool,
+pub(crate) struct Input<'a> {
+    pub(crate) kind: &'a str,
+    pub(crate) status: ItemStatus,
+    pub(crate) resolution: Option<ItemResolution>,
+    pub(crate) claim_expired: bool,
     /// `None`: nothing says whether it was verified.
-    pub proof: Option<bool>,
-    pub waiting_on: Vec<&'a str>,
+    pub(crate) proof: Option<bool>,
+    pub(crate) waiting_on: Vec<&'a str>,
 }
 
-pub fn closed(status: ItemStatus) -> bool {
+pub(crate) fn closed(status: ItemStatus) -> bool {
     matches!(status, ItemStatus::Done | ItemStatus::Cancelled | ItemStatus::Superseded)
 }
 
 /// Someone other than the author ran it: a worker's own run is a claim.
-pub fn independent(passed: bool, run_by: &str) -> bool {
+pub(crate) fn independent(passed: bool, run_by: &str) -> bool {
     passed && run_by != "worker"
 }
 
@@ -84,7 +84,7 @@ fn state(label: &str, key: StateKey) -> State {
 }
 
 /// The order of the tests is the precedence.
-pub fn of(i: Input<'_>) -> State {
+pub(crate) fn of(i: Input<'_>) -> State {
     let leaf = LEAF.contains(&i.kind);
     match i.status {
         ItemStatus::Superseded => return state("Superseded", StateKey::Gone),
@@ -116,7 +116,7 @@ pub fn of(i: Input<'_>) -> State {
     state("Open", StateKey::Idle)
 }
 
-pub fn of_row(row: &BoardRow) -> State {
+pub(crate) fn of_row(row: &BoardRow) -> State {
     of(Input {
         kind: &row.item.kind,
         status: row.item.status,
@@ -127,7 +127,7 @@ pub fn of_row(row: &BoardRow) -> State {
     })
 }
 
-pub fn of_page(page: &ItemPage) -> State {
+pub(crate) fn of_page(page: &ItemPage) -> State {
     let latest: Option<&Verification> = page.verifications.iter().max_by(|a, b| a.at.cmp(&b.at));
     of(Input {
         kind: &page.item.kind,
@@ -140,16 +140,16 @@ pub fn of_page(page: &ItemPage) -> State {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Filter {
+pub(crate) enum Filter {
     #[default]
     Open,
     All,
     Attention,
 }
 
-pub const FILTERS: [(Filter, &str, &str); 3] = [(Filter::Open, "open", "Open"), (Filter::All, "all", "All"), (Filter::Attention, "attention", "Needs attention")];
+pub(crate) const FILTERS: [(Filter, &str, &str); 3] = [(Filter::Open, "open", "Open"), (Filter::All, "all", "All"), (Filter::Attention, "attention", "Needs attention")];
 
-pub fn keeps(filter: Filter, row: &BoardRow) -> bool {
+pub(crate) fn keeps(filter: Filter, row: &BoardRow) -> bool {
     if row.item.status == ItemStatus::Cancelled {
         return false;
     }
@@ -160,16 +160,16 @@ pub fn keeps(filter: Filter, row: &BoardRow) -> bool {
     }
 }
 
-pub fn rows(board: &Board) -> impl Iterator<Item = &BoardRow> {
+pub(crate) fn rows(board: &Board) -> impl Iterator<Item = &BoardRow> {
     board.rows.iter().filter(move |r| r.item.id != board.run.id)
 }
 
-pub fn listed(board: &Board, filter: Filter) -> Vec<&BoardRow> {
+pub(crate) fn listed(board: &Board, filter: Filter) -> Vec<&BoardRow> {
     rows(board).filter(|r| keeps(filter, r)).collect()
 }
 
 /// The counted items' states in the board's order, gone ones left out, and how many are done.
-pub fn tally(board: &Board) -> (Vec<StateKey>, usize) {
+pub(crate) fn tally(board: &Board) -> (Vec<StateKey>, usize) {
     let all: Vec<&BoardRow> = rows(board).collect();
     let counted = all.iter().enumerate().filter(|(i, row)| {
         LEAF.contains(&row.item.kind.as_str())

@@ -8607,6 +8607,7 @@ dependencies = [
  "supraman-supervisor",
  "supraman-term",
  "supraman-ui",
+ "supraman-work-view",
  "supraman-workman",
  "tempfile",
  "theme",
@@ -8800,6 +8801,23 @@ dependencies = [
  "unicode-segmentation",
  "url",
  "windows 0.62.2",
+]
+
+[[package]]
+name = "supraman-work-view"
+version = "0.1.14"
+dependencies = [
+ "collections",
+ "gpui",
+ "serde",
+ "serde_json",
+ "supraman-core",
+ "supraman-gitman",
+ "supraman-supervisor",
+ "supraman-ui",
+ "supraman-workman",
+ "tempfile",
+ "theme",
 ]
 
 [[package]]

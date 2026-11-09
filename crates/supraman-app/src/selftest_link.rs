@@ -10,7 +10,8 @@ use supraman_term::Terminal;
 use supraman_ui::term_element;
 
 use crate::selftest::{sleep, until_with};
-use crate::view::{FleetView, Link};
+use crate::view::FleetView;
+use supraman_ui::open::Link;
 
 const WITHIN: Duration = Duration::from_secs(10);
 const URL: &str = "https://example.com/sched2-11?a=1&b=2";

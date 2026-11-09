@@ -10,8 +10,8 @@ use crate::{
     selftest_manage::{shot, shot_window},
     settings_window::{SettingsView, page},
     view::FleetView,
-    workman_setup::WorkmanStatus,
 };
+use supraman_workman::status::WorkmanStatus;
 
 /// A recheck is picked up within 250 ms; `/health` gives up after 3 s; a sign-in is a few requests.
 const WITHIN: Duration = Duration::from_secs(15);

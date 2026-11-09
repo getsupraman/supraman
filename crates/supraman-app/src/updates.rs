@@ -13,7 +13,8 @@ use supraman_core::update::Version;
 use supraman_ui::nudge::{self, Nudge};
 use supraman_workman::updates::{self, Available, Checked, Downloaded, Outcome, Source};
 
-use crate::view::{Confirm, Confirmed, FleetView, Link};
+use crate::view::{Confirm, Confirmed, FleetView};
+use supraman_ui::open::Link;
 
 /// What Update does with the release the banner names.
 pub type UpdateAction = fn(&mut FleetView, &Available, &mut Context<FleetView>);

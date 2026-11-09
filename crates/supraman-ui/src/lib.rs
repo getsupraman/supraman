@@ -42,7 +42,7 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::{Mutex, OnceLock},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use supraman_term::terminal_settings::TerminalConfig;
@@ -297,6 +297,10 @@ impl std::fmt::Display for FrameStats {
 
 pub fn ms_since_start(at: Instant) -> f64 {
     at.saturating_duration_since(process_start()).as_secs_f64() * 1000.0
+}
+
+pub fn timeline(phase: &str, took: Duration) {
+    log::info!("startup {phase}: {} ms (at +{:.0} ms)", took.as_millis(), ms_since_start(Instant::now()));
 }
 
 pub fn percentile(sorted: &[f64], p: f64) -> f64 {

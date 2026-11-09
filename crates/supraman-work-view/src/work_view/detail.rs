@@ -17,7 +17,7 @@ use super::state::{StateKey, independent};
 use super::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum DetailTab {
+pub(crate) enum DetailTab {
     #[default]
     Overview,
     Evidence,
@@ -26,7 +26,7 @@ pub enum DetailTab {
     Brief,
 }
 
-pub const TABS: [(DetailTab, &str, &str); 5] = [
+pub(crate) const TABS: [(DetailTab, &str, &str); 5] = [
     (DetailTab::Overview, "overview", "Overview"),
     (DetailTab::Evidence, "evidence", "Evidence"),
     (DetailTab::Notes, "notes", "Notes"),
@@ -34,7 +34,7 @@ pub const TABS: [(DetailTab, &str, &str); 5] = [
     (DetailTab::Brief, "brief", "Brief"),
 ];
 
-pub fn tab_label(tab: DetailTab, page: &ItemPage) -> String {
+pub(crate) fn tab_label(tab: DetailTab, page: &ItemPage) -> String {
     let name = TABS.iter().find(|(t, _, _)| *t == tab).map_or("", |(_, _, n)| *n);
     let n = match tab {
         DetailTab::Evidence => page.reports.len() + page.verifications.len(),
@@ -49,7 +49,7 @@ fn when(at: &str, now: i64) -> String {
     rfc3339_ms(at).map_or_else(|| rfc3339_local(at), |ms| near(ms, now))
 }
 
-pub fn facts(page: &ItemPage, now: i64) -> Vec<(&'static str, String)> {
+pub(crate) fn facts(page: &ItemPage, now: i64) -> Vec<(&'static str, String)> {
     let mut out = vec![("kind", page.item.kind.clone())];
     if let Some(commit) = page.artifacts.iter().filter(|a| a.kind == "commit").max_by(|a, b| a.at.cmp(&b.at)) {
         out.push(("commit", supraman_gitman::short_sha(&commit.value).to_string()));
@@ -63,7 +63,7 @@ pub fn facts(page: &ItemPage, now: i64) -> Vec<(&'static str, String)> {
     out
 }
 
-pub fn overview(page: &ItemPage) -> Vec<Section> {
+pub(crate) fn overview(page: &ItemPage) -> Vec<Section> {
     let mut out = Vec::new();
     if let Some(intent) = page.intent.as_deref().filter(|i| !i.trim().is_empty()) {
         out.push(Section::new("intent", "What this is for").text(intent));
@@ -90,7 +90,7 @@ pub fn overview(page: &ItemPage) -> Vec<Section> {
     out
 }
 
-pub fn notes(page: &ItemPage, now: i64) -> Vec<Section> {
+pub(crate) fn notes(page: &ItemPage, now: i64) -> Vec<Section> {
     let mut s = Section::new("notes", "Notes");
     if page.notes.is_empty() {
         s = s.text("No notes.");
@@ -106,7 +106,7 @@ fn by(session: Option<&supraman_workman::Session>, fallback: &str) -> String {
 }
 
 impl WorkView {
-    pub fn set_detail_tab(&mut self, tab: DetailTab, cx: &mut Context<Self>) {
+    pub(crate) fn set_detail_tab(&mut self, tab: DetailTab, cx: &mut Context<Self>) {
         self.detail_tab = tab;
         if tab == DetailTab::Brief
             && let Some(id) = self.item.as_ref().map(|o| o.id.clone())

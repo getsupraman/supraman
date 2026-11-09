@@ -13,7 +13,8 @@ use crate::selftest_manage::shot_window;
 use crate::selftest_schedules::themed_shots;
 use crate::settings_window::page;
 use crate::updates::{Stage, Target};
-use crate::view::{FleetView, Link};
+use crate::view::FleetView;
+use supraman_ui::open::Link;
 
 const WITHIN: Duration = Duration::from_secs(15);
 const VERSION: &str = "99.0.0";

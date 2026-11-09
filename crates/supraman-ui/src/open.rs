@@ -3,6 +3,12 @@ use std::path::{Path, PathBuf};
 
 use gpui::{App, Task};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Link {
+    Url(String),
+    Path(PathBuf),
+}
+
 /// The schemes a link may open; a program's output must not reach any other protocol handler (sched2/11).
 pub const LINK_SCHEMES: [&str; 4] = ["http", "https", "mailto", "file"];
 /// The schemes of a web page (release notes, the sign-in page).

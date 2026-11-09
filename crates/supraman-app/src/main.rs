@@ -57,7 +57,6 @@ mod transcripts_load;
 mod tray;
 mod updates;
 mod view;
-mod work_view;
 mod workman_setup;
 
 use std::cell::RefCell;
@@ -71,6 +70,7 @@ use crate::instance::Acquired;
 use crate::tray::{Command, Tray};
 use crate::view::FleetView;
 use supraman_git_view::git_view;
+use supraman_work_view::work_view;
 
 thread_local! {
     /// Dropped after the event loop, so the icon leaves the notification area with the process.

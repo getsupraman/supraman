@@ -21,6 +21,7 @@ supraman-core = { path = "../supraman-core" }
 supraman-editor = { path = "../supraman-editor" }
 supraman-gitman = { path = "../supraman-gitman", features = ["test-support"] }
 supraman-git-view = { path = "../supraman-git-view" }
+supraman-work-view = { path = "../supraman-work-view" }
 supraman-supervisor = { path = "../supraman-supervisor" }
 supraman-term = { path = "../supraman-term" }
 supraman-ui = { path = "../supraman-ui" }

@@ -8,22 +8,22 @@ use supraman_workman::Prompt;
 use super::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PromptsState {
+pub(crate) enum PromptsState {
     Loading,
     Ready(Vec<Prompt>),
     Failed(String),
 }
 
 #[derive(Default)]
-pub struct Prompts {
-    pub by_scope: HashMap<String, PromptsState>,
+pub(crate) struct Prompts {
+    pub(crate) by_scope: HashMap<String, PromptsState>,
     pending: HashSet<String>,
     /// The expanded chip: its scope and key.
-    pub open: Option<(String, String)>,
+    pub(crate) open: Option<(String, String)>,
 }
 
 impl Prompts {
-    pub fn collapse(&mut self) -> bool {
+    pub(crate) fn collapse(&mut self) -> bool {
         self.open.take().is_some()
     }
 
@@ -35,9 +35,9 @@ impl Prompts {
     }
 }
 
-pub const NOTHING_RUNS: &str = "Paste it into a fresh Claude session. Nothing runs from here.";
+pub(crate) const NOTHING_RUNS: &str = "Paste it into a fresh Claude session. Nothing runs from here.";
 
-pub fn chip_label(p: &Prompt) -> String {
+pub(crate) fn chip_label(p: &Prompt) -> String {
     match p.count {
         Some(n) => format!("{} ({n})", p.label),
         None => p.label.clone(),
@@ -45,7 +45,7 @@ pub fn chip_label(p: &Prompt) -> String {
 }
 
 impl WorkView {
-    pub fn read_prompts(&mut self, scope: String, cx: &mut Context<Self>) {
+    pub(crate) fn read_prompts(&mut self, scope: String, cx: &mut Context<Self>) {
         let Some(client) = self.client(cx) else { return };
         self.prompts.by_scope.entry(scope.clone()).or_insert(PromptsState::Loading);
         cx.spawn(async move |this, cx| {
@@ -68,7 +68,7 @@ impl WorkView {
         .detach();
     }
 
-    pub fn schedule_prompts(&mut self, scope: String, cx: &mut Context<Self>) {
+    pub(crate) fn schedule_prompts(&mut self, scope: String, cx: &mut Context<Self>) {
         if self.prompts.pending.insert(scope.clone()) {
             after_debounce(cx, move |this, cx| {
                 this.prompts.pending.remove(&scope);

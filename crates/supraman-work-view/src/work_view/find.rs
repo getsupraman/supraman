@@ -11,13 +11,13 @@ use supraman_workman::{ItemStatus, SearchHit};
 
 use super::*;
 
-pub const LIMIT: u32 = 20;
+pub(crate) const LIMIT: u32 = 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Found {
-    pub item: ItemRef,
-    pub project: String,
-    pub snippet: Option<String>,
+pub(crate) struct Found {
+    pub(crate) item: ItemRef,
+    pub(crate) project: String,
+    pub(crate) snippet: Option<String>,
 }
 
 impl Entry for Found {
@@ -30,7 +30,7 @@ impl Entry for Found {
     }
 }
 
-pub fn loaded(projects: &[OverviewProject], boards: &HashMap<String, BoardState>) -> Vec<Found> {
+pub(crate) fn loaded(projects: &[OverviewProject], boards: &HashMap<String, BoardState>) -> Vec<Found> {
     let mut out: Vec<Found> = Vec::new();
     let mut push = |item: &ItemRef, project: &str| {
         if !out.iter().any(|f| f.item.id == item.id) {
@@ -54,7 +54,7 @@ pub fn loaded(projects: &[OverviewProject], boards: &HashMap<String, BoardState>
     out
 }
 
-pub fn remote(hits: Vec<SearchHit>, projects: &[OverviewProject]) -> Vec<Found> {
+pub(crate) fn remote(hits: Vec<SearchHit>, projects: &[OverviewProject]) -> Vec<Found> {
     hits.into_iter()
         .filter_map(|h| {
             let project = projects.iter().find(|p| h.project.as_ref().is_some_and(|hp| hp.id == p.item.id))?;

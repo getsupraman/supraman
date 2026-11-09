@@ -14,18 +14,18 @@ use super::actions::COPY_SIDE;
 use super::state::{FILTERS, StateKey};
 use super::*;
 
-pub const NOTHING_MATCHES: &str = "Nothing matches this filter.";
+pub(crate) const NOTHING_MATCHES: &str = "Nothing matches this filter.";
 
-pub fn dot_key(qualified_ref: &str, key: StateKey) -> String {
+pub(crate) fn dot_key(qualified_ref: &str, key: StateKey) -> String {
     format!("work-dot-{qualified_ref}={}", key.as_str())
 }
 
-pub fn done_line(done: usize, total: usize) -> String {
+pub(crate) fn done_line(done: usize, total: usize) -> String {
     format!("{done} of {total} done.")
 }
 
 /// Every text a row paints, in order; the row paints nothing else.
-pub fn row_texts(row: &BoardRow) -> Vec<String> {
+pub(crate) fn row_texts(row: &BoardRow) -> Vec<String> {
     let mut out = vec![row.item.ref_.clone(), row.item.title.clone()];
     if row.criteria.total > 0 {
         out.push(format!("{}/{}", row.criteria.checked, row.criteria.total));
@@ -33,7 +33,7 @@ pub fn row_texts(row: &BoardRow) -> Vec<String> {
     out
 }
 
-pub fn filter_labels(board: &Board) -> Vec<String> {
+pub(crate) fn filter_labels(board: &Board) -> Vec<String> {
     FILTERS.iter().map(|(f, _, label)| format!("{label} {}", state::listed(board, *f).len())).collect()
 }
 

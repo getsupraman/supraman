@@ -8,26 +8,26 @@ use supraman_ui::{button, open};
 use super::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RowAction {
+pub(crate) enum RowAction {
     OpenWeb(ItemRef),
     CopyRef(ItemRef),
     CopyLink(ItemRef),
     CopyTitle(ItemRef),
 }
 
-pub fn web_url(base: &str, item: &ItemRef) -> String {
+pub(crate) fn web_url(base: &str, item: &ItemRef) -> String {
     format!("{}/r/{}", base.trim_end_matches('/'), item.qualified_ref)
 }
 
-pub const COPY_SIDE: f32 = 20.;
+pub(crate) const COPY_SIDE: f32 = 20.;
 
 impl WorkView {
-    pub fn copy_ref(&mut self, item: &ItemRef, cx: &mut Context<Self>) {
+    pub(crate) fn copy_ref(&mut self, item: &ItemRef, cx: &mut Context<Self>) {
         cx.write_to_clipboard(ClipboardItem::new_string(item.qualified_ref.clone()));
         self.toast.show(format!("Copied {}", item.qualified_ref), |this: &mut WorkView| &mut this.toast, cx);
     }
 
-    pub fn open_web(&mut self, item: &ItemRef, cx: &mut Context<Self>) {
+    pub(crate) fn open_web(&mut self, item: &ItemRef, cx: &mut Context<Self>) {
         let Some(base) = self.web_base(cx) else {
             self.toast.show_why("Workman is not connected, so there is no web page to open.".into(), |this: &mut WorkView| &mut this.toast, cx);
             return;
@@ -39,7 +39,7 @@ impl WorkView {
         }
     }
 
-    pub fn run_action(&mut self, action: RowAction, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn run_action(&mut self, action: RowAction, _: &mut Window, cx: &mut Context<Self>) {
         match action {
             RowAction::OpenWeb(item) => self.open_web(&item, cx),
             RowAction::CopyRef(item) => self.copy_ref(&item, cx),
@@ -58,7 +58,7 @@ impl WorkView {
         cx.notify();
     }
 
-    pub fn show_row_menu(&mut self, target: &ItemRef, position: Point<Pixels>, cx: &mut Context<Self>) {
+    pub(crate) fn show_row_menu(&mut self, target: &ItemRef, position: Point<Pixels>, cx: &mut Context<Self>) {
         self.menu = Some(ContextMenu {
             title: target.qualified_ref.clone(),
             position,
