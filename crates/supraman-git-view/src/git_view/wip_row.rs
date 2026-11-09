@@ -25,7 +25,7 @@ impl GitView {
         let counts = self.wip.map(|w| w.counts()).unwrap_or_default();
         let input = self.wip_panel.read(cx).composer().map(|c| c.row.clone());
         let row = &self.rows[ix];
-        let Some(input) = input else { return cells::message(ix, row, Some(counts.as_str()), palette) };
+        let Some(input) = input else { return cells::message(ix, row, Some(counts.as_str()), palette, &self.hits) };
         if self.selected() != Some(Selected::Wip) {
             let summary = input.read(cx).text().to_string();
             return cells::wip_message(row, still_field(summary, palette, cx), counts, palette);

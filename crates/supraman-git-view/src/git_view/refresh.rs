@@ -7,6 +7,7 @@ use std::sync::Arc;
 use futures::StreamExt as _;
 use gpui::{AnyElement, AppContext as _, Context, Pixels, SharedString, Subscription, Task, Window, px};
 use supraman_gitman::{FIRST_PAGE, Layout, Repo, Status};
+use supraman_ui::hit::SNAP;
 use supraman_ui::stall;
 
 use super::live::{self, FOCUS_DELAY, Live, Refresh};
@@ -59,10 +60,12 @@ pub(super) fn follows() -> Option<live::Debounces> {
     Some(live::DEBOUNCES)
 }
 
-/// The first commit row at or below the top of the view, and how far below the top it starts.
+/// The row a refresh keeps in place: the selected commit while it is wholly in view, else the first commit row at or
+/// below the top; how far below the top it starts, and where the view was.
 struct Anchor {
     sha: SharedString,
     offset: Pixels,
+    top: Pixels,
 }
 
 /// Two refreshes as one: the graph's covers the WIP's, and the changed files add up.
@@ -287,15 +290,22 @@ impl GitView {
 
     fn anchor(&self) -> Option<Anchor> {
         let (top, row) = (self.table.scroll_top(), px(graph::ROW));
+        let shown = |ix: usize| row * ix as f32 >= top - SNAP && self.table.viewport().is_some_and(|v| row * (ix + 1) as f32 <= top + v + SNAP);
+        let selected = self.table.selected().filter(|ix| shown(*ix)).and_then(|ix| self.rows.get(ix).filter(|r| !r.wip()).map(|r| (ix, r)));
         let first = (top / row).floor().max(0.) as usize;
-        let (ix, r) = self.rows.iter().enumerate().skip(first).find(|(_, r)| !r.wip())?;
-        Some(Anchor { sha: r.sha.clone(), offset: row * ix as f32 - top })
+        let (ix, r) = selected.or_else(|| self.rows.iter().enumerate().skip(first).find(|(_, r)| !r.wip()))?;
+        Some(Anchor { sha: r.sha.clone(), offset: row * ix as f32 - top, top })
     }
 
+    /// Rows added above the anchor take the view to the top when it was there or the selected row stays wholly in
+    /// view at the top; otherwise the anchor keeps its place.
     fn restore(&self, anchor: Anchor) {
-        if let Some(ix) = self.rows.iter().position(|r| r.sha == anchor.sha) {
-            self.table.set_scroll_top(px(graph::ROW) * ix as f32 - anchor.offset);
-        }
+        let Some(ix) = self.rows.iter().position(|r| r.sha == anchor.sha) else { return };
+        let row = px(graph::ROW);
+        let kept = row * ix as f32 - anchor.offset;
+        let fits = |ix: usize| self.table.viewport().is_some_and(|v| row * (ix + 1) as f32 <= v + SNAP);
+        let to_top = kept > anchor.top && (anchor.top < SNAP || self.table.selected().is_some_and(fits));
+        self.table.set_scroll_top(if to_top { px(0.) } else { kept });
     }
 
     /// The status read again: the WIP row's counts and panel, or the graph when the row comes or goes.

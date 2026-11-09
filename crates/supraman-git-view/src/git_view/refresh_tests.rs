@@ -166,3 +166,51 @@ fn refresh_after_a_rewrite_or_a_hidden_ref_reads_the_first_page_afresh(cx: &mut 
     cx.run_until_parked();
     assert_eq!(view.read_with(cx, |v, _| v.commits), FIRST_PAGE, "a hidden ref: the first page only");
 }
+
+/// The selected commit's row, the scroll, and where the row sits below the view's top.
+fn place(view: &Entity<GitView>, sha: &str, cx: &mut VisualTestContext) -> (usize, Pixels, Pixels) {
+    view.read_with(cx, |v, _| {
+        let ix = v.table.selected().expect("a row selected");
+        assert_eq!(v.rows[ix].sha.as_ref(), sha, "the selection stays on its commit");
+        let top = v.table.scroll_top();
+        (ix, top, px(graph::ROW) * ix as f32 - top)
+    })
+}
+
+fn select_at(view: &Entity<GitView>, ix: usize, top: Pixels, cx: &mut VisualTestContext) -> String {
+    let sha = view.update(cx, |v, cx| {
+        let sha = v.rows[ix].sha.to_string();
+        v.select_sha(&sha, cx);
+        v.table.set_scroll_top(top);
+        sha
+    });
+    redraw(view, cx);
+    sha
+}
+
+#[gpui::test]
+fn refresh_with_new_commits_on_top_follows_them_while_the_selection_stays_in_view(cx: &mut TestAppContext) {
+    let g = Generated::copy(200);
+    let (view, cx) = open(&g.dir, cx);
+    let row = px(graph::ROW);
+    let first = view.read_with(cx, |v, _| usize::from(v.rows[0].wip()));
+
+    let sha = select_at(&view, first, px(0.), cx);
+    commit_on(&g, "main", "main", "An agent's commit");
+    refreshed(&view, cx);
+    let (ix, top, _) = place(&view, &sha, cx);
+    assert_eq!((ix, top), (first + 1, px(0.)), "at the top it stays at the top, the new commit in view");
+
+    let sha = select_at(&view, first + 5, row * 3., cx);
+    commit_on(&g, "main", "main", "Another");
+    refreshed(&view, cx);
+    let (ix, top, _) = place(&view, &sha, cx);
+    assert_eq!((ix, top), (first + 6, px(0.)), "scrolled a little: to the top, the selected row still wholly in view");
+
+    let sha = select_at(&view, first + 105, row * 100., cx);
+    let (_, before, offset) = place(&view, &sha, cx);
+    commit_on(&g, "main", "main", "A third");
+    refreshed(&view, cx);
+    let (ix, top, now) = place(&view, &sha, cx);
+    assert_eq!((ix, top, now), (first + 106, before + row, offset), "far down: the selected row keeps its place on screen");
+}

@@ -6,6 +6,11 @@ use theme::ActiveTheme as _;
 
 use crate::hit::{HitTargets, hit_target};
 
+/// The deferred priority of every layer that floats over its view and is not a menu (a pill group's list, an overlay card).
+pub const FLOAT: usize = 1;
+/// Every menu's deferred priority: above every other deferred layer.
+pub const PRIORITY: usize = FLOAT + 1;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MenuItem<A> {
     /// Unique within the menu; painted under `menu-<key>`.
@@ -51,7 +56,7 @@ pub struct ContextMenu<A> {
 }
 
 impl<A: Clone + 'static> ContextMenu<A> {
-    /// Over everything, kept inside the window. `on_pick` gets the chosen item's action; `on_dismiss` a click
+    /// Over everything ([`PRIORITY`]), kept inside the window, painted under `menu`. `on_pick` gets the chosen item's action; `on_dismiss` a click
     /// outside. Both are expected to close the menu.
     pub fn render<V: 'static>(
         &self,
@@ -63,6 +68,7 @@ impl<A: Clone + 'static> ContextMenu<A> {
         let colors = cx.theme().colors().clone();
         let mut list = div()
             .id("context-menu")
+            .relative()
             .flex()
             .flex_col()
             .min_w(px(180.))
@@ -75,6 +81,7 @@ impl<A: Clone + 'static> ContextMenu<A> {
             .text_sm()
             .occlude()
             .on_mouse_down_out(cx.listener(move |this, _: &MouseDownEvent, _, cx| on_dismiss(this, cx)))
+            .child(hit_target(hits, "menu".into()))
             .child(
                 div()
                     .px_3()
@@ -141,6 +148,6 @@ impl<A: Clone + 'static> ContextMenu<A> {
                     })),
             );
         }
-        deferred(anchored().position(self.position).snap_to_window_with_margin(px(8.)).child(list)).with_priority(1).into_any_element()
+        deferred(anchored().position(self.position).snap_to_window_with_margin(px(8.)).child(list)).with_priority(PRIORITY).into_any_element()
     }
 }

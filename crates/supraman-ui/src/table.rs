@@ -171,11 +171,15 @@ impl TableState {
         state.base_handle.set_offset(gpui::point(x, -top.max(px(0.))));
     }
 
+    /// The height the rows are shown in, as the last frame laid them out.
+    pub fn viewport(&self) -> Option<Pixels> {
+        self.scroll.0.borrow().last_item_size.map(|s| s.item.height)
+    }
+
     /// The rows a page holds, as the last frame showed them; at least one.
     pub fn page(&self) -> usize {
         let height = self.inner.borrow().row_height;
-        let viewport = self.scroll.0.borrow().last_item_size.map(|s| s.item.height);
-        match viewport {
+        match self.viewport() {
             Some(viewport) if height > px(0.) => ((viewport / height).floor() as usize).max(1),
             _ => 1,
         }
@@ -214,7 +218,7 @@ type RowKeyFn = dyn Fn(usize) -> String;
 type HeaderMenuFn<V> = dyn Fn(&mut V, gpui::Point<Pixels>, &mut Window, &mut Context<V>);
 
 /// One frame's table, built in the owner's render. Its element ids and hit keys start with `id`:
-/// `<id>-col-<column>`, `<id>-divider-<column>` (right of that column) and `<id>-row-<index>`.
+/// `<id>-col-<column>`, `<id>-divider-<column>` (right of that column), `<id>-row-<index>` and its fill `<id>-fill-<index>`.
 pub struct Table<V> {
     id: SharedString,
     state: TableState,
@@ -223,6 +227,7 @@ pub struct Table<V> {
     widths: Vec<Pixels>,
     rows: usize,
     row_height: Pixels,
+    inset: Pixels,
     cell: Rc<CellFn<V>>,
     band: Option<Rc<BandFn<V>>>,
     on_select: Option<Rc<SelectFn<V>>>,
@@ -255,6 +260,7 @@ impl<V: 'static> Table<V> {
             widths: widths.to_vec(),
             rows,
             row_height: px(28.),
+            inset: px(0.),
             cell: Rc::new(cell),
             band: None,
             on_select: None,
@@ -307,6 +313,12 @@ impl<V: 'static> Table<V> {
 
     pub fn row_height(mut self, height: Pixels) -> Self {
         self.row_height = height;
+        self
+    }
+
+    /// How far a row's band, hover and selection fills stop short of its top and bottom.
+    pub fn inset(mut self, inset: Pixels) -> Self {
+        self.inset = inset;
         self
     }
 
@@ -487,7 +499,7 @@ impl<V: 'static> Table<V> {
 
     fn body(self, widths: Rc<[Pixels]>, cx: &mut Context<V>) -> gpui::UniformList {
         let scroll = self.state.scroll.clone();
-        let Self { id, state, hits, rows, row_height, cell, band, on_select, near_end, on_click, row_key, .. } = self;
+        let Self { id, state, hits, rows, row_height, inset, cell, band, on_select, near_end, on_click, row_key, .. } = self;
         let list_id = SharedString::from(format!("{id}-rows"));
         let group = row_group(&id);
         let paint = cx.processor(move |this: &mut V, range: Range<usize>, window, cx| {
@@ -503,10 +515,8 @@ impl<V: 'static> Table<V> {
             let (selection, hover) = (colors.element_selected, colors.ghost_element_hover);
             let mut out = Vec::with_capacity(range.len());
             for ix in range {
-                let key = match &row_key {
-                    Some(k) => format!("{id}-row-{}", k(ix)),
-                    None => format!("{id}-row-{ix}"),
-                };
+                let part = row_key.as_ref().map_or_else(|| ix.to_string(), |k| k(ix));
+                let (key, fill_key) = (format!("{id}-row-{part}"), format!("{id}-fill-{part}"));
                 let background = band.as_ref().and_then(|b| b(this, ix, cx));
                 let cells: Vec<AnyElement> = widths
                     .iter()
@@ -517,6 +527,15 @@ impl<V: 'static> Table<V> {
                     })
                     .collect();
                 let (state, on_select, on_click) = (state.clone(), on_select.clone(), on_click.clone());
+                let fill = div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .top(inset)
+                    .bottom(inset)
+                    .when_some(background, |d, bg| d.bg(bg))
+                    .map(|d| if selected == Some(ix) { d.bg(selection) } else { d.group_hover(group.clone(), |s| s.bg(hover)) })
+                    .child(hit_target(&hits, fill_key));
                 out.push(
                     div()
                         .id(SharedString::from(key.clone()))
@@ -525,8 +544,7 @@ impl<V: 'static> Table<V> {
                         .flex()
                         .w_full()
                         .h(row_height)
-                        .when_some(background, |d, bg| d.bg(bg))
-                        .map(|d| if selected == Some(ix) { d.bg(selection) } else { d.hover(|s| s.bg(hover)) })
+                        .child(fill)
                         .child(hit_target(&hits, key))
                         .children(cells)
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
