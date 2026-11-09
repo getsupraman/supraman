@@ -332,7 +332,7 @@ impl FleetView {
             MenuAction::SetPaused { workspace, id, paused } => self.set_schedule_paused(workspace, id, paused, cx),
             MenuAction::History { workspace, id } => self.schedule_history(&workspace, &id, cx),
             MenuAction::RemoveSchedule { workspace, id } => self.ask_remove_schedule(&workspace, &id, cx),
-            tab @ (MenuAction::OpenGit(_) | MenuAction::CloseTab(_) | MenuAction::CloseOtherTabs(_) | MenuAction::CloseTabsRight(_) | MenuAction::ReopenClosed) => {
+            tab @ (MenuAction::OpenGit(_) | MenuAction::OpenWorkman { .. } | MenuAction::CloseTab(_) | MenuAction::CloseOtherTabs(_) | MenuAction::CloseTabsRight(_) | MenuAction::ReopenClosed) => {
                 self.run_tab_action(tab, cx);
             }
         }

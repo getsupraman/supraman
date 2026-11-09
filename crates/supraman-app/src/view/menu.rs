@@ -48,6 +48,8 @@ pub enum MenuAction {
     OpenTaskScheduler,
     /// The Git tab of the repository whose top this is ([`super::tab_menu`]).
     OpenGit(PathBuf),
+    /// The Work tab of `workspace` on `project` ([`super::tab_menu`]).
+    OpenWorkman { workspace: String, project: String },
     CloseTab(u64),
     CloseOtherTabs(u64),
     CloseTabsRight(u64),

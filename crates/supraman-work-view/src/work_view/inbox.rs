@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use supraman_core::store::{JsonStore, Save};
@@ -162,6 +163,7 @@ pub struct WorkInbox {
     inboxes: HashMap<String, Inbox>,
     /// Run id → project id, from the last overview.
     run_project: HashMap<String, String>,
+    overview: Option<Arc<Overview>>,
     pub(crate) dismissed: JsonStore<Dismissed>,
     pending: Option<Plan>,
     pub(crate) failures: HashMap<String, String>,
@@ -197,6 +199,12 @@ impl WorkInbox {
         cx.new(|cx| Self::new(hub, None, cx))
     }
 
+    /// An inbox of no workspace finding repos with `repo_of`: a test's.
+    #[cfg(test)]
+    pub(crate) fn of_repos(hub: Entity<WorkHub>, repo_of: RepoOf, cx: &mut App) -> Entity<WorkInbox> {
+        cx.new(|cx| WorkInbox { repo_of, ..Self::new(hub, None, cx) })
+    }
+
     fn new(hub: Entity<WorkHub>, home: Option<&Path>, cx: &mut Context<Self>) -> Self {
         cx.subscribe(&hub, Self::on_hub).detach();
         let (dismissed, notice) = Dismissed::load(home);
@@ -209,6 +217,7 @@ impl WorkInbox {
             projects: HashMap::new(),
             inboxes: HashMap::new(),
             run_project: HashMap::new(),
+            overview: None,
             dismissed,
             pending: None,
             failures: HashMap::new(),
@@ -292,6 +301,26 @@ impl WorkInbox {
         cx.notify();
     }
 
+    /// The first project `folder`'s repo binds (`projects::bound`); git, and Workman when no overview is kept, run off the UI thread.
+    pub fn bind_folder(&mut self, folder: PathBuf, cx: &mut Context<Self>) -> Task<Binding> {
+        let client = match self.hub.read(cx).access() {
+            Access::Ready(client) => client.clone(),
+            Access::Starting => return Task::ready(Binding::Unavailable("Connecting to Workman…".into())),
+            Access::Unconfigured(why) => return Task::ready(Binding::Unavailable(why.to_string())),
+        };
+        let (kept, repo_of) = (self.overview.clone(), self.repo_of);
+        cx.spawn(async move |this, cx| {
+            let (binding, fresh) = cx.background_executor().spawn(async move { bind_folder(&client, folder, kept, repo_of) }).await;
+            if let Some(fresh) = fresh {
+                this.update(cx, |this, _| {
+                    this.overview.get_or_insert(fresh);
+                })
+                .ok();
+            }
+            binding
+        })
+    }
+
     pub fn toggle_housekeeping(&mut self, cx: &mut Context<Self>) {
         self.housekeeping_open = !self.housekeeping_open;
         cx.notify();
@@ -313,6 +342,7 @@ impl WorkInbox {
                 }
                 _ => {
                     self.projects.clear();
+                    self.overview = None;
                     self.inboxes.clear();
                     self.failures.clear();
                     cx.notify();
@@ -387,6 +417,7 @@ impl WorkInbox {
                 .iter()
                 .flat_map(|p| p.runs.iter().map(|r| (r.item.id.clone(), p.item.id.clone())))
                 .collect();
+            self.overview = Some(Arc::new(overview));
         }
         let mut save = None;
         for Answer { workspace, keys, outcome } in answers {
@@ -419,6 +450,34 @@ impl WorkInbox {
         Self::save(save, cx);
         cx.notify();
     }
+}
+
+/// Where a folder stands in Workman ([`WorkInbox::bind_folder`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Binding {
+    Project(ItemRef),
+    Unbound,
+    /// Workman's own words: not set up, not signed in, unreachable.
+    Unavailable(String),
+}
+
+fn bind_folder(client: &Client, folder: PathBuf, kept: Option<Arc<Overview>>, repo_of: RepoOf) -> (Binding, Option<Arc<Overview>>) {
+    let keys = projects::folder_keys(&[folder], repo_of);
+    if keys.is_empty() {
+        return (Binding::Unbound, None);
+    }
+    let (overview, fresh) = match kept {
+        Some(kept) => (kept, None),
+        None => match client.overview() {
+            Ok(read) => {
+                let read = Arc::new(read);
+                (read.clone(), Some(read))
+            }
+            Err(e) => return (Binding::Unavailable(read_failed(e)), None),
+        },
+    };
+    let binding = projects::bound(&overview, &keys).into_iter().next().map_or(Binding::Unbound, |p| Binding::Project(p.item));
+    (binding, fresh)
 }
 
 /// The key the Inbox paints a Workman row under; its × is [`dismiss_key_of`].

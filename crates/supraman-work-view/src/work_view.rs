@@ -40,7 +40,7 @@ use supraman_workman::status::WorkmanStatus;
 
 pub(crate) use actions::RowAction;
 pub(crate) use detail::DetailTab;
-pub use inbox::{DISMISSED_FILE, HOUSEKEEPING_KEY, WorkInbox, dismiss_key_of, row_key_of};
+pub use inbox::{Binding, DISMISSED_FILE, HOUSEKEEPING_KEY, WorkInbox, dismiss_key_of, row_key_of};
 pub use item::{FleetLink, LiveSession};
 pub(crate) use item::{ItemState, OpenItem};
 pub use projects::RepoOf;
@@ -251,6 +251,8 @@ pub struct WorkView {
     pub projects: Vec<OverviewProject>,
     pub(crate) page: Page,
     page_chosen: bool,
+    /// [`WorkView::show_project`]'s project, landed on once the projects are bound.
+    wanted: Option<String>,
     pub boards: HashMap<String, BoardState>,
     closed_open: HashSet<String>,
     pub selected: Option<String>,
@@ -321,6 +323,7 @@ impl WorkView {
             projects: Vec::new(),
             page: Page::Overview,
             page_chosen: false,
+            wanted: None,
             boards: HashMap::new(),
             closed_open: HashSet::new(),
             selected: None,
@@ -491,9 +494,14 @@ impl WorkView {
         let (Some(overview), Some(keys)) = (&self.overview, &self.keys) else { return };
         self.projects = projects::bound(overview, keys);
         self.shown = if self.projects.is_empty() { Shown::Message(projects::no_project_message(&self.workspace, keys)) } else { Shown::Ready };
-        let first = self.projects.iter().flat_map(projects::active).next().map(|r| r.item.id.clone());
-        if let Some(run) = first.filter(|_| !self.page_chosen) {
-            self.open_run(run, cx);
+        match self.wanted.take() {
+            Some(project) => self.land_on(&project, cx),
+            None => {
+                let first = self.projects.iter().flat_map(projects::active).next().map(|r| r.item.id.clone());
+                if let Some(run) = first.filter(|_| !self.page_chosen) {
+                    self.open_run(run, cx);
+                }
+            }
         }
         self.read_page(cx);
         cx.notify();
@@ -523,6 +531,25 @@ impl WorkView {
             .ok();
         })
         .detach();
+    }
+
+    /// `project`'s first active run, else the Overview with its card; once the projects are bound.
+    pub fn show_project(&mut self, project: String, cx: &mut Context<Self>) {
+        self.wanted = Some(project);
+        self.bind(cx);
+    }
+
+    fn land_on(&mut self, project: &str, cx: &mut Context<Self>) {
+        let run = self.projects.iter().find(|p| p.item.id == project).and_then(|p| projects::active(p).next()).map(|r| r.item.id.clone());
+        match run {
+            Some(run) => self.open_run(run, cx),
+            None => {
+                self.page_chosen = true;
+                self.page = Page::Overview;
+                self.selected = None;
+                self.item = None;
+            }
+        }
     }
 
     pub fn show_page(&mut self, page: Page, cx: &mut Context<Self>) {
