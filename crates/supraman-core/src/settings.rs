@@ -180,11 +180,36 @@ pub struct WindowSettings {
     /// The fleet panel's width in logical pixels, as the divider was last dragged.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub left_width: Option<u32>,
+    /// Read through [`WindowSettings::tab_keys`].
+    #[serde(deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
+    pub tab_keys: Option<TabKeys>,
 }
 
 impl Section for WindowSettings {
     const KEY: &'static str = "window";
-    const FIELDS: &'static [&'static str] = &["left_width"];
+    const FIELDS: &'static [&'static str] = &["left_width", "tab_keys"];
+}
+
+/// Whether Ctrl+T and Ctrl+W open and close tabs while a terminal tab is active.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TabKeys {
+    /// A terminal's program gets Ctrl+T and Ctrl+W; Ctrl+Shift+T and Ctrl+Shift+W work everywhere.
+    #[default]
+    OutsideTerminals,
+    Everywhere,
+}
+
+impl WindowSettings {
+    /// Unset or unknown: [`TabKeys::OutsideTerminals`].
+    pub fn tab_keys(&self) -> TabKeys {
+        self.tab_keys.unwrap_or_default()
+    }
+
+    /// The default is stored as unset.
+    pub fn set_tab_keys(&mut self, keys: TabKeys) {
+        self.tab_keys = (keys != TabKeys::default()).then_some(keys);
+    }
 }
 
 /// `[updates]`: whether the app looks for a newer release.
@@ -427,7 +452,7 @@ mod tests {
                 shell: Some(ShellSetting::Custom(r"C:\Program Files\Git\bin\bash.exe".into())),
                 shell_args: vec!["--login".into()],
             },
-            window: WindowSettings { left_width: Some(512) },
+            window: WindowSettings { left_width: Some(512), tab_keys: Some(TabKeys::Everywhere) },
             updates: UpdateSettings { check: false },
             other: Table::new(),
         }
@@ -793,5 +818,19 @@ url = "https://workman.example"
         let mut dirs = Settings::load(home.path()).unwrap().sessions.extra_plugin_dirs;
         dirs.sort();
         assert_eq!(dirs, (0..8).map(|i| PathBuf::from(format!("C:/plugins/{i}"))).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn tab_keys_are_outside_terminals_unless_set_to_everywhere() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(load_text(home.path(), "").0.window.tab_keys(), TabKeys::OutsideTerminals);
+        assert_eq!(load_text(home.path(), "[window]
+tab_keys = \"sideways\"
+").0.window.tab_keys(), TabKeys::OutsideTerminals);
+        Settings::update(home.path(), |s| s.window.set_tab_keys(TabKeys::Everywhere)).unwrap();
+        assert_eq!(saved(home.path())["window"]["tab_keys"].as_str(), Some("everywhere"));
+        assert_eq!(Settings::load(home.path()).unwrap().window.tab_keys(), TabKeys::Everywhere);
+        Settings::update(home.path(), |s| s.window.set_tab_keys(TabKeys::OutsideTerminals)).unwrap();
+        assert!(saved(home.path()).get("window").and_then(|w| w.get("tab_keys")).is_none(), "the default is stored as unset");
     }
 }

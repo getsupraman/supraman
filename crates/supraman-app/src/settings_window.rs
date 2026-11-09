@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-use supraman_core::{DEFAULT_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Settings};
+use supraman_core::{DEFAULT_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Settings, TabKeys};
 use supraman_core::shells::ShellSetting;
 use supraman_ui::settings_page::{SettingsPage, SettingsPages, row};
 use supraman_ui::{banner, button, term_element};
@@ -948,7 +948,38 @@ impl SettingsView {
                 cx,
             ),
             shell,
+            self.render_tab_keys(cx),
         ]
+    }
+
+    /// Applied to the main window once saved.
+    pub fn set_tab_keys(&mut self, mode: TabKeys, cx: &mut Context<Self>) {
+        self.change_then(
+            move |s| s.window.set_tab_keys(mode),
+            |this, cx| {
+                let mode = this.settings.window.tab_keys();
+                this.fleet.update(cx, |fleet, _| fleet.set_tab_keys(mode)).ok();
+            },
+            cx,
+        );
+    }
+
+    fn render_tab_keys(&self, cx: &mut Context<Self>) -> AnyElement {
+        let current = self.settings.window.tab_keys();
+        let mut choices = div().flex().gap_1();
+        for (ix, (label, mode)) in [("Outside terminals", TabKeys::OutsideTerminals), ("Everywhere", TabKeys::Everywhere)].into_iter().enumerate() {
+            choices = choices.child(
+                button::choice(("tab-keys", ix), label, current == mode, cx)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_tab_keys(mode, cx))),
+            );
+        }
+        row(
+            "Ctrl+T and Ctrl+W",
+            "Ctrl+T opens a new task tab and Ctrl+W closes the active tab. Outside terminals, the default, leaves both              to the program in a terminal tab; Everywhere takes them from terminals too. Ctrl+Shift+T and Ctrl+Shift+W              work in every tab, Ctrl+Alt+T reopens the last closed tab. Applied at once and kept in settings.toml              ([window] tab_keys).",
+            choices.into_any_element(),
+            None,
+            cx,
+        )
     }
 
     pub fn set_shell(&mut self, shell: ShellSetting, cx: &mut Context<Self>) {

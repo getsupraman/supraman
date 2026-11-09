@@ -1,5 +1,5 @@
 //! 30 tabs overflow the strip: they shrink to the minimum before any is cut off, the first and the last are reached by
-//! the wheel and by the ⌄ list, and a drag scrolls at the edge. A unit test cannot: it needs a real window's layout,
+//! the wheel, the ⌄ list and Ctrl+1 and Ctrl+9, and a drag scrolls at the edge. A unit test cannot: it needs a real window's layout,
 //! wheel and drag; the arithmetic itself is `supraman_ui::tabs::fit`'s tests.
 
 use std::time::Duration;
@@ -32,7 +32,8 @@ pub(crate) async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
         let wheel = wheel(view, &ids, cx).await?;
         let listed = list(view, &ids, cx).await?;
         let dragged = drag(view, &ids, cx).await?;
-        Ok(format!("{shared}; {pinned}; {wheel}; {listed}; {dragged}"))
+        let jumped = jumps(view, cx).await?;
+        Ok(format!("{shared}; {pinned}; {wheel}; {listed}; {dragged}; {jumped}"))
     }
     .await;
     close_all(view, cx).await?;
@@ -246,4 +247,18 @@ async fn drag(view: &Entity<FleetView>, ids: &[u64], cx: &mut AsyncWindowContext
     let dropped = until(view, cx, WITHIN, "the last tab dropped first", |v| (order(v).get(..2) == Some(&[last, first][..])).then_some(())).await;
     dropped.map_err(|e| anyhow!("{e:#}: tab {last} dropped on tab {first} after the edge scroll, the order starts {:?}", view.read_with(cx, |v, _| order(v))))?;
     Ok(format!("a drag at the left edge scrolled to the first tab in {moves} moves and dropped the last tab first"))
+}
+
+/// Ctrl+1 and Ctrl+9 reach the first and the last tab, each scrolled whole into view.
+async fn jumps(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    for (key, at) in [("1", 0), ("9", COUNT - 1), ("8", 7), ("1", 0)] {
+        press(cx, key, Modifiers::control())?;
+        let id = view.read_with(cx, |v, _| v.tabs[at].id);
+        until(view, cx, WITHIN, &format!("Ctrl+{key}: tab {} of {COUNT} active and whole in view", at + 1), |v| {
+            let shown = v.hits.borrow().get(&format!("tab-{id}")).is_some_and(|h| h.fully_visible());
+            (v.active == Some(id) && shown).then_some(())
+        })
+        .await?;
+    }
+    Ok(format!("Ctrl+1, Ctrl+9, Ctrl+8 and Ctrl+1 activated tabs 1, {COUNT}, 8 and 1, each scrolled whole into view"))
 }

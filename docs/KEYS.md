@@ -2,7 +2,7 @@
 
 Supraman's terminal tabs act like Windows Terminal with its defaults (René's settings: copy on Ctrl+C,
 paste on Ctrl+V, find on Ctrl+Shift+F, no copy on select, plain-text copy). Code: `crates/supraman-app/src/view/term.rs`
-(`chord`), `crates/supraman-ui/src/term_element.rs` (mouse), `crates/supraman-term` (selection, cursor, colours).
+(`chord`), `crates/supraman-app/src/view/tab_keys.rs` (the window's tab chords), `crates/supraman-ui/src/term_element.rs` (mouse), `crates/supraman-term` (selection, cursor, colours).
 
 ## Window
 
@@ -10,6 +10,12 @@ paste on Ctrl+V, find on Ctrl+Shift+F, no copy on select, plain-text copy). Code
 |---|---|
 | Ctrl+Tab, Ctrl+PgDn | next tab |
 | Ctrl+Shift+Tab, Ctrl+PgUp | previous tab |
+| Ctrl+1 … Ctrl+8, Ctrl+9 | the nth tab, Ctrl+9 the last; in every tab, terminals too |
+| Ctrl+Shift+PgUp / PgDn | move the active tab one place left / right; in every tab, terminals too |
+| Ctrl+T | a New task tab in the active tab's workspace and folder, else the first workspace; in a terminal tab the program gets it unless Settings → Appearance → Ctrl+T and Ctrl+W is Everywhere (`[window] tab_keys`) |
+| Ctrl+W | close the active tab, as its × does; in a terminal tab as Ctrl+T |
+| Ctrl+Shift+T, Ctrl+Shift+W | as Ctrl+T and Ctrl+W, in every tab |
+| Ctrl+Alt+T | reopen the last tab closed in this run (the last 20 are kept; a New task, Schedule or Details tab is not) |
 | Ctrl+, | settings |
 | Ctrl+Shift+E | the search box over the tree, its text selected; also from a terminal tab (VS Code's Explorer chord; Ctrl+Shift+F is the terminal's find bar, and a Ctrl+letter belongs to the program in the tab) |
 | F5 | refresh: read the running sessions (`claude agents`) and the closed ones' transcripts now, as the action bar's ↻ does, while no terminal tab is active (no tab, or a Work tab). With a terminal tab active, F5 goes to its program; use ↻ there |
@@ -54,7 +60,6 @@ back to the window (the terminal).
 | Ctrl+= (Ctrl++), Ctrl+-, Ctrl+0 | font size up, down, reset — every terminal, kept in settings.toml (m5/41) |
 | Ctrl+wheel | font size up / down, every terminal |
 | Ctrl+Shift+Up / Down | scroll one line |
-| Ctrl+Shift+PgUp / PgDn | scroll one page |
 | Ctrl+Shift+Home / End | scroll to the top / bottom |
 | Shift+Enter | ESC CR (a new line in Claude Code's prompt) |
 

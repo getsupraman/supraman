@@ -71,6 +71,7 @@ mod right;
 mod shells;
 pub(crate) mod schedules;
 pub(crate) mod start;
+pub(crate) mod tab_keys;
 mod term;
 mod work_tab;
 mod workman_url;
@@ -84,19 +85,13 @@ pub(crate) use left::grid;
 pub use manage::Removing;
 pub use menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuTarget};
 
-gpui::actions!(supraman, [NextTab, PreviousTab, FocusSearch]);
+gpui::actions!(supraman, [FocusSearch]);
 
 const KEY_CONTEXT: &str = "FleetView";
 
-/// Matched before [`FleetView::key_down`] runs, so a terminal tab never sees these chords.
 pub fn bind_keys(cx: &mut gpui::App) {
-    cx.bind_keys([
-        KeyBinding::new("ctrl-tab", NextTab, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-pagedown", NextTab, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-shift-tab", PreviousTab, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-pageup", PreviousTab, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-shift-e", FocusSearch, Some(KEY_CONTEXT)),
-    ]);
+    tab_keys::bind(cx);
+    cx.bind_keys([KeyBinding::new("ctrl-shift-e", FocusSearch, Some(KEY_CONTEXT))]);
 }
 
 pub const REFRESH_EVERY: Duration = Duration::from_secs(2);
@@ -404,6 +399,7 @@ pub struct FleetView {
     pub runs_dismissed: DismissedMessages,
     /// [`schedules::Waiting::key`]s whose Inbox entry René dismissed.
     pub waiting_dismissed: DismissedMessages,
+    tab_keys: tab_keys::TabKeyState,
 }
 
 /// The dismissed run notices beside the dismissed messages.
@@ -880,6 +876,7 @@ impl FleetView {
             schedule_edit: None,
             runs_dismissed,
             waiting_dismissed,
+            tab_keys: tab_keys::TabKeyState::new(loaded.window.tab_keys()),
         }
     }
 
@@ -2182,6 +2179,7 @@ impl FleetView {
     }
 
     pub fn close_tab(&mut self, id: u64, cx: &mut Context<Self>) {
+        self.remember_closed(id, cx);
         let Some(tab) = self.tab_mut(id) else {
             return;
         };
@@ -2527,8 +2525,7 @@ impl Render for FleetView {
             .text_color(colors.text)
             .track_focus(&self.focus)
             .key_context(KEY_CONTEXT)
-            .on_action(cx.listener(|this, _: &NextTab, _, cx| this.cycle_tab(1, cx)))
-            .on_action(cx.listener(|this, _: &PreviousTab, _, cx| this.cycle_tab(-1, cx)))
+            .on_action(cx.listener(Self::on_tab_chord))
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| this.focus_search(window, cx)))
             .on_key_down(cx.listener(Self::key_down))
             .on_modifiers_changed(cx.listener(|this, _: &ModifiersChangedEvent, window, cx| {

@@ -479,6 +479,20 @@ pub fn cycled(len: usize, at: Option<usize>, step: isize) -> Option<usize> {
     Some((at + step).rem_euclid(len as isize) as usize)
 }
 
+/// The browser's Ctrl+1..8 (`n` 0..=7) and Ctrl+9 (`n` `None`, the last tab).
+pub fn nth(len: usize, n: Option<usize>) -> Option<usize> {
+    match n {
+        Some(n) => (n < len).then_some(n),
+        None => len.checked_sub(1),
+    }
+}
+
+/// Where the tab at `at` moves `step` places away; none past either end.
+pub fn moved(len: usize, at: usize, step: isize) -> Option<usize> {
+    let to = at.checked_add_signed(step)?;
+    (at < len && to < len && to != at).then_some(to)
+}
+
 /// `raw` (an OSC 0/2 title) as a tab label: control and bidi-format characters dropped, runs of
 /// whitespace as one space, trimmed, at most [`MAX_TITLE`] characters. Nothing left reads as no title.
 pub fn sanitize(raw: &str) -> Option<String> {
@@ -600,6 +614,23 @@ mod tests {
         assert_eq!(cycled(3, None, 1), Some(0), "none active: the first");
         assert_eq!(cycled(3, None, -1), Some(2), "none active: the last");
         assert_eq!(cycled(0, None, 1), None);
+    }
+
+    #[test]
+    fn nth_is_the_browsers_and_moved_stops_at_the_ends() {
+        assert_eq!(nth(3, Some(0)), Some(0));
+        assert_eq!(nth(3, Some(2)), Some(2));
+        assert_eq!(nth(3, Some(3)), None, "no fourth tab");
+        assert_eq!(nth(3, None), Some(2), "Ctrl+9: the last");
+        assert_eq!(nth(9, Some(7)), Some(7));
+        assert_eq!(nth(12, None), Some(11));
+        assert_eq!(nth(0, None), None);
+        assert_eq!(moved(3, 1, -1), Some(0));
+        assert_eq!(moved(3, 1, 1), Some(2));
+        assert_eq!(moved(3, 0, -1), None, "the first stays first");
+        assert_eq!(moved(3, 2, 1), None, "the last stays last");
+        assert_eq!(moved(1, 0, 1), None);
+        assert_eq!(moved(3, 5, -1), None);
     }
 
     #[test]
