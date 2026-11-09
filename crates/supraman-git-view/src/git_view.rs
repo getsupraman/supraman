@@ -28,6 +28,7 @@ mod stash_bar;
 pub(crate) mod undo;
 mod wip;
 mod wip_row;
+mod worktree_panel;
 mod worktree_rows;
 pub(crate) mod write_gate;
 #[cfg(any(test, feature = "test-support"))]
@@ -53,6 +54,8 @@ mod stash_tests;
 mod paint_tests;
 #[cfg(test)]
 mod worktree_rows_tests;
+#[cfg(test)]
+mod worktree_panel_tests;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -84,6 +87,7 @@ use commit::CommitActions;
 use remote::RemoteActions;
 use undo::{UndoBar, UndoEvent};
 use wip::WipPanel;
+use worktree_panel::{WorktreeEvent, WorktreePanel};
 use write_gate::WriteGate;
 
 /// The table's id: its hit keys are `git-col-<c>`, `git-divider-<c>`, `git-row-<n>`.
@@ -192,6 +196,8 @@ pub struct GitView {
     over_list: Option<usize>,
     panel: Entity<CommitPanel>,
     wip_panel: Entity<WipPanel>,
+    /// The panel of another worktree's WIP row.
+    worktree_panel: Entity<WorktreePanel>,
     panel_width: Pixels,
     ref_panel: Entity<RefPanel>,
     seek: Option<seek::Seek>,
@@ -200,7 +206,7 @@ pub struct GitView {
     toast: ToastSlot,
     /// A ref's commit to reveal once the refresh under way walks it.
     reveal_after: Option<SharedString>,
-    _panel_events: [Subscription; 3],
+    _panel_events: [Subscription; 4],
     /// The file viewer in the graph's place, while one is open.
     diff: Option<(Entity<DiffView>, [Subscription; 3])>,
     /// The last viewer's mode and layout, the next one's start.
@@ -256,9 +262,10 @@ impl GitView {
             let gate = cx.new(|_| WriteGate::new(occupancy, hits.clone()));
             let panel = cx.new(|cx| CommitPanel::new(hits.clone(), gate.clone(), None, cx));
             let wip_panel = cx.new(|cx| WipPanel::new(hits.clone(), gate.clone(), cx));
+            let worktree_panel = cx.new(|cx| WorktreePanel::new(hits.clone(), cx));
             let focus = cx.focus_handle();
             let ref_panel = cx.new(|cx| RefPanel::new(hits.clone(), focus.clone(), cx));
-            let events = [cx.subscribe(&panel, Self::panel_event), cx.subscribe(&wip_panel, Self::panel_event), cx.subscribe(&ref_panel, Self::ref_event)];
+            let events = [cx.subscribe(&panel, Self::panel_event), cx.subscribe(&wip_panel, Self::panel_event), cx.subscribe(&ref_panel, Self::ref_event), cx.subscribe(&worktree_panel, Self::worktree_event)];
             let undo = cx.new(|cx| UndoBar::new(gate.clone(), hits.clone(), cx));
             let undo_events = cx.subscribe(&undo, Self::undo_event);
             let stash = cx.new(|cx| StashActions::new(gate.clone(), hits.clone(), cx));
@@ -293,6 +300,7 @@ impl GitView {
                 over_list: None,
                 panel,
                 wip_panel,
+                worktree_panel,
                 panel_width: PANEL_WIDTH,
                 ref_panel,
                 seek: None,
@@ -420,6 +428,17 @@ impl GitView {
         }
     }
 
+    fn worktree_event(&mut self, _: Entity<WorktreePanel>, e: &WorktreeEvent, cx: &mut Context<Self>) {
+        match e {
+            WorktreeEvent::File(path, target) => self.toggle_diff_in(Some(path.clone()), target.clone(), cx),
+            WorktreeEvent::Open => {
+                if let Some(ix) = self.table.selected() {
+                    self.open_worktree(ix, true, cx);
+                }
+            }
+        }
+    }
+
     fn ref_event(&mut self, _: Entity<RefPanel>, e: &RefEvent, cx: &mut Context<Self>) {
         match e {
             RefEvent::Pick(sha, walked) => self.picked(sha.clone(), *walked, cx),
@@ -477,8 +496,13 @@ impl GitView {
 
     /// Opens `target`, or goes back to the graph when it is the one open.
     pub(crate) fn toggle_diff(&mut self, target: diff::Target, cx: &mut Context<Self>) {
-        if self.diff().is_none_or(|d| d.read(cx).target != target) {
-            return self.open_diff(target, cx);
+        self.toggle_diff_in(None, target, cx);
+    }
+
+    /// [`GitView::toggle_diff`] of a file of the worktree at `worktree`, else of the tab's.
+    pub(crate) fn toggle_diff_in(&mut self, worktree: Option<Arc<std::path::Path>>, target: diff::Target, cx: &mut Context<Self>) {
+        if self.diff().is_none_or(|d| d.read(cx).target != target || d.read(cx).worktree != worktree) {
+            return self.open_diff_in(worktree, target, cx);
         }
         self.back_to_graph(cx);
     }
@@ -488,6 +512,7 @@ impl GitView {
         self.close_diff(cx);
         self.panel.update(cx, |p, cx| p.deselect_files(cx));
         self.wip_panel.update(cx, |p, cx| p.deselect_files(cx));
+        self.worktree_panel.update(cx, |p, cx| p.deselect_files(cx));
         self.focus_graph = true;
         cx.notify();
     }
@@ -523,10 +548,18 @@ impl GitView {
 
     /// Shows `target` in the graph's place; the graph keeps its selection and scroll for when it closes.
     pub fn open_diff(&mut self, target: diff::Target, cx: &mut Context<Self>) {
-        let Some(repo) = self.repo.clone() else { return };
+        self.open_diff_in(None, target, cx);
+    }
+
+    /// [`GitView::open_diff`] of a file of the worktree at `worktree`, read from its folder and read-only, else of the
+    /// tab's.
+    pub(crate) fn open_diff_in(&mut self, worktree: Option<Arc<std::path::Path>>, target: diff::Target, cx: &mut Context<Self>) {
+        let Some(tab) = self.repo.clone() else { return };
         self.close_diff(cx);
-        let working = matches!(target.of, diff::Of::Unstaged | diff::Of::Staged);
+        let working = worktree.is_none() && matches!(target.of, diff::Of::Unstaged | diff::Of::Staged);
+        let repo = worktree.as_ref().map_or_else(|| tab.clone(), |w| Repo::new(tab.git().clone(), w.to_path_buf()));
         let view = DiffView::open(repo.clone(), target, self.diff_mode, self.diff_layout, self.hits.clone(), cx);
+        view.update(cx, |d, _| d.worktree = worktree);
         if working {
             view.update(cx, |d, cx| d.enable_picks(self.gate.clone(), repo, cx));
         }
@@ -594,6 +627,11 @@ impl GitView {
                 p.set_ref_colours(colours);
                 p.show(colour, cx)
             });
+        }
+        if let Some(Selected::Worktree(path)) = &selected {
+            let (wip, said) = self.worktree_read(cx);
+            let path = path.clone();
+            self.worktree_panel.update(cx, |p, cx| p.show(path, wip, said, cx));
         }
         self.panel.update(cx, |p, cx| p.show(selected, colour, cx));
     }
@@ -791,6 +829,9 @@ impl GitView {
         let selected = self.selected();
         if selected == Some(Selected::Wip) {
             return div().size_full().child(self.wip_panel.clone()).into_any_element();
+        }
+        if let Some(Selected::Worktree(_)) = selected {
+            return div().size_full().child(self.worktree_panel.clone()).into_any_element();
         }
         let dirty = self.wip.map_or(0, |w| w.total());
         let banner = (dirty > 0 && selected.is_some()).then(|| wip::banner(dirty, &self.hits, cx));

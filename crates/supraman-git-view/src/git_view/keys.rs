@@ -125,21 +125,26 @@ impl GitView {
             Some(Selected::Wip) => self.wip_panel.read(cx).file_order(),
             Some(Selected::Commit(sha)) => self.panel.read(cx).file_order(&sha),
             Some(Selected::Stash(stash)) => self.panel.read(cx).file_order(&stash.sha),
-            Some(Selected::Worktree(_)) | None => Vec::new(),
+            Some(Selected::Worktree(path)) => self.worktree_panel.read(cx).file_order().filter(|(shown, _)| *shown == path).map(|(_, files)| files).unwrap_or_default(),
+            None => Vec::new(),
         }
     }
 
     /// Opens the file `step` leads to from the one open, selected in the panel's list.
     pub(crate) fn go_file(&mut self, step: FileStep, cx: &mut Context<Self>) {
         let files = self.files(cx);
-        let at = self.diff().and_then(|d| files.iter().position(|f| *f == d.read(cx).target));
+        let worktree = match self.selected() {
+            Some(Selected::Worktree(path)) => Some(path),
+            _ => None,
+        };
+        let at = self.diff().and_then(|d| files.iter().position(|f| *f == d.read(cx).target && d.read(cx).worktree == worktree));
         let Some(target) = step.index(files.len(), at).map(|ix| files[ix].clone()) else { return };
-        if self.selected() == Some(Selected::Wip) {
-            self.wip_panel.update(cx, |p, cx| p.mark_file(&target, cx));
-        } else {
-            self.panel.update(cx, |p, cx| p.mark_file(&target, cx));
+        match self.selected() {
+            Some(Selected::Wip) => self.wip_panel.update(cx, |p, cx| p.mark_file(&target, cx)),
+            Some(Selected::Worktree(_)) => self.worktree_panel.update(cx, |p, cx| p.mark_file(&target, cx)),
+            _ => self.panel.update(cx, |p, cx| p.mark_file(&target, cx)),
         }
-        self.open_diff(target, cx);
+        self.open_diff_in(worktree, target, cx);
     }
 
     /// Right on a row: its first file's diff, once the panel shows the row.

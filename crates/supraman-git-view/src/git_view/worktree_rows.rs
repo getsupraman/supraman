@@ -11,8 +11,8 @@ use supraman_ui::tooltip::Tooltip;
 use super::branch::OpenGit;
 use super::colours::Palette;
 use super::live::Refresh;
-use super::load::Wip;
-use super::{GitView, Load, TABLE, background, cells, graph};
+use super::load::{GraphRow, Wip};
+use super::{GitView, Load, Selected, TABLE, background, cells, graph};
 
 /// What a worktree's WIP row says.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,7 +62,32 @@ impl GitView {
         if matches!(self.load, Load::Ready) && self.wanted_worktrees(cx) != self.worktree_rows {
             self.live_refresh(Refresh::Graph, cx);
         }
+        self.worktree_panel_read(cx);
         cx.notify();
+    }
+
+    /// The selected worktree row's read and words, as last read.
+    pub(super) fn worktree_read(&self, cx: &Context<Self>) -> (Option<WorktreeWip>, Option<WorktreeView>) {
+        let Some(ix) = self.table.selected() else { return (None, None) };
+        let Some(path) = self.rows.get(ix).and_then(GraphRow::worktree) else { return (None, None) };
+        let wip = background::wips(cx.entity_id(), cx).and_then(|w| w.read(cx).get(path).cloned());
+        (wip, self.worktree_view(ix, cx))
+    }
+
+    /// The selected worktree's panel, and its open file, read again when its read changed.
+    fn worktree_panel_read(&mut self, cx: &mut Context<Self>) {
+        let Some(Selected::Worktree(path)) = self.selected() else { return };
+        let (wip, said) = self.worktree_read(cx);
+        if !self.worktree_panel.update(cx, |p, cx| p.refresh(wip, said, cx)) {
+            return;
+        }
+        let (Some((view, _)), Some(repo)) = (&self.diff, self.repo.clone()) else { return };
+        view.update(cx, |d, cx| {
+            if d.worktree.as_deref() == Some(path.as_ref()) {
+                let repo = d.repo_of(&repo);
+                d.reload(repo, cx);
+            }
+        });
     }
 
     pub(crate) fn worktree_view(&self, ix: usize, cx: &Context<Self>) -> Option<WorktreeView> {
