@@ -71,6 +71,17 @@ fn every_column_shares_one_inset_and_one_line_box(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn two_rows_bands_are_inset_3_px_and_6_px_apart(cx: &mut TestAppContext) {
+    let f = Fixture::shared();
+    let (view, cx) = open(&f.dir, cx);
+    let ix = view.read_with(cx, |v, _| v.rows.iter().position(|r| r.sha.as_ref() == f.sha("ahead")).expect("ahead's row"));
+    let hits = painted(&view, cx);
+    let (row, fill, next) = (at(&hits, &format!("git-row-{ix}")), at(&hits, &format!("git-fill-{ix}")), at(&hits, &format!("git-fill-{}", ix + 1)));
+    assert!(near(fill.top() - row.top(), px(3.)) && near(row.bottom() - fill.bottom(), px(3.)), "GitKraken's inset: {fill:?} {row:?}");
+    assert!(near(next.top() - fill.bottom(), px(6.)), "the gap between two bands: {fill:?} {next:?}");
+}
+
+#[gpui::test]
 fn a_menu_paints_over_an_open_pill_group(cx: &mut TestAppContext) {
     let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);

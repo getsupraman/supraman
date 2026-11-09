@@ -16,7 +16,7 @@ const LANE: f32 = 22.;
 /// The column's room left of the first lane and right of the last.
 const PAD: f32 = 8.;
 /// The space between two rows' bands; every column's band and fill is inset half of it from the row's top and bottom.
-pub(crate) const GAP: f32 = 2.;
+pub(crate) const GAP: f32 = 6.;
 /// Every column's line box: the band's height, so each column's text centres on the same line.
 pub(crate) const LINE: f32 = ROW - GAP;
 const RADIUS: f32 = 11.;
