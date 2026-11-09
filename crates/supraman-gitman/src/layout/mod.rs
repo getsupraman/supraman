@@ -53,6 +53,18 @@ impl Row {
     pub fn worktree(&self) -> Option<&Path> {
         self.worktree.as_deref()
     }
+
+    /// `n` rows of no commit stacked directly above this one on its lane, each joined to the next by a dashed edge,
+    /// and this row joined to the lowest: the live sessions' rows over the WIP row.
+    pub fn stacked_above(&self, n: usize) -> (Vec<Row>, Row) {
+        let (above, edges) = self.edges.stacked_above(n);
+        let none: Arc<[RefGroup]> = Arc::from([]);
+        let rows = above
+            .into_iter()
+            .map(|edges| Row { sha: None, lane: self.lane, colour: self.colour, edges, max_lane: self.max_lane, refs: none.clone(), ghost: None, detached_head: false, stash: None, worktree: None })
+            .collect();
+        (rows, Row { edges, ..self.clone() })
+    }
 }
 
 /// Another worktree's WIP row, laid out directly above its HEAD commit's row.

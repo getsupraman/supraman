@@ -1,6 +1,7 @@
 //! The Git tab of one repository: its commit graph loaded off the UI thread page by page, its panels, and the
 //! writes they make through the tab's one [`write_gate::WriteGate`].
 
+mod agent_rows;
 pub mod background;
 mod band;
 pub mod branch;
@@ -92,6 +93,8 @@ use wip::WipPanel;
 use worktree_panel::{WorktreeEvent, WorktreePanel};
 use write_gate::WriteGate;
 
+pub use agent_rows::AttachAgent;
+
 /// The table's id: its hit keys are `git-col-<c>`, `git-divider-<c>`, `git-row-<n>`.
 pub(crate) const TABLE: &str = "git";
 
@@ -157,6 +160,8 @@ pub enum Selected {
     Stash(Arc<supraman_gitman::Stash>),
     /// Another worktree's WIP row.
     Worktree(Arc<std::path::Path>),
+    /// A live session's row, by its name.
+    Agent(SharedString),
 }
 
 /// The selection changed; [`GitView::selected`] says to what.
@@ -186,6 +191,7 @@ pub struct GitView {
     commits: usize,
     /// The other worktrees whose WIP rows the last graph read laid out.
     worktree_rows: Vec<WorktreeRow>,
+    agents: agent_rows::Agents,
     wip: Option<Wip>,
     more: bool,
     paging: bool,
@@ -261,7 +267,7 @@ impl GitView {
     /// `occupancy` says which live sessions work in the repo before a write.
     pub fn open_with(folder: PathBuf, home: Option<PathBuf>, hits: HitTargets, saved: &GitSizes, occupancy: Arc<dyn Occupancy>, cx: &mut App) -> Entity<GitView> {
         cx.new(|cx| {
-            let gate = cx.new(|_| WriteGate::new(occupancy, hits.clone()));
+            let gate = cx.new(|_| WriteGate::new(occupancy));
             let panel = cx.new(|cx| CommitPanel::new(hits.clone(), gate.clone(), None, cx));
             let wip_panel = cx.new(|cx| WipPanel::new(hits.clone(), gate.clone(), cx));
             let worktree_panel = cx.new(|cx| WorktreePanel::new(hits.clone(), cx));
@@ -291,6 +297,7 @@ impl GitView {
                 rows: Vec::new(),
                 commits: 0,
                 worktree_rows: Vec::new(),
+                agents: agent_rows::Agents::default(),
                 wip: None,
                 more: false,
                 paging: false,
@@ -604,6 +611,9 @@ impl GitView {
 
     pub(crate) fn selected(&self) -> Option<Selected> {
         let row = self.rows.get(self.table.selected()?)?;
+        if let Some(name) = &row.agent {
+            return Some(Selected::Agent(name.clone()));
+        }
         if let Some(path) = &row.row.worktree {
             return Some(Selected::Worktree(path.clone()));
         }
@@ -648,13 +658,16 @@ impl GitView {
         cx.notify();
     }
 
+    /// The WIP row's index: the first row under the agent rows, when it is the WIP row.
+    pub(crate) fn wip_row(&self) -> Option<usize> {
+        self.rows.iter().position(|r| r.agent.is_none()).filter(|ix| self.rows[*ix].wip())
+    }
+
     /// Selects the WIP row, when the graph has one.
     pub(crate) fn select_wip(&mut self, cx: &mut Context<Self>) {
-        if !self.rows.first().is_some_and(GraphRow::wip) {
-            return;
-        }
-        self.table.select(Some(0));
-        self.table.reveal(0);
+        let Some(ix) = self.wip_row() else { return };
+        self.table.select(Some(ix));
+        self.table.reveal(ix);
         self.selection_moved(cx);
         cx.notify();
     }
@@ -698,6 +711,7 @@ impl GitView {
                 self.repo = Some(first.repo);
                 let before = std::mem::replace(&mut self.wip, first.wip);
                 self.load = Load::Ready;
+                self.stack_fresh();
                 self.select_conflict(before, cx);
                 self.refresh_undo(cx);
                 if *self.ref_panel.read(cx).walk() != self.follow.walked || self.wanted_worktrees(cx) != self.worktree_rows {
@@ -762,6 +776,7 @@ impl GitView {
                 self.more = page.more;
                 self.marks.push(self.rows.len(), self.commits, &page.layout);
                 self.layout = Some(page.layout);
+                self.relay_agents(cx);
             }
             Err(e) => {
                 self.more = false;
@@ -779,6 +794,9 @@ impl GitView {
         };
         if row.worktree().is_some() {
             return self.worktree_cell(ix, col, palette, cx);
+        }
+        if row.agent.is_some() {
+            return self.agent_cell(ix, col, palette, cx);
         }
         let cell = match col {
             0 => match self.branch.read(cx).inline_field(&row.sha) {
@@ -835,6 +853,9 @@ impl GitView {
         }
         if let Some(Selected::Worktree(_)) = selected {
             return div().size_full().child(self.worktree_panel.clone()).into_any_element();
+        }
+        if let Some(Selected::Agent(name)) = &selected {
+            return self.render_agent_panel(name, cx);
         }
         let dirty = self.wip.map_or(0, |w| w.total());
         let banner = (dirty > 0 && selected.is_some()).then(|| wip::banner(dirty, &self.hits, cx));

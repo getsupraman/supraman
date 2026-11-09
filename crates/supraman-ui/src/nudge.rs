@@ -24,6 +24,11 @@ impl Nudge {
     pub fn wake(&self) {
         self.0.unbounded_send(()).ok();
     }
+
+    /// Its [`Nudged`] is gone: waking it reaches nobody.
+    pub fn is_closed(&self) -> bool {
+        self.0.is_closed()
+    }
 }
 
 impl Nudged {

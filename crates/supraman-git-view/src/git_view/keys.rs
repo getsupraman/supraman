@@ -7,7 +7,6 @@ use std::time::Duration;
 use gpui::{AnyElement, App, Context, KeyBinding, KeyUpEvent, div, prelude::*};
 
 use super::diff::{self, FileStep};
-use super::load::GraphRow;
 use super::{GitView, Selected};
 
 gpui::actions!(
@@ -75,8 +74,8 @@ impl GitView {
     /// it is, else the nearest that merged it, else the nearest stash made on it.
     pub(super) fn child(&self, ix: usize) -> Option<usize> {
         let row = self.rows.get(ix).filter(|r| !r.wip())?;
-        if self.rows.first().is_some_and(GraphRow::wip) && self.heads.head.as_ref() == Some(&row.sha) {
-            return Some(0);
+        if let Some(wip) = self.wip_row().filter(|_| self.heads.head.as_ref() == Some(&row.sha)) {
+            return Some(wip);
         }
         let above = |stash: bool| (0..ix).rev().filter(move |i| self.rows[*i].stash().is_some() == stash);
         above(false)
@@ -126,7 +125,7 @@ impl GitView {
             Some(Selected::Commit(sha)) => self.panel.read(cx).file_order(&sha),
             Some(Selected::Stash(stash)) => self.panel.read(cx).file_order(&stash.sha),
             Some(Selected::Worktree(path)) => self.worktree_panel.read(cx).file_order().filter(|(shown, _)| *shown == path).map(|(_, files)| files).unwrap_or_default(),
-            None => Vec::new(),
+            Some(Selected::Agent(_)) | None => Vec::new(),
         }
     }
 

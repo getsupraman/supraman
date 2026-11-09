@@ -67,7 +67,8 @@ enum Ask {
     DeleteTag(String),
     /// A merge into another branch stopped on conflicts: stay (yes) or abandon it (no).
     Away { away: branch::Away, into: String },
-    RemoveWorktree { path: PathBuf, branch: Option<String> },
+    /// `working`: the live sessions whose cwd is in that worktree.
+    RemoveWorktree { path: PathBuf, branch: Option<String>, working: Vec<String> },
 }
 
 impl Ask {
@@ -85,9 +86,14 @@ impl Ask {
                 let kept = away.autostash.as_ref().map_or(String::new(), |s| format!(" Your changes wait in the stash \u{201c}{}\u{201d}.", s.name));
                 ask(format!("The merge into {into} stopped on conflicts. Stay on {into} to resolve them, or cancel the merge and go back to {}?{kept}", away.back), &format!("Stay on {into}"))
             }
-            Ask::RemoveWorktree { path, branch } => {
+            Ask::RemoveWorktree { path, branch, working } => {
                 let and = branch.as_ref().map_or(String::new(), |b| format!(" and delete the branch {b}"));
-                ask(format!("Remove the worktree {}{and}? Changes not committed there are lost.", path.display()), "Remove").danger()
+                let who = match working.len() {
+                    0 => String::new(),
+                    1 => format!(" {} is working there.", working[0]),
+                    _ => format!(" {} are working there.", working.join(", ")),
+                };
+                ask(format!("Remove the worktree {}{and}? Changes not committed there are lost.{who}", path.display()), "Remove").danger()
             }
         }
     }
@@ -207,12 +213,8 @@ impl BranchActions {
     }
 
     fn request(&mut self, doing: Doing, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) {
-        self.request_also(doing, None, locks, job, cx);
-    }
-
-    fn request_also(&mut self, doing: Doing, also: Option<PathBuf>, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) {
         let Some(writer) = self.writer.clone() else { return cx.emit(BranchEvent::Why(STILL_OPENING.into())) };
-        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request_also(writer, also, locks, job, cx)) {
+        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request(writer, locks, job, cx)) {
             self.doing = Some((ticket, doing));
         }
         cx.notify();
@@ -259,10 +261,9 @@ impl BranchActions {
                 let words = format!("Deleted the tag {name}");
                 self.request(Doing::Plain(words), LockSet::branch(), move |s| branch::delete_tag(s, &name), cx);
             }
-            (Some(Ask::RemoveWorktree { path, branch }), _) => {
+            (Some(Ask::RemoveWorktree { path, branch, .. }), _) => {
                 let words = format!("Removed the worktree {}", path.display());
-                let also = Some(path.clone());
-                self.request_also(Doing::Plain(words), also, LockSet::branch_delete(), move |s| branch::remove_worktree(s, &path, branch.as_deref()), cx);
+                self.request(Doing::Plain(words), LockSet::branch_delete(), move |s| branch::remove_worktree(s, &path, branch.as_deref()), cx);
             }
             _ => {}
         }
@@ -296,7 +297,10 @@ impl BranchActions {
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
                 cx.emit(BranchEvent::Said(format!("Copied {what}")));
             }
-            RefAct::RemoveWorktree { path, branch } => self.ask(Ask::RemoveWorktree { path, branch }, cx),
+            RefAct::RemoveWorktree { path, branch } => {
+                let working = self.gate.read(cx).occupancy().who_works_in(&path);
+                self.ask(Ask::RemoveWorktree { path, branch, working }, cx)
+            }
             RefAct::LockWorktree { path, lock } => {
                 let words = format!("{} the worktree {}", if lock { "Locked" } else { "Unlocked" }, path.display());
                 self.request(Doing::Plain(words), LockSet::branch(), move |s| branch::lock_worktree(s, &path, lock), cx);

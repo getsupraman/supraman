@@ -7,7 +7,6 @@ use supraman_ui::hit::HitTargets;
 use super::reword::{ASK_KEY, CANCEL_KEY, CHECK_OUT_A_BRANCH, CHECK_OUT_TO_REWORD, CLICK_TO_AMEND, CLICK_TO_EDIT_STASH, CLICK_TO_REWORD, EDIT_KEY, REBASES_KEY, TYPE_A_SUMMARY, Target, UPDATE_KEY, offer, pushed_question, rebases_words, reword_question};
 use crate::git_view::tests::redraw;
 use crate::git_view::undo::UNDO_KEY;
-use crate::git_view::write_gate::WAITING;
 use crate::git_view::{GitSizes, GitView, Selected, bind_keys};
 use crate::occupancy;
 use gpui::{Context, IntoElement, ParentElement as _, Render, Styled as _, Window, div, px};
@@ -194,7 +193,7 @@ fn amending_a_pushed_head_asks_first_cancel_writes_nothing_and_undo_puts_the_old
 }
 
 #[gpui::test]
-fn a_stashs_box_edits_its_message_through_the_stash_writes_and_waits_for_the_gate(cx: &mut TestAppContext) {
+fn a_stashs_box_edits_its_message_through_the_stash_writes_and_a_session_working_there_asks_nothing(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let live = occupancy::Live::default();
     let (view, cx) = open(&f.dir, live.clone(), cx);
@@ -213,11 +212,10 @@ fn a_stashs_box_edits_its_message_through_the_stash_writes_and_waits_for_the_gat
     let top = head(&f);
     select(&view, &top, cx);
     click(&view, EDIT_KEY, cx);
-    type_in(&view, "Ahead, waiting", "", cx);
+    type_in(&view, "Ahead, not waiting", "", cx);
     click(&view, UPDATE_KEY, cx);
-    assert_eq!(view.read_with(cx, |v, cx| v.gate().read(cx).busy()), Some(WAITING), "the gate asks about the session first");
-    assert_eq!(panel(&view, cx).read_with(cx, |p, cx| p.update_why_not(cx)), Some(WAITING), "Update Message waits with it");
-    assert_eq!(head(&f), top);
+    assert_ne!(head(&f), top, "the amend ran without a question");
+    assert_eq!(git_in(&f.git, &f.dir, &["log", "-1", "--format=%s"], &[], None), "Ahead, not waiting");
 }
 
 /// `side` (at `second`, above `root`) with three commits on it, W1 to W3, each changing c.txt.

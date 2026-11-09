@@ -22,8 +22,7 @@ impl GitView {
     pub(super) fn band(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
         self.remote.update(cx, |r, cx| r.ensure_fields(window, cx));
         let asked = |band: Option<Div>| band.map(|b| (b, false));
-        let found = asked(self.gate.update(cx, |o, cx| o.band(cx)))
-            .or_else(|| asked(self.wip_panel.update(cx, |o, cx| o.band(cx))))
+        let found = asked(self.wip_panel.update(cx, |o, cx| o.band(cx)))
             .or_else(|| asked(self.undo.update(cx, |o, cx| o.band(cx))))
             .or_else(|| asked(self.stash.update(cx, |o, cx| o.band(cx))))
             .or_else(|| asked(self.branch.update(cx, |o, cx| o.band(cx))))

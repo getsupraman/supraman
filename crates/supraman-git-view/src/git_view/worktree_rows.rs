@@ -14,7 +14,7 @@ use super::colours::Palette;
 use super::live::Refresh;
 use super::load::{GraphRow, Wip};
 use super::ref_panel::RefWips;
-use super::{GitView, Load, Selected, TABLE, background, cells, graph};
+use super::{GitView, Load, Selected, TABLE, agent_rows, background, cells, graph};
 
 /// What a worktree's WIP row says.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -134,8 +134,15 @@ impl GitView {
             (1, _) => graph::cell(ix, row, false, palette, &self.hits),
             (0, Some(view)) => self.worktree_ref(ix, &view, palette, cx),
             (2, Some(view)) => {
+                let activity = view.session.as_deref().zip(row.worktree()).and_then(|(name, path)| self.activity_in(path, name));
                 let lead = match view.session {
-                    Some(name) => supraman_ui::tabs::chip(name.into(), cx).relative().child(hit_target(&self.hits, format!("git-worktree-session-{ix}"))),
+                    Some(name) => supraman_ui::tabs::chip(name.into(), cx)
+                        .relative()
+                        .flex()
+                        .items_center()
+                        .gap_1p5()
+                        .children(activity.map(|a| agent_rows::state_dot(a, cx).relative().child(hit_target(&self.hits, format!("git-worktree-state-{ix}")))))
+                        .child(hit_target(&self.hits, format!("git-worktree-session-{ix}"))),
                     None => div().relative().flex_none().text_color(palette.muted).child("WIP").child(hit_target(&self.hits, format!("git-worktree-wip-{ix}"))),
                 };
                 cells::wip_message(row, lead, view.counts, palette)

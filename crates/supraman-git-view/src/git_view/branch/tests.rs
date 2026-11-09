@@ -306,6 +306,28 @@ fn a_branch_in_a_linked_worktree_shows_the_tree_and_every_menu_of_it_offers_the_
 }
 
 #[gpui::test]
+fn removing_a_worktree_a_live_session_works_in_names_the_session_in_its_question(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    cx.update(|cx| {
+        supraman_ui::init_globals(cx, "test");
+        supraman_ui::text_input::bind_keys(cx);
+        bind_keys(cx);
+    });
+    let live = occupancy::Live::default();
+    live.set(vec![("fm-agent".into(), f.worktree.join("src"))]);
+    let folder = f.dir.clone();
+    let (holder, cx) = cx.add_window_view(|_, cx| Holder(GitView::open_with(folder, None, HitTargets::default(), &GitSizes::default(), Arc::new(live), cx)));
+    let view = holder.read_with(cx, |h, _| h.0.clone());
+    cx.run_until_parked();
+    redraw(&view, cx);
+    press(&view, "refpanel-name-local/side", MouseButton::Right, 1, cx);
+    click(&view, "menu-worktree-remove", cx);
+    let asked = asking(&view, cx).unwrap_or_default();
+    assert!(asked.starts_with("Remove the worktree ") && asked.ends_with("Changes not committed there are lost. fm-agent is working there."), "{asked}");
+    assert!(f.worktree.exists(), "nothing before the answer");
+}
+
+#[gpui::test]
 fn the_main_worktrees_branch_keeps_its_local_pill_and_dimmed_delete_and_a_pills_letters_sit_on_its_middle(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let (view, cx) = open(&f.worktree, cx);

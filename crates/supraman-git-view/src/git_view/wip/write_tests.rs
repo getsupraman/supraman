@@ -13,7 +13,7 @@ use super::tests::select_wip;
 use super::*;
 use crate::git_view::tests::redraw;
 use crate::git_view::undo::UNDO_KEY;
-use crate::git_view::write_gate::{WAITING, WORKING};
+use crate::git_view::write_gate::WORKING;
 use crate::git_view::{GitSizes, GitView, bind_keys};
 use crate::occupancy;
 
@@ -149,26 +149,18 @@ fn wip_write_file_and_all_buttons_stage_unstage_and_discard_after_asking(cx: &mu
 }
 
 #[gpui::test]
-fn wip_write_a_session_in_the_worktree_is_asked_about_and_every_write_waits_meanwhile(cx: &mut TestAppContext) {
+fn wip_write_a_session_in_the_worktree_is_not_asked_about(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let live = occupancy::Live::default();
     live.set(vec![("fm-alpha".into(), f.dir.join("src"))]);
     let (view, cx) = open(&f.dir, live, cx);
     click(&view, "wip-stage-u.txt", cx);
-    let gate = view.read_with(cx, |v, _| v.gate().clone());
-    assert!(gate.read_with(cx, |g, _| g.asking().is_some_and(|q| q.starts_with("fm-alpha is working in"))));
-    assert_eq!(panel(&view, cx, |p, cx| p.busy(cx)), Some(WAITING), "the write buttons say why they wait");
-    click(&view, "wip-stage-all", cx);
-    click(&view, UNDO_KEY, cx);
-    assert!(!lists(&view, cx).1.contains(&"u.txt".to_string()) && lists(&view, cx).0.contains(&"b.txt".to_string()), "nothing ran meanwhile");
-    click(&view, "write-guard-yes", cx);
     let (unstaged, staged) = lists(&view, cx);
-    assert!(staged.contains(&"u.txt".to_string()) && unstaged.contains(&"b.txt".to_string()), "only the asked write ran");
+    assert!(staged.contains(&"u.txt".to_string()) && unstaged.contains(&"b.txt".to_string()), "the write ran without a question");
 
     let file = FileChange { kind: ChangeKind::Deleted, path: "b.txt".into(), old_path: None, similarity: None };
     view.update(cx, |v, cx| gate_free_stage(v, file.clone(), cx));
-    assert_eq!(panel(&view, cx, |p, cx| p.busy(cx)), Some(WAITING), "the next write asks again");
-    click(&view, "write-guard-yes", cx);
+    cx.run_until_parked();
     assert!(lists(&view, cx).1.contains(&"b.txt".to_string()));
 }
 

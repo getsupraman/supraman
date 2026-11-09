@@ -231,6 +231,7 @@ impl GitView {
         self.history = first.history;
         self.tips = first.tips.into();
         self.heads = first.heads;
+        self.stack_fresh();
         let before = std::mem::replace(&mut self.wip, first.wip);
         self.ref_panel.update(cx, |p, cx| p.set_built(first.refs, cx));
         self.hand_refs(&first.repo, first.all.clone(), &first.status, cx);
@@ -283,8 +284,9 @@ impl GitView {
             None => return,
             Some(Selected::Commit(sha)) => self.rows.iter().position(|r| r.sha == *sha),
             Some(Selected::Stash(stash)) => self.rows.iter().position(|r| r.stash().is_some_and(|s| s.sha == stash.sha)),
-            Some(Selected::Wip) => self.rows.first().is_some_and(GraphRow::wip).then_some(0),
+            Some(Selected::Wip) => self.wip_row(),
             Some(Selected::Worktree(path)) => self.rows.iter().position(|r| r.worktree() == Some(path.as_ref())),
+            Some(Selected::Agent(name)) => self.agent_row(name),
         };
         self.table.select(row);
         match (row, selected) {
@@ -345,7 +347,7 @@ impl GitView {
             }
         };
         self.follow.wip_failed = None;
-        if wip.is_some() != self.rows.first().is_some_and(GraphRow::wip) {
+        if wip.is_some() != self.wip_row().is_some() {
             return self.refresh_graph(files, cx);
         }
         let before = std::mem::replace(&mut self.wip, wip);
