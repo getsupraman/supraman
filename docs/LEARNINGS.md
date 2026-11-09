@@ -5912,3 +5912,26 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **`FakeWorkman`'s rows** keep the user that made them (an access token's `sub`, a static bearer as itself); a
   `takeoverFrom` on an existing row that does not name its launcher or comes from another user is a 409, and a
   refused mint never moves the row.
+
+## 2026-11-09 — dev-speed/1 build setup: the unit profile, one unit worktree, affected crates (ds-build)
+
+- **Where a unit's time goes**: the edit cycle is supraman-app's compile, not its link and not the tests. Under
+  `release` a one-line `git_view` edit costs 2 m 28 s before its test runs; the `unit` profile (`release`, members
+  incremental in 256 codegen units, dependencies as release) makes it 1 m 03 s and a full suite after it 4 m 58 s
+  instead of 7 m 08 s. The tests run as fast under either (~4 min summed). Table: docs/DEVELOPING.md.
+- **A path switch cannot be cached**: cargo names a member's artifacts by its path below the workspace root, so two
+  checkouts' artifacts collide. Without heavy-lock's clean, a `--no-run` in the main checkout right after ds-build
+  finished in 1.8 s with ds-build's code. With it, every move costs ~7 min under either profile. One unit worktree
+  for every unit makes a move a branch switch: 34 s when it changed supraman-gitman and supraman-app.
+- **heavy-lock's marker per profile**: debug and release keep `target\.last-workspace` (older copies of the script
+  read it), any other profile its own (`target\unit\.last-workspace`); `--config` reaches the clean, so a profile
+  defined by `--config` in a checkout without it cleans too. It sets `CARGO_TARGET_DIR` to the main checkout's
+  `target` when unset.
+- **`-p` versus `--workspace`** resolve the dependencies' features differently: the first `-p supraman-app` run after
+  `--workspace` builds ~70 dependencies again (~7 min, once per profile); both variants stay.
+- **rust-lld breaks the C grammars**: STATUS_ACCESS_VIOLATION at the image base in supraman-editor's and
+  supraman-app's tests. The C# scanner (cl `/MD`) calls the allocator through an `__imp_` pointer, which lld-link
+  leaves in `.rdata` outside the import table holding the image base (found with a ctypes debug loop over dbghelp: the
+  return address in the scanner, `ff 15` before it, the slot's value 0x140000000 on disk). Left out.
+- **A test's orphan holds a piped harness**: the crashed app tests left a `git.exe` (a temp test repo) alive with the
+  pipe of `cargo test … | while read`; write a measured run's output to a file, not a pipe.

@@ -2,6 +2,15 @@
 
 Native Rust/gpui app that supervises workspaces of Claude Code sessions. Work runs as a controller queue in Workman project `supraman`; `docs/LEARNINGS.md` holds what each unit found.
 
+## Building and checking
+
+Which command when, why, and what each costs: `docs/DEVELOPING.md`. Every cargo command runs through `powershell -File scripts/heavy-lock.ps1 cargo …` at BelowNormal: the machine lock, the clean rule, and `CARGO_TARGET_DIR` set to `P:\Projects\LarchSys\AutoWork\target` when the shell has none (never a target under `*.worktrees`).
+
+- Work in the one unit worktree `P:\Projects\LarchSys\AutoWork.worktrees\unit`, a branch per unit; the controller gates and merges from it too. A build in any other checkout path rebuilds every member (~7 min).
+- A unit's inner loop: `cargo test --profile unit -p <crate> <filter>`.
+- A unit's gate, and the controller's merge gate: `cargo test --profile unit $(powershell -File scripts/affected.ps1)`, then `cargo build --profile unit --workspace` and `target\unit\supraman.exe --selftest`.
+- Per batch of merged units and before a release: `cargo test --profile unit --workspace`. A release: `cargo test --release --workspace` and `scripts/release.ps1` (docs/RELEASE.md).
+
 ## Use shared components, never hidden hand-rolled ones
 
 **This binds every agent and subagent working in this repo — brief subagents on it when you delegate.**
@@ -41,7 +50,7 @@ Reusable components (crates, boundaries, flows and when to use each: `docs/ARCHI
 - `supraman_ui::themes` (`contrast`, `secondary` (the one secondary text colour), `fit_floors`, `lanes`, `syntax`: a theme's code colours over Supraman's dark or light defaults, held to `SYNTAX_FLOOR`; both fit a colour with the one `nearest_holding` lightness search) and `supraman_ui::term_element::terminal_grid`: the themes with their contrast floors, the Git tab's lane palette (`gitman.lane.0`–`9` overrides), and the terminal painter.
 - `supraman_core::fs::write_atomic`: every write of a file another process or thread may read or write (settings, registry, supervisor and relay files); never a fixed `*.tmp` and rename by hand.
 - `supraman_core::fs::lock_file`: an exclusive cross-process lock held while the returned file lives, around a read-modify-write (`refresh.lock`, `DesiredState::update`); never a check-then-write retry loop. `try_lock_file` is the same without the wait (`None` while held): a schedule's overlap lock.
-- `supraman_core::fs::heavy_job_lock`: the machine-wide lock of one heavy job; every selftest mode holds it for its run, and `scripts/heavy-lock.ps1` runs a cargo build or test under the same file, so builds and selftests never overlap; it cleans the workspace members when the shared target dir last built another worktree (`target\.last-workspace`), so build every cargo command through it. `try_heavy_job_lock` is the same without the wait (`None` while a build, test or selftest holds it): background git maintenance.
+- `supraman_core::fs::heavy_job_lock`: the machine-wide lock of one heavy job; every selftest mode holds it for its run, and `scripts/heavy-lock.ps1` runs a cargo build or test under the same file, so builds and selftests never overlap; it cleans the workspace members when a profile last built another checkout (`target\.last-workspace` for debug and release, `target\unit\.last-workspace` for unit), so build every cargo command through it. `try_heavy_job_lock` is the same without the wait (`None` while a build, test or selftest holds it): background git maintenance.
 - `supraman_core::fs::load_json_or_notice`: a JSON state file whose loss is shown to the user as a notice, not an error (stars, dismissals).
 - `supraman_core::store::{JsonStore, Save}` and `supraman_ui::store::save_off_thread`: a small JSON state file held in memory (stars, the dismissed messages, runs and approvals, the Workman inbox's dismissals): `load` over `load_json_or_notice`, `edit` returns the `Save` of a change, written with `write_atomic` off the UI thread, the newest value last; never a store of your own.
 - `supraman_core::fs::append_capped`: an append-only log that rotates to `<file>.1` at a size cap (event logs, `supraman.log`).
