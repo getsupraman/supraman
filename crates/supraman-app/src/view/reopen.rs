@@ -282,8 +282,7 @@ impl FleetView {
     }
 }
 
-/// Each tab followed to the session claude moved it on to, then planned against the sessions and folders as they are now;
-/// blocking.
+/// Each tab followed to its newest session and planned against the sessions and folders now; blocking.
 fn plan_tabs(
     tabs: Vec<SavedTab>,
     sessions: &[supraman_claude::Session],
