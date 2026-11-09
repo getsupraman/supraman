@@ -192,7 +192,7 @@ pub(crate) fn wip_message(row: &GraphRow, field: impl IntoElement, counts: Strin
 }
 
 pub(crate) fn date_text(row: &GraphRow) -> String {
-    if row.wip() { String::new() } else { supraman_core::time::stamp(row.time_ms) }
+    if row.commit() { supraman_core::time::stamp(row.time_ms) } else { String::new() }
 }
 
 pub(crate) fn sha_text(row: &GraphRow) -> &str {

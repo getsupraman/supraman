@@ -188,7 +188,9 @@ impl GitView {
         self.history = None;
         let walk = self.ref_panel.read(cx).walk().clone();
         let loaded = (self.commits > FIRST_PAGE && walk == self.follow.walked).then(|| self.loaded());
-        let read = cx.background_spawn(async move { load::read(repo, &walk, loaded.as_ref()) });
+        self.worktree_rows = self.wanted_worktrees(cx);
+        let worktrees = self.worktree_rows.clone();
+        let read = cx.background_spawn(async move { load::read(repo, &walk, loaded.as_ref(), &worktrees) });
         cx.spawn(async move |this, cx| {
             let read = read.await;
             this.update(cx, |v, cx| v.apply_refresh(token, read, files, cx)).ok();
@@ -220,7 +222,7 @@ impl GitView {
         self.follow.walked = first.walk;
         self.paging = false;
         self.page_error = None;
-        self.commits = rows.iter().filter(|r| !r.wip()).count();
+        self.commits = rows.iter().filter(|r| r.commit()).count();
         self.rows = rows;
         self.more = more;
         self.marks.reset(self.rows.len(), self.commits, &layout);
@@ -251,18 +253,26 @@ impl GitView {
     }
 
     fn loaded(&self) -> Loaded {
-        let commits = self.rows.iter().filter(|r| !r.wip()).map(|r| (r.sha.clone(), r.parents.clone())).collect();
+        let commits = self.rows.iter().filter(|r| r.commit()).map(|r| (r.sha.clone(), r.parents.clone())).collect();
         Loaded { tips: self.tips.clone(), commits, more: self.more }
     }
 
     /// The rows `kept` lays out again, unless they changed since they were asked for.
     fn take_kept(&mut self, kept: Kept) -> Option<(Vec<GraphRow>, Layout, bool)> {
-        let start = kept.from + usize::from(self.rows.first().is_some_and(GraphRow::wip));
-        let loaded = self.rows.get(start..start + kept.rows.len())?;
-        if loaded.iter().zip(&kept.rows).any(|(g, r)| r.sha.as_deref() != Some(g.sha.as_ref())) {
+        let shas: Vec<&str> = kept.rows.iter().filter_map(|r| r.sha.as_deref()).collect();
+        let loaded: Vec<&GraphRow> = self.rows.iter().filter(|r| r.commit()).skip(kept.from).take(shas.len()).collect();
+        if loaded.len() < shas.len() || loaded.iter().zip(&shas).any(|(g, sha)| g.sha.as_ref() != *sha) {
             return None;
         }
-        let rows = std::mem::take(&mut self.rows).into_iter().skip(start).zip(kept.rows).map(|(g, row)| GraphRow { row, ..g }).collect();
+        let mut old = std::mem::take(&mut self.rows).into_iter().filter(GraphRow::commit).skip(kept.from);
+        let rows = kept
+            .rows
+            .into_iter()
+            .map(|row| match row.sha.is_some().then(|| old.next()).flatten() {
+                Some(g) => GraphRow { row, ..g },
+                None => load::graph_row(row, None),
+            })
+            .collect();
         Some((rows, kept.layout, kept.more))
     }
 
@@ -273,6 +283,7 @@ impl GitView {
             Some(Selected::Commit(sha)) => self.rows.iter().position(|r| r.sha == *sha),
             Some(Selected::Stash(stash)) => self.rows.iter().position(|r| r.stash().is_some_and(|s| s.sha == stash.sha)),
             Some(Selected::Wip) => self.rows.first().is_some_and(GraphRow::wip).then_some(0),
+            Some(Selected::Worktree(path)) => self.rows.iter().position(|r| r.worktree() == Some(path.as_ref())),
         };
         self.table.select(row);
         match (row, selected) {
@@ -291,9 +302,9 @@ impl GitView {
     fn anchor(&self) -> Option<Anchor> {
         let (top, row) = (self.table.scroll_top(), px(graph::ROW));
         let shown = |ix: usize| row * ix as f32 >= top - SNAP && self.table.viewport().is_some_and(|v| row * (ix + 1) as f32 <= top + v + SNAP);
-        let selected = self.table.selected().filter(|ix| shown(*ix)).and_then(|ix| self.rows.get(ix).filter(|r| !r.wip()).map(|r| (ix, r)));
+        let selected = self.table.selected().filter(|ix| shown(*ix)).and_then(|ix| self.rows.get(ix).filter(|r| r.commit()).map(|r| (ix, r)));
         let first = (top / row).floor().max(0.) as usize;
-        let (ix, r) = selected.or_else(|| self.rows.iter().enumerate().skip(first).find(|(_, r)| !r.wip()))?;
+        let (ix, r) = selected.or_else(|| self.rows.iter().enumerate().skip(first).find(|(_, r)| r.commit()))?;
         Some(Anchor { sha: r.sha.clone(), offset: row * ix as f32 - top, top })
     }
 

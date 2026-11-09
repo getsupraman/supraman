@@ -28,6 +28,7 @@ mod stash_bar;
 pub(crate) mod undo;
 mod wip;
 mod wip_row;
+mod worktree_rows;
 pub(crate) mod write_gate;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
@@ -50,13 +51,15 @@ mod undo_tests;
 mod stash_tests;
 #[cfg(test)]
 mod paint_tests;
+#[cfg(test)]
+mod worktree_rows_tests;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::{AnyElement, App, AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle, Pixels, Render, SharedString, Subscription, Task, Window, div, prelude::*, px};
 use supraman_gitman::write::Occupancy;
-use supraman_gitman::{History, Layout, Repo};
+use supraman_gitman::{History, Layout, Repo, WorktreeRow};
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::{banner, button};
 use supraman_ui::tooltip::Tooltip;
@@ -146,6 +149,8 @@ pub enum Selected {
     Commit(SharedString),
     /// A stash's row, its index commit.
     Stash(Arc<supraman_gitman::Stash>),
+    /// Another worktree's WIP row.
+    Worktree(Arc<std::path::Path>),
 }
 
 /// The selection changed; [`GitView::selected`] says to what.
@@ -173,6 +178,8 @@ pub struct GitView {
     history: Option<History>,
     rows: Vec<GraphRow>,
     commits: usize,
+    /// The other worktrees whose WIP rows the last graph read laid out.
+    worktree_rows: Vec<WorktreeRow>,
     wip: Option<Wip>,
     more: bool,
     paging: bool,
@@ -274,6 +281,7 @@ impl GitView {
                 history: None,
                 rows: Vec::new(),
                 commits: 0,
+                worktree_rows: Vec::new(),
                 wip: None,
                 more: false,
                 paging: false,
@@ -560,6 +568,9 @@ impl GitView {
 
     pub(crate) fn selected(&self) -> Option<Selected> {
         let row = self.rows.get(self.table.selected()?)?;
+        if let Some(path) = &row.row.worktree {
+            return Some(Selected::Worktree(path.clone()));
+        }
         Some(match (row.wip(), row.stash()) {
             (true, _) => Selected::Wip,
             (false, Some(stash)) => Selected::Stash(stash.clone()),
@@ -624,7 +635,7 @@ impl GitView {
         let _stall = stall::section("git tab: first page");
         match first {
             Ok(first) => {
-                self.commits = first.page.rows.iter().filter(|r| !r.wip()).count();
+                self.commits = first.page.rows.iter().filter(|r| r.commit()).count();
                 self.rows = first.page.rows;
                 self.more = first.page.more;
                 self.marks.reset(self.rows.len(), self.commits, &first.page.layout);
@@ -648,7 +659,7 @@ impl GitView {
                 self.load = Load::Ready;
                 self.select_conflict(before, cx);
                 self.refresh_undo(cx);
-                if *self.ref_panel.read(cx).walk() != self.follow.walked {
+                if *self.ref_panel.read(cx).walk() != self.follow.walked || self.wanted_worktrees(cx) != self.worktree_rows {
                     self.refresh_graph(None, cx);
                 }
             }
@@ -703,7 +714,7 @@ impl GitView {
         match page {
             Ok((page, walker)) => {
                 self.history = walker;
-                self.commits += page.rows.len();
+                self.commits += page.rows.iter().filter(|r| r.commit()).count();
                 let from = self.rows.len();
                 self.rows.extend(page.rows);
                 self.measure_lanes_from(from);
@@ -725,6 +736,9 @@ impl GitView {
             let footer = if col == 2 { self.page_error.clone().unwrap_or_else(|| "Loading more commits…".into()) } else { String::new() };
             return div().text_color(palette.muted).child(SharedString::from(footer)).into_any_element();
         };
+        if row.worktree().is_some() {
+            return self.worktree_cell(ix, col, palette, cx);
+        }
         let cell = match col {
             0 => match self.branch.read(cx).inline_field(&row.sha) {
                 Some(field) => cells::naming(ix, field, &self.hits),

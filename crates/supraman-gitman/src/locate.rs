@@ -46,6 +46,9 @@ pub struct BackgroundSettings {
     /// `git maintenance run` in the background; on when unset.
     #[serde(default)]
     pub maintenance: Option<bool>,
+    /// A WIP row in the graph for each other worktree with changes or a live session; on when unset.
+    #[serde(default)]
+    pub worktree_wip: Option<bool>,
 }
 
 pub const FETCH_EVERY_MINUTES: u32 = 1;
@@ -57,6 +60,10 @@ impl BackgroundSettings {
 
     pub fn maintains(&self) -> bool {
         self.maintenance.unwrap_or(true)
+    }
+
+    pub fn worktree_wips(&self) -> bool {
+        self.worktree_wip.unwrap_or(true)
     }
 }
 

@@ -1,5 +1,5 @@
-//! The settings window's GitMan page: an open Git tab's background fetch interval and background `git maintenance`,
-//! `[gitman] fetch_every_minutes` and `maintenance`, read and saved off the UI thread with the table's other keys
+//! The settings window's GitMan page: an open Git tab's background fetch interval, background `git maintenance` and
+//! the other worktrees' WIP rows, `[gitman] fetch_every_minutes`, `maintenance` and `worktree_wip`, read and saved off the UI thread with the table's other keys
 //! kept; each save reaches the open tabs at once.
 
 use std::path::PathBuf;
@@ -16,6 +16,7 @@ use theme::ActiveTheme as _;
 use crate::view::writes::Serial;
 
 pub const MAINTENANCE_KEY: &str = "gitman-maintenance";
+pub const WORKTREE_WIP_KEY: &str = "gitman-worktree-wip";
 
 fn digit(c: char) -> Option<char> {
     c.is_ascii_digit().then_some(c)
@@ -101,6 +102,13 @@ impl GitmanPage {
         cx.notify();
     }
 
+    pub fn toggle_worktree_wip(&mut self, cx: &mut Context<Self>) {
+        let on = !self.settings.worktree_wips();
+        self.settings.worktree_wip = Some(on);
+        self.save("worktree_wip", on, cx);
+        cx.notify();
+    }
+
     /// `[gitman] <key> = value` saved after the saves before it; the open tabs hear what the file then holds.
     fn save(&mut self, key: &'static str, value: impl serde::Serialize + Send + 'static, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone().filter(|_| self.loaded) else { return };
@@ -129,9 +137,11 @@ impl GitmanPage {
     fn rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let field = div().w(px(72.)).child(self.every.clone()).into_any_element();
         let tick = button::checkbox(&self.hits, MAINTENANCE_KEY, self.settings.maintains(), cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_maintenance(cx)));
+        let worktrees = button::checkbox(&self.hits, WORKTREE_WIP_KEY, self.settings.worktree_wips(), cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_worktree_wip(cx)));
         let mut rows = vec![
             row("Fetch every N minutes (0 = off)", "An open Git tab fetches every remote when it opens, each time it becomes the active tab, and then this often. A failure shows on the Pull button.", field, None, cx),
             row("Run git maintenance in the background", "Once an hour at most per repository, while no Claude session works in it: the commit-graph written, loose objects packed, packs repacked.", tick.into_any_element(), None, cx),
+            row("Show other worktrees' work in progress", "A row in the graph above each other worktree's HEAD while it has changes or a Claude session works in it.", worktrees.into_any_element(), None, cx),
         ];
         if let Some(error) = &self.error {
             rows.insert(0, supraman_ui::banner::tinted(cx.theme().status().error).my_2().child(error.clone()).into_any_element());
@@ -183,5 +193,27 @@ mod tests {
         assert_eq!((remote.pull, remote.prune), (Some(supraman_gitman::write::remote::PullChoice::Rebase), Some(false)), "the table's other keys kept");
         assert_eq!(saved.sessions.max_working, 3, "other tables kept");
         assert_eq!(page.read_with(cx, |p, cx| p.every().read(cx).text().to_string()), "5");
+    }
+
+    #[gpui::test]
+    fn the_worktree_wip_tick_is_on_by_default_and_saves_off(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            supraman_ui::init_globals(cx, "test");
+            supraman_ui::text_input::bind_keys(cx);
+        });
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(Settings::path(home.path()), "[gitman]
+maintenance = false
+").unwrap();
+        let hits = HitTargets::default();
+        let (page, cx) = cx.add_window_view(|window, cx| GitmanPage::new(Some(home.path().to_path_buf()), hits.clone(), window, cx));
+        cx.run_until_parked();
+        assert!(page.read_with(cx, |p, _| p.settings().worktree_wips()), "on while unset");
+        cx.update(|_, _| ());
+        let at = hits.borrow().get(WORKTREE_WIP_KEY).map(|h| h.bounds.center()).expect("painted");
+        cx.simulate_click(at, gpui::Modifiers::none());
+        cx.run_until_parked();
+        let saved = background_settings(&Settings::load(home.path()).unwrap());
+        assert_eq!((saved.worktree_wip, saved.maintenance), (Some(false), Some(false)), "saved off, the other key kept");
     }
 }

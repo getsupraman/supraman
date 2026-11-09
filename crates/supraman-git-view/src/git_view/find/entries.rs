@@ -182,7 +182,7 @@ pub(crate) fn files(paths: Vec<String>, history: bool) -> Vec<GitEntry> {
 /// The graph's loaded commits, the WIP row and stashes left out.
 pub(crate) fn commits(rows: &[GraphRow]) -> Vec<GitEntry> {
     rows.iter()
-        .filter(|r| !r.wip() && r.stash().is_none())
+        .filter(|r| r.commit() && r.stash().is_none())
         .map(|r| GitEntry::Commit { sha: r.sha.clone(), summary: r.summary.clone(), body: r.body.clone(), author: r.author.clone(), time_ms: r.time_ms })
         .collect()
 }

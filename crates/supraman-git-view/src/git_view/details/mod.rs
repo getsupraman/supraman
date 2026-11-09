@@ -201,7 +201,7 @@ impl CommitPanel {
         }
         match (selected, self.repo.clone()) {
             (None, _) => self.state = State::Empty,
-            (Some(Selected::Wip), _) => self.state = State::Empty,
+            (Some(Selected::Wip | Selected::Worktree(_)), _) => self.state = State::Empty,
             (Some(Selected::Commit(_) | Selected::Stash(_)), None) => self.state = State::Loading,
             (Some(selected @ (Selected::Commit(_) | Selected::Stash(_))), Some(repo)) => {
                 if matches!(self.state, State::Shown(_)) {
@@ -214,7 +214,7 @@ impl CommitPanel {
                     match selected {
                         Selected::Stash(stash) => load::load_stash(&repo, stash, order, all_files),
                         Selected::Commit(sha) => load::load_with(&repo, &sha, order, all_files),
-                        Selected::Wip => unreachable!(),
+                        Selected::Wip | Selected::Worktree(_) => unreachable!(),
                     }
                 });
                 cx.spawn(async move |this, cx| {

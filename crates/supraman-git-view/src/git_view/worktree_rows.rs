@@ -1,0 +1,130 @@
+//! The graph's WIP rows of the repository's other worktrees (GitKraken 12.6.2): which the layout places, their cells,
+//! and Open Worktree.
+
+use gpui::{AnyElement, ClickEvent, Context, SharedString, div, prelude::*, px};
+use supraman_gitman::{WorktreeRow, WorktreeWip};
+use supraman_ui::button;
+use supraman_ui::hit::hit_target;
+use supraman_ui::icon::Icon;
+use supraman_ui::tooltip::Tooltip;
+
+use super::branch::OpenGit;
+use super::colours::Palette;
+use super::live::Refresh;
+use super::load::Wip;
+use super::{GitView, Load, TABLE, background, cells, graph};
+
+/// What a worktree's WIP row says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WorktreeView {
+    /// `on <branch>` or `Detached HEAD`.
+    pub(crate) label: String,
+    /// The tab's WIP row's counts: `+1 ✎2 −1`.
+    pub(crate) counts: String,
+    /// The live session working there, whose pill stands in place of `WIP`.
+    pub(crate) session: Option<String>,
+    pub(crate) detached: bool,
+}
+
+impl WorktreeView {
+    fn of(wip: &WorktreeWip, session: Option<String>) -> WorktreeView {
+        let label = match wip.branch() {
+            Some(branch) => format!("on {branch}"),
+            None => "Detached HEAD".into(),
+        };
+        let c = wip.counts();
+        let counts = Wip { added: c.added as usize, modified: (c.modified + c.renamed) as usize, deleted: c.deleted as usize, conflicts: 0 }.counts();
+        WorktreeView { label, counts, session, detached: wip.detached() }
+    }
+}
+
+impl GitView {
+    /// The other worktrees the graph gives a WIP row: read, with a HEAD, and changed or worked in by a live session;
+    /// none while `[gitman] worktree_wip` is off.
+    pub(super) fn wanted_worktrees(&self, cx: &Context<Self>) -> Vec<WorktreeRow> {
+        if !background::worktree_wips(cx) {
+            return Vec::new();
+        }
+        let occupancy = self.gate.read(cx).occupancy().clone();
+        let mut rows: Vec<WorktreeRow> = self
+            .other_wips(cx)
+            .iter()
+            .filter(|w| w.status().is_some() && (w.counts().total() > 0 || !occupancy.who_works_in(w.path()).is_empty()))
+            .filter_map(|w| Some(WorktreeRow { head: w.head()?.to_string(), path: w.path().to_path_buf() }))
+            .collect();
+        rows.sort();
+        rows
+    }
+
+    /// A read of the other worktrees landed, or the setting changed: the graph laid out again when its worktree rows
+    /// change, else repainted.
+    pub(crate) fn worktrees_read(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.load, Load::Ready) && self.wanted_worktrees(cx) != self.worktree_rows {
+            self.live_refresh(Refresh::Graph, cx);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn worktree_view(&self, ix: usize, cx: &Context<Self>) -> Option<WorktreeView> {
+        let path = self.rows.get(ix)?.worktree()?;
+        let wip = background::wips(cx.entity_id(), cx)?.read(cx).get(path).cloned()?;
+        let session = self.gate.read(cx).occupancy().who_works_in(path).into_iter().next();
+        Some(WorktreeView::of(&wip, session))
+    }
+
+    /// Asks the workspace for row `ix`'s worktree's Git tab; a detached worktree's only when `detached_too`.
+    pub(crate) fn open_worktree(&mut self, ix: usize, detached_too: bool, cx: &mut Context<Self>) {
+        let Some(path) = self.rows.get(ix).and_then(|r| r.row.worktree.clone()) else { return };
+        if !detached_too && self.worktree_view(ix, cx).is_none_or(|v| v.detached) {
+            return;
+        }
+        cx.emit(OpenGit(path.to_path_buf()));
+    }
+
+    /// Row `ix`'s cell of column `col`, row `ix` a worktree's: its cells double-click to open it, and it has no menu.
+    pub(super) fn worktree_cell(&mut self, ix: usize, col: usize, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let view = self.worktree_view(ix, cx);
+        let row = &self.rows[ix];
+        let cell = match (col, view) {
+            (1, _) => graph::cell(ix, row, false, palette, &self.hits),
+            (0, Some(view)) => self.worktree_ref(ix, &view, palette, cx),
+            (2, Some(view)) => {
+                let lead = match view.session {
+                    Some(name) => supraman_ui::tabs::chip(name.into(), cx).relative().child(hit_target(&self.hits, format!("git-worktree-session-{ix}"))),
+                    None => div().relative().flex_none().text_color(palette.muted).child("WIP").child(hit_target(&self.hits, format!("git-worktree-wip-{ix}"))),
+                };
+                cells::wip_message(row, lead, view.counts, palette)
+            }
+            _ => div().into_any_element(),
+        };
+        div()
+            .id(SharedString::from(format!("git-worktree-{ix}-{col}")))
+            .size_full()
+            .on_click(cx.listener(move |this, e: &ClickEvent, _, cx| {
+                if e.click_count() == 2 {
+                    this.open_worktree(ix, false, cx);
+                }
+            }))
+            .child(cell)
+            .into_any_element()
+    }
+
+    /// The `on <branch>` label, then Open Worktree shown on the row's hover or selection.
+    fn worktree_ref(&self, ix: usize, view: &WorktreeView, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let colour = self.rows[ix].row.colour;
+        let label = cells::pill_box(colour, palette)
+            .relative()
+            .text_color(palette.muted)
+            .child(Icon::Worktree.svg(12., palette.muted))
+            .child(SharedString::from(view.label.clone()))
+            .child(hit_target(&self.hits, format!("git-worktree-ref-{ix}")));
+        let selected = self.table.selected() == Some(ix);
+        let open = button::revealed(&self.hits, format!("git-worktree-open-{ix}"), Icon::GitGraph.svg(12., palette.muted), px(18.), supraman_ui::table::row_group(TABLE), selected, cx)
+            .tooltip(Tooltip::text("Open Worktree"))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                this.open_worktree(ix, true, cx);
+            }));
+        div().size_full().flex().items_center().gap_1().overflow_hidden().child(label).child(open).into_any_element()
+    }
+}
