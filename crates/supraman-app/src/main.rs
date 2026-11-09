@@ -30,6 +30,7 @@ mod selftest_manage;
 mod selftest_mark;
 mod selftest_messages;
 mod selftest_notices;
+mod selftest_overflow;
 mod selftest_refresh;
 mod selftest_reopen;
 mod selftest_responsive;

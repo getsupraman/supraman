@@ -253,6 +253,11 @@ impl FleetView {
         ids.into_iter().for_each(|id| self.close_tab(id, cx));
     }
 
+    /// For the selftest: a tab that runs nothing until resumed.
+    pub fn open_placeholder(&mut self, saved: SavedTab, cx: &mut Context<Self>) -> u64 {
+        self.open_reopened(Reopen::Placeholder(saved), cx)
+    }
+
     /// For the selftest: the tabs as a start reopens them.
     pub fn restart_tabs(&mut self, cx: &mut Context<Self>) {
         self.tabs_frozen = false;
