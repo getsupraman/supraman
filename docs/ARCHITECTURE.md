@@ -10,6 +10,7 @@ Dependencies point down this list only; nothing below depends on anything above 
 | Crate | Owns | Depends on |
 |---|---|---|
 | `crates/supraman-app` | The `supraman.exe` binary: `FleetView` (left tree, tabs, Work tab, Inbox), Settings window, tray, the supervisor's driver, hand sessions, the selftests. | every crate below |
+| `crates/supraman-git-view` | GitMan's Git tab (`git_view`: the graph, ref panel, commit and WIP panels, diff viewer, palette, every write through its `WriteGate`, the background fetch and maintenance) and `occupancy::Live`, the live sessions every tab's gate asks. The app reaches it through `GitView` (`open_with`, `folder`, `set_shown`, `sizes`, `open_diff`, `draft_commit`, `open_find`/`close_find`, `probe`/`row_of`), `GitSizes`, `Selected`, `bind_keys`, `background::apply`, `branch::OpenGit`, `diff::Target` and `probe::Probe`; `test-support` adds `GitView::open` and `test_support::sizes` for the app's tests. | core, ui, gitman, editor |
 | `crates/sm` | The `sm` CLI (`lib.rs`, shared by `sm.exe` and the console-less `smw.exe` a schedule's task runs): `workspace`, `sessions`, `want`/`unwant`/`roster`, `inbox`/`send`/`tell`/`messages`, `schedule` (with `fire`, `run`, `report` and `secret set`; `fire.rs` the checks and the script stage, `run.rs` the session stage), `work`, `hook`, `plugin install`, `probe`. Edits files the app acts on; drives no supervisor, but owns a scheduled run end to end (launch, watch, stop), and `mcp-header`, every session's `headersHelper`. | claude, core, supervisor, workman |
 | `crates/supraman-supervisor` | Desired state per workspace, the pure `reconcile`, the executor (launch, resume, stop, mint, revoke), the shared busy budget, the Inbox rows (`NeedsYou`). No UI. | claude, core, workman |
 | `crates/supraman-claude` | The only code that knows the `claude` CLI: `agents --json --all` and health, `--bg` launch, stop, rm, resume, the peer pipe, transcripts, the background-service check. | core |
@@ -25,6 +26,7 @@ Dependencies point down this list only; nothing below depends on anything above 
 - Only `supraman-workman` talks HTTP to Workman (the supervisor's `mint.rs` uses its `http_agent`). Nothing in Supraman writes Workman items; the MCP tools are the agents' write path (C21).
 - `supraman-supervisor` takes a snapshot and returns actions; it never polls, never paints, and is ticked by the app.
 - `supraman-core` and `supraman-term` have no Supraman crate dependencies; `supraman-ui` has no `claude` or Workman knowledge.
+- `supraman-git-view` knows no session, workspace or tab: the app hands each `GitView` its `occupancy::Live` and places it in a tab.
 - `plugins/supraman` is not a crate: the Claude Code plugin loaded with `--plugin-dir` on sessions Supraman launches — `plugins/supraman/hooks/hooks.json` (exec-form `sm.exe hook <event>`), `plugins/supraman/roles/` (workspace, relay, repo), and the skills `workspace-controller` and `repo-controller`. See `plugins/supraman/README.md`.
 - `spikes/term-spike` is not product: the m0/5 terminal spike, kept building against `supraman-term` and `supraman-ui`. Nothing depends on it.
 - `probes/` holds the m0 measurement scripts; `scripts/` holds `scripts/release.ps1`, `scripts/shot.ps1` and `scripts/icon-gen/`.
@@ -145,7 +147,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 **GitMan and FileMan may reuse:** all of `supraman-core`, `supraman-ui`, `supraman-term`, `supraman-workman`, and `supraman-claude` if they run claude. Their settings live in their own `Settings` table (`Settings::section`/`set_section`) and their settings window registers its pages with `SettingsPages`.
 
 **App-only (in `crates/supraman-app`, not for reuse):**
-- `FleetView` (`crates/supraman-app/src/view.rs`, `crates/supraman-app/src/view/`) — the left tree (design B: the workspace row is the workspace session, the relay a glyph; `row_details.rs` the sections of a session's and a workspace's Details tab, `view/details.rs` that tab), tabs, menus, delete flow; `crates/supraman-app/src/work_view.rs` and `crates/supraman-app/src/work_view/` — the Work tab and Inbox; `crates/supraman-app/src/git_view.rs` and `crates/supraman-app/src/git_view/` — a repository's Git tab (`TabKind::Git`; its flow is The Git tab below).
+- `FleetView` (`crates/supraman-app/src/view.rs`, `crates/supraman-app/src/view/`) — the left tree (design B: the workspace row is the workspace session, the relay a glyph; `row_details.rs` the sections of a session's and a workspace's Details tab, `view/details.rs` that tab), tabs, menus, delete flow; `crates/supraman-app/src/work_view.rs` and `crates/supraman-app/src/work_view/` — the Work tab and Inbox; the Git tab's `TabKind::Git` and `view/git_tab.rs` (its view is `crates/supraman-git-view`; its flow is The Git tab below).
 - The tab lifecycle: open, attach, resume, and detach on close or quit (`view.rs` `close_tab`, `start_detach`, `quit_step`).
 - The supervisor policy and its driver: `supervise.rs`, the poll loop (`view.rs` `Poller`), `supraman-supervisor` itself.
 - Hand sessions (`hand.rs`), sign-in wiring (`signin.rs`), Workman setup wording (`workman_setup.rs`).
@@ -198,6 +200,7 @@ Attach opens `claude attach <id>` (`view.rs` `attach`); `resume` runs `claude --
 3. `WorkView::on_hub` re-reads the open view through `crates/supraman-workman/src/client.rs` `Client`, debounced, off the UI thread; `crates/supraman-app/src/work_view/inbox.rs` `WorkInbox` listens to the same hub. `WorkHub::reconfigure` runs after sign-in, sign-out or a URL change.
 
 ### The Git tab
+The `git_view/` paths below are in `crates/supraman-git-view/src/`.
 1. Open: a git folder row's graph icon (`view/left.rs`, hit key `git-graph-<ws>/<folder>`) → `view/git_tab.rs` `FleetView::open_git` → `open_or_focus`: one tab per folder, a second click focuses it. `GitView::open` takes the sizes a saved tab kept (`GitSizes`: column widths, the commit panel's width, its message height).
 2. Load: `GitView::reload` runs `git_view/load.rs` `first` off the UI thread: git located, the refs, the status, the first page laid out with a fresh `Layout`. No git, a git older than `FLOOR` or no repository is a notice in the tab.
 3. Page: the graph is a `table::Table`; its `on_near_end` runs `load::next` off the UI thread with the `Layout` carried over and appends the rows. A page that lands under a newer refresh is dropped by its token.

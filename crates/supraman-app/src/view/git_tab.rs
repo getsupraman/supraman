@@ -51,3 +51,7 @@ impl FleetView {
         id
     }
 }
+
+#[cfg(test)]
+#[path = "git_tab_tests.rs"]
+mod tests;

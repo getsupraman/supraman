@@ -61,7 +61,7 @@ mod left;
 mod links;
 mod manage;
 mod menu;
-pub(crate) mod occupancy;
+pub(crate) use supraman_git_view::occupancy;
 pub(crate) mod notices;
 mod reopen;
 mod results;
@@ -79,7 +79,7 @@ pub use links::Link;
 #[cfg(test)]
 use {links::{link_target, missing}, supraman_term::MaybeNavigationTarget};
 
-pub(crate) use left::{grid, secondary};
+pub(crate) use left::grid;
 pub use manage::Removing;
 pub use menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuTarget};
 
@@ -1298,7 +1298,7 @@ impl FleetView {
                     .filter(|s| fleet::attachable(s, &s.health(now)))
                     .map(|s| LiveSession { claude_session_id: s.session_id.clone(), id: s.id.clone(), name: s.name.clone() })
                     .collect();
-                self.occupancy.keep(&sessions, now);
+                self.occupancy.set(sessions.iter().filter(|s| fleet::is_alive(&s.health(now))).map(|s| (s.name.clone(), s.cwd.clone())).collect());
                 self.sessions = sessions;
                 self.drop_deleted();
                 self.main_repos = refresh.main_repos;

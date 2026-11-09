@@ -9,6 +9,7 @@ use anyhow::{Context as _, anyhow, bail};
 use supraman_core::schedule::{self, FakeRegistrar, Fired, Outcome, RunEvent, RunRecord, Status, TaskState};
 use supraman_core::{Folder, FolderKind, Registry, Workspace};
 use gpui::{AsyncWindowContext, Entity, MouseButton};
+use supraman_ui::themes::selftest_light::LIGHT;
 
 use crate::selftest::{cargo_root, click, double_click, until};
 use crate::selftest_manage::{menu_open, press_painted, shot};
@@ -177,15 +178,6 @@ async fn others(view: &Entity<FleetView>, fake: &FakeRegistrar, dir: &Path, cx: 
     until(view, cx, WITHIN, "the other schedules gone", |v| (!painted(v, &group) && !painted(v, &top)).then_some(())).await?;
     Ok("9 other schedules: one under the workspace, one at the top, the rest left out; Open in Task Scheduler and Copy action, no write".into())
 }
-
-pub(crate) const LIGHT: &str =r##"{"themes":[{"name":"Selftest Light","appearance":"light","style":{
-"background":"#F3F3F3","editor.background":"#FFFFFF","editor.foreground":"#1F1F1F","panel.background":"#F3F3F3","surface.background":"#F3F3F3","elevated_surface.background":"#FFFFFF",
-"element.background":"#F0F0F0","element.hover":"#E4E4E4","element.active":"#D8D8D8","element.selected":"#DDE8F5",
-"ghost_element.hover":"#E8E8E8","ghost_element.active":"#DCDCDC","ghost_element.selected":"#DDE8F5",
-"text":"#1F1F1F","text.muted":"#5A5A5A","text.placeholder":"#6E6E6E","border":"#D0D0D0","border.variant":"#E2E2E2","border.focused":"#005FB8","border.selected":"#005FB8",
-"tab_bar.background":"#F3F3F3","tab.active_background":"#FFFFFF","tab.inactive_background":"#F3F3F3","title_bar.background":"#F3F3F3","status_bar.background":"#F3F3F3",
-"terminal.background":"#FFFFFF","terminal.foreground":"#1F1F1F",
-"warning":"#8A5A00","success":"#1E7A35","error":"#B3261E","info":"#005FB8","hint":"#5A5A5A"}}]}"##;
 
 async fn confirm_text(view: &Entity<FleetView>, what: &str, needle: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     until(view, cx, WITHIN, what, |v| v.confirm.as_ref().filter(|c| c.text.contains(needle)).map(|c| c.text.clone()))

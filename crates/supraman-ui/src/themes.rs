@@ -21,6 +21,7 @@ use serde_json::Value;
 use theme::{AccentColors, Appearance, StatusColors, Theme, ThemeColors};
 
 pub mod lanes;
+pub mod selftest_light;
 pub mod syntax;
 
 pub const DARK_MODERN: &str = "VS Code Dark Modern";
