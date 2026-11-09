@@ -46,6 +46,12 @@ pub enum MenuAction {
     History { workspace: String, id: String },
     RemoveSchedule { workspace: String, id: String },
     OpenTaskScheduler,
+    /// The Git tab of the repository whose top this is ([`super::tab_menu`]).
+    OpenGit(PathBuf),
+    CloseTab(u64),
+    CloseOtherTabs(u64),
+    CloseTabsRight(u64),
+    ReopenClosed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

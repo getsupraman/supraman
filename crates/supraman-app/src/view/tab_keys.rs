@@ -73,6 +73,10 @@ impl TabKeyState {
         Self { mode, closed: Vec::new() }
     }
 
+    pub fn has_closed(&self) -> bool {
+        !self.closed.is_empty()
+    }
+
     fn push(&mut self, saved: SavedTab) {
         if self.closed.len() == CLOSED_KEPT {
             self.closed.remove(0);

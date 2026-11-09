@@ -1,5 +1,7 @@
 //! The right pane: the tab strip with its new-shell buttons, and the active tab's content.
 
+mod tab_menu;
+
 use super::*;
 
 impl FleetView {
@@ -38,6 +40,7 @@ impl FleetView {
                 supraman_ui::tabs::reorder(&mut this.tabs, from, to);
                 cx.notify();
             },
+            |this: &mut Self, id, at, cx| this.open_tab_menu(id, at, cx),
             window,
             cx,
         );
