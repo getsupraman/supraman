@@ -340,14 +340,14 @@ fn band_has_keys(view: &Entity<GitView>, cx: &mut VisualTestContext) -> bool {
 }
 
 #[gpui::test]
-fn a_question_is_one_band_across_the_top_of_the_graph_that_enter_and_esc_answer(cx: &mut TestAppContext) {
+fn a_question_is_one_band_across_the_tab_under_the_toolbar_that_enter_and_esc_answer(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let (view, cx) = open(&f.worktree, cx);
     press(&view, "refpanel-name-local/feature", MouseButton::Right, 1, cx);
     click(&view, "menu-ref-delete-feature", cx);
     assert!(painted(&view, "git-ref-ask-band", cx));
-    let [area, band, text, yes, cancel] = ["git-graph-area", "git-ref-ask-band", "git-ref-ask-text", "git-ref-ask-yes", "git-ref-ask-cancel"].map(|k| bounds(&view, k, cx));
-    assert_eq!((band.origin, band.size.width), (area.origin, area.size.width), "across the top of the graph area");
+    let [area, band, text, yes, cancel] = ["git-below-toolbar", "git-ref-ask-band", "git-ref-ask-text", "git-ref-ask-yes", "git-ref-ask-cancel"].map(|k| bounds(&view, k, cx));
+    assert_eq!((band.origin, band.size.width), (area.origin, area.size.width), "across the tab under the toolbar");
     assert_eq!(band.size.height, supraman_ui::confirm::ROW, "one line");
     assert!((yes.center().y - text.center().y).abs() < px(1.) && (cancel.center().y - text.center().y).abs() < px(1.), "the text and its answers on one line");
 

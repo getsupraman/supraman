@@ -46,14 +46,14 @@ fn press(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
     redraw(view, cx);
 }
 
-/// The band `key` across the top of the graph area, `inline` on one line with its text.
+/// The band `key` across the tab under the toolbar, `inline` on one line with its text.
 fn inline(view: &Entity<GitView>, key: &str, inline: &[&str], cx: &mut VisualTestContext) {
     let hits = view.read_with(cx, |v, _| v.hits.clone());
     hits.borrow_mut().clear();
     redraw(view, cx);
     let at = |k: &str| hits.borrow().get(k).map(|h| h.bounds).unwrap_or_else(|| panic!("{k} is painted"));
-    let (area, band, text) = (at("git-graph-area"), at(&format!("{key}-band")), at(&format!("{key}-text")));
-    assert_eq!((band.origin, band.size.width), (area.origin, area.size.width), "{key}: across the top of the graph area");
+    let (area, band, text) = (at("git-below-toolbar"), at(&format!("{key}-band")), at(&format!("{key}-text")));
+    assert_eq!((band.origin, band.size.width), (area.origin, area.size.width), "{key}: across the tab under the toolbar");
     assert_eq!(band.size.height, supraman_ui::confirm::ROW, "{key}: one line in {:?}", area.size.width);
     for k in inline {
         assert!((at(k).center().y - text.center().y).abs() < px(1.), "{k} on the text's line");
