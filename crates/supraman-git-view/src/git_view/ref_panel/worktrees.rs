@@ -37,7 +37,7 @@ pub(crate) struct RefWips {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Summary {
     Reading,
-    /// `↑1 ↓2`, then `+1 ✎2 −1`; either may be empty.
+    /// `2↑ 1↓`, then `+1 ✎2 −1`; either may be empty.
     Said { upstream: String, counts: String },
 }
 

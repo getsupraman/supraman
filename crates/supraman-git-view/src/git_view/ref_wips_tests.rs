@@ -149,7 +149,7 @@ fn a_worktree_row_shows_its_icon_its_lock_or_prunable_mark_its_folder_where_it_d
 
     let ahead = git_in(&t.f.git, &t.f.worktree, &["rev-list", "--count", "main..side"], &[], None);
     let behind = git_in(&t.f.git, &t.f.worktree, &["rev-list", "--count", "side..main"], &[], None);
-    let upstream = [(ahead.trim(), "↑"), (behind.trim(), "↓")].iter().filter(|(n, _)| *n != "0").map(|(n, a)| format!("{a}{n}")).collect::<Vec<_>>().join(" ");
+    let upstream = [(ahead.trim(), "↑"), (behind.trim(), "↓")].iter().filter(|(n, _)| *n != "0").map(|(n, a)| format!("{n}{a}")).collect::<Vec<_>>().join(" ");
     assert!(!upstream.is_empty(), "side and main differ");
     assert_eq!(summary(&view, &wt, cx), Some(format!("{upstream} +1 ✎1")), "the upstream's arrows, then the graph row's counts");
     assert!(painted(&view, &format!("refpanel-wip-{wt}"), cx));

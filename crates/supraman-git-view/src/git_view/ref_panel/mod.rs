@@ -59,6 +59,11 @@ pub(crate) struct Built {
 }
 
 /// The remote whose row `path` is: `remote/<name>`, the folder its branches sit in.
+/// Ahead of and behind an upstream as every ref row says it: `2↑ 1↓`, the zero ones left out.
+pub(crate) fn track(ahead: u32, behind: u32) -> String {
+    [(ahead, "↑"), (behind, "↓")].iter().filter(|(n, _)| *n > 0).map(|(n, arrow)| format!("{n}{arrow}")).collect::<Vec<_>>().join(" ")
+}
+
 pub(crate) fn remote_folder(path: &str) -> Option<&str> {
     path.strip_prefix("remote/").filter(|name| !name.is_empty() && !name.contains('/'))
 }

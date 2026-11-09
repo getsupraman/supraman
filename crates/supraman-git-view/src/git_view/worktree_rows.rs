@@ -23,7 +23,7 @@ pub(crate) struct WorktreeView {
     pub(crate) label: String,
     /// The tab's WIP row's counts: `+1 ✎2 −1`.
     pub(crate) counts: String,
-    /// Ahead of and behind its upstream: `↑1 ↓2`, the zero ones left out.
+    /// Ahead of and behind its upstream ([`super::ref_panel::track`]).
     pub(crate) upstream: String,
     /// The live session working there, whose pill stands in place of `WIP`.
     pub(crate) session: Option<String>,
@@ -39,7 +39,7 @@ impl WorktreeView {
         let c = wip.counts();
         let counts = Wip { added: c.added as usize, modified: (c.modified + c.renamed) as usize, deleted: c.deleted as usize, conflicts: 0 }.counts();
         let (ahead, behind) = wip.upstream().map_or((0, 0), |(_, ahead, behind)| (ahead, behind));
-        let upstream = [(ahead, "↑"), (behind, "↓")].iter().filter(|(n, _)| *n > 0).map(|(n, arrow)| format!("{arrow}{n}")).collect::<Vec<_>>().join(" ");
+        let upstream = super::ref_panel::track(ahead, behind);
         WorktreeView { label, counts, upstream, session, detached: wip.detached() }
     }
 }

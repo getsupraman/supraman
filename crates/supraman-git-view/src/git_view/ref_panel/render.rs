@@ -87,8 +87,7 @@ impl RefPanel {
 
     fn track(entry: &Entry) -> Option<String> {
         let Entry::Branch { ahead, behind, .. } = entry else { return None };
-        let parts: Vec<String> = [(*ahead, "↑"), (*behind, "↓")].iter().filter(|(n, _)| *n > 0).map(|(n, arrow)| format!("{n}{arrow}")).collect();
-        (!parts.is_empty()).then(|| parts.join(" "))
+        Some(super::track(*ahead, *behind)).filter(|t| !t.is_empty())
     }
 
     fn file(&self, list: &str, row: &Row<'_, Entry, Keys>, entry: &Entry, cx: &mut Context<Self>) -> Div {
