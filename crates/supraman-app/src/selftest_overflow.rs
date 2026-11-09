@@ -14,7 +14,7 @@ use supraman_ui::tabs::{LIST, LIST_BUTTON, STRIP, TAB_MIN, tab_width};
 
 use crate::{
     saved_tabs::SavedTab,
-    selftest::{click, sleep, until},
+    selftest::{click, drawn, until},
     selftest_supervise::type_text,
     selftest_tabs::press,
     view::FleetView,
@@ -53,11 +53,10 @@ fn forget(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowContext) {
     view.read_with(cx, |v, _| v.hits.borrow_mut().remove(key));
 }
 
-/// Painted again within a few frames after [`forget`].
-async fn painted(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowContext) -> bool {
-    view.update(cx, |_, cx| cx.notify());
-    sleep(cx, Duration::from_millis(300)).await;
-    hit(view, key, cx).is_some()
+/// Painted on the next frame after [`forget`].
+async fn painted(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<bool> {
+    drawn(cx).await?;
+    Ok(hit(view, key, cx).is_some())
 }
 
 fn visible(view: &Entity<FleetView>, id: u64, cx: &mut AsyncWindowContext) -> bool {
@@ -99,7 +98,7 @@ async fn open(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
         bail!("the strip ({room:?}) never overflowed or never fitted: {fitted} of {COUNT} tabs fitted at the minimum");
     }
     forget(view, &format!("{STRIP}-fade-left"), cx);
-    if !painted(view, &format!("{STRIP}-fade-left"), cx).await || visible(view, ids[0], cx) {
+    if !painted(view, &format!("{STRIP}-fade-left"), cx).await? || visible(view, ids[0], cx) {
         bail!("{COUNT} tabs, the last opened: no fade at the left, or the first tab still whole in view");
     }
     crate::selftest_manage::shot("tv-overflow-strip", cx).await;
@@ -137,7 +136,7 @@ async fn wheel(view: &Entity<FleetView>, ids: &[u64], cx: &mut AsyncWindowContex
             }
             scroll(at, dy, cx)?;
             n += 1;
-            sleep(cx, Duration::from_millis(40)).await;
+            drawn(cx).await?;
         }
         notches.push(n);
     }
@@ -179,14 +178,21 @@ async fn list(view: &Entity<FleetView>, ids: &[u64], cx: &mut AsyncWindowContext
     })
     .await?;
     forget(view, LIST, cx);
-    if painted(view, LIST, cx).await {
+    if painted(view, LIST, cx).await? {
         bail!("the ⌄ list stayed open after its row was clicked");
     }
 
     click(view, LIST_BUTTON, cx).await?;
     until(view, cx, WITHIN, "the ⌄ list open again", |v| v.hits.borrow().contains_key(LIST).then_some(())).await?;
+    let selected = format!("{LIST}-selected");
+    forget(view, &selected, cx);
+    forget(view, &row(last), cx);
     type_text(cx, "30")?;
-    sleep(cx, Duration::from_millis(200)).await;
+    until(view, cx, WITHIN, "the last tab's row selected for \"30\"", |v| {
+        let hits = v.hits.borrow();
+        (hits.get(&selected)?.bounds == hits.get(&row(last))?.bounds).then_some(())
+    })
+    .await?;
     press(cx, "enter", Modifiers::default())?;
     until(view, cx, WITHIN, "the last tab active and whole in view", |v| {
         let shown = v.hits.borrow().get(&format!("tab-{last}")).is_some_and(|h| h.fully_visible());
@@ -223,23 +229,21 @@ async fn drag(view: &Entity<FleetView>, ids: &[u64], cx: &mut AsyncWindowContext
         }
         moved(point(edge.x + px((moves % 2) as f32), edge.y), cx)?;
         moves += 1;
-        sleep(cx, Duration::from_millis(16)).await;
+        drawn(cx).await?;
     }
     let onto = hit(view, &format!("tab-{first}"), cx).map(|h| h.bounds.center());
     let reached = visible(view, first, cx);
     let to = onto.filter(|_| reached).unwrap_or(edge);
     moved(to, cx)?;
-    sleep(cx, Duration::from_millis(100)).await;
+    drawn(cx).await?;
     cx.update(|window, cx| {
         window.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: to, modifiers: none, click_count: 1 }), cx);
     })?;
-    sleep(cx, Duration::from_millis(100)).await;
     if !reached {
         bail!("dragging tab {last} at the strip's left edge for {moves} moves never scrolled tab {first} into view");
     }
-    let order: Vec<u64> = view.read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).collect());
-    if order.first() != Some(&last) || order.get(1) != Some(&first) {
-        bail!("tab {last} dropped on tab {first} after the edge scroll: the order starts {:?}", &order[..3.min(order.len())]);
-    }
+    let order = |v: &FleetView| -> Vec<u64> { v.tabs.iter().take(3).map(|t| t.id).collect() };
+    let dropped = until(view, cx, WITHIN, "the last tab dropped first", |v| (order(v).get(..2) == Some(&[last, first][..])).then_some(())).await;
+    dropped.map_err(|e| anyhow!("{e:#}: tab {last} dropped on tab {first} after the edge scroll, the order starts {:?}", view.read_with(cx, |v, _| order(v))))?;
     Ok(format!("a drag at the left edge scrolled to the first tab in {moves} moves and dropped the last tab first"))
 }

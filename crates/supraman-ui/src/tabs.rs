@@ -12,8 +12,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, AnyView, App, ClickEvent, Context, Anchor, Div, DragMoveEvent, Entity, FocusHandle, MouseButton, MouseDownEvent, Pixels,
-    ScrollHandle, SharedString, Subscription, Svg, Window, anchored, canvas, deferred, div, linear_color_stop, linear_gradient, point,
+    AnyElement, AnyView, App, ClickEvent, Context, Anchor, Div, DragMoveEvent, Entity, FocusHandle, Hsla, MouseButton, MouseDownEvent, Pixels,
+    ScrollHandle, SharedString, Stateful, Subscription, Svg, Window, anchored, canvas, deferred, div, linear_color_stop, linear_gradient, point,
     prelude::*, px,
 };
 use theme::ActiveTheme as _;
@@ -99,6 +99,8 @@ struct Strip {
     shown_active: Option<u64>,
     reveal: Option<u64>,
     list: Option<Listed>,
+    /// A press on ⌄ since its last click.
+    pressed: bool,
     /// The press that closed the list was on ⌄: its click must not open it again.
     swallow: bool,
 }
@@ -162,7 +164,8 @@ pub fn tab_strip<V: 'static>(
     window: &mut Window,
     cx: &mut Context<V>,
 ) -> Div {
-    let colors = cx.theme().colors().clone();
+    let colors = cx.theme().colors();
+    let (bar, border) = (colors.tab_bar_background, colors.border);
     let strip = window.use_keyed_state(STRIP, cx, |_, _| Strip::default());
     let ids: Rc<[u64]> = tabs.iter().map(|t| t.id).collect();
     let entries: Vec<TabEntry> = tabs.iter().map(|t| TabEntry { id: t.id, title: t.title.clone(), active: active == Some(t.id) }).collect();
@@ -171,19 +174,32 @@ pub fn tab_strip<V: 'static>(
     let fit = Fit { width, content: width * tabs.len() as f32, room };
     strip.update(cx, |s, _| s.settle(&ids, active, fit));
     sync_list(&strip, entries.clone(), cx);
-    let (scroll, measured) = {
-        let s = strip.read(cx);
-        (s.scroll.clone(), s.room.clone())
-    };
-    let (cut_left, cut_right) = cut(-scroll.offset().x, room, fit.content);
-
-    let mut row = div().id("tab-strip-scroll").size_full().flex().overflow_x_scroll().track_scroll(&scroll);
+    let mut row = div().id("tab-strip-scroll").size_full().flex().overflow_x_scroll().track_scroll(&strip.read(cx).scroll);
     for (ix, tab) in tabs.into_iter().enumerate() {
         let header = Header { ix, active, width, ids: &ids, strip: &strip };
         row = row.child(header.render(hits, tab, &close_icon, &on_activate, &on_close, &on_move, cx));
     }
+    div()
+        .flex()
+        .flex_none()
+        .h(px(32.))
+        .items_end()
+        .bg(bar)
+        .border_b_1()
+        .border_color(border)
+        .child(viewport(hits, &strip, row, fit, bar, cx))
+        .child(list_button(hits, entries, &strip, on_activate, cx))
+}
+
+/// The tabs' row clipped to the room left beside ⌄: it measures that room, fades a cut edge, and scrolls while a tab is
+/// dragged near an edge.
+fn viewport<V>(hits: &HitTargets, strip: &Entity<Strip>, row: Stateful<Div>, fit: Fit, bg: Hsla, cx: &Context<V>) -> Stateful<Div> {
+    let (scroll, measured) = {
+        let s = strip.read(cx);
+        (s.scroll.clone(), s.room.clone())
+    };
+    let (cut_left, cut_right) = cut(-scroll.offset().x, fit.room, fit.content);
     let fade = |left: bool| {
-        let bg = colors.tab_bar_background;
         let side = if left { "left" } else { "right" };
         div()
             .absolute()
@@ -196,7 +212,7 @@ pub fn tab_strip<V: 'static>(
             .child(hit_target(hits, format!("{STRIP}-fade-{side}")))
     };
     let dragged = strip.clone();
-    let viewport = div()
+    div()
         .id(STRIP)
         .relative()
         .flex_1()
@@ -232,18 +248,7 @@ pub fn tab_strip<V: 'static>(
                     cx.notify();
                 });
             }
-        });
-
-    div()
-        .flex()
-        .flex_none()
-        .h(px(32.))
-        .items_end()
-        .bg(colors.tab_bar_background)
-        .border_b_1()
-        .border_color(colors.border)
-        .child(viewport)
-        .child(list_button(hits, entries, &strip, on_activate, cx))
+        })
 }
 
 struct Header<'a> {
@@ -353,7 +358,7 @@ fn list_button<V: 'static>(
 ) -> AnyElement {
     let colors = cx.theme().colors().clone();
     let open = strip.read(cx).list.as_ref().map(|l| l.palette.clone());
-    let (toggled, list_hits) = (strip.clone(), hits.clone());
+    let (toggled, list_hits, pressed) = (strip.clone(), hits.clone(), strip.clone());
     button::ghost(hits, LIST_BUTTON, cx)
         .flex()
         .flex_none()
@@ -366,6 +371,11 @@ fn list_button<V: 'static>(
         .when(open.is_some(), |d| d.bg(colors.ghost_element_selected))
         .child(Icon::ChevronDown.svg(14., colors.text_muted).group_hover(LIST_BUTTON, |s| s.text_color(colors.text)))
         .tooltip(Tooltip::text("All tabs"))
+        .capture_any_mouse_down(move |e: &MouseDownEvent, _, cx| {
+            if e.button == MouseButton::Left {
+                pressed.update(cx, |s, _| s.pressed = true);
+            }
+        })
         .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| {
             toggle_list(&toggled, &list_hits, entries.clone(), on_activate.clone(), window, cx);
         }))
@@ -393,6 +403,7 @@ fn toggle_list<V: 'static>(
         let s = strip.read(cx);
         (s.swallow, s.list.is_some())
     };
+    strip.update(cx, |s, _| s.pressed = false);
     if swallow || open {
         strip.update(cx, |s, cx| {
             s.swallow = false;
@@ -407,7 +418,7 @@ fn toggle_list<V: 'static>(
         palette.set_top("Filter tabs…", "TABS", cx);
         palette
     });
-    let (listed, button_hits) = (strip.clone(), hits.clone());
+    let listed = strip.clone();
     let events = cx.subscribe_in(&palette, window, move |this: &mut V, _, event: &PaletteEvent<TabEntry>, window, cx| match event {
         PaletteEvent::Open(entry) => {
             let id = entry.id;
@@ -420,9 +431,8 @@ fn toggle_list<V: 'static>(
             cx.notify();
         }
         PaletteEvent::Close => {
-            let on_button = button_hits.borrow().get(LIST_BUTTON).is_some_and(|hit| hit.bounds.contains(&window.mouse_position()));
             listed.update(cx, |s, cx| {
-                s.swallow = on_button;
+                s.swallow = std::mem::take(&mut s.pressed);
                 s.close_list(window, cx);
                 cx.notify();
             });
@@ -510,7 +520,76 @@ fn is_format(c: char) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use gpui::{Modifiers, TestAppContext, VisualTestContext, svg};
+
     use super::*;
+
+    struct Tabs {
+        hits: HitTargets,
+        active: Option<u64>,
+    }
+
+    impl Render for Tabs {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.hits.borrow_mut().clear();
+            let tabs = (1..=3)
+                .map(|id| TabHeader { id, label: div().child(format!("tab {id}")).into_any_element(), title: format!("tab {id}").into(), tooltip: None })
+                .collect();
+            let strip = tab_strip(&self.hits, tabs, self.active, svg, |this: &mut Tabs, id, _| this.active = Some(id), |_, _, _| {}, |_, _, _, _| {}, window, cx);
+            div().size_full().child(strip)
+        }
+    }
+
+    fn strip(cx: &mut TestAppContext) -> (Entity<Tabs>, &mut VisualTestContext) {
+        cx.update(|cx| {
+            crate::init_globals(cx, "test");
+            crate::text_input::bind_keys(cx);
+        });
+        let (view, cx) = cx.add_window_view(|_, _| Tabs { hits: HitTargets::default(), active: Some(1) });
+        cx.run_until_parked();
+        (view, cx)
+    }
+
+    fn list_open(view: &Entity<Tabs>, cx: &mut VisualTestContext) -> bool {
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        view.read_with(cx, |v, _| v.hits.borrow().contains_key(LIST))
+    }
+
+    fn list_button_at(view: &Entity<Tabs>, cx: &mut VisualTestContext) -> gpui::Point<Pixels> {
+        view.read_with(cx, |v, _| v.hits.borrow().get(LIST_BUTTON).copied()).expect("the ⌄ paints").bounds.center()
+    }
+
+    fn click_list_button(view: &Entity<Tabs>, cx: &mut VisualTestContext) {
+        let at = list_button_at(view, cx);
+        cx.simulate_click(at, Modifiers::none());
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn esc_with_the_pointer_on_the_list_button_leaves_its_next_click_opening_the_list(cx: &mut TestAppContext) {
+        let (view, cx) = strip(cx);
+        click_list_button(&view, cx);
+        assert!(list_open(&view, cx), "a click on ⌄ opens the list");
+        let at = list_button_at(&view, cx);
+        cx.simulate_mouse_move(at, None, Modifiers::none());
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(!list_open(&view, cx), "Esc closes the list");
+        click_list_button(&view, cx);
+        assert!(list_open(&view, cx), "the next click on ⌄ opens the list again");
+    }
+
+    #[gpui::test]
+    fn a_click_on_the_list_button_while_open_closes_the_list(cx: &mut TestAppContext) {
+        let (view, cx) = strip(cx);
+        click_list_button(&view, cx);
+        assert!(list_open(&view, cx));
+        click_list_button(&view, cx);
+        assert!(!list_open(&view, cx), "the press that closed the list does not open it again on its click");
+        click_list_button(&view, cx);
+        assert!(list_open(&view, cx));
+    }
 
     #[test]
     fn tabs_cycle_wrapping_both_ways() {
