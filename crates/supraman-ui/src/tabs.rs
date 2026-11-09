@@ -3,7 +3,7 @@
 //! the width evenly down to [`TAB_MIN`], then the strip scrolls sideways (wheel or touchpad, a fade on a cut
 //! edge); the active tab is scrolled whole into view whenever it changes or is clicked. A tab drags as a
 //! [`DraggedTab`]; dropped on another tab of the strip, the owner moves it there, and a drag near an edge
-//! scrolls the strip. A session row drags as a [`DraggedSession`].
+//! scrolls the strip. A session row drags as a [`DraggedSession`]. A right click on a tab is the owner's `on_menu`.
 
 mod fit;
 mod list;
@@ -13,7 +13,7 @@ use std::rc::Rc;
 
 use gpui::{
     AnyElement, AnyView, App, ClickEvent, Context, Anchor, Div, DragMoveEvent, Entity, FocusHandle, Hsla, MouseButton, MouseDownEvent, Pixels,
-    ScrollHandle, SharedString, Stateful, Subscription, Svg, Window, anchored, canvas, deferred, div, linear_color_stop, linear_gradient, point,
+    Point, ScrollHandle, SharedString, Stateful, Subscription, Svg, Window, anchored, canvas, deferred, div, linear_color_stop, linear_gradient, point,
     prelude::*, px,
 };
 use theme::ActiveTheme as _;
@@ -150,8 +150,9 @@ impl Strip {
 /// The strip: its viewport painted under [`STRIP`] (fades under `tab-strip-fade-left`/`-right`), each tab under
 /// `tab-<id>`, its close button under `close-tab-<id>`, the ⌄ under [`LIST_BUTTON`] and its list's rows under
 /// `tab-list-row-<id>`. `close_icon` draws the close glyph; a middle click closes too. A tab dropped on another
-/// gets `on_move(from, to)`, indices into `tabs`; the target shows a bar on the side the tab lands. `active`
-/// changing, by whatever means, scrolls that tab into view.
+/// gets `on_move(from, to)`, indices into `tabs`; the target shows a bar on the side the tab lands. A right click
+/// on a tab gets `on_menu(id, position)`, the pointer's window position. `active` changing, by whatever means,
+/// scrolls that tab into view.
 #[allow(clippy::too_many_arguments)]
 pub fn tab_strip<V: 'static>(
     hits: &HitTargets,
@@ -161,6 +162,7 @@ pub fn tab_strip<V: 'static>(
     on_activate: impl Fn(&mut V, u64, &mut Context<V>) + Clone + 'static,
     on_close: impl Fn(&mut V, u64, &mut Context<V>) + Clone + 'static,
     on_move: impl Fn(&mut V, usize, usize, &mut Context<V>) + Clone + 'static,
+    on_menu: impl Fn(&mut V, u64, Point<Pixels>, &mut Context<V>) + Clone + 'static,
     window: &mut Window,
     cx: &mut Context<V>,
 ) -> Div {
@@ -177,7 +179,8 @@ pub fn tab_strip<V: 'static>(
     let mut row = div().id("tab-strip-scroll").size_full().flex().overflow_x_scroll().track_scroll(&strip.read(cx).scroll);
     for (ix, tab) in tabs.into_iter().enumerate() {
         let header = Header { ix, active, width, ids: &ids, strip: &strip };
-        row = row.child(header.render(hits, tab, &close_icon, &on_activate, &on_close, &on_move, cx));
+        let handlers = Handlers { activate: &on_activate, close: &on_close, moved: &on_move, menu: &on_menu };
+        row = row.child(header.render(hits, tab, &close_icon, handlers, cx));
     }
     div()
         .flex()
@@ -251,6 +254,13 @@ fn viewport<V>(hits: &HitTargets, strip: &Entity<Strip>, row: Stateful<Div>, fit
         })
 }
 
+struct Handlers<'a, A, C, M, U> {
+    activate: &'a A,
+    close: &'a C,
+    moved: &'a M,
+    menu: &'a U,
+}
+
 struct Header<'a> {
     ix: usize,
     active: Option<u64>,
@@ -260,23 +270,19 @@ struct Header<'a> {
 }
 
 impl Header<'_> {
-    #[allow(clippy::too_many_arguments)]
-    fn render<V: 'static>(
-        self,
-        hits: &HitTargets,
-        tab: TabHeader,
-        close_icon: &impl Fn() -> Svg,
-        on_activate: &(impl Fn(&mut V, u64, &mut Context<V>) + Clone + 'static),
-        on_close: &(impl Fn(&mut V, u64, &mut Context<V>) + Clone + 'static),
-        on_move: &(impl Fn(&mut V, usize, usize, &mut Context<V>) + Clone + 'static),
-        cx: &mut Context<V>,
-    ) -> AnyElement {
+    fn render<V: 'static, A, C, M, U>(self, hits: &HitTargets, tab: TabHeader, close_icon: &impl Fn() -> Svg, on: Handlers<'_, A, C, M, U>, cx: &mut Context<V>) -> AnyElement
+    where
+        A: Fn(&mut V, u64, &mut Context<V>) + Clone + 'static,
+        C: Fn(&mut V, u64, &mut Context<V>) + Clone + 'static,
+        M: Fn(&mut V, usize, usize, &mut Context<V>) + Clone + 'static,
+        U: Fn(&mut V, u64, Point<Pixels>, &mut Context<V>) + Clone + 'static,
+    {
         let colors = cx.theme().colors().clone();
         let (id, ix) = (tab.id, self.ix);
         let is_active = self.active == Some(id);
         let group = SharedString::from(format!("tab-{id}"));
-        let (close, middle, activate) = (on_close.clone(), on_close.clone(), on_activate.clone());
-        let (moved, over_ids, drop_ids) = (on_move.clone(), self.ids.clone(), self.ids.clone());
+        let (close, middle, activate, menu) = (on.close.clone(), on.close.clone(), on.activate.clone(), on.menu.clone());
+        let (moved, over_ids, drop_ids) = (on.moved.clone(), self.ids.clone(), self.ids.clone());
         let drop_border = colors.drop_target_border;
         let clicked = self.strip.clone();
         let close_button = button::icon(hits, format!("close-tab-{id}"), close_icon(), px(18.), cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -311,6 +317,13 @@ impl Header<'_> {
                 cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
                     middle(this, id, cx);
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    menu(this, id, e.position, cx);
                 }),
             )
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -541,6 +554,7 @@ mod tests {
     struct Tabs {
         hits: HitTargets,
         active: Option<u64>,
+        menu: Option<(u64, Point<Pixels>)>,
     }
 
     impl Render for Tabs {
@@ -549,7 +563,7 @@ mod tests {
             let tabs = (1..=3)
                 .map(|id| TabHeader { id, label: div().child(format!("tab {id}")).into_any_element(), title: format!("tab {id}").into(), tooltip: None })
                 .collect();
-            let strip = tab_strip(&self.hits, tabs, self.active, svg, |this: &mut Tabs, id, _| this.active = Some(id), |_, _, _| {}, |_, _, _, _| {}, window, cx);
+            let strip = tab_strip(&self.hits, tabs, self.active, svg, |this: &mut Tabs, id, _| this.active = Some(id), |_, _, _| {}, |_, _, _, _| {}, |this: &mut Tabs, id, at, _| this.menu = Some((id, at)), window, cx);
             div().size_full().child(strip)
         }
     }
@@ -559,7 +573,7 @@ mod tests {
             crate::init_globals(cx, "test");
             crate::text_input::bind_keys(cx);
         });
-        let (view, cx) = cx.add_window_view(|_, _| Tabs { hits: HitTargets::default(), active: Some(1) });
+        let (view, cx) = cx.add_window_view(|_, _| Tabs { hits: HitTargets::default(), active: Some(1), menu: None });
         cx.run_until_parked();
         (view, cx)
     }
@@ -603,6 +617,17 @@ mod tests {
         assert!(!list_open(&view, cx), "the press that closed the list does not open it again on its click");
         click_list_button(&view, cx);
         assert!(list_open(&view, cx));
+    }
+
+    #[gpui::test]
+    fn a_right_click_on_a_tab_asks_its_owner_for_the_menu_at_the_pointer_and_activates_nothing(cx: &mut TestAppContext) {
+        let (view, cx) = strip(cx);
+        let tab = view.read_with(cx, |v, _| v.hits.borrow().get("tab-2").copied()).expect("tab 2 paints").bounds;
+        let at = tab.center();
+        cx.simulate_mouse_down(at, MouseButton::Right, Modifiers::none());
+        cx.simulate_mouse_up(at, MouseButton::Right, Modifiers::none());
+        cx.run_until_parked();
+        assert_eq!(view.read_with(cx, |v, _| (v.menu, v.active)), (Some((2, at)), Some(1)));
     }
 
     #[test]

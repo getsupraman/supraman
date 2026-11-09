@@ -39,7 +39,8 @@ pub(crate) async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     std::fs::remove_file(&script).ok();
     let result = result?;
     restored?;
-    Ok(result)
+    let menu = crate::selftest_tab_menu::run(view, cx).await?;
+    Ok(format!("{result}; {menu}"))
 }
 
 async fn close_all(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {

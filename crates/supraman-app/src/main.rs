@@ -41,6 +41,7 @@ mod selftest_shots;
 mod selftest_start;
 mod selftest_supervise;
 mod selftest_tab_keys;
+mod selftest_tab_menu;
 mod selftest_tabs;
 mod selftest_title;
 mod selftest_updates;
