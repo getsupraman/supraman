@@ -8,6 +8,7 @@ mod marks;
 mod overlay;
 mod render;
 mod sections;
+mod worktrees;
 
 #[cfg(test)]
 mod tests;
@@ -15,7 +16,7 @@ mod tests;
 use std::sync::Arc;
 
 use gpui::{Context, Entity, EventEmitter, FocusHandle, Pixels, SharedString, Subscription, Window, px};
-use supraman_gitman::Refs;
+use supraman_gitman::{Refs, Worktree};
 use supraman_ui::hit::HitTargets;
 use supraman_ui::menu::ContextMenu;
 use supraman_ui::text_input::{self, TextInput};
@@ -27,6 +28,9 @@ use super::stash::{StashAct, StashRef};
 
 pub(crate) use entries::{Count, Entry, Section, Walk, counts, entries, tips, without};
 pub(crate) use marks::RefAction;
+pub(crate) use worktrees::RefWips;
+#[cfg(test)]
+pub(crate) use worktrees::Summary;
 
 /// The tree's id: its rows paint under `refpanel-row-<path>`.
 pub(crate) const LIST: &str = "refpanel";
@@ -51,9 +55,15 @@ fn fold(keys: &mut Keys, entry: &Entry) {
 pub(crate) struct Built {
     entries: Vec<(String, Entry)>,
     trees: [Tree<Entry, Keys>; 5],
+    worktrees: Vec<Worktree>,
 }
 
 /// The remote whose row `path` is: `remote/<name>`, the folder its branches sit in.
+/// Ahead of and behind an upstream as every ref row says it: `2↑ 1↓`, the zero ones left out.
+pub(crate) fn track(ahead: u32, behind: u32) -> String {
+    [(ahead, "↑"), (behind, "↓")].iter().filter(|(n, _)| *n > 0).map(|(n, arrow)| format!("{n}{arrow}")).collect::<Vec<_>>().join(" ")
+}
+
 pub(crate) fn remote_folder(path: &str) -> Option<&str> {
     path.strip_prefix("remote/").filter(|name| !name.is_empty() && !name.contains('/'))
 }
@@ -61,7 +71,7 @@ pub(crate) fn remote_folder(path: &str) -> Option<&str> {
 pub(crate) fn build(refs: &Refs) -> Built {
     let entries = entries(refs);
     let trees = Section::ALL.map(|section| Tree::build_given(entries.iter().filter(|(path, _)| Section::of(path) == Some(section)).cloned(), fold));
-    Built { entries, trees }
+    Built { entries, trees, worktrees: refs.worktrees.clone() }
 }
 
 pub(crate) enum RefEvent {
@@ -79,11 +89,16 @@ pub(crate) enum RefEvent {
     Menu(String, gpui::Point<Pixels>),
     /// A ref's or a worktree's row was double-clicked: the row's path.
     Checkout(String),
+    /// Refresh WIPs was clicked.
+    RefreshWips,
 }
 
 pub(crate) struct RefPanel {
     hits: HitTargets,
     entries: Arc<Vec<(String, Entry)>>,
+    /// `worktrees/<n>`'s worktree at `n`.
+    worktrees: Vec<Worktree>,
+    wips: RefWips,
     tree: sections::Sections,
     /// Each section's height while open, in [`Section::ALL`]'s order; zero for an even share.
     heights: [Pixels; 5],
@@ -113,6 +128,8 @@ impl RefPanel {
         RefPanel {
             hits,
             entries: Arc::new(Vec::new()),
+            worktrees: Vec::new(),
+            wips: RefWips::default(),
             tree: sections::Sections::new(cx),
             heights: [px(0.); 5],
             stack: StackState::default(),
@@ -160,6 +177,7 @@ impl RefPanel {
             self.close_collapsed();
         }
         self.entries = Arc::new(built.entries);
+        self.worktrees = built.worktrees;
         self.recount();
         self.refill_overlay(cx);
         cx.notify();

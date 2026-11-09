@@ -60,8 +60,12 @@ impl RefPanel {
 
     /// The mark of a row of `list`.
     pub(super) fn paint_mark(&self, list: &str, row: Row<'_, Entry, Keys>, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let (hide, solo, current) = Self::keys_of(&row);
         let key = format!("{list}-mark-{}", row.path);
+        if let Item::File(Entry::Worktree { .. }) = row.item {
+            let whole = self.whole(list, row.path);
+            return self.worktree_mark(key, &whole, cx);
+        }
+        let (hide, solo, current) = Self::keys_of(&row);
         let colors = cx.theme().colors();
         let (accent, muted) = (colors.text_accent, secondary(cx.theme().colors()));
         let (icon, colour, shown, tip, keys, solos) = match self.mark_of(hide, solo, current)? {
@@ -83,7 +87,7 @@ impl RefPanel {
     }
 
     /// A row of `list`'s path in the panel's whole tree.
-    fn whole(&self, list: &str, path: &str) -> String {
+    pub(super) fn whole(&self, list: &str, path: &str) -> String {
         match self.overlay().filter(|_| list == OVERLAY) {
             Some(section) => format!("{}/{path}", section.key()),
             None => path.to_string(),

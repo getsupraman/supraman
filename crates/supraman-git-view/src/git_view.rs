@@ -56,6 +56,8 @@ mod paint_tests;
 mod worktree_rows_tests;
 #[cfg(test)]
 mod worktree_panel_tests;
+#[cfg(test)]
+mod ref_wips_tests;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -451,6 +453,7 @@ impl GitView {
             RefEvent::Stash(act, stash) => self.stash_act(*act, stash.clone(), cx),
             RefEvent::Menu(path, position) => self.ref_menu(path, *position, cx),
             RefEvent::Checkout(path) => self.ref_double_clicked(path, cx),
+            RefEvent::RefreshWips => background::refresh_wips(cx.entity_id(), cx),
         }
     }
 

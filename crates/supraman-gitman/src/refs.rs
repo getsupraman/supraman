@@ -56,6 +56,9 @@ pub struct Worktree {
     pub bare: bool,
     pub locked: bool,
     pub prunable: bool,
+    /// Why it is locked or prunable, as git says it; empty when git gives none.
+    pub lock_reason: String,
+    pub prune_reason: String,
     /// The repository's own checkout, `worktree list`'s first.
     pub main: bool,
 }
@@ -187,8 +190,8 @@ fn parse_worktrees(out: &[u8]) -> Vec<Worktree> {
                     "branch" => w.branch = Some(value.strip_prefix("refs/heads/").unwrap_or(value).to_string()),
                     "detached" => w.detached = true,
                     "bare" => w.bare = true,
-                    "locked" => w.locked = true,
-                    "prunable" => w.prunable = true,
+                    "locked" => (w.locked, w.lock_reason) = (true, value.to_string()),
+                    "prunable" => (w.prunable, w.prune_reason) = (true, value.to_string()),
                     _ => {}
                 }
             }
@@ -211,5 +214,14 @@ mod tests {
         assert_eq!(wt.len(), 2);
         assert_eq!(wt[0].branch.as_deref(), Some("main"));
         assert!(wt[1].detached && wt[1].locked && wt[1].branch.is_none());
+        assert_eq!(wt[1].lock_reason, "");
+    }
+
+    #[test]
+    fn a_worktree_keeps_why_it_is_locked_or_prunable() {
+        let wt = parse_worktrees(b"worktree C:/r HEAD abc branch refs/heads/main  worktree C:/w HEAD def branch refs/heads/w locked on a stick prunable gitdir file points to non-existent location  ");
+        assert!(wt[1].locked && wt[1].prunable);
+        assert_eq!(wt[1].lock_reason, "on a stick");
+        assert_eq!(wt[1].prune_reason, "gitdir file points to non-existent location");
     }
 }

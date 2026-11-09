@@ -173,6 +173,7 @@ impl GitView {
 
     /// After a write of the tab's own: the watchers refresh once it settles, else this does.
     pub(super) fn refresh_after_write(&mut self, cx: &mut Context<Self>) {
+        super::background::wips_after_write(cx.entity_id(), cx);
         if self.follow.live.is_none() {
             self.refresh_graph(None, cx);
         }
