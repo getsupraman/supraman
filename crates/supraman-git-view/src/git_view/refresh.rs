@@ -375,7 +375,7 @@ impl GitView {
         let (Some((view, _)), Some(repo)) = (&self.diff, self.repo.clone()) else { return };
         view.update(cx, |d, cx| {
             let changed = files.is_none_or(|f| f.contains(&d.target.path) || f.contains(d.target.old_path()));
-            if d.target.side_word().is_some() && changed {
+            if d.worktree.is_none() && d.target.side_word().is_some() && changed {
                 d.reload(repo, cx);
             }
         });

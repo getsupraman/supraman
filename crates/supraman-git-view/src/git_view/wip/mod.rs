@@ -36,7 +36,7 @@ use super::diff::{Of, Target};
 use super::write_gate::{WriteGate, Written};
 
 pub(crate) use actions::{Ask, Doing};
-pub(crate) use load::{Branch, Section, file_changes, sections};
+pub(crate) use load::{Branch, Section, file_changes, of_status, sections};
 pub(crate) use render::banner;
 
 /// The working directory shown, its lists in the panel's order.
@@ -79,14 +79,14 @@ pub(crate) enum State {
 }
 
 /// One list's view state.
-struct List {
-    tree: TreeState<Option<ChangeKind>, Counts>,
-    paths: TableState,
-    open: bool,
+pub(crate) struct List {
+    pub(crate) tree: TreeState<Option<ChangeKind>, Counts>,
+    pub(crate) paths: TableState,
+    pub(crate) open: bool,
 }
 
 impl List {
-    fn new(cx: &mut App) -> List {
+    pub(crate) fn new(cx: &mut App) -> List {
         List { tree: TreeState::new(cx), paths: TableState::new(cx), open: true }
     }
 }

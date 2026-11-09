@@ -16,6 +16,9 @@ mod tests;
 #[cfg(test)]
 mod pick_tests;
 
+use std::path::Path;
+use std::sync::Arc;
+
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, KeyBinding, Window};
 use supraman_editor::{Diff, SplitDiff, ZedEditor};
 use supraman_gitman::Repo;
@@ -154,6 +157,8 @@ pub(crate) struct DiffView {
     focus: FocusHandle,
     /// The line picks of a working-tree diff, once the tab offers them.
     picks: Option<Picks>,
+    /// The other worktree whose file this is, read from its folder.
+    pub(crate) worktree: Option<Arc<Path>>,
 }
 
 impl EventEmitter<Close> for DiffView {}
@@ -163,7 +168,7 @@ impl DiffView {
     pub(crate) fn open(repo: Repo, target: Target, mode: Mode, layout: Layout, hits: HitTargets, cx: &mut App) -> Entity<DiffView> {
         cx.new(|cx| {
             let mode = if target.of == Of::Conflicted { Mode::File } else { mode };
-            let mut view = DiffView { hits, target, mode, layout, content: Content::Loading, current: None, to_first: false, token: 0, focus: cx.focus_handle(), picks: None };
+            let mut view = DiffView { hits, target, mode, layout, content: Content::Loading, current: None, to_first: false, token: 0, focus: cx.focus_handle(), picks: None, worktree: None };
             view.reload(repo, cx);
             view
         })
@@ -248,6 +253,14 @@ impl DiffView {
             Content::Image(i) => format!("image {} → {}", picture(&i.old), picture(&i.new)),
             Content::Text(t) if !t.invisible.is_empty() => format!("same text: {}", t.invisible.join("; ")),
             Content::Text(_) => "text".into(),
+        }
+    }
+
+    /// Where this file is read: its worktree's folder, else the tab's `repo`.
+    pub(crate) fn repo_of(&self, repo: &Repo) -> Repo {
+        match &self.worktree {
+            Some(path) => Repo::new(repo.git().clone(), path.to_path_buf()),
+            None => repo.clone(),
         }
     }
 
