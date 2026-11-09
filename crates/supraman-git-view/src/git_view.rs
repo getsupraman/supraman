@@ -2,6 +2,7 @@
 //! writes they make through the tab's one [`write_gate::WriteGate`].
 
 pub mod background;
+mod band;
 pub mod branch;
 mod cap;
 mod cells;
@@ -56,7 +57,7 @@ use std::sync::Arc;
 use gpui::{AnyElement, App, AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle, Pixels, Render, SharedString, Subscription, Task, Window, div, prelude::*, px};
 use supraman_gitman::write::Occupancy;
 use supraman_gitman::{History, Layout, Repo};
-use supraman_ui::hit::HitTargets;
+use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::{banner, button};
 use supraman_ui::tooltip::Tooltip;
 use supraman_ui::icon::Icon;
@@ -202,6 +203,7 @@ pub struct GitView {
     focus_diff: bool,
     /// The viewer closed since the last frame and the graph takes the keyboard on the next.
     focus_graph: bool,
+    band: band::Band,
     /// The panels' read of a selection a key moved, waiting for the key to come up.
     settle: Option<Task<()>>,
     follow: refresh::Follow,
@@ -295,6 +297,7 @@ impl GitView {
                 diff_layout: DiffLayout::default(),
                 focus_diff: false,
                 focus_graph: false,
+                band: band::Band::new(cx),
                 settle: None,
                 follow: refresh::Follow::default(),
                 key: None,
@@ -780,7 +783,7 @@ impl GitView {
         div().size_full().flex().flex_col().children(banner).child(div().flex_1().min_h_0().child(self.panel.clone())).into_any_element()
     }
 
-    fn render_split(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_split(&mut self, band: Option<Div>, cx: &mut Context<Self>) -> AnyElement {
         let first = match &self.diff {
             Some((view, _)) if self.selected() == Some(Selected::Wip) => div()
                 .size_full()
@@ -792,7 +795,8 @@ impl GitView {
             Some((view, _)) => view.clone().into_any_element(),
             None => self.render_graph(cx),
         };
-        let table = div().relative().flex_1().min_w_0().h_full().child(first).children(self.toast.render(&self.hits, "git-toast", cx));
+        let band = band.map(|b| div().absolute().top_0().left_0().right_0().occlude().child(b));
+        let table = div().relative().flex_1().min_w_0().h_full().child(first).child(hit_target(&self.hits, "git-graph-area".into())).children(band).children(self.toast.render(&self.hits, "git-toast", cx));
         let panel = div().flex_shrink(1.).min_w_0().flex().flex_col().w(self.panel_width).h_full().child(self.render_panel(cx));
         let split = SplitPane { id: "git-split".into(), min_first: px(GRAPH_MIN), min_second: px(PANEL_MIN), default: PANEL_WIDTH }
             .render_second(table, panel, |this: &mut GitView, width, cx| {
@@ -874,10 +878,11 @@ impl Render for GitView {
         self.wip_panel.update(cx, |p, cx| p.ensure_composer(window, cx));
         self.branch.update(cx, |b, cx| b.ensure_dialog(window, cx));
         self.take_focus_summary(window, cx);
+        let mut band = self.band(window, cx);
         let content = match &self.load {
             Load::Loading => notice("Reading the history…", self.folder.display().to_string(), cx).into_any_element(),
             Load::Problem(problem) => self.problem(problem, cx),
-            Load::Ready => self.render_split(cx),
+            Load::Ready => self.render_split(band.take(), cx),
         };
         div()
             .size_full()
@@ -899,7 +904,8 @@ impl Render for GitView {
             .flex()
             .flex_col()
             .child(div().flex().items_start().border_b_1().border_color(cx.theme().colors().border).child(self.undo.clone()).child(self.stash_buttons(cx)).child(self.remote_buttons(cx)))
-            .child(div().mx_2().child(self.gate.clone()).child(self.stash.clone()).child(self.branch.clone()).child(self.commit.clone()).child(self.remote.clone()))
+            .children(band)
+            .child(div().mx_2().child(self.stash.clone()).child(self.branch.clone()).child(self.commit.clone()).child(self.remote.clone()))
             .children(self.layout_notice(cx))
             .children(self.follow_notice(cx))
             .child(div().flex_1().min_h_0().child(content))

@@ -330,3 +330,42 @@ fn the_main_worktrees_branch_keeps_its_local_pill_and_dimmed_delete_and_a_pills_
     let (pill, text) = (centre(format!("git-pill-{first}"), cx), centre(format!("git-ref-{first}-text"), cx));
     assert!(below > px(0.) && supraman_ui::ink::level(pill, text + below), "the pill's letters on its middle: {pill:?} {text:?} {below:?}");
 }
+
+fn bounds(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) -> gpui::Bounds<gpui::Pixels> {
+    view.read_with(cx, |v, _| v.hits.borrow().get(key).map(|h| h.bounds)).unwrap_or_else(|| panic!("{key} is painted"))
+}
+
+fn band_has_keys(view: &Entity<GitView>, cx: &mut VisualTestContext) -> bool {
+    cx.update(|window, cx| view.read(cx).band_focused(window))
+}
+
+#[gpui::test]
+fn a_question_is_one_band_across_the_top_of_the_graph_that_enter_and_esc_answer(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let (view, cx) = open(&f.worktree, cx);
+    press(&view, "refpanel-name-local/feature", MouseButton::Right, 1, cx);
+    click(&view, "menu-ref-delete-feature", cx);
+    assert!(painted(&view, "git-ref-ask-band", cx));
+    let [area, band, text, yes, cancel] = ["git-graph-area", "git-ref-ask-band", "git-ref-ask-text", "git-ref-ask-yes", "git-ref-ask-cancel"].map(|k| bounds(&view, k, cx));
+    assert_eq!((band.origin, band.size.width), (area.origin, area.size.width), "across the top of the graph area");
+    assert_eq!(band.size.height, supraman_ui::confirm::ROW, "one line");
+    assert!((yes.center().y - text.center().y).abs() < px(1.) && (cancel.center().y - text.center().y).abs() < px(1.), "the text and its answers on one line");
+
+    assert!(band_has_keys(&view, cx), "the band takes the keyboard");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    redraw(&view, cx);
+    assert!(asking(&view, cx).is_none() && exists(&f, "refs/heads/feature"), "Enter cancels a delete");
+    assert!(!band_has_keys(&view, cx) && cx.update(|window, cx| view.read(cx).focus.contains_focused(window, cx)), "the keyboard goes back into the tab");
+
+    press(&view, "refpanel-name-local/feature", MouseButton::Right, 1, cx);
+    click(&view, "menu-ref-delete-feature", cx);
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(asking(&view, cx).is_none() && exists(&f, "refs/heads/feature"), "Esc cancels");
+
+    press(&view, "refpanel-name-local/feature", MouseButton::Right, 1, cx);
+    click(&view, "menu-ref-delete-feature", cx);
+    click(&view, "git-ref-ask-yes", cx);
+    assert!(!exists(&f, "refs/heads/feature"), "the yes keeps its hit key");
+}

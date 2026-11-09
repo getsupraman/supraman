@@ -82,12 +82,12 @@ impl Ask {
             }
             Ask::Reset { branch, sha, .. } => ask(format!("{branch} was already pushed. Resetting it to {} rewrites it, and the next push must force. Reset anyway?", short_sha(sha)), "Reset"),
             Ask::Rebase { branch, .. } => ask(format!("{branch} was already pushed. Rebasing rewrites it, and the next push must force. Rebase anyway?"), "Rebase"),
-            Ask::DiscardAll(paths) => ask(format!("Discard the staged and unstaged changes to {}? You can undo it.", files_words(paths.len())), "Discard"),
+            Ask::DiscardAll(paths) => ask(format!("Discard the staged and unstaged changes to {}? You can undo it.", files_words(paths.len())), "Discard").danger(),
             Ask::Ignore { ignore, untrack } => {
                 let question = ask(format!("Add {} to .gitignore?", ignore.pattern()), "Ignore");
                 if untrack.is_empty() { question } else { question.or("Ignore and stop tracking", self.clone()) }
             }
-            Ask::Delete(path) => ask(format!("Delete {path}? A file git does not track cannot be brought back."), "Delete"),
+            Ask::Delete(path) => ask(format!("Delete {path}? A file git does not track cannot be brought back."), "Delete").danger(),
             Ask::Restore { paths, sha } => ask(format!("Restoring {} from {} replaces your changes to it. You can undo it.", files_words(paths.len()), short_sha(sha)), "Restore"),
         }
     }
@@ -125,6 +125,10 @@ fn index_write() -> LockSet {
 }
 
 impl CommitActions {
+    pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        self.asking.as_ref().map(|asked| asked.render_band_answer(&self.hits, "git-commit-ask", |this: &mut Self, answer, _, cx| this.answer(answer, cx), cx))
+    }
+
     pub(crate) fn new(gate: Entity<WriteGate>, hits: HitTargets, cx: &mut Context<Self>) -> CommitActions {
         let written = cx.subscribe(&gate, |this: &mut CommitActions, _, w: &Written, cx| this.written(w, cx));
         cx.observe(&gate, |_, _, cx| cx.notify()).detach();
@@ -369,7 +373,6 @@ impl Render for CommitActions {
         if let Some(sha) = self.patching.take() {
             supraman_ui::folder_picker::pick_folder("Save the patch in", window, cx, move |this: &mut CommitActions, folder, _, cx| this.save_patch(sha, folder, cx));
         }
-        let question = self.asking.as_ref().map(|asked| asked.render_answer(&self.hits, "git-commit-ask", |this: &mut Self, answer, _, cx| this.answer(answer, cx), cx).m_2());
-        div().children(question)
+        div()
     }
 }

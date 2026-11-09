@@ -78,16 +78,16 @@ impl Ask {
                 .or("New branch here", self.clone()),
             Ask::Clash(_) => Confirm::report("Nothing to decide"),
             Ask::Stash(plan) => ask(format!("Checking out {} would overwrite your local changes. Stash them, check out and put them back?", plan.target()), "Stash and checkout"),
-            Ask::Delete { name, .. } => ask(format!("Delete the branch {name}? Undo can bring it back."), "Delete"),
-            Ask::DeleteAnyway(name) => ask(format!("{name} has commits on no other branch. Delete it anyway?"), "Delete anyway"),
-            Ask::DeleteTag(name) => ask(format!("Delete the tag {name}? It cannot be undone."), "Delete"),
+            Ask::Delete { name, .. } => ask(format!("Delete the branch {name}? Undo can bring it back."), "Delete").danger(),
+            Ask::DeleteAnyway(name) => ask(format!("{name} has commits on no other branch. Delete it anyway?"), "Delete anyway").danger(),
+            Ask::DeleteTag(name) => ask(format!("Delete the tag {name}? It cannot be undone."), "Delete").danger(),
             Ask::Away { away, into } => {
                 let kept = away.autostash.as_ref().map_or(String::new(), |s| format!(" Your changes wait in the stash \u{201c}{}\u{201d}.", s.name));
                 ask(format!("The merge into {into} stopped on conflicts. Stay on {into} to resolve them, or cancel the merge and go back to {}?{kept}", away.back), &format!("Stay on {into}"))
             }
             Ask::RemoveWorktree { path, branch } => {
                 let and = branch.as_ref().map_or(String::new(), |b| format!(" and delete the branch {b}"));
-                ask(format!("Remove the worktree {}{and}? Changes not committed there are lost.", path.display()), "Remove")
+                ask(format!("Remove the worktree {}{and}? Changes not committed there are lost.", path.display()), "Remove").danger()
             }
         }
     }
@@ -137,6 +137,10 @@ fn with_stash(done: String, autostash: &Autostash) -> String {
 }
 
 impl BranchActions {
+    pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        self.asking.as_ref().map(|asked| asked.render_band_answer(&self.hits, "git-ref-ask", |this: &mut Self, answer, _, cx| this.answer(answer, cx), cx))
+    }
+
     pub(crate) fn new(gate: Entity<WriteGate>, hits: HitTargets, cx: &mut Context<Self>) -> BranchActions {
         let written = cx.subscribe(&gate, |this: &mut BranchActions, _, w: &Written, cx| this.written(w, cx));
         cx.observe(&gate, |_, _, cx| cx.notify()).detach();
@@ -523,13 +527,12 @@ impl BranchActions {
 impl Render for BranchActions {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_dialog(window, cx);
-        let question = self.asking.as_ref().map(|asked| asked.render_answer(&self.hits, "git-ref-ask", |this: &mut Self, answer, _, cx| this.answer(answer, cx), cx).m_2());
         let menu = self.menu.as_ref().map(|menu| {
             menu.render(&self.hits, |this: &mut BranchActions, act, _, cx| this.act(act, cx), |this: &mut BranchActions, cx| {
                 this.menu = None;
                 cx.notify();
             }, cx)
         });
-        div().children(question).children(self.render_dialog(cx)).children(menu)
+        div().children(self.render_dialog(cx)).children(menu)
     }
 }

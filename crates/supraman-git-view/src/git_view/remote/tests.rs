@@ -46,6 +46,20 @@ fn press(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
     redraw(view, cx);
 }
 
+/// The band `key` across the top of the graph area, `inline` on one line with its text.
+fn inline(view: &Entity<GitView>, key: &str, inline: &[&str], cx: &mut VisualTestContext) {
+    let hits = view.read_with(cx, |v, _| v.hits.clone());
+    hits.borrow_mut().clear();
+    redraw(view, cx);
+    let at = |k: &str| hits.borrow().get(k).map(|h| h.bounds).unwrap_or_else(|| panic!("{k} is painted"));
+    let (area, band, text) = (at("git-graph-area"), at(&format!("{key}-band")), at(&format!("{key}-text")));
+    assert_eq!((band.origin, band.size.width), (area.origin, area.size.width), "{key}: across the top of the graph area");
+    assert_eq!(band.size.height, supraman_ui::confirm::ROW, "{key}: one line in {:?}", area.size.width);
+    for k in inline {
+        assert!((at(k).center().y - text.center().y).abs() < px(1.), "{k} on the text's line");
+    }
+}
+
 fn git(f: &Fixture, dir: &Path, args: &[&str]) -> String {
     git_in(&f.git, dir, args, &[], None)
 }
@@ -271,6 +285,7 @@ fn a_branch_without_upstream_is_pushed_after_the_dialog_chooses_one(cx: &mut Tes
     assert_eq!(dialog, Some(("topic".into(), "origin".into())));
     view.update(cx, |v, cx| v.remote.update(cx, |r, cx| r.upstream_dialog().unwrap().type_in("shared/topic", cx)));
     redraw(&view, cx);
+    inline(&view, "git-upstream", &["git-upstream-origin", "git-upstream-field", "git-upstream-ok", "git-upstream-cancel"], cx);
     press(&view, "git-upstream-ok", cx);
     assert_eq!(git(&f, &f.temp.path().join("origin.git"), &["rev-parse", "shared/topic"]), sha);
     assert_eq!(git(&f, &mine, &["rev-parse", "--abbrev-ref", "topic@{upstream}"]), "origin/shared/topic");
@@ -298,6 +313,7 @@ fn sshs_passphrase_prompt_answers_through_the_dialog_and_is_kept_only_when_remem
         view.update(cx, |v, cx| v.remote.update(cx, |r, cx| r.heard(0, super::Heard::Asked(a), cx)));
         redraw(&view, cx);
         view.update(cx, |v, cx| v.remote.update(cx, |r, cx| r.prompting().unwrap().type_in(typed, cx)));
+        inline(&view, "git-askpass", &["git-askpass-field", "git-askpass-ok", "git-askpass-cancel"], cx);
         if remember {
             press(&view, "git-askpass-remember", cx);
         }

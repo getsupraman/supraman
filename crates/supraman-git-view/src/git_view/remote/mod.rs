@@ -99,12 +99,14 @@ impl Ask {
         let ask = |text: String, yes: &str| Confirm::ask(text, yes, self.clone());
         match self {
             Ask::Behind { local, remote, branch } => ask(format!("{remote}/{branch} has commits {local} lacks. Pull them first, or force the push with lease, dropping them from {remote}?"), "Pull")
-                .or("Force with lease", Ask::Force { local: local.clone(), remote: remote.clone(), branch: branch.clone(), force: Force::Lease }),
+                .or("Force with lease", Ask::Force { local: local.clone(), remote: remote.clone(), branch: branch.clone(), force: Force::Lease })
+                .danger_alt(),
             Ask::Stale { local, remote, branch } => ask(format!("{remote}/{branch} moved since this repository last fetched it. Fetch first, or force the push anyway?"), "Fetch")
-                .or("Force anyway", Ask::Force { local: local.clone(), remote: remote.clone(), branch: branch.clone(), force: Force::Anyway }),
-            Ask::Force { local, remote, branch, .. } => ask(format!("Force push {local} to {remote}/{branch}? The commits only {remote} holds are lost there."), "Force push"),
-            Ask::Delete { remote, refname } => ask(format!("Delete {} from {remote}? It cannot be undone.", short(refname)), "Delete"),
-            Ask::RemoveRemote(name) => ask(format!("Remove the remote {name} and its remote-tracking branches? It cannot be undone."), "Remove"),
+                .or("Force anyway", Ask::Force { local: local.clone(), remote: remote.clone(), branch: branch.clone(), force: Force::Anyway })
+                .danger_alt(),
+            Ask::Force { local, remote, branch, .. } => ask(format!("Force push {local} to {remote}/{branch}? The commits only {remote} holds are lost there."), "Force push").danger(),
+            Ask::Delete { remote, refname } => ask(format!("Delete {} from {remote}? It cannot be undone.", short(refname)), "Delete").danger(),
+            Ask::RemoveRemote(name) => ask(format!("Remove the remote {name} and its remote-tracking branches? It cannot be undone."), "Remove").danger(),
         }
     }
 }
@@ -659,13 +661,12 @@ fn askpass(store: Option<Arc<dyn SecretStore>>, heard: Arc<Mutex<Option<Unbounde
 impl Render for RemoteActions {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_fields(window, cx);
-        let question = self.asking.as_ref().map(|asked| asked.render_answer(&self.hits, "git-remote-ask", |this: &mut Self, answer, _, cx| this.answer_force(answer, cx), cx).m_2());
         let menu = self.menu.as_ref().map(|menu| {
             menu.render(&self.hits, |this: &mut RemoteActions, act, _, cx| this.act(act, cx), |this: &mut RemoteActions, cx| {
                 this.menu = None;
                 cx.notify();
             }, cx)
         });
-        div().children(question).children(self.render_dialogs(cx)).children(menu)
+        div().children(menu)
     }
 }

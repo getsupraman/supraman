@@ -131,8 +131,13 @@ impl WriteGate {
 
 impl Render for WriteGate {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let question = self.asking.as_ref().map(|asked| asked.render(&self.hits, "write-guard", |this: &mut Self, yes, _, cx| this.answer(yes, cx), cx));
-        div().children(question)
+        div().children(self.band(cx))
+    }
+}
+
+impl WriteGate {
+    pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        self.asking.as_ref().map(|asked| asked.render_band(&self.hits, "write-guard", |this: &mut Self, yes, _, cx| this.answer(yes, cx), cx))
     }
 }
 

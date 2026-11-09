@@ -160,7 +160,9 @@ impl WipPanel {
             return;
         }
         let (text, yes) = ask.question();
-        self.asking = Some(Confirm::ask(text, yes, ask));
+        let destroys = matches!(ask, Ask::Discard(_) | Ask::DiscardAll);
+        let asked = Confirm::ask(text, yes, ask);
+        self.asking = Some(if destroys { asked.danger() } else { asked });
         cx.notify();
     }
 
