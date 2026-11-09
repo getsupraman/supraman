@@ -518,6 +518,17 @@ pub(crate) async fn until_with<T>(
     }
 }
 
+/// The main window drawn once more from now: a hit key forgotten before it is back only if that frame painted it.
+pub(crate) async fn drawn(cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let flag = std::rc::Rc::new(std::cell::Cell::new(false));
+    let set = flag.clone();
+    cx.update(|window, _| {
+        window.on_next_frame(move |_, _| set.set(true));
+        window.refresh();
+    })?;
+    until_with(cx, Duration::from_secs(5), "a frame drawn", |_| flag.get().then_some(())).await
+}
+
 pub(crate) async fn until<T>(
     view: &Entity<FleetView>,
     cx: &mut AsyncWindowContext,

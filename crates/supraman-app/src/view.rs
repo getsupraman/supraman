@@ -2563,7 +2563,7 @@ impl Render for FleetView {
                 SplitPane { id: "divider".into(), min_first: MIN_LEFT_WIDTH, min_second: MIN_RIGHT_WIDTH, default: DEFAULT_LEFT_WIDTH }
                     .render(
                         self.render_left(cx),
-                        self.render_right(cx),
+                        self.render_right(window, cx),
                         |this: &mut Self, width, cx| {
                             this.left_width = width;
                             cx.notify();

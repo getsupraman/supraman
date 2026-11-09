@@ -3,7 +3,7 @@
 use super::*;
 
 impl FleetView {
-    pub(super) fn render_right(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_right(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         self.show_git_tabs(cx);
         let _stall = supraman_ui::stall::section("render: right");
         let colors = cx.theme().colors().clone();
@@ -13,12 +13,12 @@ impl FleetView {
             .map(|tab| {
                 let title = tab.label();
                 let card = self.tab_card(tab, title.clone());
-                let clipped = supraman_ui::clipped::clipped_with(format!("tab-title-{}", tab.id), title.clone(), false, false).max_w(px(280.));
+                let clipped = supraman_ui::clipped::clipped_with(format!("tab-title-{}", tab.id), title.clone(), false, false);
                 TabHeader {
                     id: tab.id,
                     label: match tab.kind {
-                        TabKind::Work(_) => div().flex().items_center().gap_1p5().child(crate::brand::workman(gpui::rems(1.), if self.active == Some(tab.id) { colors.text } else { colors.text_muted })).child(clipped).into_any_element(),
-                        TabKind::Git(_) => div().flex().items_center().gap_1p5().child(Icon::GitGraph.svg(14., if self.active == Some(tab.id) { colors.text } else { colors.text_muted })).child(clipped).into_any_element(),
+                        TabKind::Work(_) => div().flex().min_w_0().items_center().gap_1p5().child(crate::brand::workman(gpui::rems(1.), if self.active == Some(tab.id) { colors.text } else { colors.text_muted })).child(clipped).into_any_element(),
+                        TabKind::Git(_) => div().flex().min_w_0().items_center().gap_1p5().child(Icon::GitGraph.svg(14., if self.active == Some(tab.id) { colors.text } else { colors.text_muted })).child(clipped).into_any_element(),
                         _ => clipped.into_any_element(),
                     },
                     title: title.into(),
@@ -38,6 +38,7 @@ impl FleetView {
                 supraman_ui::tabs::reorder(&mut this.tabs, from, to);
                 cx.notify();
             },
+            window,
             cx,
         );
         bar = bar.child(
