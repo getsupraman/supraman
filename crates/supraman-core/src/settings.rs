@@ -186,11 +186,11 @@ impl Section for WindowSettings {
     const FIELDS: &'static [&'static str] = &["left_width", "tab_keys"];
 }
 
-/// Whether Ctrl+T and Ctrl+W open and close tabs while a terminal tab is active.
+/// Whether Ctrl+T, Ctrl+W and Ctrl+Shift+PgUp/PgDn act on tabs while a terminal tab is active.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TabKeys {
-    /// A terminal's program gets Ctrl+T and Ctrl+W; Ctrl+Shift+T and Ctrl+Shift+W work everywhere.
+    /// A terminal's program gets Ctrl+T and Ctrl+W, Ctrl+Shift+PgUp/PgDn scroll it; Ctrl+Shift+T and Ctrl+Shift+W work everywhere.
     #[default]
     OutsideTerminals,
     Everywhere,
