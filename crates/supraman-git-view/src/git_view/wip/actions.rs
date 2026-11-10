@@ -2,10 +2,9 @@
 //! first), commit, and the next step of the operation under way; their outcome goes to the tab as a [`PanelEvent`].
 
 use supraman_core::text::count;
-use std::sync::PoisonError;
 
 use gpui::{App, Context};
-use supraman_gitman::write::conflicts::{Sequence, Side};
+use supraman_gitman::write::conflicts::{Marked, Sequence, Side};
 use supraman_gitman::write::rebase::{Autostash, Rebased};
 use supraman_gitman::write::wip::{self, Step};
 use supraman_gitman::write::{LockSet, Resource, Session, WriteError};
@@ -26,6 +25,12 @@ pub(crate) enum Ask {
     Step(Step),
     /// Mark resolved of these files (`None`: every conflicted one), whose `markers` files still hold conflict markers.
     ResolveAnyway { paths: Option<Vec<String>>, markers: Vec<String> },
+}
+
+/// What a step's or a mark resolved's job left for [`WipPanel::written`].
+pub(crate) enum Kept {
+    Stepped(Rebased),
+    Marked(Marked),
 }
 
 /// The panel's write under way.
@@ -94,17 +99,13 @@ pub(super) fn index_write() -> LockSet {
 impl WipPanel {
     /// Why no write can start now, from the tab's gate.
     pub(crate) fn busy(&self, cx: &App) -> Option<&'static str> {
-        self.gate.read(cx).busy()
+        self.writes.busy(cx)
     }
 
     pub(super) fn request(&mut self, doing: Doing, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) {
-        if self.gate.read(cx).writer().is_none() {
-            return cx.emit(PanelEvent::Why("The repository is still opening; try again in a moment".into()));
+        if let Err(why) = self.writes.request(doing, locks, job, cx) {
+            cx.emit(PanelEvent::Why(why.into()));
         }
-        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request(locks, job, cx)) {
-            self.doing = Some((ticket, doing));
-        }
-        cx.notify();
     }
 
     pub(crate) fn stage(&mut self, files: Vec<FileChange>, cx: &mut Context<Self>) {
@@ -153,18 +154,14 @@ impl WipPanel {
 
     /// Asks before `ask` runs; nothing is asked while a write waits or runs.
     pub(crate) fn ask(&mut self, ask: Ask, cx: &mut Context<Self>) {
-        if self.busy(cx).is_some() {
-            return;
-        }
         let (text, yes) = ask.question();
         let destroys = matches!(ask, Ask::Discard(_) | Ask::DiscardAll);
         let asked = Confirm::ask(text, yes, ask);
-        self.asking = Some(if destroys { asked.danger() } else { asked });
-        cx.notify();
+        self.writes.ask(if destroys { asked.danger() } else { asked }, cx);
     }
 
     pub(crate) fn answer(&mut self, yes: bool, cx: &mut Context<Self>) {
-        let Some(ask) = self.asking.take().and_then(|c| c.action).filter(|_| yes) else { return cx.notify() };
+        let Some(ask) = self.writes.answer(yes) else { return cx.notify() };
         match ask {
             Ask::Discard(files) => self.request(Doing::Discard(files.len()), LockSet::reset(), move |s| wip::discard_unstaged(s, &files), cx),
             Ask::DiscardAll => self.request(Doing::DiscardAll, LockSet::reset(), |s| wip::discard_all(s).map(drop), cx),
@@ -175,7 +172,7 @@ impl WipPanel {
 
     #[cfg(test)]
     pub(crate) fn asking(&self) -> Option<&str> {
-        self.asking.as_ref().map(|c| c.text.as_str())
+        self.writes.asked()
     }
 
     /// The commit button's words and act now; `stage_all` counts the unstaged files as staged.
@@ -216,21 +213,22 @@ impl WipPanel {
 
     /// `step` through the gate, `stage_all` staging every file first; how it ended kept for [`Self::written`].
     fn step(&mut self, step: Step, stage_all: bool, cx: &mut Context<Self>) {
-        let stepped = self.stepped.clone();
-        self.request(Doing::Step(step), LockSet::rebase(), move |s| {
+        let job = self.writes.keeping(Kept::Stepped, move |s| {
             if stage_all {
                 stage_everything(s)?;
             }
-            let outcome = wip::step(s, step)?;
-            *stepped.lock().unwrap_or_else(PoisonError::into_inner) = Some(outcome);
-            Ok(())
-        }, cx);
+            wip::step(s, step)
+        });
+        self.request(Doing::Step(step), LockSet::rebase(), job, cx);
     }
 
     /// A rebase's step done: once it finished, the new HEAD selected with what became of GitMan's autostash
     /// (`None`: said); else the toast of [`PanelEvent::Wrote`].
     fn stepped(&mut self, step: Step, cx: &mut Context<Self>) -> Option<Option<String>> {
-        let outcome = self.stepped.lock().unwrap_or_else(PoisonError::into_inner).take();
+        let outcome = match self.writes.kept() {
+            Some(Kept::Stepped(rebased)) => Some(rebased),
+            _ => None,
+        };
         match (step, outcome) {
             (Step::AbortMerge, _) | (_, None) => Some(None),
             (Step::Continue(seq) | Step::Skip(seq) | Step::Abort(seq), Some(Rebased::Conflicted)) => Some(Some(format!("The {} stopped on another conflict", noun(seq)))),
@@ -248,7 +246,7 @@ impl WipPanel {
 
     /// A write of the gate ran; this panel's says how it went.
     pub(super) fn written(&mut self, w: &Written, cx: &mut Context<Self>) {
-        let Some((_, doing)) = self.doing.take_if(|(ticket, _)| *ticket == w.ticket) else { return };
+        let Some(doing) = self.writes.written(w) else { return };
         let toast = match (&doing, &w.result) {
             (Doing::Commit { .. }, Err(why)) => {
                 if let Some(c) = &mut self.composer {

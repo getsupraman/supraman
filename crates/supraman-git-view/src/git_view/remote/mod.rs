@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
-use gpui::{AppContext as _, Context, Entity, EventEmitter, Pixels, Point, Render, Subscription, Window, div, prelude::*};
+use gpui::{AppContext as _, Context, Entity, EventEmitter, Pixels, Point, Render, Window, div, prelude::*};
 use supraman_core::askpass::{Asked, Bridge};
 use supraman_core::secret::SecretStore;
 use supraman_gitman::write::remote::{self, Force, Progress, PullChoice, PullMode, Pulled, Pushed, Transfer};
@@ -29,8 +29,7 @@ use supraman_ui::confirm::{Answer, Confirm};
 use supraman_ui::hit::HitTargets;
 use supraman_ui::menu::{ContextMenu, MenuItem};
 
-use super::stash::STILL_OPENING;
-use super::write_gate::{WriteGate, Written, capitalised};
+use super::write_gate::{WriteGate, Writes, Written, capitalised};
 pub(crate) use bar::{caption, words};
 pub(crate) use dialogs::{Prompting, UpstreamDialog};
 pub(crate) use menu::RemoteFacts;
@@ -148,7 +147,6 @@ enum Heard {
 }
 
 struct Running {
-    ticket: u64,
     doing: Doing,
     progress: Option<Progress>,
     cancel: Arc<AtomicBool>,
@@ -156,7 +154,7 @@ struct Running {
 
 pub(crate) struct RemoteActions {
     hits: HitTargets,
-    gate: Entity<WriteGate>,
+    writes: Writes<Ask, Running, Done>,
     home: Option<PathBuf>,
     store: Option<Arc<dyn SecretStore>>,
     refs: Arc<Refs>,
@@ -164,16 +162,12 @@ pub(crate) struct RemoteActions {
     remotes: Vec<Remote>,
     pull: PullChoice,
     prune: bool,
-    running: Option<Running>,
     /// A cancelled call's ticket, said as cancelled when it ends.
     cancelled: Option<u64>,
-    outcome: Arc<Mutex<Option<Done>>>,
-    asking: Option<Confirm<Ask>>,
     menu: Option<ContextMenu<RemoteAct>>,
     upstream: Option<UpstreamDialog>,
     editing: Option<dialogs::EditRemote>,
     prompting: Option<Prompting>,
-    _written: Subscription,
 }
 
 impl EventEmitter<RemoteEvent> for RemoteActions {}
@@ -181,12 +175,10 @@ impl EventEmitter<RemoteEvent> for RemoteActions {}
 impl RemoteActions {
     /// `home` holds `settings.toml` (`[gitman] pull`, `prune`) and the secret store a remembered passphrase goes to.
     pub(crate) fn new(gate: Entity<WriteGate>, hits: HitTargets, home: Option<PathBuf>, cx: &mut Context<Self>) -> RemoteActions {
-        let written = cx.subscribe(&gate, |this: &mut RemoteActions, _, w: &Written, cx| this.written(w, cx));
-        cx.observe(&gate, |_, _, cx| cx.notify()).detach();
         let store = home.as_deref().map(supraman_core::secret::default_store);
         RemoteActions {
             hits,
-            gate,
+            writes: Writes::new(gate, Self::written, cx),
             home,
             store,
             refs: Arc::new(Refs::empty()),
@@ -194,15 +186,11 @@ impl RemoteActions {
             remotes: Vec::new(),
             pull: PullChoice::default(),
             prune: true,
-            running: None,
             cancelled: None,
-            outcome: Arc::default(),
-            asking: None,
             menu: None,
             upstream: None,
             editing: None,
             prompting: None,
-            _written: written,
         }
     }
 
@@ -217,7 +205,7 @@ impl RemoteActions {
     pub(crate) fn set_refs(&mut self, repo: Repo, refs: Arc<Refs>, under_way: bool, cx: &mut Context<Self>) {
         self.refs = refs;
         self.under_way = under_way;
-        let opening = self.gate.update(cx, |g, cx| g.open(&repo, cx));
+        let opening = self.writes.gate().update(cx, |g, cx| g.open(&repo, cx));
         let read = cx.background_spawn(async move {
             let writer = opening.await.ok_or_else(|| "the repository did not open".to_string())?;
             supraman_gitman::remotes(writer.repo()).map_err(|e| e.to_string())
@@ -279,28 +267,28 @@ impl RemoteActions {
 
     /// Why a remote call cannot start: another runs or waits, the gate is busy.
     pub(crate) fn busy(&self, cx: &gpui::App) -> Option<String> {
-        if let Some(running) = &self.running {
+        if let Some((_, running)) = self.writes.doing() {
             return Some(format!("{}…", running.doing.running()));
         }
-        self.gate.read(cx).busy().map(str::to_string)
+        self.writes.busy(cx).map(str::to_string)
     }
 
     /// The call under way: its words and progress.
     pub(crate) fn progress(&self) -> Option<(String, Option<&Progress>)> {
-        self.running.as_ref().map(|r| (r.doing.running(), r.progress.as_ref()))
+        self.writes.doing().map(|(_, r)| (r.doing.running(), r.progress.as_ref()))
     }
 
     pub(crate) fn cancel(&mut self, cx: &mut Context<Self>) {
-        if let Some(running) = &self.running {
+        if let Some((ticket, running)) = self.writes.doing() {
             running.cancel.store(true, Ordering::SeqCst);
-            self.cancelled = Some(running.ticket);
+            self.cancelled = Some(ticket);
             cx.notify();
         }
     }
 
     #[cfg(test)]
     pub(crate) fn asking(&self) -> Option<&str> {
-        self.asking.as_ref().map(|c| c.text.as_str())
+        self.writes.asked()
     }
 
     #[cfg(test)]
@@ -310,16 +298,13 @@ impl RemoteActions {
 
     /// Runs `job` with a [`Transfer`] whose prompts and progress come back here, holding `locks`.
     fn request(&mut self, doing: Doing, locks: LockSet, job: impl FnOnce(&Session<'_>, &Transfer) -> Result<Done, WriteError> + Send + 'static, cx: &mut Context<Self>) {
-        if self.gate.read(cx).writer().is_none() {
-            return cx.emit(RemoteEvent::Why(STILL_OPENING.into()));
-        }
         if self.busy(cx).is_some() {
             return;
         }
         let (heard, mut hearing) = unbounded::<Heard>();
         let cancel = Arc::new(AtomicBool::new(false));
-        let (outcome, store, stop) = (self.outcome.clone(), self.store.clone(), cancel.clone());
-        let wrapped = move |s: &Session<'_>| {
+        let (store, stop) = (self.store.clone(), cancel.clone());
+        let wrapped = self.writes.keeping(|done| done, move |s: &Session<'_>| {
             let to = heard.clone();
             let mut t = Transfer { cancel: stop, progress: Arc::new(move |p| drop(to.unbounded_send(Heard::Progress(p)))), env: Vec::new() };
             let slot = Arc::new(Mutex::new(Some(heard)));
@@ -330,11 +315,13 @@ impl RemoteActions {
             let done = job(s, &t);
             drop(bridge);
             slot.lock().unwrap_or_else(PoisonError::into_inner).take();
-            *outcome.lock().unwrap_or_else(PoisonError::into_inner) = Some(done?);
-            Ok(())
+            done
+        });
+        let ticket = match self.writes.request(Running { doing, progress: None, cancel }, locks, wrapped, cx) {
+            Ok(Some(ticket)) => ticket,
+            Ok(None) => return,
+            Err(why) => return cx.emit(RemoteEvent::Why(why.into())),
         };
-        let Some(ticket) = self.gate.update(cx, |g, cx| g.request(locks, wrapped, cx)) else { return };
-        self.running = Some(Running { ticket, doing, progress: None, cancel });
         cx.spawn(async move |this, cx| {
             while let Some(h) = hearing.next().await {
                 if this.update(cx, |this, cx| this.heard(ticket, h, cx)).is_err() {
@@ -349,7 +336,7 @@ impl RemoteActions {
     fn heard(&mut self, ticket: u64, heard: Heard, cx: &mut Context<Self>) {
         match heard {
             Heard::Progress(p) => {
-                if let Some(running) = self.running.as_mut().filter(|r| r.ticket == ticket) {
+                if let Some(running) = self.writes.doing_mut(ticket) {
                     running.progress = Some(p);
                 }
             }
@@ -359,11 +346,11 @@ impl RemoteActions {
     }
 
     fn written(&mut self, w: &Written, cx: &mut Context<Self>) {
-        let Some(running) = self.running.take_if(|r| r.ticket == w.ticket) else { return };
+        let Some(running) = self.writes.written(w) else { return };
         if let Some(p) = self.prompting.take() {
             p.cancel();
         }
-        let done = self.outcome.lock().unwrap_or_else(PoisonError::into_inner).take();
+        let done = self.writes.kept();
         if self.cancelled.take() == Some(w.ticket) {
             cx.emit(RemoteEvent::Wrote(None));
             return cx.emit(RemoteEvent::Why(format!("{} was cancelled", running.doing.running())));
@@ -399,12 +386,12 @@ impl RemoteActions {
     }
 
     fn ask(&mut self, ask: Ask, cx: &mut Context<Self>) {
-        self.asking = Some(ask.question());
+        self.writes.asking = Some(ask.question());
         cx.notify();
     }
 
     pub(crate) fn answer(&mut self, answer: Answer, cx: &mut Context<Self>) {
-        let Some(asked) = self.asking.take() else { return };
+        let Some(asked) = self.writes.asking.take() else { return };
         match asked.take(answer) {
             Some(Ask::Behind { .. }) => self.act(RemoteAct::Pull(PullMode::FastForwardIfPossible), cx),
             Some(Ask::Stale { remote, .. }) => self.act(RemoteAct::Fetch(remote), cx),
@@ -424,13 +411,13 @@ impl RemoteActions {
 
     /// The forced push the second question was about, once confirmed.
     fn answer_force(&mut self, answer: Answer, cx: &mut Context<Self>) {
-        match self.asking.as_ref().and_then(|a| a.action.clone()) {
+        match self.writes.asking.as_ref().and_then(|a| a.action.clone()) {
             Some(Ask::Force { local, remote, branch, force }) if answer == Answer::Yes => {
-                self.asking = None;
+                self.writes.asking = None;
                 self.push(local, remote, branch, force, cx);
             }
             Some(Ask::Force { .. }) => {
-                self.asking = None;
+                self.writes.asking = None;
                 cx.notify();
             }
             _ => self.answer(answer, cx),

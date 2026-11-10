@@ -14,13 +14,10 @@ pub(crate) mod tests;
 
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use gpui::{App, AppContext as _, Context, Entity, EventEmitter, SharedString, Subscription};
-use supraman_gitman::write::conflicts::Marked;
-use supraman_gitman::write::rebase::Rebased;
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, SharedString};
 use supraman_gitman::{ChangeKind, Conflict, FileChange, OperationState, Repo, Status, UnderWay};
-use supraman_ui::confirm::Confirm;
 use supraman_ui::hit::HitTargets;
 use supraman_ui::stall;
 use supraman_ui::table::TableState;
@@ -28,7 +25,7 @@ use supraman_ui::tree::{Order, TreeState};
 
 use super::details::{Counts, FileView, PanelEvent, sort_changes};
 use super::diff::{Of, Target};
-use super::write_gate::{WriteGate, Written};
+use super::write_gate::{WriteGate, Writes};
 
 pub(crate) use actions::{Ask, Doing};
 pub(crate) use load::{Branch, Section, file_changes, of_status, sections};
@@ -103,19 +100,11 @@ pub(crate) struct WipPanel {
     staged: List,
     /// Each branch's lane colour in the graph, for the conflict header's pills.
     ref_colours: Rc<HashMap<String, usize>>,
-    gate: Entity<WriteGate>,
+    writes: Writes<Ask, Doing, actions::Kept>,
     /// The repo runs commit hooks: Skip hooks is offered.
     hooks: bool,
-    /// The panel's write under way: its gate ticket.
-    doing: Option<(u64, Doing)>,
-    asking: Option<Confirm<Ask>>,
-    /// How the last rebase step ended, as its job left it.
-    stepped: Arc<Mutex<Option<Rebased>>>,
-    /// What the last mark resolved did, as its job left it.
-    marked: Arc<Mutex<Option<Marked>>>,
     /// Made once a window is at hand.
     composer: Option<compose::Composer>,
-    _written: Subscription,
     #[cfg(test)]
     pub(crate) status_reads: usize,
 }
@@ -124,8 +113,6 @@ impl EventEmitter<PanelEvent> for WipPanel {}
 
 impl WipPanel {
     pub(crate) fn new(hits: HitTargets, gate: Entity<WriteGate>, cx: &mut Context<Self>) -> Self {
-        let written = cx.subscribe(&gate, |this: &mut WipPanel, _, w: &Written, cx| this.written(w, cx));
-        cx.observe(&gate, |_, _, cx| cx.notify()).detach();
         WipPanel {
             hits,
             repo: None,
@@ -139,14 +126,9 @@ impl WipPanel {
             unstaged: List::new(cx),
             staged: List::new(cx),
             ref_colours: Rc::default(),
-            gate,
+            writes: Writes::new(gate, Self::written, cx),
             hooks: false,
-            doing: None,
-            asking: None,
-            stepped: Arc::default(),
-            marked: Arc::default(),
             composer: None,
-            _written: written,
             #[cfg(test)]
             status_reads: 0,
         }

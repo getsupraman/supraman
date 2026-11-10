@@ -199,8 +199,8 @@ impl RemoteActions {
     /// The question, else the upstream, the URL or ssh's prompt, as the tab's band; `true` when a field of it
     /// holds the keyboard.
     pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<(Div, bool)> {
-        if let Some(asked) = &self.asking {
-            return Some((asked.render_band_answer(&self.hits, "git-remote-ask", |this: &mut Self, answer, _, cx| this.answer_force(answer, cx), cx), false));
+        if let Some(band) = self.writes.band_answer(&self.hits, "git-remote-ask", Self::answer_force, cx) {
+            return Some((band, false));
         }
         self.render_upstream(cx).or_else(|| self.render_edit(cx)).or_else(|| self.render_prompt(cx))
     }

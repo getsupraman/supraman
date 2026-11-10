@@ -3,7 +3,6 @@
 //! the questions before them, the stash row's menu and the message box. None is undoable.
 
 use supraman_core::text::count;
-use std::sync::{Arc, Mutex, PoisonError};
 
 use gpui::{AppContext as _, ClickEvent, Context, Entity, EventEmitter, Pixels, Point, Render, Subscription, Window, div, prelude::*};
 use supraman_gitman::write::stash::{self, Applied};
@@ -15,7 +14,7 @@ use supraman_ui::hit::HitTargets;
 use supraman_ui::menu::{ContextMenu, MenuItem, item};
 use supraman_ui::text_input::{InputEvent, TextInput};
 
-use super::write_gate::{WriteGate, Written, capitalised};
+use super::write_gate::{WriteGate, Writes, Written, capitalised};
 
 /// A stash as its row names it: its commit and its label.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,40 +93,32 @@ pub(crate) enum StashEvent {
 
 pub(crate) struct StashActions {
     hits: HitTargets,
-    gate: Entity<WriteGate>,
-    doing: Option<(u64, Doing)>,
-    applied: Arc<Mutex<Option<Applied>>>,
-    asking: Option<Confirm<Ask>>,
+    writes: Writes<Ask, Doing, Applied>,
     menu: Option<ContextMenu<(StashAct, StashRef)>>,
     /// The stash whose message is being edited, and its field once a window made it.
     editing: Option<(StashRef, Option<(Entity<TextInput>, Subscription)>)>,
     /// The stash an apply or a pop left conflicted, kept.
     conflicted: Option<StashRef>,
-    _written: Subscription,
 }
 
 impl EventEmitter<StashEvent> for StashActions {}
 
-pub(crate) const STILL_OPENING: &str = "The repository is still opening; try again in a moment";
-
 impl StashActions {
     pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
-        self.asking.as_ref().map(|asked| asked.render_band(&self.hits, "git-stash-ask", |this: &mut Self, yes, _, cx| this.answer(yes, cx), cx))
+        self.writes.band(&self.hits, "git-stash-ask", Self::answer, cx)
     }
 
     pub(crate) fn new(gate: Entity<WriteGate>, hits: HitTargets, cx: &mut Context<Self>) -> StashActions {
-        let written = cx.subscribe(&gate, |this: &mut StashActions, _, w: &Written, cx| this.written(w, cx));
-        cx.observe(&gate, |_, _, cx| cx.notify()).detach();
-        StashActions { hits, gate, doing: None, applied: Arc::default(), asking: None, menu: None, editing: None, conflicted: None, _written: written }
+        StashActions { hits, writes: Writes::new(gate, Self::written, cx), menu: None, editing: None, conflicted: None }
     }
 
     pub(crate) fn busy(&self, cx: &gpui::App) -> Option<&'static str> {
-        self.gate.read(cx).busy()
+        self.writes.busy(cx)
     }
 
     #[cfg(test)]
     pub(crate) fn asking(&self) -> Option<&str> {
-        self.asking.as_ref().map(|c| c.text.as_str())
+        self.writes.asked()
     }
 
     #[cfg(test)]
@@ -136,29 +127,21 @@ impl StashActions {
     }
 
     fn request(&mut self, doing: Doing, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) {
-        if self.gate.read(cx).writer().is_none() {
-            return cx.emit(StashEvent::Why(STILL_OPENING.into()));
+        if let Err(why) = self.writes.request(doing, LockSet::stash(), job, cx) {
+            cx.emit(StashEvent::Why(why.into()));
         }
-        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request(LockSet::stash(), job, cx)) {
-            self.doing = Some((ticket, doing));
-        }
-        cx.notify();
     }
 
     fn ask(&mut self, ask: Ask, cx: &mut Context<Self>) {
-        if self.busy(cx).is_some() {
-            return;
-        }
         let (text, yes) = ask.question();
         let destroys = matches!(ask, Ask::Delete(_));
         let asked = Confirm::ask(text, yes, ask);
-        self.asking = Some(if destroys { asked.danger() } else { asked });
-        cx.notify();
+        self.writes.ask(if destroys { asked.danger() } else { asked }, cx);
     }
 
     /// The answer to the question shown; a no writes nothing.
     pub(crate) fn answer(&mut self, yes: bool, cx: &mut Context<Self>) {
-        let Some(ask) = self.asking.take().and_then(|c| c.action).filter(|_| yes) else { return cx.notify() };
+        let Some(ask) = self.writes.answer(yes) else { return cx.notify() };
         match ask {
             Ask::Files { files, message } => self.request(Doing::Files(files.len()), move |s| stash::stash_files(s, &files, &message), cx),
             Ask::Apply { stash, pop } => self.run_apply(stash, pop, cx),
@@ -191,12 +174,9 @@ impl StashActions {
     }
 
     fn run_apply(&mut self, stash: StashRef, pop: bool, cx: &mut Context<Self>) {
-        let (applied, sha) = (self.applied.clone(), stash.sha.clone());
-        self.request(Doing::Apply { stash, pop }, move |s| {
-            let outcome = stash::apply(s, &sha, pop)?;
-            *applied.lock().unwrap_or_else(PoisonError::into_inner) = Some(outcome);
-            Ok(())
-        }, cx);
+        let sha = stash.sha.clone();
+        let job = self.writes.keeping(|applied| applied, move |s| stash::apply(s, &sha, pop));
+        self.request(Doing::Apply { stash, pop }, job, cx);
     }
 
     /// `files` of the stash `sha` put in the work tree.
@@ -255,7 +235,7 @@ impl StashActions {
     }
 
     fn written(&mut self, w: &Written, cx: &mut Context<Self>) {
-        let Some((_, doing)) = self.doing.take_if(|(ticket, _)| *ticket == w.ticket) else { return };
+        let Some(doing) = self.writes.written(w) else { return };
         if let Err(why) = &w.result {
             cx.emit(StashEvent::Wrote(None));
             return cx.emit(StashEvent::Why(capitalised(why)));
@@ -279,7 +259,7 @@ impl StashActions {
     }
 
     fn applied(&mut self, stash: StashRef, pop: bool, cx: &mut Context<Self>) {
-        let outcome = self.applied.lock().unwrap_or_else(PoisonError::into_inner).take();
+        let outcome = self.writes.kept();
         let verb = if pop { "Popped" } else { "Applied" };
         if outcome == Some(Applied::Conflicted) {
             let kept = if pop { "; the stash is kept" } else { "" };

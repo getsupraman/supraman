@@ -182,11 +182,11 @@ fn the_palettes_push_pull_and_fetch_act_as_the_toolbar_does_and_are_dimmed_with_
     let default = palette_remote(&view, cx).into_iter().find(|r| r.0 == "cmd:pull").map(|r| r.1);
     assert_eq!(default.as_deref(), Some("Remote: Fetch"), "the default's words follow the toolbar's");
 
-    view.update(cx, |v, cx| v.remote.update(cx, |r, _| r.running = Some(super::Running { ticket: 0, doing: super::Doing::FetchAll, progress: None, cancel: Default::default() })));
+    view.update(cx, |v, cx| v.remote.update(cx, |r, _| r.writes.set_doing(Some((0, super::Running { doing: super::Doing::FetchAll, progress: None, cancel: Default::default() })))));
     let rows = palette_remote(&view, cx);
     assert!(rows.iter().all(|r| r.2.as_deref() == Some("Fetching…")), "a transfer running dims every one: {rows:?}");
     assert_eq!(why_not(&view, cx), [Some("Fetching…".into()), Some("Fetching…".into())]);
-    view.update(cx, |v, cx| v.remote.update(cx, |r, _| r.running = None));
+    view.update(cx, |v, cx| v.remote.update(cx, |r, _| r.writes.set_doing(None)));
 }
 
 #[gpui::test]

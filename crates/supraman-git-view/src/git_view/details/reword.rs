@@ -18,9 +18,9 @@ use theme::ActiveTheme as _;
 
 use super::{CommitPanel, PanelEvent, Shown};
 use crate::git_view::keys::{AMEND_CONTEXT, NextField, PreviousField};
-use crate::git_view::stash::{STILL_OPENING, StashRef};
+use crate::git_view::stash::StashRef;
 use crate::git_view::wip::compose::{failure_banner, message_fields, summary_row};
-use crate::git_view::write_gate::{Written, capitalised};
+use crate::git_view::write_gate::{STILL_OPENING, Written, capitalised};
 
 pub(crate) const CLICK_TO_AMEND: &str = "Click to amend your commit message";
 pub(crate) const CLICK_TO_EDIT_STASH: &str = "Click to edit the stash message";
