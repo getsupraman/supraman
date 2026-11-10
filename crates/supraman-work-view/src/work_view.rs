@@ -7,6 +7,7 @@ pub mod cards;
 mod detail;
 pub(crate) mod find;
 mod inbox;
+pub mod inbox_card;
 mod item;
 mod layout;
 mod navigator;

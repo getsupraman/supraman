@@ -21,9 +21,8 @@ use supraman_ui::clipped::clipped;
 use crate::settings_window::page;
 use crate::updates::Stage;
 use crate::fleet::{self, Open, RepoNode, SessionRow, WorkspaceNode};
-use crate::work_view;
 
-mod inbox_card;
+mod work_cards;
 mod messages;
 
 const REVEAL_WITHIN: Duration = Duration::from_secs(60);

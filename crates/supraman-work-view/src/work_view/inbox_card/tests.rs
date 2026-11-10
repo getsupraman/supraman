@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use gpui::{Bounds, Entity, Modifiers, Render, TestAppContext, VisualTestContext};
+use gpui::{Bounds, Context, Modifiers, Pixels, Render, TestAppContext, VisualTestContext, rems};
 use serde_json::json;
 use supraman_workman::Client;
 use supraman_workman::fake::{Answer, FakeWorkman, INBOX_KINDS, inbox_rows};
@@ -35,7 +35,7 @@ impl Render for Holder {
         div().w(px(320.)).flex().flex_col().gap_1().children(self.cards.iter().map(|card| {
             let (done, key) = (self.done.clone(), card.key.clone());
             let on: OnCard = Rc::new(move |action, _, _| done.borrow_mut().push((key.clone(), action)));
-            render(card, &self.hits, now, on, cx)
+            render(card, &self.hits, now, |color| div().size(rems(0.875)).bg(color).into_any_element(), on, cx)
         }))
     }
 }
