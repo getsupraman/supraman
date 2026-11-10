@@ -194,6 +194,12 @@ try {
     try { $run = Get-CargoRun $program $rest } catch { [Console]::Error.WriteLine("heavy-lock: no cargo metadata: $_") }
     if ($run) {
         try { Clear-SwitchedMembers $run } catch { [Console]::Error.WriteLine("heavy-lock: no switch check: $_") }
+        # A test's temp repos sit under the target dir, which the scanner exclusion covers; a build keeps the user's temp.
+        if ($run.sub -in 'test', 't') {
+            $temp = Join-Path $run.targetDir 'tmp\t'
+            New-Item -ItemType Directory -Force $temp | Out-Null
+            $env:TMP = $temp; $env:TEMP = $temp
+        }
         $code = Invoke-Cargo $program $rest $run
     } else {
         & $program @rest; $code = $LASTEXITCODE
