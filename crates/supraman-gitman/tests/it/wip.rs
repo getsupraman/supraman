@@ -175,7 +175,8 @@ fn rewording_head_changes_only_its_message_and_leaves_the_staged_changes_staged_
 fn only_heads_message_on_a_branch_with_nothing_under_way_is_amendable_and_a_push_marks_it_pushed() {
     let f = Fixture::copy();
     let head = f.git(&["rev-parse", "HEAD"]);
-    assert_eq!(amendable(&f.repo(), &head).unwrap(), Amendable::Branch { name: "main".into(), pushed: false });
+    assert_eq!(amendable(&f.repo(), &head).unwrap(), Amendable::Branch { name: "main".into() });
+    assert!(!pushed(&f.repo(), &head).unwrap());
     assert_eq!(amendable(&f.repo(), f.sha("merge")).unwrap(), Amendable::No, "not HEAD");
 
     let wt = Repo::new(f.git.clone(), &f.worktree);
@@ -190,5 +191,6 @@ fn only_heads_message_on_a_branch_with_nothing_under_way_is_amendable_and_a_push
     assert_eq!(amendable(&wt, &side).unwrap(), Amendable::No, "a merge under way");
 
     f.git(&["push", "-q", "origin", "main"]);
-    assert_eq!(amendable(&f.repo(), &head).unwrap(), Amendable::Branch { name: "main".into(), pushed: true });
+    assert_eq!(amendable(&f.repo(), &head).unwrap(), Amendable::Branch { name: "main".into() });
+    assert!(pushed(&f.repo(), &head).unwrap());
 }

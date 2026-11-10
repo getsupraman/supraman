@@ -67,9 +67,10 @@ fn only_commits_on_heads_first_parent_line_above_the_first_merge_qualify() {
     let side = f.side();
     assert_eq!([f.sha("second"), &w1, &w2].map(|c| rewordable(&side, c).unwrap()), [Some(3), Some(2), Some(1)]);
     assert_eq!([f.sha("root"), &w3].map(|c| rewordable(&side, c).unwrap()), [None, None], "the root and HEAD");
-    assert_eq!(amendable(&side, &w1).unwrap(), Amendable::Older { name: "side".into(), above: 2, pushed: false });
+    assert_eq!(amendable(&side, &w1).unwrap(), Amendable::Older { name: "side".into(), above: 2 });
+    assert!(!pushed(&side, &w1).unwrap());
     f.at(&f.worktree, &["push", "-q", "origin", "side"]);
-    assert_eq!(amendable(&side, &w1).unwrap(), Amendable::Older { name: "side".into(), above: 2, pushed: true });
+    assert!(pushed(&side, &w1).unwrap());
     f.at(&f.worktree, &["checkout", "-q", "--detach"]);
     assert_eq!(amendable(&side, &w1).unwrap(), Amendable::OlderDetached);
     assert!(matches!(write(&side, |s| rebase::reword(s, &w1, "New\n")), Err(WriteError::Refused(rebase::DETACHED))));

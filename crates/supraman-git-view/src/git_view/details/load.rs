@@ -52,8 +52,6 @@ pub(crate) struct Loaded {
     pub(crate) all: Option<Whole>,
     /// The changed files' paths.
     pub(crate) files: HashSet<String>,
-    /// Whether the message box may amend the commit's message; [`Amendable::No`] for a stash.
-    pub(crate) amendable: Amendable,
 }
 
 /// The whole tree at a commit ([`whole`]) and every path in it.
@@ -72,11 +70,15 @@ pub(crate) fn load(repo: &Repo, sha: &str, order: Order) -> Result<Loaded, Strin
 pub(crate) fn load_with(repo: &Repo, sha: &str, order: Order, all_files: bool) -> Result<Loaded, String> {
     let details = supraman_gitman::details(repo, sha).map_err(|e| e.to_string())?;
     let changes = supraman_gitman::changed_files(repo, sha).map_err(|e| e.to_string())?;
-    let amendable = supraman_gitman::amendable(repo, sha).unwrap_or_else(|e| {
+    build(repo, sha, details, changes, None, order, all_files)
+}
+
+/// Whether the message box may amend or reword `sha`, read after its details are shown.
+pub(crate) fn amendable(repo: &Repo, sha: &str) -> Amendable {
+    supraman_gitman::amendable(repo, sha).unwrap_or_else(|e| {
         log::warn!("git tab: cannot tell whether {sha} can be amended: {e}");
         Amendable::No
-    });
-    Ok(Loaded { amendable, ..build(repo, sha, details, changes, None, order, all_files)? })
+    })
 }
 
 /// A stash's commit and its work-tree changes against its base.
@@ -92,7 +94,7 @@ fn build(repo: &Repo, sha: &str, details: Details, changes: Vec<FileChange>, sta
     changes.iter().for_each(|c| counts.add(&Some(c.kind)));
     let files = changes.iter().map(|c| c.path.clone()).collect();
     let changed = Tree::build(changes.iter().map(|c| (c.path.clone(), Some(c.kind))), Counts::add, order);
-    Ok(Loaded { sha: sha.to_string(), details, stash, changes, counts, changed, all, files, amendable: Amendable::No })
+    Ok(Loaded { sha: sha.to_string(), details, stash, changes, counts, changed, all, files })
 }
 
 /// Every file at `sha` (`ls-tree -r`) with `changes` marked, as a tree.
