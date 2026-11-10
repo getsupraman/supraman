@@ -39,6 +39,15 @@ impl Stars {
         (on, save)
     }
 
+    /// The stars made before this store was read join the file's.
+    pub fn absorb(&mut self, early: &Stars) -> Option<Save> {
+        self.0.edit(|f| {
+            let before = f.sessions.len();
+            f.sessions.extend(early.ids().iter().cloned());
+            f.sessions.len() != before
+        })
+    }
+
     /// Each starred session that continued (`continued`: to the newest of its chain) is starred under the newest instead.
     pub fn follow(&mut self, continued: &std::collections::HashMap<String, String>) -> Option<Save> {
         self.0.edit(|f| {
@@ -89,6 +98,21 @@ mod tests {
         assert!(!toggled(&mut again, "aaaa-1"));
         let (third, _) = Stars::load(Some(home.path()));
         assert!(!third.ids().contains("aaaa-1") && third.ids().contains("bbbb-2"));
+    }
+
+    #[test]
+    fn a_star_made_before_the_file_is_read_is_kept_with_the_files() {
+        let home = tempfile::tempdir().unwrap();
+        let (mut stars, _) = Stars::load(Some(home.path()));
+        assert!(toggled(&mut stars, "aaaa-1"));
+        let mut early = Stars::default();
+        let (on, save) = early.toggle("bbbb-2");
+        assert!(on && save.is_none(), "no file yet, nothing written");
+        let (mut read, _) = Stars::load(Some(home.path()));
+        read.absorb(&early).expect("a change").write().unwrap();
+        assert!(read.absorb(&early).is_none(), "nothing new the second time");
+        let (again, _) = Stars::load(Some(home.path()));
+        assert_eq!(again.ids().iter().map(String::as_str).collect::<Vec<_>>(), ["aaaa-1", "bbbb-2"]);
     }
 
     #[test]

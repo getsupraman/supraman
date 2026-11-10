@@ -31,7 +31,6 @@ impl FleetView {
         let waiting = total - all.len();
         all.truncate(MESSAGES_LISTED);
         let colors = cx.theme().colors().clone();
-        let status = cx.theme().status().clone();
         let now = now_ms();
         let no_answers = BTreeMap::new();
         let asks: BTreeMap<&String, BTreeMap<String, AskState>> = self
@@ -65,152 +64,153 @@ impl FleetView {
                     })),
             );
         for (workspace, m) in all {
-            let key = message_key(workspace, m);
-            let color = if m.is_notice() || m.error.is_some() { status.warning } else { status.info };
-            let sender = match (&m.error, m.from_name.as_str()) {
-                (Some(_), _) => format!("unreadable {}", m.file),
-                (None, "") => "?".to_string(),
-                (None, name) => name.to_string(),
-            };
-            let lines: Vec<&str> = m.body.lines().collect();
-            let open = self.expanded.contains(&key);
-            let shown = if open { lines.len() } else { lines.len().min(MESSAGE_LINES) };
-            let mut body = div().flex().flex_col().min_w_0().text_xs().text_color(colors.text);
-            for (n, segment) in segments(&lines[..shown]).into_iter().enumerate() {
-                body = body.child(match segment {
-                    Segment::Text(text) => div().child(SharedString::from(text)),
-                    Segment::Table(rows) => div().flex().flex_col().py_1().overflow_hidden().font_family(supraman_ui::fonts::MONO).children(
-                        rows.into_iter().enumerate().map(|(i, row)| {
-                            div()
-                                .relative()
-                                .whitespace_nowrap()
-                                .child(SharedString::from(row))
-                                .child(hit_target(&self.hits, format!("msg-table-{key}#{n}.{i}")))
-                        }),
-                    ),
-                });
-            }
-            if shown < lines.len() {
-                body = body.child(SharedString::from(format!("… {} more line(s), click to show", lines.len() - shown)));
-            }
-            // every row, not the tree's: a sender in the workspace root but outside its repos has no tree row
-            let target = self
-                .sessions
-                .iter()
-                .find(|s| !m.from_name.is_empty() && s.name == m.from_name && fleet::attachable(s, &s.health(now)))
-                .map(|s| s.id.clone());
-            let attach = target.map(|id| {
-                let workspace = workspace.clone();
-                button::bordered(&self.hits, format!("msg-attach-{key}"), "Attach", cx).on_click(cx.listener(
-                    move |this, _: &ClickEvent, window, cx| {
-                        cx.stop_propagation();
-                        this.attach_by_id(&workspace, &id, window, cx);
-                    },
-                ))
-            });
-            let answer = asks.get(workspace).and_then(|a| a.get(&m.file)).map(|state| {
-                let row = div().flex().items_center().gap_2().text_xs();
-                let reply = |cx: &mut Context<Self>| {
-                    let (w, file) = (workspace.clone(), m.file.clone());
-                    button::bordered(&self.hits, format!("msg-reply-{key}"), "Reply…", cx).on_click(cx.listener(
-                        move |this, _: &ClickEvent, window, cx| {
-                            cx.stop_propagation();
-                            this.open_compose(&w, file.clone(), window, cx);
-                        },
-                    ))
-                };
-                match state {
-                    AskState::Open(Ask::Approve) => {
-                        let (w, file) = (workspace.clone(), m.file.clone());
-                        row.child(button::bordered(&self.hits, format!("msg-approve-{key}"), "Approve", cx).on_click(cx.listener(
-                            move |this, _: &ClickEvent, _, cx| {
-                                cx.stop_propagation();
-                                this.approve(&w, &file, cx);
-                            },
-                        )))
-                        .child(reply(cx))
-                    }
-                    AskState::Open(Ask::Decide) => row.child(reply(cx)),
-                    AskState::Answered(line) => row.child(
-                        div()
-                            .relative()
-                            .text_color(status.success)
-                            .child(SharedString::from(match self.answered_route.get(&key) {
-                                Some(route) => format!("answered: {line} · {route}"),
-                                None => format!("answered: {line}"),
-                            }))
-                            .child(hit_target(&self.hits, format!("msg-answered-{key}"))),
-                    ),
-                    AskState::Superseded => {
-                        row.child(div().text_color(colors.text_muted).child("superseded by a later APPROVE?"))
-                    }
-                }
-            });
-            let dismiss = {
-                let (w, file) = (workspace.clone(), m.file.clone());
-                glyph_button(&self.hits, format!("msg-dismiss-{key}"), Icon::Close, "Dismiss here", cx).on_click(cx.listener(
-                    move |this, _: &ClickEvent, _, cx| {
-                        cx.stop_propagation();
-                        this.dismiss_message(&w, &file, cx);
-                    },
-                ))
-            };
-            let replying = self
-                .compose
-                .as_ref()
-                .is_some_and(|c| &c.workspace == workspace && c.reply_to == m.file);
-            section = section.child(
-                div()
-                    .id(SharedString::from(format!("msg-{key}")))
-                    .flex()
-                    .items_start()
-                    .gap_2()
-                    .p_2()
-                    .rounded_md()
-                    .border_l_2()
-                    .border_color(color)
-                    .bg(color.opacity(MESSAGE_TINT))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(color.opacity(MESSAGE_TINT_HOVER)))
-                    .active(|s| s.bg(color.opacity(0.22)))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .min_w_0()
-                            .gap(px(2.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap_2()
-                                    .text_sm()
-                                    .child(div().font_weight(FontWeight::BOLD).text_color(colors.text).child(SharedString::from(sender)))
-                                    .child(div().text_color(quiet(cx)).child(SharedString::from(workspace.clone())))
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(quiet(cx))
-                                            .child(SharedString::from(supraman_core::time::ago(now - m.at))),
-                                    ),
-                            )
-                            .child(body)
-                            .children(answer),
-                    )
-                    .children(attach)
-                    .child(dismiss)
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        if !this.expanded.remove(&key) {
-                            this.expanded.insert(key.clone());
-                        }
-                        cx.notify();
-                    })),
-            );
+            let ask = asks.get(workspace).and_then(|a| a.get(&m.file));
+            section = section.child(self.render_message(workspace, m, ask, now, cx));
+            let replying = self.compose.as_ref().is_some_and(|c| &c.workspace == workspace && c.reply_to == m.file);
             if replying {
                 section = section.children(self.render_compose(cx));
             }
         }
         Some(section.into_any_element())
+    }
+
+    fn render_message(&self, workspace: &String, m: &OutboxMessage, ask: Option<&AskState>, now: i64, cx: &mut Context<Self>) -> AnyElement {
+        let key = message_key(workspace, m);
+        let colors = cx.theme().colors().clone();
+        let status = cx.theme().status().clone();
+        let color = if m.is_notice() || m.error.is_some() { status.warning } else { status.info };
+        let sender = match (&m.error, m.from_name.as_str()) {
+            (Some(_), _) => format!("unreadable {}", m.file),
+            (None, "") => "?".to_string(),
+            (None, name) => name.to_string(),
+        };
+        let dismiss = {
+            let (w, file) = (workspace.clone(), m.file.clone());
+            glyph_button(&self.hits, format!("msg-dismiss-{key}"), Icon::Close, "Dismiss here", cx).on_click(cx.listener(
+                move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.dismiss_message(&w, &file, cx);
+                },
+            ))
+        };
+        div()
+            .id(SharedString::from(format!("msg-{key}")))
+            .flex()
+            .items_start()
+            .gap_2()
+            .p_2()
+            .rounded_md()
+            .border_l_2()
+            .border_color(color)
+            .bg(color.opacity(MESSAGE_TINT))
+            .cursor_pointer()
+            .hover(|s| s.bg(color.opacity(MESSAGE_TINT_HOVER)))
+            .active(|s| s.bg(color.opacity(0.22)))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .text_sm()
+                            .child(div().font_weight(FontWeight::BOLD).text_color(colors.text).child(SharedString::from(sender)))
+                            .child(div().text_color(quiet(cx)).child(SharedString::from(workspace.clone())))
+                            .child(div().text_xs().text_color(quiet(cx)).child(SharedString::from(supraman_core::time::ago(now - m.at)))),
+                    )
+                    .child(self.message_body(&key, m, cx))
+                    .children(ask.map(|state| self.message_answer(workspace, m, &key, state, cx))),
+            )
+            .children(self.message_attach(workspace, m, &key, now, cx))
+            .child(dismiss)
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                if !this.expanded.remove(&key) {
+                    this.expanded.insert(key.clone());
+                }
+                cx.notify();
+            }))
+            .into_any_element()
+    }
+
+    fn message_body(&self, key: &str, m: &OutboxMessage, cx: &mut Context<Self>) -> Div {
+        let lines: Vec<&str> = m.body.lines().collect();
+        let shown = if self.expanded.contains(key) { lines.len() } else { lines.len().min(MESSAGE_LINES) };
+        let mut body = div().flex().flex_col().min_w_0().text_xs().text_color(cx.theme().colors().text);
+        for (n, segment) in segments(&lines[..shown]).into_iter().enumerate() {
+            body = body.child(match segment {
+                Segment::Text(text) => div().child(SharedString::from(text)),
+                Segment::Table(rows) => div().flex().flex_col().py_1().overflow_hidden().font_family(supraman_ui::fonts::MONO).children(
+                    rows.into_iter().enumerate().map(|(i, row)| {
+                        div()
+                            .relative()
+                            .whitespace_nowrap()
+                            .child(SharedString::from(row))
+                            .child(hit_target(&self.hits, format!("msg-table-{key}#{n}.{i}")))
+                    }),
+                ),
+            });
+        }
+        if shown < lines.len() {
+            body = body.child(SharedString::from(format!("… {} more line(s), click to show", lines.len() - shown)));
+        }
+        body
+    }
+
+    // every row, not the tree's: a sender in the workspace root but outside its repos has no tree row
+    fn message_attach(&self, workspace: &String, m: &OutboxMessage, key: &str, now: i64, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let id = self
+            .sessions
+            .iter()
+            .find(|s| !m.from_name.is_empty() && s.name == m.from_name && fleet::attachable(s, &s.health(now)))
+            .map(|s| s.id.clone())?;
+        let workspace = workspace.clone();
+        Some(
+            button::bordered(&self.hits, format!("msg-attach-{key}"), "Attach", cx)
+                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.attach_by_id(&workspace, &id, window, cx);
+                }))
+                .into_any_element(),
+        )
+    }
+
+    fn message_answer(&self, workspace: &String, m: &OutboxMessage, key: &str, state: &AskState, cx: &mut Context<Self>) -> Div {
+        let row = div().flex().items_center().gap_2().text_xs();
+        let reply = |cx: &mut Context<Self>| {
+            let (w, file) = (workspace.clone(), m.file.clone());
+            button::bordered(&self.hits, format!("msg-reply-{key}"), "Reply…", cx).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                cx.stop_propagation();
+                this.open_compose(&w, file.clone(), window, cx);
+            }))
+        };
+        match state {
+            AskState::Open(Ask::Approve) => {
+                let (w, file) = (workspace.clone(), m.file.clone());
+                row.child(button::bordered(&self.hits, format!("msg-approve-{key}"), "Approve", cx).on_click(cx.listener(
+                    move |this, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.approve(&w, &file, cx);
+                    },
+                )))
+                .child(reply(cx))
+            }
+            AskState::Open(Ask::Decide) => row.child(reply(cx)),
+            AskState::Answered(line) => row.child(
+                div()
+                    .relative()
+                    .text_color(cx.theme().status().success)
+                    .child(SharedString::from(match self.answered_route.get(key) {
+                        Some(route) => format!("answered: {line} · {route}"),
+                        None => format!("answered: {line}"),
+                    }))
+                    .child(hit_target(&self.hits, format!("msg-answered-{key}"))),
+            ),
+            AskState::Superseded => row.child(div().text_color(cx.theme().colors().text_muted).child("superseded by a later APPROVE?")),
+        }
     }
 
     fn render_compose(&self, cx: &mut Context<Self>) -> Option<AnyElement> {

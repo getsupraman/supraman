@@ -38,6 +38,20 @@ impl DismissedMessages {
         self.0.edit(|f| f.workspaces.entry(workspace.to_string()).or_default().insert(file.to_string()))
     }
 
+    /// The dismissals made before this store was read join the file's.
+    pub fn absorb(&mut self, early: &DismissedMessages) -> Option<Save> {
+        self.0.edit(|f| {
+            let mut changed = false;
+            for (workspace, files) in &early.0.get().workspaces {
+                let mine = f.workspaces.entry(workspace.clone()).or_default();
+                for file in files {
+                    changed |= mine.insert(file.clone());
+                }
+            }
+            changed
+        })
+    }
+
     /// A workspace not in `messages` (an empty or unreadable outbox) keeps its dismissals.
     pub fn prune(&mut self, messages: &BTreeMap<String, Vec<OutboxMessage>>) -> (bool, Option<Save>) {
         let listed: BTreeMap<String, Vec<String>> = messages.iter().map(|(w, msgs)| (w.clone(), msgs.iter().map(|m| m.file.clone()).collect())).collect();
@@ -135,6 +149,20 @@ mod tests {
         assert!(!again.hides("w", "a.json") && again.hides("w", "b.json") && again.hides("v", "c.json"), "the prune was written");
         assert!(pruned(&mut d, &listed("w", &["d.json"])));
         assert!(!d.0.get().workspaces.contains_key("w"), "an emptied workspace leaves nothing behind");
+    }
+
+    #[test]
+    fn a_dismissal_made_before_the_file_is_read_is_kept_with_the_files() {
+        let home = tempfile::tempdir().unwrap();
+        let (mut d, _) = DismissedMessages::load(Some(home.path()));
+        dismissed(&mut d, "w", "a.json");
+        let mut early = DismissedMessages::default();
+        assert!(early.dismiss("v", "b.json").is_none(), "no file yet, nothing written");
+        let (mut read, _) = DismissedMessages::load(Some(home.path()));
+        read.absorb(&early).expect("a change").write().unwrap();
+        assert!(read.absorb(&early).is_none(), "nothing new the second time");
+        let (again, _) = DismissedMessages::load(Some(home.path()));
+        assert!(again.hides("w", "a.json") && again.hides("v", "b.json"));
     }
 
     #[test]
