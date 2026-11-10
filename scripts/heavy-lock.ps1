@@ -157,6 +157,20 @@ function Invoke-Cargo([string]$program, [object[]]$rest, $run) {
     $again.code
 }
 
+# A test's temp beside the main checkout: under the scanner exclusion with it, yet in no repo, since a test folder
+# meant to be none would find the checkout's .git. A build keeps the user's temp.
+function Set-TestTemp([string]$checkout) {
+    $temp = Join-Path "$checkout.tmp" 't'
+    for ($d = [IO.DirectoryInfo]::new($temp); $d; $d = $d.Parent) {
+        if (Test-Path -LiteralPath (Join-Path $d.FullName '.git')) {
+            [Console]::Error.WriteLine("heavy-lock: tests keep the user's temp: $temp is in the repo at $($d.FullName)")
+            return
+        }
+    }
+    New-Item -ItemType Directory -Force $temp | Out-Null
+    $env:TMP = $temp; $env:TEMP = $temp
+}
+
 if ($MyInvocation.InvocationName -eq '.') { return }
 
 if ($args.Count -lt 1) { [Console]::Error.WriteLine('usage: heavy-lock.ps1 <program> [arguments...]'); exit 2 }
@@ -171,11 +185,10 @@ if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
         }
     }
 }
+$common = git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir 2>$null
+$checkout = if ($LASTEXITCODE -eq 0 -and $common) { Split-Path -Parent ([IO.Path]::GetFullPath($common)) }
 # Every worktree builds into the main checkout's target (docs/DEVELOPING.md); one under a *.worktrees path fails sm's dry-run test.
-if (-not $env:CARGO_TARGET_DIR) {
-    $common = git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir 2>$null
-    if ($LASTEXITCODE -eq 0 -and $common) { $env:CARGO_TARGET_DIR = Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($common))) 'target' }
-}
+if (-not $env:CARGO_TARGET_DIR -and $checkout) { $env:CARGO_TARGET_DIR = Join-Path $checkout 'target' }
 # cargo colours its stderr only for a console; the pipe Invoke-Watched reads would turn that off.
 if (-not [Console]::IsErrorRedirected -and -not $env:CARGO_TERM_COLOR) { $env:CARGO_TERM_COLOR = 'always' }
 $rest = @($args | Select-Object -Skip 1)
@@ -194,12 +207,7 @@ try {
     try { $run = Get-CargoRun $program $rest } catch { [Console]::Error.WriteLine("heavy-lock: no cargo metadata: $_") }
     if ($run) {
         try { Clear-SwitchedMembers $run } catch { [Console]::Error.WriteLine("heavy-lock: no switch check: $_") }
-        # A test's temp repos sit under the target dir, which the scanner exclusion covers; a build keeps the user's temp.
-        if ($run.sub -in 'test', 't') {
-            $temp = Join-Path $run.targetDir 'tmp\t'
-            New-Item -ItemType Directory -Force $temp | Out-Null
-            $env:TMP = $temp; $env:TEMP = $temp
-        }
+        if ($run.sub -in 'test', 't' -and $checkout) { Set-TestTemp $checkout }
         $code = Invoke-Cargo $program $rest $run
     } else {
         & $program @rest; $code = $LASTEXITCODE

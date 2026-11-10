@@ -19,3 +19,9 @@ fn only_the_refusals_a_scanner_causes_are_tried_again() {
         assert!(!scanner_held(refused), "{refused}");
     }
 }
+
+#[test]
+fn the_temp_root_is_in_no_repo() {
+    let temp = std::env::temp_dir();
+    assert_eq!(supraman_core::paths::git_at(&temp), None, "a test folder meant to be no repo under {} would act on that one", temp.display());
+}
