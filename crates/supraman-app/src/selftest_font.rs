@@ -104,7 +104,7 @@ async fn painted_fits(view: &Entity<FleetView>, terminal: &Entity<Terminal>, fon
     let started = Instant::now();
     let (line, glyphs, cell) = loop {
         view.update(cx, |_, cx| cx.notify());
-        sleep(cx, Duration::from_millis(50)).await;
+        crate::selftest::drawn(cx).await?;
         let (line, cell) = terminal.read_with(cx, |t, _| (printed_line(t, PRINTED), t.last_content().terminal_bounds.cell_width));
         let glyphs = term_element::painted_glyphs();
         if let Some(line) = line {
