@@ -628,7 +628,7 @@ async fn open_folder(view: &Entity<FleetView>, ws_key: &str, cx: &mut AsyncWindo
         std::mem::replace(&mut v.open_with, pumping_open)
     });
     // the click reaches the closures of the next frame
-    sleep(cx, Duration::from_millis(200)).await;
+    crate::selftest::drawn(cx).await?;
 
     let (ticks, stop) = (Rc::new(Cell::new(0u32)), Rc::new(Cell::new(false)));
     let busy = (view.clone(), ticks.clone(), stop.clone());
