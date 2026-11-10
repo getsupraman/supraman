@@ -136,9 +136,9 @@ impl FleetView {
     fn default_of(&mut self) -> Option<Shell> {
         let (shell, notice) = self.shell_default.resolved()?.clone();
         if let Some(notice) = notice
-            && !self.tab_notices.contains(&notice)
+            && !self.saving.tab_notices.contains(&notice)
         {
-            self.tab_notices.push(notice);
+            self.saving.tab_notices.push(notice);
         }
         Some(shell)
     }

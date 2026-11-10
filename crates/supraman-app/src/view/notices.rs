@@ -34,7 +34,7 @@ impl FleetView {
         let supervise = undismissed(&self.supervise_errors, &self.supervise_dismissed).map(|t| (Notice::Supervise, t));
         let schedule = undismissed(&self.scheduling.schedule_errors, &self.scheduling.schedule_errors_dismissed).map(|t| (Notice::Schedule, t));
         let hand = self.hand_notices.iter().map(|t| (Notice::Hand, t.clone()));
-        let tabs = self.tab_notices.iter().map(|t| (Notice::Tabs, t.clone()));
+        let tabs = self.saving.tab_notices.iter().map(|t| (Notice::Tabs, t.clone()));
         let inbox = self.work_inbox.read(cx).notice.clone().map(|t| (Notice::Inbox, t));
         let action = self.action_error.iter().map(|t| (Notice::Action, t.clone()));
         setup.chain(supervise).chain(schedule).chain(hand).chain(tabs).chain(inbox).chain(action).collect()
@@ -46,7 +46,7 @@ impl FleetView {
             Notice::Supervise => self.supervise_dismissed.push(text.to_string()),
             Notice::Schedule => self.scheduling.schedule_errors_dismissed.push(text.to_string()),
             Notice::Hand => remove_one(&mut self.hand_notices, text),
-            Notice::Tabs => remove_one(&mut self.tab_notices, text),
+            Notice::Tabs => remove_one(&mut self.saving.tab_notices, text),
             Notice::Inbox => self.work_inbox.update(cx, |inbox, _| {
                 if inbox.notice.as_deref() == Some(text) {
                     inbox.notice = None;

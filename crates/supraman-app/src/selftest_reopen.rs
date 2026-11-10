@@ -26,7 +26,7 @@ pub(crate) async fn run(view: &Entity<FleetView>, home: &Path, own: &str, cx: &m
     let closed = close_all(view, false, cx).await;
     view.update(cx, |v, cx| {
         v.claude_command = saved;
-        v.tab_notices.clear();
+        v.saving.tab_notices.clear();
         cx.notify();
     });
     let reset = supraman_core::Settings::update(home, |s| s.sessions.resume_tabs_on_click = false).map_err(|e| anyhow!("settings.toml: {e}"));
@@ -111,7 +111,7 @@ async fn restart(view: &Entity<FleetView>, home: &Path, expected: usize, gone: O
     std::fs::remove_file(seen_file(home)).ok();
     let started = Instant::now();
     view.update(cx, |v, cx| v.restart_tabs(cx));
-    until(view, cx, WITHIN, &format!("{expected} tabs reopened"), |v| (v.tabs_restored && v.tabs.len() == expected).then_some(())).await?;
+    until(view, cx, WITHIN, &format!("{expected} tabs reopened"), |v| (v.saving.tabs_restored && v.tabs.len() == expected).then_some(())).await?;
     Ok(started.elapsed())
 }
 
@@ -160,7 +160,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, own: &str, gone: &Path, cx
     let took = restart(view, home, 4, Some(gone), cx).await?;
     let mut expected = saved.clone();
     expected.tabs.remove(4);
-    let (now, notices) = view.read_with(cx, |v, cx| (v.saved_tabs(cx), v.tab_notices.clone()));
+    let (now, notices) = view.read_with(cx, |v, cx| (v.saved_tabs(cx), v.saving.tab_notices.clone()));
     if now != expected {
         bail!("after the restart {now:?}, expected {expected:?}");
     }
@@ -182,7 +182,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, own: &str, gone: &Path, cx
     }
 
     supraman_core::Settings::update(home, |s| s.sessions.resume_tabs_on_click = true).map_err(|e| anyhow!("settings.toml: {e}"))?;
-    view.update(cx, |v, _| v.tab_notices.clear());
+    view.update(cx, |v, _| v.saving.tab_notices.clear());
     restart(view, home, 4, None, cx).await?;
     let placeholder = view.read_with(cx, |v, _| v.tabs.get(2).filter(|t| matches!(t.kind, TabKind::Saved(_)) && t.terminal.is_none()).map(|t| t.id));
     let Some(placeholder) = placeholder else {

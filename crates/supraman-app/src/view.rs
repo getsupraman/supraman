@@ -76,6 +76,7 @@ mod schedule_state;
 mod startup;
 pub(crate) mod start;
 pub(crate) mod tab_keys;
+mod tab_saving;
 mod term;
 mod work_tab;
 mod workman_url;
@@ -350,8 +351,6 @@ pub struct FleetView {
     pub claude_command: String,
     pub search: Entity<TextInput>,
     search_marks: StdHashMap<String, crate::search::Marks>,
-    tabs_resolving: bool,
-    tabs_again: bool,
     blink: term::CursorBlink,
     pub toast: ToastSlot,
     pub pane_toast: ToastSlot,
@@ -360,12 +359,7 @@ pub struct FleetView {
     pub deleted: StdHashMap<String, i64>,
     pub deleting: HashSet<String>,
     painted_sessions: bool,
-    pub tabs_restored: bool,
-    tabs_reopening: bool,
-    tabs_frozen: bool,
-    tabs_saved: Option<crate::saved_tabs::SavedTabs>,
-    tabs_writes: futures::channel::mpsc::UnboundedSender<crate::saved_tabs::SavedTabs>,
-    pub tab_notices: Vec<String>,
+    pub saving: tab_saving::TabSaving,
     pub scheduling: schedule_state::ScheduleState,
     pub(crate) tab_keys: Entity<tab_keys::TabKeyState>,
 }
@@ -694,8 +688,6 @@ impl FleetView {
             claude_command: "claude".into(),
             search,
             search_marks: StdHashMap::new(),
-            tabs_resolving: false,
-            tabs_again: false,
             blink,
             toast: ToastSlot::default(),
             pane_toast: ToastSlot::default(),
@@ -704,12 +696,7 @@ impl FleetView {
             deleted: StdHashMap::new(),
             deleting: HashSet::new(),
             painted_sessions: false,
-            tabs_restored: false,
-            tabs_reopening: false,
-            tabs_frozen: false,
-            tabs_saved: None,
-            tabs_writes,
-            tab_notices: Vec::new(),
+            saving: tab_saving::TabSaving::new(tabs_writes),
             scheduling,
             tab_keys: cx.new(|_| tab_keys::TabKeyState::new(defaults.window.tab_keys())),
         }
@@ -1452,8 +1439,8 @@ impl FleetView {
     }
 
     pub fn resolve_tabs(&mut self, cx: &mut Context<Self>) {
-        if self.tabs_resolving {
-            self.tabs_again = true;
+        if self.saving.tabs_resolving {
+            self.saving.tabs_again = true;
             return;
         }
         let shells: Vec<(u64, u32)> = self
@@ -1465,12 +1452,12 @@ impl FleetView {
         if shells.is_empty() && self.tabs.iter().all(|t| t.claude.is_none()) {
             return;
         }
-        self.tabs_resolving = true;
+        self.saving.tabs_resolving = true;
         let found = cx.background_executor().spawn(async move { tab_sessions(&shells) });
         cx.spawn(async move |this, cx| {
             let found = found.await;
             this.update(cx, |this, cx| {
-                this.tabs_resolving = false;
+                this.saving.tabs_resolving = false;
                 let mut changed = false;
                 let mut unlisted = false;
                 for tab in &mut this.tabs {
@@ -1487,7 +1474,7 @@ impl FleetView {
                 if changed {
                     cx.notify();
                 }
-                if std::mem::take(&mut this.tabs_again) {
+                if std::mem::take(&mut this.saving.tabs_again) {
                     this.resolve_tabs(cx);
                 }
             })
