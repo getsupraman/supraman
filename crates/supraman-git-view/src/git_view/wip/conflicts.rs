@@ -164,3 +164,6 @@ impl WipPanel {
         live(button::outline(&self.hits, "wip-resolve-all", "Mark all resolved", cx.theme().status().created, cx), busy, cx, |this, cx| this.resolve(None, false, cx))
     }
 }
+
+#[cfg(test)]
+mod tests;

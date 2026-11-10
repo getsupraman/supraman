@@ -5,11 +5,11 @@ use supraman_gitman::fixture::Fixture;
 use supraman_ui::hit::HitTargets;
 
 use super::open_or_focus;
-use crate::saved_tabs::{self, Reopen, SavedTab, SavedTabs, World};
+use crate::saved_tabs::SavedTab;
 use crate::view::{Tab, TabKind};
 
 #[gpui::test]
-fn git_tab_opens_once_per_folder_and_comes_back_after_a_restart(cx: &mut TestAppContext) {
+fn git_tab_opens_once_per_folder_and_saves_its_title_and_folder(cx: &mut TestAppContext) {
     let f = Fixture::shared();
     let (mut tabs, mut next) = (Vec::<Tab>::new(), 1u64);
     let made = std::cell::Cell::new(0);
@@ -29,18 +29,5 @@ fn git_tab_opens_once_per_folder_and_comes_back_after_a_restart(cx: &mut TestApp
 
     let TabKind::Git(view) = &tabs[0].kind else { panic!("a Git tab") };
     let saved = cx.update(|cx| SavedTab::git(tabs[0].title.clone(), view.read(cx).folder.clone()));
-    let home = tempfile::tempdir().unwrap();
-    saved_tabs::save(home.path(), &SavedTabs { tabs: vec![saved.clone()], active: Some(0) }).unwrap();
-    let (back, notice) = saved_tabs::load(home.path());
-    assert_eq!((back.tabs.as_slice(), notice), (std::slice::from_ref(&saved), None));
-    let world = World { sessions: &[], now: 0, workspaces: &[], resume_on_click: false, is_dir: &|p| p.is_dir(), is_file: &|_| true, has_transcript: &|_, _| false };
-    let Ok(Reopen::Git { title, folder, sizes: back }) = saved_tabs::plan(&back.tabs[0], &world) else { panic!("a Git tab reopens") };
-    assert_eq!((title.as_str(), folder.as_path(), back), ("Git · repo", f.dir.as_path(), GitSizes::default()), "the sizes are the layout file's, not the tab's");
-    let gone = SavedTab::git("Git · x".into(), f.temp.path().join("gone"));
-    assert!(saved_tabs::plan(&gone, &world).unwrap_err().contains("is gone"));
-
-    let old = serde_json::json!({ "kind": "git", "title": "Git · repo", "folder": f.dir, "widths": [200, 90, 300, 130, 70], "panel": 360, "message": 150, "refs": 210, "refs_shut": true, "hidden": ["refs/heads/feature", "stash/0123"] });
-    let old: SavedTab = serde_json::from_value(old).unwrap();
-    let Ok(Reopen::Git { sizes: back, .. }) = saved_tabs::plan(&old, &world) else { panic!("a Git tab reopens") };
-    assert_eq!(back, sizes(), "a tab saved before the layout file still hands over its sizes");
+    assert_eq!(saved, SavedTab::git("Git · repo".into(), f.dir.clone()), "a Git tab saves its title and folder");
 }

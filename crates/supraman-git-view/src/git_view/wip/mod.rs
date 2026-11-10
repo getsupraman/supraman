@@ -11,10 +11,6 @@ mod render;
 
 #[cfg(test)]
 pub(crate) mod tests;
-#[cfg(test)]
-mod conflict_tests;
-#[cfg(test)]
-mod write_tests;
 
 use std::collections::HashMap;
 use std::rc::Rc;

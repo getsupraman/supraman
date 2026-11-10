@@ -1,66 +1,20 @@
 //! The ref writes through the real tab: the ref panel's and the pills' double-click checkout and menus, the name
 //! dialog and the row's field, the questions, and a pill dropped on another, on fixture copies (C196).
 
-use std::cell::RefCell;
 use std::path::Path;
-use std::rc::Rc;
-use std::sync::Arc;
 
-use gpui::{Context, Entity, IntoElement, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Render, TestAppContext, VisualTestContext, Window, div, point, prelude::*, px};
-use supraman_gitman::fixture::{Fixture, git_in, run_git};
-use supraman_ui::hit::HitTargets;
+use gpui::{Entity, MouseButton, TestAppContext, VisualTestContext, point, px};
+use supraman_gitman::fixture::{Fixture, run_git};
 use supraman_ui::icon::Icon;
 
-use super::OpenGit;
 use super::view::DraggedPill;
-use crate::git_view::tests::redraw;
+use crate::git_view::test_support::{self, Opts, click, menu, opened, painted, press, redraw, row_of, toast};
 use crate::git_view::ref_panel::RefPanel;
-use crate::git_view::{GitSizes, GitView, bind_keys};
+use crate::git_view::GitView;
 use crate::occupancy;
 
-struct Holder(Entity<GitView>);
-
-impl Render for Holder {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().w(px(1400.)).h(px(900.)).child(self.0.clone())
-    }
-}
-
 fn open<'a>(folder: &Path, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
-    cx.update(|cx| {
-        supraman_ui::init_globals(cx, "test");
-        supraman_ui::text_input::bind_keys(cx);
-        bind_keys(cx);
-    });
-    let folder = folder.to_path_buf();
-    let (holder, cx) = cx.add_window_view(|_, cx| Holder(GitView::open_with(folder, None, HitTargets::default(), &GitSizes::default(), Arc::new(occupancy::Live::default()), cx)));
-    let view = holder.read_with(cx, |h, _| h.0.clone());
-    cx.run_until_parked();
-    crate::git_view::test_support::assert_loaded(&view, cx);
-    redraw(&view, cx);
-    (view, cx)
-}
-
-fn press(view: &Entity<GitView>, key: &str, button: MouseButton, click_count: usize, cx: &mut VisualTestContext) {
-    let hits = view.read_with(cx, |v, _| v.hits.clone());
-    hits.borrow_mut().clear();
-    redraw(view, cx);
-    let position = hits.borrow().get(key).unwrap_or_else(|| panic!("{key} is painted")).bounds.center();
-    let modifiers = Modifiers::none();
-    cx.simulate_event(MouseDownEvent { position, button, modifiers, click_count, first_mouse: false });
-    cx.simulate_event(MouseUpEvent { position, button, modifiers, click_count });
-    cx.run_until_parked();
-    redraw(view, cx);
-}
-
-fn click(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
-    press(view, key, MouseButton::Left, 1, cx);
-}
-
-fn painted(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) -> bool {
-    view.read_with(cx, |v, _| v.hits.borrow_mut().clear());
-    redraw(view, cx);
-    view.read_with(cx, |v, _| v.hits.borrow().contains_key(key))
+    test_support::open(folder, Opts::default().live(occupancy::Live::default()).size(1400., 900.), cx)
 }
 
 fn head(f: &Fixture, dir: &Path) -> String {
@@ -69,7 +23,7 @@ fn head(f: &Fixture, dir: &Path) -> String {
 }
 
 fn sha(f: &Fixture, name: &str) -> String {
-    git_in(&f.git, &f.dir, &["rev-parse", name], &[], None)
+    f.at(&f.dir, &["rev-parse", name])
 }
 
 fn exists(f: &Fixture, full: &str) -> bool {
@@ -78,25 +32,6 @@ fn exists(f: &Fixture, full: &str) -> bool {
 
 fn asking(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<String> {
     view.read_with(cx, |v, cx| v.branch.read(cx).asking().map(str::to_string))
-}
-
-fn menu(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<String> {
-    view.read_with(cx, |v, cx| v.branch.read(cx).menu_labels())
-}
-
-fn toast(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<String> {
-    view.read_with(cx, |v, _| v.toast.text().map(str::to_string))
-}
-
-fn opened(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Rc<RefCell<Vec<String>>> {
-    let seen = Rc::new(RefCell::new(Vec::new()));
-    let heard = seen.clone();
-    cx.update(|_, cx| cx.subscribe(view, move |_, e: &OpenGit, _| heard.borrow_mut().push(supraman_core::paths::path_key(&e.0))).detach());
-    seen
-}
-
-fn row_of(view: &Entity<GitView>, sha: &str, cx: &mut VisualTestContext) -> usize {
-    view.read_with(cx, |v, _| v.rows.iter().position(|r| r.sha.as_ref() == sha)).unwrap_or_else(|| panic!("a row of {sha}"))
 }
 
 fn group_of(view: &Entity<GitView>, ix: usize, name: &str, cx: &mut VisualTestContext) -> usize {
@@ -137,9 +72,9 @@ fn a_double_click_checks_a_branch_out_opens_its_worktree_and_asks_to_stash_over_
 #[gpui::test]
 fn a_remote_that_went_apart_from_its_local_asks_for_a_reset_or_a_new_branch(cx: &mut TestAppContext) {
     let f = Fixture::copy();
-    git_in(&f.git, &f.dir, &["push", "-q", "origin", &format!("{}:refs/heads/apart", f.sha("rename"))], &[], None);
-    git_in(&f.git, &f.dir, &["fetch", "-q", "origin"], &[], None);
-    git_in(&f.git, &f.dir, &["branch", "-q", "apart", f.sha("root")], &[], None);
+    f.at(&f.dir, &["push", "-q", "origin", &format!("{}:refs/heads/apart", f.sha("rename"))]);
+    f.at(&f.dir, &["fetch", "-q", "origin"]);
+    f.at(&f.dir, &["branch", "-q", "apart", f.sha("root")]);
     let (view, cx) = open(&f.worktree, cx);
     press(&view, "refpanel-name-remote/origin/apart", MouseButton::Left, 2, cx);
     assert_eq!(asking(&view, cx).as_deref(), Some(format!("apart and origin/apart went apart. Reset apart to origin/apart, or make a new branch at {}?", &f.sha("rename")[..7]).as_str()));
@@ -159,7 +94,7 @@ fn a_pills_double_click_checks_out_and_its_menu_fast_forwards_merges_and_makes_a
     pill_menu(&view, f.sha("main_work"), "stale", cx);
     assert_eq!(menu(&view, cx)[..3], ["Fast-forward side to stale", "Merge stale into side", "Rebase side onto stale"]);
     click(&view, "menu-ref-merge-stale", cx);
-    assert_eq!(git_in(&f.git, &f.worktree, &["rev-parse", "HEAD^2"], &[], None), f.sha("main_work"), "a merge commit on side");
+    assert_eq!(f.at(&f.worktree, &["rev-parse", "HEAD^2"]), f.sha("main_work"), "a merge commit on side");
     assert_eq!(toast(&view, cx).as_deref(), Some("Merged stale into side"));
 
     pill_menu(&view, f.sha("rename"), "feature", cx);
@@ -185,8 +120,8 @@ fn a_pills_double_click_checks_out_and_its_menu_fast_forwards_merges_and_makes_a
 #[gpui::test]
 fn a_branch_with_commits_nowhere_else_is_asked_about_twice_and_the_checked_out_ones_delete_is_dimmed(cx: &mut TestAppContext) {
     let f = Fixture::copy();
-    let commit = git_in(&f.git, &f.dir, &["commit-tree", "-p", f.sha("root"), "-m", "Lonely", &format!("{}^{{tree}}", f.sha("root"))], &[], None);
-    git_in(&f.git, &f.dir, &["branch", "-q", "lonely", &commit], &[], None);
+    let commit = f.at(&f.dir, &["commit-tree", "-p", f.sha("root"), "-m", "Lonely", &format!("{}^{{tree}}", f.sha("root"))]);
+    f.at(&f.dir, &["branch", "-q", "lonely", &commit]);
     let (view, cx) = open(&f.worktree, cx);
     press(&view, "refpanel-name-local/side", MouseButton::Right, 1, cx);
     assert!(menu(&view, cx).contains(&"Delete side".to_string()));
@@ -218,8 +153,8 @@ fn the_dialog_makes_an_annotated_tag_and_renames_a_branch(cx: &mut TestAppContex
     view.update(cx, |v, cx| v.branch.update(cx, |b, cx| b.naming().unwrap().type_in("t1", "Tag words", cx)));
     redraw(&view, cx);
     click(&view, "git-name-create", cx);
-    assert_eq!(git_in(&f.git, &f.dir, &["cat-file", "-t", "t1"], &[], None), "tag");
-    assert_eq!(git_in(&f.git, &f.dir, &["rev-parse", "t1^{commit}"], &[], None), f.sha("rename"));
+    assert_eq!(f.at(&f.dir, &["cat-file", "-t", "t1"]), "tag");
+    assert_eq!(f.at(&f.dir, &["rev-parse", "t1^{commit}"]), f.sha("rename"));
 
     press(&view, "refpanel-name-local/stale", MouseButton::Right, 1, cx);
     click(&view, "menu-ref-rename-stale", cx);
@@ -250,7 +185,7 @@ fn the_ref_menus_of_a_tag_a_worktree_a_detached_head_and_a_section_header(cx: &m
 #[gpui::test]
 fn a_detached_heads_menu_makes_a_branch_or_a_tag_and_copies_its_sha(cx: &mut TestAppContext) {
     let f = Fixture::copy();
-    git_in(&f.git, &f.worktree, &["checkout", "-q", "--detach", "HEAD"], &[], None);
+    f.at(&f.worktree, &["checkout", "-q", "--detach", "HEAD"]);
     let (view, cx) = open(&f.worktree, cx);
     press(&view, "refpanel-name-local/HEAD", MouseButton::Right, 1, cx);
     assert_eq!(menu(&view, cx), ["Create branch here", "Copy commit sha", "Create tag here", "Create annotated tag here"]);
@@ -260,7 +195,7 @@ fn a_detached_heads_menu_makes_a_branch_or_a_tag_and_copies_its_sha(cx: &mut Tes
 fn a_pill_dropped_on_another_fast_forwards_that_branch_without_a_checkout(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let (view, cx) = open(&f.dir, cx);
-    let status = git_in(&f.git, &f.dir, &["status", "--porcelain"], &[], None);
+    let status = f.at(&f.dir, &["status", "--porcelain"]);
     let (main_ix, stale_ix) = (row_of(&view, f.sha("ahead"), cx), row_of(&view, f.sha("main_work"), cx));
     let (main_group, stale_group) = (group_of(&view, main_ix, "main", cx), group_of(&view, stale_ix, "stale", cx));
     let pill = view.read_with(cx, |v, _| DraggedPill { group: v.rows[main_ix].row.refs[main_group].clone(), sha: v.rows[main_ix].sha.clone() });
@@ -271,7 +206,7 @@ fn a_pill_dropped_on_another_fast_forwards_that_branch_without_a_checkout(cx: &m
     click(&view, "menu-drop-ff-stale", cx);
     assert_eq!(sha(&f, "stale"), f.sha("ahead"));
     assert_eq!(head(&f, &f.dir), "main", "nothing checked out");
-    assert_eq!(git_in(&f.git, &f.dir, &["status", "--porcelain"], &[], None), status);
+    assert_eq!(f.at(&f.dir, &["status", "--porcelain"]), status);
     assert!(!painted(&view, "menu-drop-ff-stale", cx), "a pick closes the menu");
 }
 
@@ -309,19 +244,9 @@ fn a_branch_in_a_linked_worktree_shows_the_tree_and_every_menu_of_it_offers_the_
 #[gpui::test]
 fn removing_a_worktree_a_live_session_works_in_names_the_session_in_its_question(cx: &mut TestAppContext) {
     let f = Fixture::copy();
-    cx.update(|cx| {
-        supraman_ui::init_globals(cx, "test");
-        supraman_ui::text_input::bind_keys(cx);
-        bind_keys(cx);
-    });
     let live = occupancy::Live::default();
     live.set_sessions(vec![occupancy::LiveSession { name: "fm-agent".into(), cwd: f.worktree.join("src"), activity: supraman_ui::marks::Activity::Working, attach: None }]);
-    let folder = f.dir.clone();
-    let (holder, cx) = cx.add_window_view(|_, cx| Holder(GitView::open_with(folder, None, HitTargets::default(), &GitSizes::default(), Arc::new(live), cx)));
-    let view = holder.read_with(cx, |h, _| h.0.clone());
-    cx.run_until_parked();
-    crate::git_view::test_support::assert_loaded(&view, cx);
-    redraw(&view, cx);
+    let (view, cx) = test_support::open(&f.dir, Opts::default().live(live).size(1400., 900.), cx);
     press(&view, "refpanel-name-local/side", MouseButton::Right, 1, cx);
     click(&view, "menu-worktree-remove", cx);
     let asked = asking(&view, cx).unwrap_or_default();

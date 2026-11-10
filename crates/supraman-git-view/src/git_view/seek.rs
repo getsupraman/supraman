@@ -65,3 +65,6 @@ impl GitView {
         self.toast.show_why(text, |v: &mut GitView| &mut v.toast, cx);
     }
 }
+
+#[cfg(test)]
+pub(crate) mod tests;

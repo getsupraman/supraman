@@ -43,8 +43,6 @@ pub fn inbox_keys() -> (String, [String; 2]) {
     (format!("inbox-ws-blocked:{TASK_2}"), housekeeping)
 }
 
-const EVERY_KIND: [&str; 7] = ["question", "blocked", "blocker_finding", "done_unverified", "stale_in_progress", "expired_claim", "assumption_due"];
-
 pub fn fake() -> Option<(&'static FakeWorkman, &'static supraman_workman::fake::FakeAuth)> {
     Some((FAKE.get()?, OAUTH.get()?.as_ref()))
 }
@@ -244,7 +242,7 @@ fn every_kind_id(n: usize) -> String {
 
 /// One row of each kind the Inbox shows, and a note it does not.
 fn inbox_every_kind(seq: i64) -> String {
-    let rows: Vec<Value> = EVERY_KIND
+    let rows: Vec<Value> = supraman_workman::fake::INBOX_KINDS
         .iter()
         .chain(&[cards::NOTE])
         .enumerate()
@@ -264,7 +262,7 @@ fn inbox_every_kind(seq: i64) -> String {
 async fn every_kind(view: &Entity<FleetView>, fake: &FakeWorkman, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     fake.set(inbox_target(), Answer::json(inbox_every_kind(123)));
     fake.push(&json!({ "seq": 123, "runId": null, "itemId": null, "kind": "note" }).to_string());
-    let keys: Vec<String> = EVERY_KIND.iter().enumerate().map(|(n, kind)| format!("inbox-ws-{kind}:{}", every_kind_id(n))).collect();
+    let keys: Vec<String> = supraman_workman::fake::INBOX_KINDS.iter().enumerate().map(|(n, kind)| format!("inbox-ws-{kind}:{}", every_kind_id(n))).collect();
     let mut wanted: Vec<&str> = keys.iter().map(String::as_str).collect();
     let open = format!("{HOUSEKEEPING_KEY}=open");
     wanted.push(&open);
@@ -279,13 +277,13 @@ async fn every_kind(view: &Entity<FleetView>, fake: &FakeWorkman, cx: &mut Async
         let sections = cards::sections(&refs, &[], supraman_core::time::now_ms());
         sections.needs_you.iter().chain(sections.housekeeping.iter().flat_map(|g| &g.cards)).flat_map(|c| c.texts(0)).collect()
     });
-    if let Some(text) = texts.iter().find(|t| EVERY_KIND.iter().any(|k| t.contains(&every_kind_call(k)))) {
+    if let Some(text) = texts.iter().find(|t| supraman_workman::fake::INBOX_KINDS.iter().any(|k| t.contains(&every_kind_call(k)))) {
         bail!("a card paints its call: {text:?}");
     }
     fake.set(inbox_target(), Answer::json(inbox(124, true, true)));
     fake.push(&json!({ "seq": 124, "runId": null, "itemId": null, "kind": "note" }).to_string());
     painted(view, &[&format!("inbox-ws-question:{TASK_1}"), &format!("inbox-ws-done_unverified:{SHIPPED}")], LIVE_WITHIN, "the inbox again", cx).await?;
-    Ok(format!("a card per kind ({}) painted with Housekeeping open, no card for the note, no call in any card's text; shot wu-cards-inbox", EVERY_KIND.join(", ")))
+    Ok(format!("a card per kind ({}) painted with Housekeeping open, no card for the note, no call in any card's text; shot wu-cards-inbox", supraman_workman::fake::INBOX_KINDS.join(", ")))
 }
 
 fn inbox_target() -> String {

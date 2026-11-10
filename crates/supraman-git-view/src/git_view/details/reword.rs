@@ -393,3 +393,6 @@ impl CommitPanel {
         }, cx))
     }
 }
+
+#[cfg(test)]
+mod tests;

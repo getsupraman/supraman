@@ -1,11 +1,14 @@
+mod cap;
+mod media;
+
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
-use supraman_gitman::fixture::{Fixture, git_in};
+use supraman_gitman::fixture::Fixture;
 use supraman_gitman::{ChangeKind, FileChange};
 
 use super::*;
 use crate::git_view::GitView;
 use crate::git_view::details::FileView;
-use crate::git_view::tests::{open as open_tab, redraw};
+use crate::git_view::test_support::{Opts, open as open_tab, redraw};
 
 const M_OLD: &str = "fn one() {}\nfn two() {}\nfn three() {}\nfn four() {}\nfn five() {}\nfn six() {}\nfn seven() {}\nfn eight() {}\n";
 const M_NEW: &str = "fn one() {}\nfn TWO() {}\nfn three() {}\nfn four() {}\nfn five() {}\nfn six() {}\nfn seven() {}\nfn eight() {}\nfn nine() {}\n";
@@ -20,18 +23,14 @@ struct Repo {
     merge: String,
 }
 
-fn git(f: &Fixture, args: &[&str]) -> String {
-    git_in(&f.git, &f.worktree, args, &[], None)
-}
-
 fn write(f: &Fixture, path: &str, bytes: &[u8]) {
     std::fs::write(f.worktree.join(path), bytes).unwrap();
 }
 
 fn commit(f: &Fixture, message: &str) -> String {
-    git(f, &["add", "-A"]);
-    git(f, &["commit", "-q", "--no-verify", "-m", message]);
-    git(f, &["rev-parse", "HEAD"])
+    f.at(&f.worktree, &["add", "-A"]);
+    f.at(&f.worktree, &["commit", "-q", "--no-verify", "-m", message]);
+    f.at(&f.worktree, &["rev-parse", "HEAD"])
 }
 
 fn big(lines: usize, changed: usize) -> String {
@@ -50,26 +49,23 @@ fn repo() -> Repo {
     write(&f, "m.rs", M_NEW.as_bytes());
     write(&f, "new.txt", b"hello\nworld\n");
     std::fs::remove_file(f.worktree.join("gone.txt")).unwrap();
-    git(&f, &["mv", "mv.txt", "moved.txt"]);
+    f.at(&f.worktree, &["mv", "mv.txt", "moved.txt"]);
     write(&f, "pic.bin", &[0, 9, 9, 9]);
     write(&f, "big.txt", big(5000, 1).as_bytes());
     let change = commit(&f, "Change");
-    git(&f, &["checkout", "-q", "-b", "topic"]);
+    f.at(&f.worktree, &["checkout", "-q", "-b", "topic"]);
     write(&f, "f.txt", b"a\nb\n");
     commit(&f, "Topic");
-    git(&f, &["checkout", "-q", "side"]);
+    f.at(&f.worktree, &["checkout", "-q", "side"]);
     write(&f, "g.txt", b"g\n");
     commit(&f, "Side");
-    git(&f, &["merge", "-q", "--no-ff", "--no-verify", "-m", "Merge topic", "topic"]);
-    let merge = git(&f, &["rev-parse", "HEAD"]);
+    f.at(&f.worktree, &["merge", "-q", "--no-ff", "--no-verify", "-m", "Merge topic", "topic"]);
+    let merge = f.at(&f.worktree, &["rev-parse", "HEAD"]);
     Repo { f, base, change, merge }
 }
 
 fn open<'a>(r: &Repo, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
-    cx.update(|cx| {
-        supraman_editor::init(supraman_ui::fonts::MONO, 13., cx);
-    });
-    open_tab(&r.f.dir, cx)
+    open_tab(&r.f.dir, Opts::default().editor(), cx)
 }
 
 fn change(r: &Repo, path: &str) -> Option<FileChange> {
@@ -364,7 +360,7 @@ fn diff_tints_keep_the_text_readable_and_the_stripes_seen_in_a_dark_and_a_light_
 fn a_stash_file_opens_its_change_against_the_base(cx: &mut TestAppContext) {
     let f = Fixture::shared();
     cx.update(|cx| supraman_editor::init(supraman_ui::fonts::MONO, 13., cx));
-    let (view, cx) = open_tab(&f.dir, cx);
+    let (view, cx) = open_tab(&f.dir, Opts::default(), cx);
     view.update(cx, |v, cx| v.select_sha(f.sha("stash_message_index"), cx));
     cx.run_until_parked();
     redraw(&view, cx);

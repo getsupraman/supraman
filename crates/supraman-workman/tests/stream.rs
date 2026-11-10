@@ -4,6 +4,7 @@
 use std::time::{Duration, Instant};
 
 use async_channel::Receiver;
+use supraman_core::testing::{eventually, polled};
 use supraman_workman::fake::{FakeWorkman, closed_base};
 use supraman_workman::{Client, Stream, StreamConfig, StreamEvent, StreamSignal};
 
@@ -20,23 +21,16 @@ fn config() -> StreamConfig {
 
 #[track_caller]
 fn next(rx: &Receiver<StreamSignal>) -> StreamSignal {
-    let until = Instant::now() + Duration::from_secs(10);
-    loop {
-        match rx.try_recv() {
-            Ok(signal) => return signal,
-            Err(e) if e.is_closed() || Instant::now() > until => panic!("no stream signal: {e}"),
-            Err(_) => std::thread::sleep(Duration::from_millis(5)),
-        }
-    }
+    eventually(Duration::from_secs(10), "no stream signal", polled(Duration::from_millis(5)), || match rx.try_recv() {
+        Ok(signal) => Some(signal),
+        Err(e) if e.is_closed() => panic!("no stream signal: {e}"),
+        Err(_) => None,
+    })
 }
 
 /// Pushes `frame` once the stream has registered with the fake.
 fn push_when_open(fake: &FakeWorkman, frame: &str) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while fake.push_frame(frame) == 0 {
-        assert!(Instant::now() < deadline, "the stream never registered");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    eventually(Duration::from_secs(5), "the stream never registered", polled(Duration::from_millis(20)), || (fake.push_frame(frame) != 0).then_some(()));
 }
 
 #[test]

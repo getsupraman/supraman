@@ -128,8 +128,28 @@ impl Fixture {
         git_in(&self.git, &self.dir, args, &[], None)
     }
 
+    /// `git args` in `dir` (the repo, `wt` or another checkout beside them); may write.
+    pub fn at(&self, dir: &Path, args: &[&str]) -> String {
+        git_in(&self.git, dir, args, &[], None)
+    }
+
+    /// The worktree `wt` as a repo.
+    pub fn side(&self) -> Repo {
+        Repo::new(self.git.clone(), &self.worktree)
+    }
+
     pub fn write(&self, path: &str, bytes: &[u8]) {
         std::fs::write(self.dir.join(path), bytes).unwrap();
+    }
+
+    /// `job` in the checkout `repo` under `locks`.
+    pub fn write_job<T>(repo: &Repo, locks: crate::write::LockSet, job: impl FnOnce(&crate::write::Session<'_>) -> Result<T, crate::write::WriteError>) -> Result<T, crate::write::WriteError> {
+        crate::write::Writer::open(repo).unwrap().run(locks, job)
+    }
+
+    /// Undo in the checkout `repo`, a stash allowed.
+    pub fn undo(repo: &Repo) -> Result<crate::write::journal::Done, crate::write::journal::Refused> {
+        Fixture::write_job(repo, crate::write::LockSet::undo(), |s| Ok(crate::write::journal::undo(s, true))).unwrap()
     }
 
     /// The worktree `wt` (on `side`) stops merging `main` on a conflict in `a.txt`.

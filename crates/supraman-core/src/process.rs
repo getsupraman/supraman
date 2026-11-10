@@ -592,6 +592,7 @@ pub fn wait_any_exit(pids: &[u32], timeout: Duration) -> bool {
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+    use crate::testing::{eventually, polled, wait_until};
 
     /// Every child of a crate or its tests starts through [`command`]: a console program started bare gets
     /// a visible window when the parent has no console.
@@ -660,10 +661,7 @@ mod tests {
         let started = Instant::now();
         let pid = spawn_detached(&mut powershell(&script)).unwrap();
         assert!(pid > 0 && started.elapsed() < lives && !done.exists(), "returns before the child ends");
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while !done.exists() && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(50));
-        }
+        wait_until(Duration::from_secs(30), polled(Duration::from_millis(50)), || done.exists());
         assert!(done.exists(), "the child finished on its own");
         assert!(spawn_detached(&mut command("supraman-no-such-program")).is_err());
     }
@@ -692,10 +690,7 @@ mod tests {
             assert!(matches!(err, RunError::Timeout(d) if d == Duration::from_secs(8)), "{err:?}");
             assert!(started_at.elapsed() < Duration::from_secs(30), "{:?}", started_at.elapsed());
             let pid: u32 = std::fs::read_to_string(&pid_file).expect("the grandchild started").trim().parse().unwrap();
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while alive(pid) && !grandchild_left && Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(100));
-            }
+            wait_until(Duration::from_secs(5), polled(Duration::from_millis(100)), || !(alive(pid) && !grandchild_left));
             assert_eq!(alive(pid), grandchild_left, "{kill:?}");
             if grandchild_left {
                 let _ = command("taskkill").args(["/PID", &pid.to_string(), "/F"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
@@ -758,10 +753,7 @@ mod tests {
         let pid = grandchild(&dropped);
         assert!(alive(pid));
         drop(job);
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while alive(pid) && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(50));
-        }
+        wait_until(Duration::from_secs(5), polled(Duration::from_millis(50)), || !alive(pid));
         let left = alive(pid);
         end(pid);
         assert!(!left, "the job's last handle closing ends the tree, as when sm dies");
@@ -790,24 +782,16 @@ mod tests {
     fn a_grandchild_started_at_once_is_in_the_tree_a_timeout_kills() {
         let me = std::process::id();
         let probe = thread::spawn(move || {
-            let deadline = Instant::now() + Duration::from_secs(30);
-            loop {
+            eventually(Duration::from_secs(30), "no ping under our cmd", polled(Duration::from_millis(10)), || {
                 let all = processes();
                 let ours = |parent: u32| all.iter().any(|(pid, up, name)| *pid == parent && *up == me && name.eq_ignore_ascii_case("cmd.exe"));
-                if let Some((pid, ..)) = all.iter().find(|(_, parent, name)| name.eq_ignore_ascii_case("ping.exe") && ours(*parent)) {
-                    return *pid;
-                }
-                assert!(Instant::now() < deadline, "no ping under our cmd");
-                thread::sleep(Duration::from_millis(10));
-            }
+                all.iter().find(|(_, parent, name)| name.eq_ignore_ascii_case("ping.exe") && ours(*parent)).map(|(pid, ..)| *pid)
+            })
         });
         let err = run(command("cmd").args(["/C", "ping -n 60 127.0.0.1"]), Duration::from_secs(2), Kill::Tree).unwrap_err();
         assert!(matches!(err, RunError::Timeout(_)), "{err:?}");
         let pid = probe.join().unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while alive(pid) && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(50));
-        }
+        wait_until(Duration::from_secs(5), polled(Duration::from_millis(50)), || !alive(pid));
         let left = alive(pid);
         end(pid);
         assert!(!left, "the grandchild escaped the job");

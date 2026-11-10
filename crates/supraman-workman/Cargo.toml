@@ -23,6 +23,7 @@ thiserror = "2.0.12"
 ureq = { version = "3", default-features = false, features = ["native-tls-no-default"] }
 
 [dev-dependencies]
+supraman-core = { path = "../supraman-core", features = ["test-support"] }
 supraman-workman = { path = ".", features = ["fake"] }
 tempfile = "3.27.0"
 zip = { version = "9.2.1", default-features = false, features = ["deflate-flate2"] }

@@ -8,13 +8,7 @@ mod picks;
 mod render;
 
 #[cfg(test)]
-mod media_tests;
-#[cfg(test)]
-mod cap_tests;
-#[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod pick_tests;
 
 use std::path::Path;
 use std::sync::Arc;

@@ -194,3 +194,6 @@ impl UndoBar {
         self.stash.as_ref().map(|asked| asked.render_band(&self.hits, "git-undo-stash", |this: &mut Self, yes, _, cx| this.answer(yes, cx), cx))
     }
 }
+
+#[cfg(test)]
+mod tests;

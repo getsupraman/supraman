@@ -37,28 +37,6 @@ pub mod test_support;
 
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod live_tests;
-#[cfg(test)]
-mod keys_tests;
-#[cfg(test)]
-mod refresh_tests;
-#[cfg(test)]
-mod seek_tests;
-#[cfg(test)]
-mod stream_tests;
-#[cfg(test)]
-mod undo_tests;
-#[cfg(test)]
-mod stash_tests;
-#[cfg(test)]
-mod paint_tests;
-#[cfg(test)]
-mod worktree_rows_tests;
-#[cfg(test)]
-mod worktree_panel_tests;
-#[cfg(test)]
-mod ref_wips_tests;
 
 use std::path::PathBuf;
 use std::sync::Arc;

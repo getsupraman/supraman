@@ -64,12 +64,12 @@ fn advance_origin(f: &Fixture, n: usize) -> String {
     let origin = f.temp.path().join("origin.git");
     let other = f.temp.path().join("other");
     if !other.exists() {
-        git_in(&f.git, f.temp.path(), &["clone", "-q", "-b", "main", &origin.to_string_lossy(), "other"], &[], None);
+        f.at(f.temp.path(), &["clone", "-q", "-b", "main", &origin.to_string_lossy(), "other"]);
     }
     let env = [("GIT_AUTHOR_NAME", "t".to_string()), ("GIT_AUTHOR_EMAIL", "t@t".to_string()), ("GIT_COMMITTER_NAME", "t".to_string()), ("GIT_COMMITTER_EMAIL", "t@t".to_string())];
     git_in(&f.git, &other, &["commit", "-q", "--allow-empty", "-m", &format!("origin {n}")], &env, None);
-    git_in(&f.git, &other, &["push", "-q", "origin", "HEAD:main"], &[], None);
-    git_in(&f.git, &other, &["rev-parse", "HEAD"], &[], None)
+    f.at(&other, &["push", "-q", "origin", "HEAD:main"]);
+    f.at(&other, &["rev-parse", "HEAD"])
 }
 
 /// The tab closed: its entity released at the next flush.

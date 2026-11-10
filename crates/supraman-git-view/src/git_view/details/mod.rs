@@ -8,8 +8,6 @@ pub(crate) mod reword;
 
 #[cfg(test)]
 pub(crate) mod tests;
-#[cfg(test)]
-mod reword_tests;
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;

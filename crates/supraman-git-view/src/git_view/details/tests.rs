@@ -6,8 +6,8 @@ use supraman_ui::tree::Order;
 
 use super::*;
 use crate::git_view::GitView;
-use crate::git_view::tests::{open, redraw};
-use crate::git_view::wip::tests::click;
+use crate::git_view::test_support::{Opts, open, redraw, repaint};
+use crate::git_view::test_support::click;
 
 fn panel_of(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Entity<CommitPanel> {
     view.read_with(cx, |v, _| v.panel().clone())
@@ -27,14 +27,6 @@ fn hits(view: &Entity<GitView>, cx: &mut VisualTestContext) -> supraman_ui::hit:
     view.read_with(cx, |v, _| v.hits.clone())
 }
 
-/// Hit keys of the next frame only.
-fn repaint(view: &Entity<GitView>, cx: &mut VisualTestContext) -> supraman_ui::hit::HitTargets {
-    let hits = hits(view, cx);
-    hits.borrow_mut().clear();
-    redraw(view, cx);
-    hits
-}
-
 fn names(people: &[supraman_gitman::Person]) -> Vec<&str> {
     people.iter().map(|p| p.name.as_str()).collect()
 }
@@ -42,7 +34,7 @@ fn names(people: &[supraman_gitman::Person]) -> Vec<&str> {
 #[gpui::test]
 fn commit_details_show_a_commit_a_merge_and_the_root(cx: &mut TestAppContext) {
     let f = Fixture::shared();
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     let panel = panel_of(&view, cx);
 
     select(&view, f.sha("rename"), cx);
@@ -108,9 +100,9 @@ fn nested_commit(f: &Fixture) -> String {
     std::fs::remove_file(f.worktree.join("b.txt")).unwrap();
     let date = "@1700100000 +0000".to_string();
     let env = [("GIT_AUTHOR_DATE", date.clone()), ("GIT_COMMITTER_DATE", date)];
-    git_in(&f.git, &f.worktree, &["add", "-A"], &[], None);
+    f.at(&f.worktree, &["add", "-A"]);
     git_in(&f.git, &f.worktree, &["commit", "-q", "--no-verify", "-m", "Folders"], &env, None);
-    git_in(&f.git, &f.worktree, &["rev-parse", "HEAD"], &[], None)
+    f.at(&f.worktree, &["rev-parse", "HEAD"])
 }
 
 /// A test's own copy of the fixture with [`nested_commit`].
@@ -128,7 +120,7 @@ fn visible(panel: &Entity<CommitPanel>, cx: &mut VisualTestContext) -> Vec<Strin
 fn commit_details_list_path_tree_and_all_files_with_marks_badges_and_the_filter(cx: &mut TestAppContext) {
     let nested = nested();
     let (f, sha) = (&nested.0, nested.1.clone());
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     let panel = panel_of(&view, cx);
     select(&view, &sha, cx);
     let s = shown(&panel, cx);
@@ -201,7 +193,7 @@ fn commit_details_list_path_tree_and_all_files_with_marks_badges_and_the_filter(
 #[gpui::test]
 fn commit_details_toolbar_clicks_switch_the_list_and_the_filter_takes_typing(cx: &mut TestAppContext) {
     let f = Fixture::shared();
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     select(&view, f.sha("ahead"), cx);
     for (key, shows) in [("commit-view-path", "commit-files-row-a.txt"), ("commit-view-tree", "commit-tree-row-a.txt"), ("commit-all-files", "commit-tree-row-bin.dat"), ("commit-filter", "commit-filter")] {
         click(&view, key, cx);
@@ -218,7 +210,7 @@ fn commit_details_toolbar_clicks_switch_the_list_and_the_filter_takes_typing(cx:
 #[gpui::test]
 fn commit_details_drop_a_load_that_finishes_after_a_newer_selection(cx: &mut TestAppContext) {
     let f = Fixture::shared();
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     let panel = panel_of(&view, cx);
     let earlier = panel.update(cx, |p, cx| p.show(Some(Selected::Commit(f.sha("root").to_string().into())), 0, cx));
     panel.update(cx, |p, cx| p.show(Some(Selected::Commit(f.sha("second").to_string().into())), 0, cx));
@@ -236,7 +228,7 @@ fn commit_details_drop_a_load_that_finishes_after_a_newer_selection(cx: &mut Tes
 fn commit_details_a_second_click_on_the_open_file_closes_its_diff(cx: &mut TestAppContext) {
     let nested = nested();
     let (f, sha) = (&nested.0, nested.1.clone());
-    let (view, cx) = crate::git_view::wip::tests::open_with_editor(&f.dir, cx);
+    let (view, cx) = crate::git_view::test_support::open(&f.dir, crate::git_view::test_support::Opts::default().editor(), cx);
     let panel = panel_of(&view, cx);
     select(&view, &sha, cx);
     let open_path = |cx: &mut VisualTestContext| view.read_with(cx, |v, cx| v.diff().map(|d| d.read(cx).target.path.clone()));
@@ -260,7 +252,7 @@ fn commit_details_a_second_click_on_the_open_file_closes_its_diff(cx: &mut TestA
 #[gpui::test]
 fn commit_details_show_a_stash_its_branch_time_and_files_against_its_base(cx: &mut TestAppContext) {
     let f = Fixture::shared();
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     let panel = panel_of(&view, cx);
     select(&view, f.sha("stash_feature_index"), cx);
     let Some(Selected::Stash(stash)) = view.read_with(cx, |v, _| v.selected()) else { panic!("the stash row selects its stash") };
@@ -304,7 +296,7 @@ pub(crate) fn first_frame(view: &Entity<GitView>, cx: &mut VisualTestContext, ac
 fn commit_details_paint_a_list_whole_in_the_first_frame_it_shows(cx: &mut TestAppContext) {
     let nested = nested();
     let (f, sha) = (&nested.0, nested.1.clone());
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     let panel = panel_of(&view, cx);
     select(&view, &sha, cx);
     let painted = first_frame(&view, cx, |cx| {
@@ -326,7 +318,7 @@ fn commit_details_paint_a_list_whole_in_the_first_frame_it_shows(cx: &mut TestAp
 fn commit_details_keep_the_last_counts_and_files_unpainted_while_the_next_commit_loads(cx: &mut TestAppContext) {
     let nested = nested();
     let (f, sha) = (&nested.0, nested.1.clone());
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     let panel = panel_of(&view, cx);
     select(&view, &sha, cx);
     let painted = repaint(&view, cx);
@@ -347,7 +339,7 @@ fn commit_details_keep_the_last_counts_and_files_unpainted_while_the_next_commit
 fn commit_details_read_the_whole_tree_only_while_view_all_files_is_on(cx: &mut TestAppContext) {
     let nested = nested();
     let (f, sha) = (&nested.0, nested.1.clone());
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     let panel = panel_of(&view, cx);
     select(&view, &sha, cx);
     assert_eq!(panel.read_with(cx, |p, _| (p.whole, p.all.row_count())), (Whole::Unread, 0), "a selection with View all files off reads no whole tree");
@@ -368,7 +360,7 @@ fn commit_details_read_the_whole_tree_only_while_view_all_files_is_on(cx: &mut T
 fn commit_details_file_order_follows_the_list_on_show_with_each_files_change(cx: &mut TestAppContext) {
     let nested = nested();
     let (f, sha) = (&nested.0, nested.1.clone());
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     let panel = panel_of(&view, cx);
     select(&view, &sha, cx);
     let order = |cx: &mut VisualTestContext| -> Vec<(String, Option<supraman_gitman::ChangeKind>)> { panel.read_with(cx, |p, _| p.file_order(&sha).into_iter().map(|t| (t.path.clone(), t.kind())).collect()) };

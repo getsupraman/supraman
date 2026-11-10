@@ -229,8 +229,7 @@ mod tests {
 
     #[test]
     fn no_card_text_holds_the_resolving_call() {
-        let kinds = ["question", "blocked", "blocker_finding", "done_unverified", "stale_in_progress", "expired_claim", "assumption_due"];
-        for kind in kinds {
+        for kind in supraman_workman::fake::INBOX_KINDS {
             let mut r = row(kind, "7");
             r.what = r.call.clone();
             r.detail = None;

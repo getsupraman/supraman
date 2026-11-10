@@ -1,0 +1,150 @@
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use gpui::{TestAppContext, VisualTestContext};
+use supraman_core::watch::Batch;
+use supraman_gitman::Dirs;
+use supraman_gitman::fixture::Fixture;
+
+use crate::git_view::cells::ref_cell;
+use crate::git_view::diff::Content;
+use crate::git_view::live::{Debounces, Refresh, git_class, git_refresh, sent, work_files};
+use crate::git_view::test_support::{Opts, open};
+use crate::git_view::wip::Section;
+use crate::git_view::test_support::select_wip;
+use crate::git_view::wip::tests::open_file;
+use crate::git_view::*;
+
+const DEADLINE: Duration = Duration::from_secs(10);
+
+/// Runs the app until `done`, failing after `within`; woken by each refresh the watchers' threads send.
+fn until(what: &str, within: Duration, cx: &mut VisualTestContext, mut done: impl FnMut(&mut VisualTestContext) -> bool) -> Duration {
+    let start = Instant::now();
+    loop {
+        let seen = sent::count();
+        cx.run_until_parked();
+        if done(cx) {
+            return start.elapsed();
+        }
+        assert!(sent::past(seen, within.saturating_sub(start.elapsed())), "{what}: not within {within:?}");
+    }
+}
+
+/// Tabs this test opens from here on follow their repositories.
+pub(crate) fn follow(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    cx.update(|cx| cx.set_global(crate::git_view::refresh::Follows(Debounces { git: Duration::from_millis(20), work: Duration::from_millis(50) })));
+}
+
+pub(crate) fn following(view: &Entity<GitView>, cx: &mut VisualTestContext) {
+    until("the watchers start", DEADLINE, cx, |cx| view.read_with(cx, |v, _| v.follow.live().is_some()));
+}
+
+/// Closes the test's window and waits for the watchers to end, so none wakes the app after the test.
+pub(crate) fn close(view: Entity<GitView>, cx: &mut VisualTestContext) -> Vec<supraman_core::watch::Stopped> {
+    let stopped = view.read_with(cx, |v, _| v.follow.live().expect("following").stopped());
+    drop(view);
+    cx.update(|window, _| window.remove_window());
+    cx.run_until_parked();
+    assert!(stopped.iter().all(|s| s.wait(Duration::from_secs(5))), "the watchers' threads end with the tab");
+    cx.run_until_parked();
+    stopped
+}
+
+#[gpui::test]
+fn live_refresh_shows_a_new_commit_and_its_refs_within_a_second_and_an_edit_within_three(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    follow(cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
+    following(&view, cx);
+    let live = view.read_with(cx, |v, _| v.follow.live().unwrap().stopped());
+    assert_eq!(live.len(), 2, "the git dir's watcher and the work dir's");
+    assert!(live.iter().all(|s| !s.stopped()), "watching while the tab is open");
+    f.git(&["commit", "-q", "--no-verify", "-m", "Made while watched"]);
+    let head = f.git(&["rev-parse", "HEAD"]);
+    let took = until("the new commit", DEADLINE, cx, |cx| {
+        view.read_with(cx, |v, _| {
+            v.rows.iter().find(|r| r.sha.as_ref() == head).is_some_and(|r| ref_cell(&r.row, false).first.is_some_and(|g| g.name == "main" && g.head()))
+        })
+    });
+    eprintln!("the commit and main on it after {took:?}");
+    let ahead = view.read_with(cx, |v, _| v.rows.iter().find(|r| r.sha.as_ref() == f.sha("ahead")).map(|r| r.row.refs.len()));
+    assert_eq!(ahead, Some(0), "main moved off its old commit");
+
+    let added = |v: &GitView| v.wip.map_or(0, |w| w.added);
+    let before = view.read_with(cx, |v, _| added(v));
+    f.write("live.txt", b"new\n");
+    let took = until("the edit in the WIP", DEADLINE, cx, |cx| view.read_with(cx, |v, _| added(v) == before + 1));
+    eprintln!("the edit after {took:?}");
+    close(view, cx);
+}
+
+#[gpui::test]
+fn live_refresh_keeps_the_open_diff_and_reloads_it_when_its_file_changes(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    follow(cx);
+    let (view, cx) = open(&f.dir, Opts::default().editor(), cx);
+    following(&view, cx);
+    select_wip(&view, cx);
+    let (diff, _, new) = open_file(&view, Section::Unstaged, "u.txt", cx);
+    assert_eq!(new, "untracked\n");
+    f.write("u.txt", b"untracked\nand more\n");
+    until("the diff reloaded", DEADLINE, cx, |cx| {
+        diff.read_with(cx, |d, cx| matches!(d.content(), Content::Text(t) if t.diff.new.read(cx).text() == "untracked\nand more\n"))
+    });
+    view.read_with(cx, |v, _| {
+        assert_eq!(v.diff().map(Entity::entity_id), Some(diff.entity_id()), "the same viewer stays open");
+        assert_eq!(v.selected(), Some(Selected::Wip));
+    });
+    drop(diff);
+    close(view, cx);
+}
+
+fn dirs(top: &str, git_dir: &str, common_dir: &str) -> Dirs {
+    Dirs { top: top.into(), git_dir: git_dir.into(), common_dir: common_dir.into() }
+}
+
+fn under(base: &Path, rel: &str) -> PathBuf {
+    rel.split('/').fold(base.to_path_buf(), |p, part| p.join(part))
+}
+
+#[test]
+fn live_refresh_classifies_each_change_in_the_git_dirs() {
+    let main = dirs("C:/r", "C:/r/.git", "C:/r/.git");
+    let wt = dirs("C:/wt", "C:/r/.git/worktrees/wt", "C:/r/.git");
+    let git = Path::new("C:/r/.git");
+    let wip = Some(Refresh::Wip { files: None });
+    for (rel, in_main, in_wt) in [
+        ("HEAD", Some(Refresh::Graph), Some(Refresh::Graph)),
+        ("refs/heads/main", Some(Refresh::Graph), Some(Refresh::Graph)),
+        ("refs/tags/v1", Some(Refresh::Graph), Some(Refresh::Graph)),
+        ("packed-refs", Some(Refresh::Graph), Some(Refresh::Graph)),
+        ("logs/HEAD", Some(Refresh::Graph), Some(Refresh::Graph)),
+        ("index", wip.clone(), None),
+        ("MERGE_HEAD", wip.clone(), None),
+        ("worktrees/wt/HEAD", Some(Refresh::Graph), Some(Refresh::Graph)),
+        ("worktrees/wt/index", None, wip.clone()),
+        ("worktrees/wt/rebase-merge/done", None, wip.clone()),
+        ("refs/heads/main.lock", None, None),
+        ("index.lock", None, None),
+        ("objects/ab/cdef", None, None),
+        ("logs/refs/heads/main", None, None),
+        ("config", None, None),
+    ] {
+        let path = under(git, rel);
+        assert_eq!((git_class(&main, &path), git_class(&wt, &path)), (in_main, in_wt), "{rel}");
+    }
+    let batch = |rels: &[&str]| Batch { paths: rels.iter().map(|r| under(git, r)).collect(), rescan: false };
+    assert_eq!(git_refresh(&main, &batch(&["index", "refs/heads/x", "objects/1"])), Some(Refresh::Graph), "the graph's refresh covers the WIP's");
+    assert_eq!(git_refresh(&main, &batch(&["index.lock", "index"])), wip);
+    assert_eq!(git_refresh(&main, &batch(&["objects/1"])), None);
+    assert_eq!(git_refresh(&main, &Batch { paths: Vec::new(), rescan: true }), Some(Refresh::Graph), "lost changes read everything");
+}
+
+#[test]
+fn live_refresh_takes_the_work_dirs_files_without_the_git_dir() {
+    let main = dirs("C:/r", "C:/r/.git", "C:/r/.git");
+    let top = Path::new("C:/r");
+    let batch = Batch { paths: ["src/a.rs", ".git/index", ".git/refs/heads/x", "", "target/out.bin", "docs"].iter().map(|r| if r.is_empty() { top.to_path_buf() } else { under(top, r) }).collect(), rescan: false };
+    assert_eq!(work_files(&main, &batch), ["src/a.rs", "target/out.bin", "docs"], "ignored ones go to git check-ignore next");
+}
