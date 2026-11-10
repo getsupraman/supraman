@@ -34,7 +34,7 @@ fn commit(sha: &str) -> Option<Selected> {
 }
 
 fn open_target(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<Target> {
-    view.read_with(cx, |v, cx| v.diff().map(|d| d.read(cx).target.clone()))
+    view.read_with(cx, |v, cx| v.diff(cx).map(|d| d.read(cx).target.clone()))
 }
 
 fn paths(targets: &[Target]) -> Vec<&str> {
@@ -150,7 +150,7 @@ fn right_opens_the_first_file_and_left_or_escape_go_back_to_the_row(cx: &mut Tes
     assert_eq!(open_target(&view, cx).map(|t| t.path), Some("a.txt".into()), "Right: the first file's diff");
     let picked = view.read_with(cx, |v, cx| v.panel.read(cx).selected_file());
     assert_eq!(picked.as_deref(), Some("a.txt"), "and the file selected in the list");
-    let d = view.read_with(cx, |v, _| v.diff().cloned()).unwrap();
+    let d = view.read_with(cx, |v, cx| v.diff(cx).cloned()).unwrap();
     assert_eq!(d.read_with(cx, |d, _| d.current()), Some(0), "scrolled to its first change");
     assert!(cx.update(|window, cx| d.read(cx).focus_handle().is_focused(window)), "the viewer has the keyboard");
     keys(&view, "right", cx);
@@ -187,7 +187,7 @@ fn up_and_down_in_the_viewer_walk_the_files_and_wrap(cx: &mut TestAppContext) {
     assert_eq!(seen, ["b.txt", "bin.dat", "old.txt", "a.txt", "old.txt", "bin.dat", "old.txt", "a.txt", "old.txt", "a.txt"], "down wraps from the last, up from the first");
     let picked = view.read_with(cx, |v, cx| v.panel.read(cx).selected_file());
     assert_eq!(picked.as_deref(), Some("a.txt"), "the list follows");
-    let d = view.read_with(cx, |v, _| v.diff().cloned()).unwrap();
+    let d = view.read_with(cx, |v, cx| v.diff(cx).cloned()).unwrap();
     assert_eq!(d.read_with(cx, |d, _| d.current()), Some(0), "each file opens at its first change");
 }
 

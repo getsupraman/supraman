@@ -42,7 +42,7 @@ impl GitView {
             PanelState::Shown(s) => Some((s.sha.to_string(), s.parents.iter().map(|p| p.to_string()).collect())),
             _ => None,
         };
-        let diff = self.diff().map(|d| {
+        let diff = self.diff(cx).map(|d| {
             let d = d.read(cx);
             ProbeDiff { path: d.target.path.clone(), shown: d.shown() }
         });

@@ -134,7 +134,7 @@ fn worktree_file_opens_its_diff_from_that_worktree_and_nothing_writes(cx: &mut T
     let index_before = index_of(&f, &f.worktree);
 
     click(&view, &format!("{}-files-row-a.txt", list_id(Section::Unstaged)), cx);
-    let d = view.read_with(cx, |v, _| v.diff().cloned()).expect("the viewer is open");
+    let d = view.read_with(cx, |v, cx| v.diff(cx).cloned()).expect("the viewer is open");
     let (of, worktree, new, old) = d.read_with(cx, |d, cx| match d.content() {
         Content::Text(t) => (d.target.of.clone(), d.worktree.clone(), t.diff.new.read(cx).text(), t.diff.old.read(cx).text()),
         _ => panic!("a.txt is not a text diff"),
@@ -165,11 +165,11 @@ fn worktree_file_opens_its_diff_from_that_worktree_and_nothing_writes(cx: &mut T
 
     cx.simulate_keystrokes("down");
     settle(&view, cx);
-    let stepped = view.read_with(cx, |v, cx| v.diff().map(|d| (d.read(cx).target.path.clone(), d.read(cx).worktree.as_deref().map(path_key))));
+    let stepped = view.read_with(cx, |v, cx| v.diff(cx).map(|d| (d.read(cx).target.path.clone(), d.read(cx).worktree.as_deref().map(path_key))));
     assert_eq!(stepped, Some(("dir/u.txt".to_string(), Some(path_key(&f.worktree)))), "Down opens the worktree's next file");
 
     click(&view, &format!("{}-files-row-s.txt", list_id(Section::Staged)), cx);
-    let (of, new) = view.read_with(cx, |v, _| v.diff().cloned()).expect("open").read_with(cx, |d, cx| match d.content() {
+    let (of, new) = view.read_with(cx, |v, cx| v.diff(cx).cloned()).expect("open").read_with(cx, |d, cx| match d.content() {
         Content::Text(t) => (d.target.of.clone(), t.diff.new.read(cx).text()),
         _ => panic!("s.txt is not a text diff"),
     });

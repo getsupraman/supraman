@@ -20,7 +20,7 @@ fn listed(files: &[FileChange]) -> Vec<(&str, ChangeKind)> {
 /// Clicks `path`'s row in `section` and reads the diff it opens: its target and its two sides.
 pub(crate) fn open_file(view: &Entity<GitView>, section: Section, path: &str, cx: &mut VisualTestContext) -> (Entity<DiffView>, String, String) {
     click(view, &format!("{}-files-row-{path}", section.list()), cx);
-    let d = view.read_with(cx, |v, _| v.diff().cloned()).expect("the viewer is open");
+    let d = view.read_with(cx, |v, cx| v.diff(cx).cloned()).expect("the viewer is open");
     let (old, new) = d.read_with(cx, |d, cx| match d.content() {
         Content::Text(t) => (t.diff.old.read(cx).text(), t.diff.new.read(cx).text()),
         _ => panic!("{path} is not a text diff"),
@@ -138,9 +138,9 @@ fn wip_view_a_second_click_on_the_open_file_closes_its_diff(cx: &mut TestAppCont
     select_wip(&view, cx);
     open_file(&view, Section::Unstaged, "a.txt", cx);
     open_file(&view, Section::Staged, "a.txt", cx);
-    assert_eq!(view.read_with(cx, |v, cx| v.diff().map(|d| d.read(cx).target.of.clone())), Some(Of::Staged), "the same path in the other list is another file");
+    assert_eq!(view.read_with(cx, |v, cx| v.diff(cx).map(|d| d.read(cx).target.of.clone())), Some(Of::Staged), "the same path in the other list is another file");
     click(&view, "wip-staged-files-row-a.txt", cx);
-    assert!(view.read_with(cx, |v, _| v.diff().is_none()), "a second click on the open file closes the viewer");
+    assert!(view.read_with(cx, |v, cx| v.diff(cx).is_none()), "a second click on the open file closes the viewer");
     assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Wip));
     let deselected = view.read_with(cx, |v, cx| {
         let p = v.wip_panel().read(cx);

@@ -27,6 +27,7 @@ mod splice;
 pub(crate) mod stash;
 mod stash_bar;
 pub(crate) mod undo;
+mod viewer;
 mod wip;
 mod wip_row;
 mod worktree_panel;
@@ -58,7 +59,7 @@ use theme::ActiveTheme as _;
 
 use cells::ref_cell;
 use details::{CommitPanel, PanelEvent};
-use diff::{DiffView, Layout as DiffLayout, Mode as DiffMode};
+use diff::DiffView;
 use colours::Palette;
 use load::{GraphRow, Heads, Problem, Wip};
 use ref_panel::{RefEvent, RefPanel};
@@ -195,13 +196,7 @@ pub struct GitView {
     /// A ref's commit to reveal once the refresh under way walks it.
     reveal_after: Option<SharedString>,
     _panel_events: [Subscription; 4],
-    /// The file viewer in the graph's place, while one is open.
-    diff: Option<(Entity<DiffView>, [Subscription; 3])>,
-    /// The last viewer's mode and layout, the next one's start.
-    diff_mode: DiffMode,
-    diff_layout: DiffLayout,
-    /// The viewer opened since the last frame and takes the keyboard on the next.
-    focus_diff: bool,
+    viewer: Entity<viewer::Viewer>,
     /// The viewer closed since the last frame and the graph takes the keyboard on the next.
     focus_graph: bool,
     band: band::Band,
@@ -298,10 +293,7 @@ impl GitView {
                 toast: ToastSlot::default(),
                 reveal_after: None,
                 _panel_events: events,
-                diff: None,
-                diff_mode: DiffMode::default(),
-                diff_layout: DiffLayout::default(),
-                focus_diff: false,
+                viewer: cx.new(|_| viewer::Viewer::default()),
                 focus_graph: false,
                 band: band::Band::new(cx),
                 settle: None,
@@ -492,7 +484,7 @@ impl GitView {
 
     /// [`GitView::toggle_diff`] of a file of the worktree at `worktree`, else of the tab's.
     pub(crate) fn toggle_diff_in(&mut self, worktree: Option<Arc<std::path::Path>>, target: diff::Target, cx: &mut Context<Self>) {
-        if self.diff().is_none_or(|d| d.read(cx).target != target || d.read(cx).worktree != worktree) {
+        if self.diff(cx).is_none_or(|d| d.read(cx).target != target || d.read(cx).worktree != worktree) {
             return self.open_diff_in(worktree, target, cx);
         }
         self.back_to_graph(cx);
@@ -533,8 +525,8 @@ impl GitView {
         &self.wip_panel
     }
 
-    pub(crate) fn diff(&self) -> Option<&Entity<DiffView>> {
-        self.diff.as_ref().map(|(d, _)| d)
+    pub(crate) fn diff<'a>(&self, cx: &'a App) -> Option<&'a Entity<DiffView>> {
+        self.viewer.read(cx).view()
     }
 
     /// Shows `target` in the graph's place; the graph keeps its selection and scroll for when it closes.
@@ -549,7 +541,8 @@ impl GitView {
         self.close_diff(cx);
         let working = worktree.is_none() && matches!(target.of, diff::Of::Unstaged | diff::Of::Staged);
         let repo = worktree.as_ref().map_or_else(|| tab.clone(), |w| Repo::new(tab.git().clone(), w.to_path_buf()));
-        let view = DiffView::open(repo.clone(), target, self.diff_mode, self.diff_layout, self.hits.clone(), cx);
+        let (mode, layout) = self.viewer.read_with(cx, |v, _| (v.mode, v.layout));
+        let view = DiffView::open(repo.clone(), target, mode, layout, self.hits.clone(), cx);
         view.update(cx, |d, _| d.worktree = worktree);
         if working {
             view.update(cx, |d, cx| d.enable_picks(self.gate.clone(), repo, cx));
@@ -557,8 +550,7 @@ impl GitView {
         let closed = cx.subscribe(&view, |this: &mut GitView, _, _: &diff::Close, cx| this.back_to_graph(cx));
         let go = cx.subscribe(&view, |this: &mut GitView, _, go: &diff::Go, cx| this.go_file(go.0, cx));
         let picked = cx.subscribe(&view, |this: &mut GitView, _, e: &diff::PickEvent, cx| this.picked_lines(e, cx));
-        self.diff = Some((view, [closed, go, picked]));
-        self.focus_diff = true;
+        self.viewer.update(cx, |v, _| v.show(view, [closed, go, picked]));
         cx.notify();
     }
 
@@ -575,12 +567,7 @@ impl GitView {
     }
 
     pub(crate) fn close_diff(&mut self, cx: &mut Context<Self>) {
-        if let Some((view, _)) = self.diff.take() {
-            let (mode, layout, of) = view.read_with(cx, |v, _| (v.mode(), v.layout(), v.target.of.clone()));
-            if of != diff::Of::Conflicted {
-                self.diff_mode = mode;
-            }
-            self.diff_layout = layout;
+        if self.viewer.update(cx, |v, cx| v.close(cx)) {
             cx.notify();
         }
     }
@@ -857,15 +844,15 @@ impl GitView {
     }
 
     fn render_split(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let first = match &self.diff {
-            Some((view, _)) if self.selected() == Some(Selected::Wip) => div()
+        let first = match self.diff(cx).cloned() {
+            Some(view) if self.selected() == Some(Selected::Wip) => div()
                 .size_full()
                 .key_context(keys::WIP_LIST_CONTEXT)
                 .on_action(cx.listener(|this, _: &keys::StageSelected, _, cx| this.wip_panel.update(cx, |p, cx| p.stage_selected(cx))))
                 .on_action(cx.listener(|this, _: &keys::UnstageSelected, _, cx| this.wip_panel.update(cx, |p, cx| p.unstage_selected(cx))))
-                .child(view.clone())
+                .child(view)
                 .into_any_element(),
-            Some((view, _)) => view.clone().into_any_element(),
+            Some(view) => view.into_any_element(),
             None => self.render_graph(cx),
         };
         let table = div().relative().flex_1().min_w_0().h_full().child(first).children(self.toast.render(&self.hits, "git-toast", cx));
@@ -943,10 +930,8 @@ impl Render for GitView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _stall = stall::section("render: git tab");
         self.watch_activation(window, cx);
-        if std::mem::take(&mut self.focus_diff)
-            && let Some((view, _)) = &self.diff
-        {
-            let focus = view.read(cx).focus_handle().clone();
+        let focus = self.viewer.update(cx, |v, cx| std::mem::take(&mut v.focus).then(|| v.view().map(|d| d.read(cx).focus_handle().clone())).flatten());
+        if let Some(focus) = focus {
             window.focus(&focus, cx);
         }
         if std::mem::take(&mut self.focus_graph) {

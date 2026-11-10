@@ -92,8 +92,8 @@ fn live_refresh_keeps_the_open_diff_and_reloads_it_when_its_file_changes(cx: &mu
     until("the diff reloaded", DEADLINE, cx, |cx| {
         diff.read_with(cx, |d, cx| matches!(d.content(), Content::Text(t) if t.diff.new.read(cx).text() == "untracked\nand more\n"))
     });
-    view.read_with(cx, |v, _| {
-        assert_eq!(v.diff().map(Entity::entity_id), Some(diff.entity_id()), "the same viewer stays open");
+    view.read_with(cx, |v, cx| {
+        assert_eq!(v.diff(cx).map(Entity::entity_id), Some(diff.entity_id()), "the same viewer stays open");
         assert_eq!(v.selected(), Some(Selected::Wip));
     });
     drop(diff);

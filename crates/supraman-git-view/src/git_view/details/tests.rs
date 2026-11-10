@@ -231,7 +231,7 @@ fn commit_details_a_second_click_on_the_open_file_closes_its_diff(cx: &mut TestA
     let (view, cx) = crate::git_view::test_support::open(&f.dir, crate::git_view::test_support::Opts::default().editor(), cx);
     let panel = panel_of(&view, cx);
     select(&view, &sha, cx);
-    let open_path = |cx: &mut VisualTestContext| view.read_with(cx, |v, cx| v.diff().map(|d| d.read(cx).target.path.clone()));
+    let open_path = |cx: &mut VisualTestContext| view.read_with(cx, |v, cx| v.diff(cx).map(|d| d.read(cx).target.path.clone()));
     for (list, row) in [(FileView::Path, "commit-files-row"), (FileView::Tree, "commit-tree-row")] {
         panel.update(cx, |p, cx| p.set_view(list, cx));
         click(&view, &format!("{row}-a.txt"), cx);

@@ -38,7 +38,7 @@ fn open<'a>(f: &Fixture, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mu
 fn show(view: &Entity<GitView>, of: Of, layout: Layout, cx: &mut VisualTestContext) -> Entity<DiffView> {
     let change = Some(FileChange { kind: ChangeKind::Modified, path: PATH.into(), old_path: None, similarity: None });
     view.update(cx, |v, cx| v.open_diff(Target { of, path: PATH.into(), change }, cx));
-    let d = view.read_with(cx, |v, _| v.diff().cloned()).expect("the viewer is open");
+    let d = view.read_with(cx, |v, cx| v.diff(cx).cloned()).expect("the viewer is open");
     d.update(cx, |d, cx| d.set_layout(layout, cx));
     settle(view, cx);
     d
@@ -155,7 +155,7 @@ fn diff_picks_the_line_menu_acts_on_the_line_or_the_selection(cx: &mut TestAppCo
     assert_eq!(index(&f), "one\nTWO\nthree\nfour\nfive\nsix\nseven\n", "Stage selected lines stages the removed and the added line");
 
     show(&view, Of::Staged, Layout::Inline, cx);
-    let d = view.read_with(cx, |v, _| v.diff().cloned()).unwrap();
+    let d = view.read_with(cx, |v, cx| v.diff(cx).cloned()).unwrap();
     let at = at_line(&d, 1, true, cx);
     right_click(&view, at, cx);
     assert_eq!(d.read_with(cx, |d, _| d.menu_labels()), ["Unstage this line"]);

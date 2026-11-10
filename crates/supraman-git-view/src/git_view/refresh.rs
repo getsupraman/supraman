@@ -379,7 +379,7 @@ impl GitView {
 
     /// The open working-tree diff read again when its file is among `files` (`None`: any may have changed).
     fn reload_diff(&mut self, files: Option<&HashSet<String>>, cx: &mut Context<Self>) {
-        let (Some((view, _)), Some(repo)) = (&self.diff, self.repo.clone()) else { return };
+        let (Some(view), Some(repo)) = (self.diff(cx).cloned(), self.repo.clone()) else { return };
         view.update(cx, |d, cx| {
             let changed = files.is_none_or(|f| f.contains(&d.target.path) || f.contains(d.target.old_path()));
             if d.worktree.is_none() && d.target.side_word().is_some() && changed {

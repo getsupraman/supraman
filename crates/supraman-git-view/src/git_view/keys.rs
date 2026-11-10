@@ -136,7 +136,7 @@ impl GitView {
             Some(Selected::Worktree(path)) => Some(path),
             _ => None,
         };
-        let at = self.diff().and_then(|d| files.iter().position(|f| *f == d.read(cx).target && d.read(cx).worktree == worktree));
+        let at = self.diff(cx).and_then(|d| files.iter().position(|f| *f == d.read(cx).target && d.read(cx).worktree == worktree));
         let Some(target) = step.index(files.len(), at).map(|ix| files[ix].clone()) else { return };
         match self.selected() {
             Some(Selected::Wip) => self.wip_panel.update(cx, |p, cx| p.mark_file(&target, cx)),
@@ -149,7 +149,7 @@ impl GitView {
     /// Right on a row: its first file's diff, once the panel shows the row.
     fn open_first_file(&mut self, cx: &mut Context<Self>) {
         self.settled(cx);
-        if self.diff.is_none() {
+        if self.diff(cx).is_none() {
             self.go_file(FileStep::First, cx);
         }
     }

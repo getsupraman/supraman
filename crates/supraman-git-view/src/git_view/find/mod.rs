@@ -192,7 +192,7 @@ impl GitView {
             (Command::GoToUpstream, why(self.heads.upstream.is_some(), "The current branch has no upstream.")),
             (Command::GoToWip, why(self.wip_row().is_some(), "The working tree is clean.")),
             if view == FileView::Tree { (Command::FilesAsPaths, None) } else { (Command::FilesAsTree, None) },
-            (Command::CloseViewer, why(self.diff.is_some(), "No file is open in the viewer.")),
+            (Command::CloseViewer, why(self.diff(cx).is_some(), "No file is open in the viewer.")),
             (Command::Push, dim(Button::Push)),
             (Command::PullDefault(remote.pull_choice()), dim(Button::Pull(None))),
         ]
@@ -221,7 +221,7 @@ impl GitView {
             Command::FetchAll => self.remote.update(cx, |r, cx| r.act(RemoteAct::FetchAll, cx)),
         }
         if !matches!(command, Command::FilterRefs | Command::CloseViewer) {
-            self.focus_graph = self.diff.is_none();
+            self.focus_graph = self.diff(cx).is_none();
         }
     }
 

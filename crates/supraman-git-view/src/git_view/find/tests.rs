@@ -64,14 +64,14 @@ fn c1_ctrl_p_finds_a_branch_a_file_and_a_commit_by_its_sha(cx: &mut TestAppConte
     assert_eq!((mode.as_deref(), query.as_str()), (Some(FILES), "new"));
     assert_eq!(files.first().map(String::as_str), Some("file:new.txt"), "the files at HEAD, read when it opened: {files:?}");
     keys(&view, "enter", cx);
-    let target = view.read_with(cx, |v, cx| v.diff().map(|d| d.read(cx).target.clone())).expect("the viewer shows the file");
+    let target = view.read_with(cx, |v, cx| v.diff(cx).map(|d| d.read(cx).target.clone())).expect("the viewer shows the file");
     assert_eq!((target.path.as_str(), target.of, target.change), ("new.txt", Of::Commit { sha: f.sha("ahead").to_string(), parent: None }, None), "the file at HEAD");
 
     keys(&view, "ctrl-p", cx);
     typed(&view, &format!("#{}", &f.sha("second")[..6]), cx);
     assert_eq!(listed(&view, cx).2.first().cloned(), Some(format!("commit:{}", f.sha("second"))));
     keys(&view, "enter", cx);
-    assert_eq!(view.read_with(cx, |v, _| (v.selected(), v.diff().is_some())), (commit(f.sha("second")), false), "the commit selected, the viewer closed");
+    assert_eq!(view.read_with(cx, |v, cx| (v.selected(), v.diff(cx).is_some())), (commit(f.sha("second")), false), "the commit selected, the viewer closed");
 }
 
 #[gpui::test]
@@ -135,7 +135,7 @@ fn a_command_that_cannot_act_is_listed_dimmed_and_its_pick_does_nothing(cx: &mut
     let first = palette(&view, cx).read_with(cx, |p, _| p.selected().cloned());
     assert_eq!(first, Some(GitEntry::Command { command: Command::CloseViewer, why_not: None }));
     keys(&view, "enter", cx);
-    assert_eq!(view.read_with(cx, |v, _| (v.find().is_some(), v.diff().is_some())), (false, false), "it acts once it can");
+    assert_eq!(view.read_with(cx, |v, cx| (v.find().is_some(), v.diff(cx).is_some())), (false, false), "it acts once it can");
 }
 
 #[gpui::test]

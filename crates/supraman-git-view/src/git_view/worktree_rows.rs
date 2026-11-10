@@ -101,7 +101,7 @@ impl GitView {
         if !self.worktree_panel.update(cx, |p, cx| p.refresh(wip, said, cx)) {
             return;
         }
-        let (Some((view, _)), Some(repo)) = (&self.diff, self.repo.clone()) else { return };
+        let (Some(view), Some(repo)) = (self.diff(cx).cloned(), self.repo.clone()) else { return };
         view.update(cx, |d, cx| {
             if d.worktree.as_deref() == Some(path.as_ref()) {
                 let repo = d.repo_of(&repo);

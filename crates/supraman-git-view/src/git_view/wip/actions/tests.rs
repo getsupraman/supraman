@@ -277,7 +277,7 @@ fn wip_keys_one_summary_in_two_fields_commit_stage_and_unstage(cx: &mut TestAppC
     keys(&view, "u", cx);
     assert_eq!(lists(&view, cx), (vec!["k.txt".to_string()], Vec::<String>::new()), "U unstages it");
     click(&view, "wip-unstaged-files-row-k.txt", cx);
-    assert!(view.read_with(cx, |v, _| v.diff().is_some()), "the file's diff has the keyboard");
+    assert!(view.read_with(cx, |v, cx| v.diff(cx).is_some()), "the file's diff has the keyboard");
     keys(&view, "s", cx);
     assert_eq!(lists(&view, cx).1, vec!["k.txt".to_string()], "S from the open diff stages its file");
     view.update(cx, |v, cx| v.back_to_graph(cx));
