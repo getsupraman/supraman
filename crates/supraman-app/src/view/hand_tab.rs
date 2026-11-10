@@ -249,7 +249,7 @@ impl FleetView {
     }
 
     fn claude_shell(&self, launch: &Launch, claude: &str, extras: &Extras) -> util::shell::Shell {
-        let launch_args = match &self.daemon_hold {
+        let launch_args = match &self.supervising.daemon_hold {
             Some(why) => {
                 let script = format!("{}; {}", held_line(why), launch.script_with(claude, extras));
                 ["-NoExit".into(), "-EncodedCommand".into(), crate::hand::encoded_command(&script)]

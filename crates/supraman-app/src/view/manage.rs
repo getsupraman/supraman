@@ -217,7 +217,7 @@ impl FleetView {
     }
 
     pub(crate) fn adoption(&self, workspace: &str, folder: &str, row: &SessionRow) -> Option<fleet::Adoption> {
-        fleet::adoption(&self.workspaces, workspace, folder, row, &self.sessions, &self.desired)
+        fleet::adoption(&self.workspaces, workspace, folder, row, &self.sessions, &self.supervising.desired)
     }
 
     pub(super) fn claimed_item(&self, workspace: &str, name: &str, cx: &gpui::App) -> Option<String> {
@@ -320,7 +320,7 @@ impl FleetView {
     }
 
     fn ask_remove(&mut self, w: String) {
-        let started = self.desired.get(&w).is_some_and(|d| d.0);
+        let started = self.supervising.desired.get(&w).is_some_and(|d| d.0);
         let stop = if started { "Its supervision stops first (Stop), then " } else { "" };
         self.confirm = Some(Confirm::ask(
             format!(
@@ -346,7 +346,7 @@ impl FleetView {
     fn ask_adopt(&mut self, workspace: String, folder: String, session: Session, name: String) {
         let label = if session.name.is_empty() { format!("session {}", session.id) } else { format!("{} ({})", session.name, session.id) };
         let stop = if fleet::is_alive(&session.health(now_ms())) { "It is stopped (stop, never rm), then its" } else { "Its" };
-        let started = self.desired.get(&workspace).is_some_and(|d| d.0);
+        let started = self.supervising.desired.get(&workspace).is_some_and(|d| d.0);
         let later = if started { String::new() } else { format!(" Workspace {workspace} is not started: the copy starts when you Start it.") };
         self.confirm = Some(Confirm::ask(
             format!(
@@ -377,7 +377,7 @@ impl FleetView {
 
     /// Nothing on disk outside the Supraman home is touched.
     pub fn remove_workspace(&mut self, name: &str, cx: &mut Context<Self>) {
-        let (started, wanted) = self.desired.get(name).cloned().unwrap_or_default();
+        let (started, wanted) = self.supervising.desired.get(name).cloned().unwrap_or_default();
         if started {
             self.stop_workspace(name, cx);
         }
@@ -417,7 +417,7 @@ impl FleetView {
     fn removed(&mut self, done: Result<String, String>, cx: &mut Context<Self>) {
         match done {
             Ok(name) => {
-                self.desired.remove(&name);
+                self.supervising.desired.remove(&name);
                 self.invalidate_tree();
                 self.relays.remove(&name);
                 self.messages.remove(&name);

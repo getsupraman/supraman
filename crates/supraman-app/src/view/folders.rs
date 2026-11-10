@@ -178,7 +178,7 @@ impl FleetView {
 
     /// Asks first when an edit stops a supervised session ([`stops`]).
     pub fn request_edits(&mut self, w: &str, edits: Vec<Edit>, cx: &mut Context<Self>) {
-        let wanted = self.desired.get(w).map(|d| d.1.clone()).unwrap_or_default();
+        let wanted = self.supervising.desired.get(w).map(|d| d.1.clone()).unwrap_or_default();
         let workspace = self.workspaces.iter().find(|x| x.name == w);
         let mut stopping = Vec::new();
         let mut verbs = Vec::new();

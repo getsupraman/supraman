@@ -123,7 +123,7 @@ fn listed(items: &[(String, String)]) -> String {
 
 impl FleetView {
     fn wanted(&self, name: &str) -> bool {
-        !name.is_empty() && self.desired.values().any(|(_, wanted)| wanted.iter().any(|w| w == name))
+        !name.is_empty() && self.supervising.desired.values().any(|(_, wanted)| wanted.iter().any(|w| w == name))
     }
 
     fn in_tab(&self, s: &Session) -> bool {
@@ -152,7 +152,7 @@ impl FleetView {
             _ => "Its transcript and its tool files under the claude dir are deleted, so it can no longer be resumed",
         };
         let kind = if session.kind == Kind::Background { "background session" } else { "closed session" };
-        let foreign = if fleet::is_foreign(&session.name, &self.workspaces, Some(&self.desired), self.own_prefix.as_deref()) { " It is another Supraman's session." } else { "" };
+        let foreign = if fleet::is_foreign(&session.name, &self.workspaces, Some(&self.supervising.desired), self.own_prefix.as_deref()) { " It is another Supraman's session." } else { "" };
         self.confirm = Some(Confirm::ask(
             format!("Delete {kind} {}? {what}. This cannot be undone.{foreign}", label(&session)),
             "Delete",

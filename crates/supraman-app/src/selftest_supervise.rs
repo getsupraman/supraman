@@ -290,10 +290,10 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
                 "refreshes {} ticks {} desired {:?} rows named {} in the view: {} errors {:?}",
                 v.polls.refreshes,
                 v.polls.ticks,
-                v.desired,
+                v.supervising.desired,
                 ctrl,
                 v.sessions.iter().filter(|s| s.name == ctrl).count(),
-                v.supervise_errors
+                v.supervising.supervise_errors
             )
         });
         println!("step b: panel state: {state}");
@@ -356,7 +356,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     const OLD_PID_GONE: Duration = Duration::from_secs(15);
     let polled = Instant::now();
     let old_gone_after = loop {
-        let attempt = view.read_with(cx, |v, _| v.last_attempt.get(&ctrl).copied());
+        let attempt = view.read_with(cx, |v, _| v.supervising.last_attempt.get(&ctrl).copied());
         let by_supervisor = attempt.is_some_and(|t| t >= killed_at);
         let old_alive = supraman_core::process::alive(pid);
         if by_supervisor && !old_alive {
@@ -413,14 +413,14 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let clicked = Instant::now();
     let run_key = format!("inbox-run-{u_ctrl}");
     let need = loop {
-        let need = view.read_with(cx, |v, _| v.needs.iter().find(|n| n.name == u_ctrl && n.kind == NeedsKind::TrustNeeded).cloned());
+        let need = view.read_with(cx, |v, _| v.supervising.needs.iter().find(|n| n.name == u_ctrl && n.kind == NeedsKind::TrustNeeded).cloned());
         if let Some(need) = need
             && view.read_with(cx, |v, _| v.hits.borrow().contains_key(&run_key))
         {
             break need;
         }
         if clicked.elapsed() > Duration::from_secs(30) {
-            bail!("step d: no TrustNeeded Inbox row for {u_ctrl} within 30 s (needs: {:?})", view.read_with(cx, |v, _| v.needs.clone()));
+            bail!("step d: no TrustNeeded Inbox row for {u_ctrl} within 30 s (needs: {:?})", view.read_with(cx, |v, _| v.supervising.needs.clone()));
         }
         sleep(cx, Duration::from_millis(100)).await;
     };
@@ -468,12 +468,12 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     }
     click(view, &retry_key, cx).await?;
     let retried = Instant::now();
-    if view.read_with(cx, |v, _| v.needs.iter().any(|n| n.name == u_ctrl && n.kind == NeedsKind::TrustNeeded)) {
+    if view.read_with(cx, |v, _| v.supervising.needs.iter().any(|n| n.name == u_ctrl && n.kind == NeedsKind::TrustNeeded)) {
         bail!("step d: Retry left the trust row");
     }
     // still untrusted: the supervisor's next launch is refused again and the row comes back
     loop {
-        if view.read_with(cx, |v, _| v.needs.iter().any(|n| n.name == u_ctrl && n.kind == NeedsKind::TrustNeeded)) {
+        if view.read_with(cx, |v, _| v.supervising.needs.iter().any(|n| n.name == u_ctrl && n.kind == NeedsKind::TrustNeeded)) {
             break;
         }
         if retried.elapsed() > Duration::from_secs(30) {
@@ -555,7 +555,7 @@ async fn reopen(
             (
                 v.polls.polled_at,
                 v.sessions.iter().find(|s| s.name == ctrl).and_then(|s| s.pid),
-                v.needs.iter().filter(|n| n.name == ctrl).map(|n| format!("{:?}", n.kind)).collect::<Vec<_>>(),
+                v.supervising.needs.iter().filter(|n| n.name == ctrl).map(|n| format!("{:?}", n.kind)).collect::<Vec<_>>(),
             )
         });
         if polled_at > opened_ms && pid == settled.pid && needs.is_empty() {
@@ -640,7 +640,7 @@ async fn park_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowC
             {
                 bail!("{park}'s command was answered before this step saw it parked: {result:?} [{}]", raw(&r));
             }
-            let need = view.read_with(cx, |v, _| v.needs.iter().find(|n| n.name == park && n.kind == NeedsKind::Blocked).cloned());
+            let need = view.read_with(cx, |v, _| v.supervising.needs.iter().find(|n| n.name == park && n.kind == NeedsKind::Blocked).cloned());
             if let (Some(prompt), Some(need)) = (prompt, need)
                 && view.read_with(cx, |v, _| v.hits.borrow().contains_key(&attach_key))
             {
@@ -782,7 +782,7 @@ async fn want_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowC
     })
     .await?;
     let live_after = started.elapsed();
-    let attempt = view.read_with(cx, |v, _| v.last_attempt.get(&name).copied());
+    let attempt = view.read_with(cx, |v, _| v.supervising.last_attempt.get(&name).copied());
     if attempt.is_none() {
         bail!("{name} is live, but the supervisor never launched it");
     }

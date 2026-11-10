@@ -15,8 +15,8 @@ impl FleetView {
     pub fn search_tree(&self) -> Tree {
         let all: HashSet<String> = self.workspaces.iter().flat_map(|w| w.folders.iter().map(move |r| format!("{}/{}", w.name, r.name))).collect();
         let sup = Supervised {
-            desired: Some(&self.desired),
-            hooks: Some(&self.hooks),
+            desired: Some(&self.supervising.desired),
+            hooks: Some(&self.supervising.hooks),
             polled_at: self.polls.polled_at,
             main_repos: Some(&self.main_repos),
             closed: &self.closed,

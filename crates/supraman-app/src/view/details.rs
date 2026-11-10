@@ -167,7 +167,7 @@ impl FleetView {
         if let Some(id) = supraman_core::schedule::schedule_of_session(workspace, name) {
             return StartedBy::Schedule(id.to_string());
         }
-        if self.desired.get(workspace).is_some_and(|(_, wanted)| wanted.contains(name)) || super::menu::is_foremans(&row.session) {
+        if self.supervising.desired.get(workspace).is_some_and(|(_, wanted)| wanted.contains(name)) || super::menu::is_foremans(&row.session) {
             return StartedBy::Supervisor;
         }
         if self.hand_tab(row).is_some() {

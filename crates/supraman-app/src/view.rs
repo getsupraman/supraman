@@ -12,9 +12,9 @@ use std::{
 use futures::FutureExt as _;
 use supraman_claude::{ClaudeVersion, Sent, Session, list_sessions, now_ms, send_from_human};
 use supraman_core::{
-    DEFAULT_MAX_WORKING, Event, EventReader, FM_PREFIX, OutboxMessage, Workspace, Registry, Settings, mark_answered,
+    Event, EventReader, FM_PREFIX, OutboxMessage, Workspace, Registry, Settings, mark_answered,
 };
-use supraman_supervisor::{DesiredState, NeedsYou, workspace_session_name};
+use supraman_supervisor::{DesiredState, workspace_session_name};
 use supraman_term::{
     MouseInputMode, Terminal, TerminalBuilder, TerminalMode,
     terminal_settings::{AlternateScroll, CursorShape},
@@ -80,6 +80,7 @@ mod startup;
 pub(crate) mod start;
 pub(crate) mod tab_keys;
 mod tab_saving;
+mod supervising;
 mod term;
 mod term_look;
 mod work_tab;
@@ -265,17 +266,8 @@ pub struct FleetView {
     pub home: Option<PathBuf>,
     pub plugin_dir: Option<PathBuf>,
     pub setup_notices: Vec<String>,
-    pub needs: Vec<NeedsYou>,
-    pub desired: BTreeMap<String, (bool, Vec<String>)>,
-    pub max_working: usize,
-    pub supervise_errors: Vec<String>,
-    supervise_dismissed: Vec<String>,
-    pub daemon_hold: Option<String>,
     pub action_error: Option<String>,
-    pub last_attempt: StdHashMap<String, i64>,
-    pub hooks: StdHashMap<String, HookSignal>,
     pub(crate) settings_window: Option<WindowHandle<SettingsView>>,
-    last_alive: StdHashMap<String, i64>,
     pub relays: BTreeMap<String, RelayStatus>,
     pub messages: BTreeMap<String, Vec<OutboxMessage>>,
     pub dismissed_messages: DismissedMessages,
@@ -294,7 +286,6 @@ pub struct FleetView {
     pub open_link_with: fn(&Link, &mut App),
     pub workman: WorkmanStatus,
     pub hand_notices: Vec<String>,
-    desired_writes: futures::channel::mpsc::UnboundedSender<DesiredWrite>,
     pub closed: Vec<Session>,
     /// A selftest's closed sessions, kept across transcript scans.
     pub injected_closed: Vec<Session>,
@@ -318,6 +309,7 @@ pub struct FleetView {
     pub workman_state: workman_state::WorkmanState,
     lifecycle: lifecycle::Lifecycle,
     pub polls: polls::Polls,
+    pub supervising: supervising::Supervising,
     pub scheduling: schedule_state::ScheduleState,
     pub(crate) tab_keys: Entity<tab_keys::TabKeyState>,
 }
@@ -536,16 +528,7 @@ impl FleetView {
             home,
             plugin_dir: None,
             setup_notices: Vec::new(),
-            needs: Vec::new(),
-            desired: BTreeMap::new(),
-            max_working: DEFAULT_MAX_WORKING,
-            supervise_errors: Vec::new(),
-            supervise_dismissed: Vec::new(),
-            daemon_hold: None,
-            last_attempt: StdHashMap::new(),
-            hooks: StdHashMap::new(),
             settings_window: None,
-            last_alive: StdHashMap::new(),
             relays: BTreeMap::new(),
             messages: BTreeMap::new(),
             dismissed_messages: DismissedMessages::default(),
@@ -567,7 +550,6 @@ impl FleetView {
             },
             workman: WorkmanStatus::Checking,
             hand_notices: Vec::new(),
-            desired_writes,
             closed: Vec::new(),
             injected_closed: Vec::new(),
             closed_repos: StdHashMap::new(),
@@ -590,6 +572,7 @@ impl FleetView {
             workman_state: workman_state::WorkmanState::new(workman_recheck),
             lifecycle: lifecycle::Lifecycle::new(hands),
             polls,
+            supervising: supervising::Supervising::new(desired_writes),
             scheduling,
             tab_keys: cx.new(|_| tab_keys::TabKeyState::new(defaults.window.tab_keys())),
         }
@@ -798,7 +781,7 @@ impl FleetView {
 
     fn apply(&mut self, refresh: Refresh, cx: &mut Context<Self>) {
         let _stall = supraman_ui::stall::section("poll: apply");
-        let before = (self.workspaces.clone(), self.sessions.clone(), self.main_repos.clone(), self.hooks.clone(), self.desired.clone(), self.polls.polled_at);
+        let before = (self.workspaces.clone(), self.sessions.clone(), self.main_repos.clone(), self.supervising.hooks.clone(), self.supervising.desired.clone(), self.polls.polled_at);
         match fresh_registry(refresh.workspaces, refresh.registry_writes, self.polls.registry_writes.load(Ordering::SeqCst)) {
             None => {}
             Some(Ok((workspaces, skipped))) => {
@@ -823,7 +806,7 @@ impl FleetView {
                 }
                 for s in &sessions {
                     if fleet::is_alive(&s.health(now)) {
-                        self.last_alive.insert(s.session_id.clone(), now);
+                        self.supervising.last_alive.insert(s.session_id.clone(), now);
                     }
                 }
                 self.occupancy.set_sessions(fleet::live_sessions(&sessions, now));
@@ -842,10 +825,10 @@ impl FleetView {
         }
         self.polls.sessions_read = true;
         for event in refresh.events {
-            HookSignal::record(&mut self.hooks, event);
+            HookSignal::record(&mut self.supervising.hooks, event);
         }
         if let Some(desired) = refresh.desired {
-            self.desired = desired;
+            self.supervising.desired = desired;
         }
         if let Some((schedules, errors)) = refresh.schedules {
             self.scheduling.schedules = schedules;
@@ -857,28 +840,28 @@ impl FleetView {
         }
         let (workspaces, sessions, main_repos, hooks, desired, polled_at) = &before;
         // a permission prompt newer than the last poll makes its row Blocked (fleet::with_hook)
-        let prompted = self.polls.polled_at != *polled_at && self.hooks.values().any(|h| h.is_permission_prompt() && h.last.ts > (*polled_at).min(self.polls.polled_at));
-        if prompted || self.workspaces != *workspaces || self.sessions != *sessions || self.main_repos != *main_repos || self.hooks != *hooks || self.desired != *desired {
+        let prompted = self.polls.polled_at != *polled_at && self.supervising.hooks.values().any(|h| h.is_permission_prompt() && h.last.ts > (*polled_at).min(self.polls.polled_at));
+        if prompted || self.workspaces != *workspaces || self.sessions != *sessions || self.main_repos != *main_repos || self.supervising.hooks != *hooks || self.supervising.desired != *desired {
             self.invalidate_tree();
         }
         self.polls.last_refresh_took = Some(refresh.took);
     }
 
     fn apply_report(&mut self, report: Report, cx: &mut Context<Self>) {
-        self.desired = report.desired;
+        self.supervising.desired = report.desired;
         self.invalidate_tree();
-        self.needs = report.needs;
-        let (workspaces, desired, own) = (&self.workspaces, &self.desired, self.own_prefix.as_deref());
-        self.needs.retain(|n| !fleet::is_foreign(&n.name, workspaces, Some(desired), own));
+        self.supervising.needs = report.needs;
+        let (workspaces, desired, own) = (&self.workspaces, &self.supervising.desired, self.own_prefix.as_deref());
+        self.supervising.needs.retain(|n| !fleet::is_foreign(&n.name, workspaces, Some(desired), own));
         if self.writes.max.report_counts() {
-            self.max_working = report.max_working;
+            self.supervising.max_working = report.max_working;
         }
         self.term_look.shell_default.ticked(report.terminal);
-        self.supervise_errors = report.errors;
-        supraman_ui::notices::keep_dismissed(&mut self.supervise_dismissed, &self.supervise_errors);
-        self.daemon_hold = report.daemon_hold;
+        self.supervising.supervise_errors = report.errors;
+        supraman_ui::notices::keep_dismissed(&mut self.supervising.supervise_dismissed, &self.supervising.supervise_errors);
+        self.supervising.daemon_hold = report.daemon_hold;
         self.workman_state.left_pending.extend(report.left_servers);
-        self.last_attempt = report.last_attempt.into_iter().collect();
+        self.supervising.last_attempt = report.last_attempt.into_iter().collect();
         self.relays = report.relays;
         self.messages = report.messages;
         let (_, save) = self.dismissed_messages.prune(&self.messages);
@@ -919,8 +902,8 @@ impl FleetView {
     fn build_tree(&self, now: i64) -> Tree {
         let _stall = supraman_ui::stall::section("tree");
         let sup = Supervised {
-            desired: Some(&self.desired),
-            hooks: Some(&self.hooks),
+            desired: Some(&self.supervising.desired),
+            hooks: Some(&self.supervising.hooks),
             polled_at: self.polls.polled_at,
             main_repos: Some(&self.main_repos),
             closed: &self.closed,
@@ -940,14 +923,14 @@ impl FleetView {
             (None, _) => return self.desired_failed(format!("Cannot start {name}: no Supraman home"), cx),
             (_, None) => return self.desired_failed(format!("Cannot start {name}: not registered"), cx),
         };
-        self.desired_writes.unbounded_send(write).ok();
+        self.supervising.desired_writes.unbounded_send(write).ok();
     }
 
     pub fn stop_workspace(&mut self, name: &str, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
             return self.desired_failed(format!("Cannot stop {name}: no Supraman home"), cx);
         };
-        self.desired_writes.unbounded_send(DesiredWrite::Stop { home, name: name.to_string() }).ok();
+        self.supervising.desired_writes.unbounded_send(DesiredWrite::Stop { home, name: name.to_string() }).ok();
     }
 
     fn desired_failed(&mut self, error: String, cx: &mut Context<Self>) {
@@ -977,13 +960,13 @@ impl FleetView {
                     match result {
                         Ok(Some(desired)) => {
                             let names = desired.sessions.iter().map(|w| w.name.clone()).collect();
-                            this.desired.insert(name.clone(), (true, names));
+                            this.supervising.desired.insert(name.clone(), (true, names));
                             this.invalidate_tree();
                             this.action_error = None;
                             this.workman_state.start_warning = this.workman.start_warning(&name);
                         }
                         Ok(None) => {
-                            if let Some(entry) = this.desired.get_mut(&name) {
+                            if let Some(entry) = this.supervising.desired.get_mut(&name) {
                                 entry.0 = false;
                             }
                             this.invalidate_tree();
@@ -1135,7 +1118,7 @@ impl FleetView {
             cx.notify();
             return;
         };
-        self.max_working = max_working;
+        self.supervising.max_working = max_working;
         let generation = self.writes.max.set();
         let previous = self.writes.max.serial.previous();
         let task = cx.spawn(async move |this, cx| {
@@ -1159,7 +1142,7 @@ impl FleetView {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .push((workspace.to_string(), name.to_string()));
-        self.needs.retain(|n| !(n.workspace == workspace && n.name == name));
+        self.supervising.needs.retain(|n| !(n.workspace == workspace && n.name == name));
         cx.notify();
     }
 
@@ -1274,7 +1257,7 @@ impl FleetView {
     }
 
     pub fn resumable(&self, row: &SessionRow) -> bool {
-        offers_resume(&row.session, &row.health, self.last_alive.get(&row.session.session_id).copied(), now_ms())
+        offers_resume(&row.session, &row.health, self.supervising.last_alive.get(&row.session.session_id).copied(), now_ms())
     }
 
     /// `claude --bg --resume` with no other flag keeps the session id.
@@ -1285,7 +1268,7 @@ impl FleetView {
     fn resume_titled(&mut self, title: String, session: &Session, cx: &mut Context<Self>) -> u64 {
         let sid = &session.session_id;
         if session.kind == supraman_claude::Kind::Background {
-            let script = match &self.daemon_hold {
+            let script = match &self.supervising.daemon_hold {
                 Some(why) => held_line(why),
                 None => format!(
                     "Write-Host 'resuming {} in the background, then attaching…'; claude --bg --resume {sid}; if ($LASTEXITCODE -eq 0) {{ claude attach {} }}",

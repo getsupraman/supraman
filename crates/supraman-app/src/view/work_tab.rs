@@ -49,7 +49,7 @@ impl FleetView {
     /// A Work tab's Needs you: every Inbox row shown now, the list at its top and highlighted; a toast only when nothing needs you.
     pub fn show_inbox(&mut self, cx: &mut Context<Self>) {
         self.release_left(cx);
-        if self.work_inbox.read(cx).rows().is_empty() && self.needs.is_empty() {
+        if self.work_inbox.read(cx).rows().is_empty() && self.supervising.needs.is_empty() {
             self.toast.show("Nothing needs you.".into(), |this: &mut Self| &mut this.toast, cx);
             return;
         }

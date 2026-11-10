@@ -226,7 +226,7 @@ impl FleetView {
             hold.moved = Instant::now();
             return;
         }
-        let mut keys: HashSet<String> = self.needs.iter().map(need_key).collect();
+        let mut keys: HashSet<String> = self.supervising.needs.iter().map(need_key).collect();
         keys.extend(self.messages.iter().flat_map(|(w, msgs)| msgs.iter().map(move |m| messages::message_key(w, m))));
         keys.extend(self.work_inbox.read(cx).rows().into_iter().map(|(w, r)| work_key(w, r)));
         self.sidebar.left_hold = Some(Hold { keys, moved: Instant::now() });
@@ -575,9 +575,9 @@ impl FleetView {
     fn render_inbox(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let all_work: Vec<(String, supraman_workman::InboxRow)> =
             self.work_inbox.read(cx).rows().into_iter().map(|(w, r)| (w.to_string(), r.clone())).collect();
-        let total = self.needs.len() + all_work.len();
+        let total = self.supervising.needs.len() + all_work.len();
         let work_rows: Vec<_> = all_work.into_iter().filter(|(w, r)| self.shown_now(&work_key(w, r))).collect();
-        let mut needs: Vec<&NeedsYou> = self.needs.iter().filter(|n| self.shown_now(&need_key(n))).collect();
+        let mut needs: Vec<&NeedsYou> = self.supervising.needs.iter().filter(|n| self.shown_now(&need_key(n))).collect();
         let scheduled = self.render_schedule_inbox(cx);
         if needs.is_empty() && work_rows.is_empty() && scheduled.is_empty() {
             return None;
@@ -1313,7 +1313,7 @@ impl FleetView {
             );
         }
         let adopting = repo_session_name(workspace, &repo.name)
-            .and_then(|name| self.needs.iter().find(|n| n.workspace == workspace && n.name == name && matches!(n.action, Some(Remedy::Adopt { .. }))));
+            .and_then(|name| self.supervising.needs.iter().find(|n| n.workspace == workspace && n.name == name && matches!(n.action, Some(Remedy::Adopt { .. }))));
         if let Some(need) = adopting {
             let key = format!("adopt-failed-{workspace}/{}", repo.name);
             let why = format!("{}: {}. Retry or Start fresh in the Inbox.", need.name, need.detail);
