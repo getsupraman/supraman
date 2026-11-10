@@ -146,7 +146,7 @@ async fn close_settings_by_wm_close(view: &Entity<FleetView>, cx: &mut AsyncWind
         .ok_or_else(|| anyhow!("the settings window has no HWND"))?;
     let closing = log_offset();
     win::post_close(hwnd)?;
-    let gone = closed(handle, Some(hwnd.0 as isize), cx).await?;
+    let gone = closed(handle, Some(hwnd), cx).await?;
     let errors = teardown_errors_since(closing);
     if !errors.is_empty() {
         bail!("closing the settings window logged {} window-teardown line(s): {}", errors.len(), errors.join(" | "));

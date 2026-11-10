@@ -189,21 +189,6 @@ const TOOL_SHELL: [&str; 10] = [
     "CLAUDE_JOB_DIR",
 ];
 
-/// A Windows that ignores the manifest's detached `consoleAllocationPolicy` gives the app its own console.
-#[cfg(windows)]
-fn release_own_console() {
-    use windows::Win32::System::Console::{FreeConsole, GetConsoleProcessList};
-    let mut attached = [0u32; 2];
-    if unsafe { GetConsoleProcessList(&mut attached) } == 1 {
-        unsafe {
-            let _ = FreeConsole();
-        }
-    }
-}
-
-#[cfg(not(windows))]
-fn release_own_console() {}
-
 fn main() {
     supraman_ui::process_start();
     for name in env_scrub(|name| std::env::var(name).ok()) {
@@ -212,7 +197,7 @@ fn main() {
     }
     let (mode, relaunched) = parse_args();
     if mode == Mode::App {
-        release_own_console();
+        supraman_core::platform::desktop::detach_console();
     }
     let _machine = hold_machine(mode);
     let home = match mode {

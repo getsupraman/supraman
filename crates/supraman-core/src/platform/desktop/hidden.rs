@@ -244,7 +244,7 @@ mod imp {
     use super::*;
 
     fn unsupported() -> io::Error {
-        io::Error::new(io::ErrorKind::Unsupported, "hidden desktops are Windows desktops")
+        io::Error::new(io::ErrorKind::Unsupported, crate::platform::refused("a hidden desktop"))
     }
 
     impl HiddenDesktop {

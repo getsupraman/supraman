@@ -10,7 +10,8 @@ use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 
 /// Queued as the OS queues a real click or key: through gpui's window procedure (and `TranslateMessage`), not straight to `dispatch_event`.
 #[cfg(windows)]
-pub(crate) fn post(hwnd: HWND, messages: &[(u32, usize, isize)]) -> anyhow::Result<()> {
+pub(crate) fn post(hwnd: isize, messages: &[(u32, usize, isize)]) -> anyhow::Result<()> {
+    let hwnd = HWND(hwnd as *mut _);
     for &(message, wparam, lparam) in messages {
         unsafe { PostMessageW(Some(hwnd), message, WPARAM(wparam), LPARAM(lparam)) }.map_err(|e| anyhow!("PostMessage: {e}"))?;
     }
@@ -18,15 +19,15 @@ pub(crate) fn post(hwnd: HWND, messages: &[(u32, usize, isize)]) -> anyhow::Resu
 }
 
 #[cfg(windows)]
-pub(crate) fn post_close(hwnd: HWND) -> anyhow::Result<()> {
+pub(crate) fn post_close(hwnd: isize) -> anyhow::Result<()> {
     use windows::Win32::UI::WindowsAndMessaging::WM_CLOSE;
-    unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) }.map_err(|e| anyhow!("WM_CLOSE: {e}"))
+    unsafe { PostMessageW(Some(HWND(hwnd as *mut _)), WM_CLOSE, WPARAM(0), LPARAM(0)) }.map_err(|e| anyhow!("WM_CLOSE: {e}"))
 }
 
 /// `window`'s HWND as [`destroyed`] takes it.
 #[cfg(windows)]
 pub(crate) fn hwnd_of(window: &gpui::Window) -> Option<isize> {
-    crate::tray::hwnd(window).map(|hwnd| hwnd.0 as isize)
+    crate::tray::hwnd(window)
 }
 
 #[cfg(not(windows))]
