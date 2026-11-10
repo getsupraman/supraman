@@ -308,7 +308,10 @@ impl Drop for Prepared {
 
 /// An editor command git's sh runs with the file to edit appended: `file` copied over it.
 fn copy_over(file: &Path) -> String {
-    let path = file.to_string_lossy().replace('\\', "/");
+    let path = file.to_string_lossy();
+    // git's sh is the Windows boundary: it takes `/` separators.
+    #[cfg(windows)]
+    let path = path.replace('\\', "/");
     format!("cp '{}'", path.replace('\'', r"'\''"))
 }
 
