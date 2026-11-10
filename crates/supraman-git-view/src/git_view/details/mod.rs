@@ -70,7 +70,8 @@ pub(crate) struct Shown {
     pub(crate) authored_ms: i64,
     pub(crate) parents: Vec<SharedString>,
     pub(crate) co_authors: Vec<Person>,
-    pub(crate) amendable: Amendable,
+    /// Whether the message box may amend or reword the commit; `None` until read, and for a stash.
+    pub(crate) amendable: Option<Amendable>,
     /// The stash shown, its parents only its base.
     pub(crate) stash: Option<Arc<Stash>>,
     pub(crate) counts: Counts,
@@ -271,7 +272,7 @@ impl CommitPanel {
             authored_ms: loaded.stash.as_ref().map_or(d.commit.author.time, |s| s.time) * 1000,
             parents: d.commit.parents.into_iter().take(if loaded.stash.is_some() { 1 } else { usize::MAX }).map(SharedString::from).collect(),
             co_authors: d.co_authors,
-            amendable: loaded.amendable,
+            amendable: None,
             stash: loaded.stash,
             counts: loaded.counts,
             index: index(&changes),
@@ -279,6 +280,32 @@ impl CommitPanel {
             files: Rc::new(files),
         }));
         self.read_whole(cx);
+        self.read_amendable(cx);
+        cx.notify();
+    }
+
+    /// Reads off the UI thread whether the shown commit's message can be amended or reworded.
+    fn read_amendable(&mut self, cx: &mut Context<Self>) {
+        let (Some(shown), Some(repo)) = (self.shown(), self.repo.clone()) else { return };
+        if shown.stash.is_some() {
+            return;
+        }
+        let (token, sha) = (self.token, shown.sha.to_string());
+        let amendable = cx.background_spawn(async move { load::amendable(&repo, &sha) });
+        cx.spawn(async move |this, cx| {
+            let amendable = amendable.await;
+            this.update(cx, |this, cx| this.apply_amendable(token, amendable, cx)).ok();
+        })
+        .detach();
+    }
+
+    fn apply_amendable(&mut self, token: u64, amendable: Amendable, cx: &mut Context<Self>) {
+        if token != self.token {
+            return;
+        }
+        if let State::Shown(shown) = &mut self.state {
+            Rc::make_mut(shown).amendable = Some(amendable);
+        }
         cx.notify();
     }
 

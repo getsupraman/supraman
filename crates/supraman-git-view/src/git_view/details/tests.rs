@@ -380,3 +380,20 @@ fn commit_details_file_order_follows_the_list_on_show_with_each_files_change(cx:
     let all = [changed[2], changed[3], changed[4], changed[5], changed[0], changed[1], ("bin.dat", None), ("old.txt", None)];
     assert_eq!(order(cx), owned(&all), "View all files: every file, the unchanged ones without a change");
 }
+
+#[gpui::test]
+fn a_commit_selection_shows_its_details_after_two_git_reads_and_reads_whether_it_amends_after(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let head = f.git(&["rev-parse", "HEAD"]);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
+    let panel = panel_of(&view, cx);
+    let before = supraman_core::process::spawned_here();
+    view.update(cx, |v, cx| v.select_sha(&head, cx));
+    while panel.read_with(cx, |p, _| p.shown().is_none_or(|s| s.sha != head.as_str() || p.stale())) {
+        assert!(cx.executor().tick(), "the details land");
+    }
+    assert_eq!(supraman_core::process::spawned_here() - before, 2, "details and changed_files, nothing else before they show");
+    assert_eq!(shown(&panel, cx).amendable, None, "the message box is read-only until the second read lands");
+    cx.run_until_parked();
+    assert_eq!(shown(&panel, cx).amendable, Some(Amendable::Branch { name: "main".into() }));
+}

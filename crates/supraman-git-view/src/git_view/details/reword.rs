@@ -36,9 +36,9 @@ pub(crate) const REBASES_KEY: &str = "commit-reword-rebases";
 /// What the open field edits.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Target {
-    Head { branch: String, pushed: bool },
+    Head { branch: String },
     /// An older commit of `branch`, the `above` commits over it rebased.
-    Older { sha: String, branch: String, above: usize, pushed: bool },
+    Older { sha: String, branch: String, above: usize },
     Stash(StashRef),
 }
 
@@ -56,6 +56,8 @@ pub(crate) struct Reword {
     pub(crate) edit_next: Option<String>,
     asking: Option<Confirm<String>>,
     failure: Option<String>,
+    /// Whether a remote holds the field's commit is being read before Update Message asks or writes.
+    checking: bool,
     /// The amend under way: its gate ticket.
     doing: Option<u64>,
     /// HEAD's sha after the amend, as the job left it.
@@ -69,15 +71,12 @@ pub(crate) fn offer(shown: &Shown) -> Option<(&'static str, Option<Target>)> {
     if let Some(stash) = &shown.stash {
         return Some((CLICK_TO_EDIT_STASH, Some(Target::Stash(StashRef { sha: stash.sha.clone(), label: shown.summary.to_string() }))));
     }
-    match &shown.amendable {
+    match shown.amendable.as_ref()? {
         Amendable::No => None,
         Amendable::Detached => Some((CHECK_OUT_A_BRANCH, None)),
-        Amendable::Branch { name, pushed } => Some((CLICK_TO_AMEND, Some(Target::Head { branch: name.clone(), pushed: *pushed }))),
+        Amendable::Branch { name } => Some((CLICK_TO_AMEND, Some(Target::Head { branch: name.clone() }))),
         Amendable::OlderDetached => Some((CHECK_OUT_TO_REWORD, None)),
-        Amendable::Older { name, above, pushed } => {
-            let target = Target::Older { sha: shown.sha.to_string(), branch: name.clone(), above: *above, pushed: *pushed };
-            Some((CLICK_TO_REWORD, Some(target)))
-        }
+        Amendable::Older { name, above } => Some((CLICK_TO_REWORD, Some(Target::Older { sha: shown.sha.to_string(), branch: name.clone(), above: *above }))),
     }
 }
 
@@ -121,7 +120,8 @@ impl CommitPanel {
     /// The field asked for by [`CommitPanel::edit_when_shown`], once its commit is shown.
     pub(super) fn open_asked_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(sha) = self.reword.edit_next.clone() else { return };
-        if self.shown().is_some_and(|s| s.sha.as_ref() == sha) && !self.stale {
+        let read = |s: &Shown| s.stash.is_some() || s.amendable.is_some();
+        if self.shown().is_some_and(|s| s.sha.as_ref() == sha && read(&s)) && !self.stale {
             self.reword.edit_next = None;
             self.open_field(window, cx);
         }
@@ -168,6 +168,7 @@ impl CommitPanel {
         self.reword.field = None;
         self.reword.asking = None;
         self.reword.failure = None;
+        self.reword.checking = false;
         cx.notify();
     }
 
@@ -195,8 +196,13 @@ impl CommitPanel {
                     cx.emit(PanelEvent::StashMessage(stash, message));
                 }
             }
-            Target::Head { branch, pushed: true } => self.reword.asking = Some(Confirm::ask(pushed_question(&branch), "Amend anyway", wip::message(&summary, &description))),
-            Target::Head { pushed: false, .. } => cx.emit(PanelEvent::Amend(wip::message(&summary, &description))),
+            Target::Head { branch } => {
+                let message = wip::message(&summary, &description);
+                self.when_pushed("HEAD".into(), cx, move |this, pushed, cx| match pushed {
+                    true => this.reword.asking = Some(Confirm::ask(pushed_question(&branch), "Amend anyway", message)),
+                    false => cx.emit(PanelEvent::Amend(message)),
+                });
+            }
             Target::Older { .. } => cx.emit(PanelEvent::Reword(wip::message(&summary, &description))),
         }
         cx.notify();
@@ -204,12 +210,37 @@ impl CommitPanel {
 
     /// An older commit's reword to `message`, asked first when pushed or `dirty` (the tab has work in progress).
     pub(crate) fn reword_older(&mut self, message: String, dirty: bool, cx: &mut Context<Self>) {
-        let Some(Target::Older { branch, above, pushed, .. }) = self.reword.field.as_ref().map(|f| f.target.clone()) else { return };
-        match reword_question(&branch, above, pushed, dirty) {
-            Some(question) => self.reword.asking = Some(Confirm::ask(question, "Reword", message)),
-            None => self.run_reword(message, cx),
+        let Some(Target::Older { sha, branch, above }) = self.reword.field.as_ref().map(|f| f.target.clone()) else { return };
+        self.when_pushed(sha, cx, move |this, pushed, cx| match reword_question(&branch, above, pushed, dirty) {
+            Some(question) => this.reword.asking = Some(Confirm::ask(question, "Reword", message)),
+            None => this.run_reword(message, cx),
+        });
+    }
+
+    /// `then` with whether a remote-tracking branch holds `rev`, read off the UI thread; dropped once the field closed or moved on.
+    fn when_pushed(&mut self, rev: String, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, bool, &mut Context<Self>) + 'static) {
+        let (Some(repo), Some(target)) = (self.repo.clone(), self.reword.field.as_ref().map(|f| f.target.clone())) else { return };
+        if std::mem::replace(&mut self.reword.checking, true) {
+            return;
         }
-        cx.notify();
+        let read = cx.background_spawn(async move {
+            supraman_gitman::pushed(&repo, &rev).unwrap_or_else(|e| {
+                log::warn!("git tab: cannot tell whether a remote holds {rev}: {e}");
+                true
+            })
+        });
+        cx.spawn(async move |this, cx| {
+            let pushed = read.await;
+            this.update(cx, |this, cx| {
+                let same = this.reword.field.as_ref().is_some_and(|f| f.target == target);
+                if std::mem::take(&mut this.reword.checking) && same {
+                    then(this, pushed, cx);
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub(crate) fn answer_amend(&mut self, yes: bool, cx: &mut Context<Self>) {

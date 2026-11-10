@@ -204,7 +204,7 @@ fn an_older_commits_box_offers_reword_naming_the_commits_it_rebases_and_rewords_
 
     select(&view, &w1, cx);
     let shown = panel(&view, cx).read_with(cx, |p, _| p.shown().expect("W1 shown"));
-    assert_eq!(offer(&shown), Some((CLICK_TO_REWORD, Some(Target::Older { sha: w1.clone(), branch: "side".into(), above: 2, pushed: false }))));
+    assert_eq!(offer(&shown), Some((CLICK_TO_REWORD, Some(Target::Older { sha: w1.clone(), branch: "side".into(), above: 2 }))));
     click(&view, EDIT_KEY, cx);
     assert_eq!(field(&view, cx).0, "W one");
     assert!(painted(&view, REBASES_KEY, cx), "{}", rebases_words(2));

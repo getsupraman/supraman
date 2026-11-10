@@ -24,10 +24,10 @@ pub enum Amendable {
     No,
     /// HEAD, on no branch.
     Detached,
-    /// HEAD of `branch`; `pushed` while a remote-tracking branch holds it.
-    Branch { name: String, pushed: bool },
+    /// HEAD of `branch`; whether a remote holds it is [`pushed`]'s, read when an amend asks.
+    Branch { name: String },
     /// Below HEAD of `branch` on [`rewordable`]'s terms: a reword rebases the `above` commits over it.
-    Older { name: String, above: usize, pushed: bool },
+    Older { name: String, above: usize },
     /// Below a HEAD on no branch, on [`rewordable`]'s terms.
     OlderDetached,
 }
@@ -54,10 +54,9 @@ pub fn amendable(repo: &Repo, sha: &str) -> Result<Amendable, GitError> {
         return Ok(if above.is_some() { Amendable::OlderDetached } else { Amendable::Detached });
     }
     let name = text(&branch.stdout).trim().to_string();
-    let pushed = pushed(repo, sha)?;
     Ok(match above {
-        Some(above) => Amendable::Older { name, above, pushed },
-        None => Amendable::Branch { name, pushed },
+        Some(above) => Amendable::Older { name, above },
+        None => Amendable::Branch { name },
     })
 }
 
