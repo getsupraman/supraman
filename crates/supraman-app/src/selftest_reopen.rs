@@ -1,3 +1,5 @@
+//! `--selftest` step 7x: the window's tabs (Work, shells, a claude session, an attach) saved and reopened in order with their real processes; FleetView is not buildable in a gpui test.
+
 use std::path::Path;
 use std::time::{Duration, Instant};
 

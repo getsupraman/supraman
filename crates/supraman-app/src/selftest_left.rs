@@ -1,3 +1,5 @@
+//! `--selftest` step 7c: the sidebar's action bar, its Settings window opened and closed (by FleetView and by WM_CLOSE) with no teardown line in the log, and the tree clipped under the Inbox with real fonts; real windows a gpui test does not make.
+
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
@@ -5,7 +7,7 @@ use anyhow::{anyhow, bail};
 use gpui::{AsyncWindowContext, Bounds, Entity, Modifiers, MouseMoveEvent, PlatformInput, Pixels, WindowHandle};
 
 use crate::{
-    selftest::{WORKSPACE, click, log_offset, sleep, teardown_errors_since, until, until_with},
+    selftest::{WORKSPACE, click, drawn, drawn_in, log_offset, teardown_errors_since, until, until_with, win},
     selftest_manage::{shot, shot_window},
     settings_window::{SettingsView, page},
     view::FleetView,
@@ -73,7 +75,9 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
         window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: None, modifiers: Modifiers::default() }), cx);
     })?;
     if crate::selftest_manage::shooting() {
-        sleep(cx, Duration::from_millis(900)).await;
+        supraman_ui::tooltip::LAST_SHOWN.with(|l| l.borrow_mut().take());
+        until_with(cx, WITHIN, "collapse-all's tooltip shown", |_| supraman_ui::tooltip::LAST_SHOWN.with(|l| l.borrow().is_some()).then_some(())).await?;
+        drawn(cx).await?;
         shot("m5-13-bar-tooltip", cx).await;
     }
 
@@ -87,9 +91,10 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     }
     shown_and_painted(handle, cx).await?;
     shot_window("m5-13-settings-about", Some("Supraman Settings"), cx).await;
+    let hwnd = handle.update(cx, |_, window, _| win::hwnd_of(window)).ok().flatten();
     let closing = log_offset();
     view.update(cx, |v, cx| v.close_settings(cx));
-    sleep(cx, Duration::from_millis(1000)).await;
+    closed(handle, hwnd, cx).await?;
     let errors = teardown_errors_since(closing);
     if !errors.is_empty() {
         bail!("close_settings logged {} window-teardown line(s): {}", errors.len(), errors.join(" | "));
@@ -111,21 +116,23 @@ pub(crate) async fn shown_and_painted(handle: WindowHandle<SettingsView>, cx: &m
         handle.update(cx, |_, window, _| crate::tray::is_shown(window)).ok().filter(|shown| *shown).map(|_| ())
     })
     .await?;
-    let painted = std::rc::Rc::new(std::cell::Cell::new(false));
-    let flag = painted.clone();
-    handle
-        .update(cx, |_, window, _| {
-            window.on_next_frame(move |_, _| flag.set(true));
-            window.refresh();
-        })
-        .map_err(|e| anyhow!("settings window: {e}"))?;
-    until_with(cx, WITHIN, "a frame of the settings window painted", |_| painted.get().then_some(())).await
+    drawn_in(handle.into(), cx).await.map_err(|e| anyhow!("settings window: {e}"))
+}
+
+/// The settings window gone and its HWND destroyed, then a frame of the main window: a teardown's log lines are written by then.
+async fn closed(handle: WindowHandle<SettingsView>, hwnd: Option<isize>, cx: &mut AsyncWindowContext) -> anyhow::Result<Duration> {
+    let asked = Instant::now();
+    until_with(cx, WITHIN, "the settings window closed and its HWND destroyed", |cx| {
+        (handle.read_with(cx, |_, _| ()).is_err() && win::destroyed(hwnd)).then_some(())
+    })
+    .await?;
+    let gone = asked.elapsed();
+    drawn(cx).await?;
+    Ok(gone)
 }
 
 #[cfg(windows)]
 async fn close_settings_by_wm_close(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    use windows::Win32::Foundation::{LPARAM, WPARAM};
-    use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
     click(view, "bar-settings", cx).await?;
     let handle = until_with(cx, WITHIN, "Settings opens a second time", |cx| {
         view.read_with(cx, |v, _| v.settings_window).filter(|handle| handle.read_with(cx, |_, _| ()).is_ok())
@@ -138,17 +145,8 @@ async fn close_settings_by_wm_close(view: &Entity<FleetView>, cx: &mut AsyncWind
         .flatten()
         .ok_or_else(|| anyhow!("the settings window has no HWND"))?;
     let closing = log_offset();
-    unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) }.map_err(|e| anyhow!("WM_CLOSE: {e}"))?;
-    let asked = Instant::now();
-    while handle.read_with(cx, |_, _| ()).is_ok() {
-        if asked.elapsed() > WITHIN {
-            bail!("the settings window is still open {} s after WM_CLOSE", WITHIN.as_secs());
-        }
-        sleep(cx, Duration::from_millis(50)).await;
-    }
-    let gone = asked.elapsed();
-    // gpui destroys the HWND on a later turn of its executor; give that time to log
-    sleep(cx, Duration::from_millis(1000)).await;
+    win::post_close(hwnd)?;
+    let gone = closed(handle, Some(hwnd.0 as isize), cx).await?;
     let errors = teardown_errors_since(closing);
     if !errors.is_empty() {
         bail!("closing the settings window logged {} window-teardown line(s): {}", errors.len(), errors.join(" | "));
@@ -209,12 +207,12 @@ pub async fn tree_clip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) ->
         })
     };
     wheel(100_000., cx)?;
-    sleep(cx, Duration::from_millis(300)).await;
+    drawn(cx).await?;
     let mut checked = Vec::new();
     for step in [0., 7., 8., 15., 30., 100.] {
         if step > 0. {
             wheel(-step, cx)?;
-            sleep(cx, Duration::from_millis(300)).await;
+            drawn(cx).await?;
         }
         let (offset, last, area, rows) = view.read_with(cx, |v, _| {
             let hits = v.hits.borrow();

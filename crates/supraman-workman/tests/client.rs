@@ -1,4 +1,5 @@
-use supraman_workman::fake::{Answer, FakeWorkman, closed_base};
+use supraman_workman::closed_base;
+use supraman_workman::fake::{Answer, FakeWorkman};
 use supraman_workman::{
     BriefFor, Client, Error, ItemResolution, ItemStatus, JournalQuery, SessionsQuery,
 };

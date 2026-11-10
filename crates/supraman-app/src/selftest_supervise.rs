@@ -115,8 +115,7 @@ pub fn prepare() -> anyhow::Result<()> {
     desired.save(&home)?;
     supraman_core::ensure_relay_dirs(&home, &tb.a.0)?;
     // no sign-in, and a closed loopback port as the server: the status check never reaches a real Workman
-    let closed = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
-    crate::selftest::set_workman(&format!("http://127.0.0.1:{closed}"))?;
+    crate::selftest::set_workman(&supraman_workman::closed_base())?;
     println!(
         "step a: claude {} | SUPRAMAN_HOME={} | workspaces {} (testbed, plain dir), {} (git init: untrusted) | {} wants {} and {} (permission mode default) | step y (release only): {}",
         version.raw,
@@ -506,7 +505,7 @@ struct Hidden {
 
 /// WM_CLOSE to this process's windows, as the caption button and Alt+F4 send it: the window hides.
 async fn hide(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<Hidden> {
-    let posted = crate::selftest::post_close_to_own_windows();
+    let posted = crate::selftest::win::post_close_to_own_windows();
     let at = Instant::now();
     while cx.update(|window, _| crate::tray::is_shown(window))? {
         if at.elapsed() > Duration::from_secs(5) {
@@ -1239,22 +1238,13 @@ async fn wait_delivered(transcript: &str, w: &str, text: &str, id: &str, cx: &mu
     Ok(started.elapsed())
 }
 
-/// An outbox drop from the workspace session, as the relay's watcher writes one.
-fn inject(outbox: &std::path::Path, from_name: &str, tag: &str, body: &str) -> anyhow::Result<String> {
-    let file = format!("{:013}-selftest-{tag}.json", now_ms());
-    let text = serde_json::json!({"from": "uds:selftest", "from_name": from_name, "body": body}).to_string();
-    std::fs::write(outbox.join(format!("{file}.tmp")), text)?;
-    std::fs::rename(outbox.join(format!("{file}.tmp")), outbox.join(&file))?;
-    Ok(file)
-}
-
 async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let w = tb.a.0.as_str();
     let ctrl = workspace_session_name(w);
     own_peer(&ctrl, &tb.a.1).context("the workspace session's registry entry")?;
     let nonce = format!("SUPRAMAN-TASKBOX-{}", crate::selftest::hex6());
     let outbox = outbox_dir(&tb.home, w)?;
-    let decide = inject(&outbox, &ctrl, "decide", &format!("DECIDE: selftest question {nonce} (injected by the selftest)"))?;
+    let decide = crate::selftest::drop_outbox(&outbox, &ctrl, "decide", &format!("DECIDE: selftest question {nonce} (injected by the selftest)"))?;
     let decide_key = format!("{w}/{decide}");
     let reply_key = format!("msg-reply-{decide_key}");
     wait_painted(view, &reply_key, Duration::from_secs(10), cx).await?;
@@ -1281,8 +1271,8 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     let task_id = direct_id(&route)?;
     let task_in = wait_delivered(transcript, w, &task, &task_id, cx).await?;
 
-    let file = inject(&outbox, &ctrl, "approve", &format!("APPROVE? selftest plan {nonce} — 1 repo, 1 unit, 0 need a decision from you\n(injected by the selftest)"))?;
-    let later = inject(&outbox, &ctrl, "decide-later", &format!("DECIDE: second selftest question {nonce} (injected by the selftest)"))?;
+    let file = crate::selftest::drop_outbox(&outbox, &ctrl, "approve", &format!("APPROVE? selftest plan {nonce} — 1 repo, 1 unit, 0 need a decision from you\n(injected by the selftest)"))?;
+    let later = crate::selftest::drop_outbox(&outbox, &ctrl, "decide-later", &format!("DECIDE: second selftest question {nonce} (injected by the selftest)"))?;
     let key = format!("{w}/{file}");
     let approve_key = format!("msg-approve-{key}");
     wait_painted(view, &approve_key, Duration::from_secs(10), cx).await?;
@@ -1321,8 +1311,7 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     click(view, "compose-text", cx).await?;
     until_compose_focused(view, cx).await?;
     type_text(cx, "typed, not sent")?;
-    let hold = std::env::var("SUPRAMAN_SELFTEST_HOLD_SECS").ok().and_then(|s| s.parse::<u64>().ok());
-    if let Some(secs) = hold {
+    if let Some(secs) = crate::selftest::hold_secs() {
         std::fs::write(tb.home.join("hold"), "")?;
         println!("step t: holding {secs} s for a screenshot");
         sleep(cx, Duration::from_secs(secs)).await;

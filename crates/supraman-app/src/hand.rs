@@ -677,7 +677,7 @@ mod tests {
                 (home, auth)
             }
             None => {
-                let server_json = crate::test_auth::server_json(&home, &supraman_workman::fake::closed_base());
+                let server_json = crate::test_auth::server_json(&home, &supraman_workman::closed_base());
                 let auth = Arc::new(Auth::with_store(&home, Arc::new(supraman_core::secret::MemoryStore::default())).with_server_json(Some(server_json)));
                 (home, auth)
             }

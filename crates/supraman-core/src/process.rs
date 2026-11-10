@@ -554,6 +554,30 @@ pub fn alive(pid: u32) -> bool {
     started(pid).is_some()
 }
 
+/// Ends `pid` while it runs with the start time `start` ([`started`]), never a process that took its pid since.
+#[cfg(windows)]
+pub fn terminate_started(pid: u32, start: u64) -> bool {
+    use windows::Win32::Foundation::{CloseHandle, FILETIME};
+    use windows::Win32::System::Threading::{GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, TerminateProcess};
+    // SAFETY: plain Win32 calls on a handle this function opens and closes.
+    unsafe {
+        let Ok(handle) = OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return false;
+        };
+        let (mut created, mut exited, mut kernel, mut user) = (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+        let same = GetProcessTimes(handle, &mut created, &mut exited, &mut kernel, &mut user).is_ok()
+            && (u64::from(created.dwHighDateTime) << 32 | u64::from(created.dwLowDateTime)) == start;
+        let ended = same && TerminateProcess(handle, 1).is_ok();
+        let _ = CloseHandle(handle);
+        ended
+    }
+}
+
+#[cfg(not(windows))]
+pub fn terminate_started(pid: u32, start: u64) -> bool {
+    started(pid) == Some(start) && command("kill").args(["-9", &pid.to_string()]).status().is_ok_and(|s| s.success())
+}
+
 /// Blocks until one of `pids` exits or `timeout` passes; `true` when one exited. A pid that cannot be
 /// opened is not waited on, and with none left it returns `false` at once.
 #[cfg(windows)]
@@ -631,6 +655,18 @@ mod tests {
         let mut cmd = command("powershell");
         cmd.args(["-NoProfile", "-NonInteractive", "-Command", script]);
         cmd
+    }
+
+    #[test]
+    fn terminate_started_ends_only_the_process_started_at_that_time() {
+        let mut child = powershell("Start-Sleep 60").spawn().unwrap();
+        let pid = child.id();
+        let start = started(pid).expect("the child runs");
+        assert!(!terminate_started(pid, start + 1), "another start time");
+        assert!(alive(pid));
+        assert!(terminate_started(pid, start));
+        child.wait().unwrap();
+        assert!(!alive(pid));
     }
 
     #[test]

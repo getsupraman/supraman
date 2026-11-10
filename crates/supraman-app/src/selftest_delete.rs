@@ -1,3 +1,5 @@
+//! `--selftest` step 7p: the gate's own live claude session stopped and deleted from its row's menu, gone from `claude agents` with its transcript; a unit test runs no real claude.
+
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 

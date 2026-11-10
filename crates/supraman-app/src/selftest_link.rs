@@ -1,3 +1,5 @@
+//! `--selftest` step 6d: an OSC 8 link a real shell printed, hovered and Ctrl+clicked in its terminal tab: the hand, the opener and the refusal's toast.
+
 use std::sync::Mutex;
 use std::time::Duration;
 

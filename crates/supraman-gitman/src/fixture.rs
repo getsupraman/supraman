@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
 use supraman_core::process::{self, Kill};
+use supraman_core::testing::{polled, wait_until};
 use tempfile::TempDir;
 
 use crate::{Git, Located, Repo};
@@ -270,7 +271,7 @@ impl Fixture {
         git_in(&self.git, &temp, &["init", "-q", "--bare", "origin.git"], &[], None);
         let origin = temp.join("origin.git").to_string_lossy().into_owned();
         self.git(&["remote", "add", "origin", &origin]);
-        self.git(&["push", "-q", "origin", "main"]);
+        self.push_to_new_origin();
         self.git(&["branch", "-q", "-u", "origin/main", "main"]);
         self.write("a.txt", b"one\ntwo\nthree\n");
         self.git(&["add", "a.txt"]);
@@ -281,6 +282,19 @@ impl Fixture {
         let worktree = self.worktree.to_string_lossy().into_owned();
         let second = self.sha("second").to_string();
         self.git(&["worktree", "add", "-q", "-b", "side", &worktree, &second]);
+    }
+
+    /// A bare repo just made can read as none under load: that refusal is tried again, any other fails.
+    fn push_to_new_origin(&self) {
+        const NOT_A_REPO: &str = "does not appear to be a git repository";
+        let mut refused = String::new();
+        let pushed = wait_until(Duration::from_secs(10), polled(Duration::from_millis(100)), || {
+            let out = run_git(&self.git, &self.dir, &["push", "-q", "origin", "main"], &[], None);
+            refused = String::from_utf8_lossy(&out.stderr).into_owned();
+            assert!(out.success() || refused.contains(NOT_A_REPO), "git push -q origin main: {refused}");
+            out.success()
+        });
+        assert!(pushed, "git push -q origin main for 10 s: {refused}");
     }
 
     fn work_in_progress(&mut self) {

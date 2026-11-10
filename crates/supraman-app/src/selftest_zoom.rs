@@ -1,3 +1,5 @@
+//! `--selftest` step 7q's size: Ctrl+=, Ctrl+- and Ctrl+0 resizing real terminal grids and Appearance's page, saved to settings.toml.
+
 use std::path::Path;
 use std::time::{Duration, Instant};
 

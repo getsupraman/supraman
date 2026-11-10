@@ -1,4 +1,5 @@
-//! `--selftest` step 7b: managing workspaces through the window.
+//! `--selftest` step 7b: managing workspaces through the window: the add-workspace dialog, its folder rows and keys posted
+//! through the window procedure, and the registry they write; FleetView and its dialog are not buildable in a gpui test.
 
 use std::{
     cell::Cell,
@@ -18,7 +19,7 @@ use gpui::{
 };
 
 use crate::{
-    selftest::{cargo_root, click, press, sleep, until, until_app},
+    selftest::{cargo_root, click, press, sleep, until, until_app, win},
     view::{FleetView, MenuAction, workspace_dialog::WorkspaceDialog},
 };
 
@@ -62,85 +63,39 @@ fn typed(cx: &mut AsyncWindowContext, key: &str, key_char: Option<&str>) -> anyh
     Ok(())
 }
 
-/// As the OS queues a real click or key: through gpui's window procedure (and `TranslateMessage`), not straight to `dispatch_event`.
 fn post(cx: &mut AsyncWindowContext, messages: &[(u32, usize, isize)]) -> anyhow::Result<()> {
-    use windows::Win32::{
-        Foundation::{LPARAM, WPARAM},
-        UI::WindowsAndMessaging::PostMessageW,
-    };
     let hwnd = cx.update(|window, _| crate::tray::hwnd(window))?.ok_or_else(|| anyhow!("no HWND"))?;
-    for &(message, wparam, lparam) in messages {
-        unsafe { PostMessageW(Some(hwnd), message, WPARAM(wparam), LPARAM(lparam)) }.map_err(|e| anyhow!("PostMessage: {e}"))?;
-    }
-    Ok(())
+    win::post(hwnd, messages)
 }
 
 async fn post_click(view: &Entity<FleetView>, key: &str, dx: f32, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
-    use windows::Win32::UI::WindowsAndMessaging::{WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE};
     let bounds = crate::selftest::scrolled_into_view(view, key, cx).await?;
     let scale = cx.update(|window, _| window.scale_factor())?;
     let x = ((f32::from(bounds.left()) + dx) * scale) as isize;
     let y = (f32::from(bounds.center().y) * scale) as isize;
-    let at = (y << 16) | (x & 0xffff);
-    post(cx, &[(WM_MOUSEMOVE, 0, at), (WM_LBUTTONDOWN, 1, at), (WM_LBUTTONUP, 0, at)])?;
+    post(cx, &win::click_messages(x, y))?;
     sleep(cx, Duration::from_millis(150)).await;
     Ok(())
 }
 
 /// A key that types goes on to `TranslateMessage`'s WM_CHAR, queued behind it: read what it typed with [`until_app`], never right after this returns (F-04).
 pub(crate) async fn post_keys(keys: &[&str], cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
-    use windows::Win32::UI::{
-        Input::KeyboardAndMouse::{
-            GetAsyncKeyState, GetKeyState, GetKeyboardState, MAPVK_VK_TO_VSC, MapVirtualKeyW, SetKeyboardState, VK_BACK, VK_CONTROL, VK_END,
-            VK_ESCAPE, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU,
-            VK_RSHIFT, VK_RWIN, VK_SHIFT, VkKeyScanW,
-        },
-        WindowsAndMessaging::{WM_KEYDOWN, WM_KEYUP},
-    };
-    // gpui takes a key's modifiers from GetKeyState, which a posted message does not set: a held modifier would turn End into Alt+End.
-    let held = || {
-        [(VK_CONTROL, "Ctrl"), (VK_MENU, "Alt"), (VK_SHIFT, "Shift"), (VK_LWIN, "Win"), (VK_RWIN, "Win")]
-            .into_iter()
-            .filter(|(vk, _)| unsafe { GetKeyState(vk.0 as i32) } < 0)
-            .map(|(_, name)| name)
-            .collect::<Vec<_>>()
-    };
-    let stale = held();
+    // a held modifier would turn End into Alt+End
+    let stale = win::held_modifiers();
     if !stale.is_empty() {
-        let live: Vec<&str> = [(VK_CONTROL, "Ctrl"), (VK_MENU, "Alt"), (VK_SHIFT, "Shift")]
-            .into_iter()
-            .filter(|(vk, _)| unsafe { GetAsyncKeyState(vk.0 as i32) } as u16 & 0x8000 != 0)
-            .map(|(_, name)| name)
-            .collect();
-        let mut state = [0u8; 256];
-        unsafe { GetKeyboardState(&mut state) }.map_err(|e| anyhow!("GetKeyboardState: {e}"))?;
-        for vk in [VK_CONTROL, VK_LCONTROL, VK_RCONTROL, VK_MENU, VK_LMENU, VK_RMENU, VK_SHIFT, VK_LSHIFT, VK_RSHIFT, VK_LWIN, VK_RWIN] {
-            state[vk.0 as usize] &= !0x80;
-        }
-        unsafe { SetKeyboardState(&state) }.map_err(|e| anyhow!("SetKeyboardState: {e}"))?;
+        let live = win::pressed_modifiers();
+        win::clear_held_modifiers()?;
         println!("keys: {stale:?} held in the UI thread's key state (held on the keyboard: {live:?}); cleared there before posting {keys:?}");
     }
     let started = Instant::now();
-    while !held().is_empty() {
+    while !win::held_modifiers().is_empty() {
         if started.elapsed() > WITHIN {
-            bail!("{:?} held in this thread's key state for {} s: posted keys would carry it (another process's input?)", held(), WITHIN.as_secs());
+            bail!("{:?} held in this thread's key state for {} s: posted keys would carry it (another process's input?)", win::held_modifiers(), WITHIN.as_secs());
         }
         sleep(cx, Duration::from_millis(50)).await;
     }
     for key in keys {
-        let vk = match *key {
-            "end" => VK_END.0 as u32,
-            "left" => VK_LEFT.0 as u32,
-            "right" => VK_RIGHT.0 as u32,
-            "pageup" => VK_PRIOR.0 as u32,
-            "pagedown" => VK_NEXT.0 as u32,
-            "backspace" => VK_BACK.0 as u32,
-            "enter" => VK_RETURN.0 as u32,
-            "escape" => VK_ESCAPE.0 as u32,
-            c => (unsafe { VkKeyScanW(c.encode_utf16().next().unwrap_or_default()) } & 0xff) as u32,
-        };
-        let scan = unsafe { MapVirtualKeyW(vk, MAPVK_VK_TO_VSC) } as isize;
-        post(cx, &[(WM_KEYDOWN, vk as usize, 1 | (scan << 16)), (WM_KEYUP, vk as usize, 1 | (scan << 16) | (0b11 << 30))])?;
+        post(cx, &win::key_messages(key))?;
     }
     sleep(cx, Duration::from_millis(150)).await;
     Ok(())
@@ -529,7 +484,7 @@ pub(crate) fn fake_repo(root: &Path, name: &str) -> anyhow::Result<()> {
 
 /// `SUPRAMAN_SHOTS` is set: the run takes screenshots, and the rests that only serve them are taken too.
 pub(crate) fn shooting() -> bool {
-    std::env::var_os("SUPRAMAN_SHOTS").is_some()
+    crate::selftest_shots::dir().is_some()
 }
 
 pub(crate) async fn shot(name: &str, cx: &mut AsyncWindowContext) {
@@ -537,7 +492,7 @@ pub(crate) async fn shot(name: &str, cx: &mut AsyncWindowContext) {
 }
 
 pub(crate) async fn shot_window(name: &str, title: Option<&str>, cx: &mut AsyncWindowContext) {
-    let Some(dir) = std::env::var_os("SUPRAMAN_SHOTS").map(PathBuf::from) else {
+    let Some(dir) = crate::selftest_shots::dir() else {
         return;
     };
     sleep(cx, Duration::from_millis(300)).await;
@@ -552,8 +507,8 @@ pub(crate) async fn capture(out: PathBuf, title: Option<&str>, cx: &mut AsyncWin
     let title = title.map(str::to_string);
     cx.background_executor()
         .spawn(async move {
-            let hwnd = crate::selftest_capture::window(title.as_deref())?;
-            crate::selftest_capture::print_window(hwnd, &out)?;
+            let hwnd = crate::selftest::win::window(title.as_deref())?;
+            crate::selftest::win::print_window(hwnd, &out)?;
             Ok(out)
         })
         .await
@@ -595,18 +550,10 @@ static OPENED_ON: Mutex<Option<ThreadId>> = Mutex::new(None);
 /// As ShellExecuteW does while Explorer answers a folder's open (shell32, then gpui's window procedure
 /// running a foreground task): the calling thread's messages are dispatched. Then the real call.
 fn pumping_open(path: &Path) -> Result<(), String> {
-    use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage};
     *OPENED_ON.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::thread::current().id());
     let until = Instant::now() + Duration::from_millis(300);
-    let mut msg = MSG::default();
     while Instant::now() < until {
-        // SAFETY: a plain message loop on this thread's own queue.
-        unsafe {
-            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-                let _ = TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
-        }
+        win::pump_messages();
         std::thread::sleep(Duration::from_millis(5));
     }
     supraman_ui::open::open(path.as_os_str())

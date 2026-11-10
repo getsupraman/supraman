@@ -1,3 +1,6 @@
+//! `--selftest` step 7n's notices: each × painted where a click lands on it in the real sidebar; which notice a ×
+//! removes and when one shows again are `view::notices`' and `supraman_ui::notices`' tests.
+
 use std::time::Duration;
 
 use anyhow::bail;
@@ -51,24 +54,10 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         bail!("× on the first hand notice did not remove it alone: (hand notices, action error) {:?}; {:?}", view.read_with(cx, |v, _| (v.hand_notices.clone(), v.action_error.clone())), second.err());
     }
     shot("m5-37-notices-after", cx).await;
-
     view.update(cx, |v, cx| {
-        v.hand_notices.push(FIRST.into());
+        v.hand_notices.clear();
+        v.action_error = None;
         cx.notify();
     });
-    let again_x = until(view, cx, WITHIN, "the first hand notice shown again once raised again", |v| hand_x(v, FIRST)).await?;
-    click(view, &again_x, cx).await?;
-    let second_x = until(view, cx, WITHIN, "the raised-again notice gone after its ×", |v| {
-        (!v.hand_notices.iter().any(|t| t == FIRST)).then(|| hand_x(v, SECOND)).flatten()
-    })
-    .await?;
-    click(view, &second_x, cx).await?;
-    until(view, cx, WITHIN, "the second hand notice gone, its × unpainted", |v| {
-        (v.hand_notices.is_empty() && !v.hits.borrow().contains_key(&dismiss_key(Notice::Hand, 0))).then_some(())
-    })
-    .await?;
-    click(view, &action_x, cx).await?;
-    until(view, cx, WITHIN, "the action error gone after its ×", |v| v.action_error.is_none().then_some(())).await?;
-
-    Ok("× on one of 2 hand notices removed only it (the other and the action error stayed); raised again it showed again and its × removed it; × removed the second and the action error".into())
+    Ok("× painted on 2 hand notices and an action error; a click on the first one's × removed it alone".into())
 }

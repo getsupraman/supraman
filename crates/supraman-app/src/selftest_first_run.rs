@@ -1,3 +1,5 @@
+//! `--selftest` step 7d: Workman's sign-out and sign-in through the real notice and Settings window against a fake OAuth server, and the URL switched there; FleetView and its settings window are not buildable in a gpui test.
+
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
@@ -166,8 +168,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     }
     lines.push(format!("URL → {}: signed in there, saved", other.base()));
 
-    let port = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
-    let closed = format!("http://127.0.0.1:{port}");
+    let closed = supraman_workman::closed_base();
     handle.update(cx, |s, _, cx| s.set_url_text(&closed, cx)).map_err(|e| anyhow!("settings window: {e}"))?;
     handle.update(cx, |s, _, cx| s.apply_url(cx)).map_err(|e| anyhow!("settings window: {e}"))?;
     let error = until(view, cx, "the failed switch's error", |v| v.signing_in.is_none().then(|| v.sign_in_error.clone()).flatten()).await?;

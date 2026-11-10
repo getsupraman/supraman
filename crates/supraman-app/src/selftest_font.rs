@@ -1,3 +1,5 @@
+//! `--selftest` step 7q's family: the machine's real fonts (Consolas, the default's ligatures and glyph fit) laid out in a real terminal grid, which a gpui test's text system does not have.
+
 use std::path::Path;
 use std::time::{Duration, Instant};
 

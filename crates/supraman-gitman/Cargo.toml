@@ -7,7 +7,7 @@ license.workspace = true
 
 [features]
 # The fixture repos (a small one of every kind of change, a generated long history) for other crates' tests.
-test-support = ["dep:tempfile", "dep:image"]
+test-support = ["dep:tempfile", "dep:image", "supraman-core/test-support"]
 
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }

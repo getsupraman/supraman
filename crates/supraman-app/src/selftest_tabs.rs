@@ -1,3 +1,5 @@
+//! `--selftest` step 7e: the tab chords and mouse drags on the real tab strip over real terminals; the strip's arithmetic is `supraman_ui::tabs`' tests.
+
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};

@@ -1,3 +1,5 @@
+//! `--selftest` step 7i: a new shell's folder taken from the active tab, and its program's OSC 2 title on the tab and its hover card, read from a real pwsh.
+
 use std::path::Path;
 use std::time::{Duration, Instant};
 

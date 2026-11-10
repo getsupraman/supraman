@@ -1,9 +1,9 @@
 //! A tab's right-click menu on a shell tab in a fixture repo's subfolder (standing in for a session tab: no claude
-//! session runs there): opened at the pointer, closed by Esc and by a click outside, Open Git opening and then
-//! activating the repository's one Git tab, Copy folder path, Open folder, Close tabs to the right, Reopen closed tab,
+//! session runs there): opened at the pointer, closed by Esc and by a click outside, Open Git opening the
+//! repository's Git tab, Copy folder path, Open folder, Close tabs to the right, Reopen closed tab,
 //! Close other tabs and Close. A unit test cannot: it needs the app's real terminal and Git tabs, gpui's mouse dispatch
 //! through the strip and the menu, and the repository read landing off the UI thread in the open menu; the items per
-//! tab are `view::right::tab_menu`'s tests.
+//! tab are `view::right::tab_menu`'s tests, one Git tab per folder `view::git_tab`'s.
 
 use std::{
     path::{Path, PathBuf},
@@ -89,9 +89,6 @@ async fn steps(view: &Entity<FleetView>, top: &Path, sub: &Path, cx: &mut AsyncW
         _ => None,
     })
     .await?;
-    press_painted(view, &format!("tab-{shell}"), MouseButton::Left, cx).await?;
-    pick(view, shell, "tab-open-git", cx).await?;
-    until_app(view, cx, WITHIN, "the same Git tab activated, no second one", |v, cx| (git_tabs(v, cx, top).len() == 1 && v.active == Some(git)).then_some(())).await?;
     let in_sub = view.read_with(cx, |v, cx| git_tabs(v, cx, sub).len());
     if in_sub != 0 || ids(view, cx) != [shell, right, git] {
         bail!("tabs {:?} with {in_sub} Git tab(s) of the subfolder; expected [{shell}, {right}, {git}]", ids(view, cx));
@@ -112,7 +109,7 @@ async fn steps(view: &Entity<FleetView>, top: &Path, sub: &Path, cx: &mut AsyncW
     pick(view, shell, "tab-close", cx).await?;
     until(view, cx, WITHIN, "the tab closed", |v| v.tabs.is_empty().then_some(())).await?;
     Ok(format!(
-        "tab menu at the pointer, closed by Esc and a click outside; Open Git from {} opened and then activated Git tab {git} of its top; copied {copied:?}; Open folder; Close tabs to the right, Reopen closed tab (Git tab {reopened}), Close other tabs, Close",
+        "tab menu at the pointer, closed by Esc and a click outside; Open Git from {} opened Git tab {git} of its top; copied {copied:?}; Open folder; Close tabs to the right, Reopen closed tab (Git tab {reopened}), Close other tabs, Close",
         sub.display()
     ))
 }

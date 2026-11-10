@@ -1,3 +1,7 @@
+//! `--selftest` step 7n's messages: each note's × painted where a click lands on it, and the hold that keeps a note
+//! back under a resting pointer (real mouse moves over the real sidebar); what a dismissal keeps and when a note shows
+//! again are `dismissed_messages`' tests.
+
 use std::{
     path::Path,
     time::{Duration, Instant},
@@ -8,7 +12,6 @@ use supraman_core::outbox_dir;
 use gpui::{AsyncWindowContext, Bounds, Entity, Pixels};
 
 use crate::{
-    dismissed_messages::{DismissedMessages, FILE},
     selftest::{WORKSPACE, click, scrolled_into_view, sleep, until},
     selftest_left::{bounds, move_to},
     selftest_manage::shot,
@@ -35,11 +38,7 @@ pub(crate) async fn pointer_off(view: &Entity<FleetView>, cx: &mut AsyncWindowCo
 }
 
 fn tell(outbox: &Path, tag: &str, body: &str) -> anyhow::Result<String> {
-    let file = format!("{:013}-selftest-dismiss-{tag}.json", supraman_claude::now_ms());
-    let text = serde_json::json!({"from": "uds:selftest", "from_name": SENDER, "body": body}).to_string();
-    std::fs::write(outbox.join(format!("{file}.tmp")), text)?;
-    std::fs::rename(outbox.join(format!("{file}.tmp")), outbox.join(&file))?;
-    Ok(file)
+    crate::selftest::drop_outbox(outbox, SENDER, &format!("dismiss-{tag}"), body)
 }
 
 async fn dismiss_all(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<usize> {
@@ -79,52 +78,10 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     if !view.read_with(cx, |v, _| painted(v, &newer_x)) {
         bail!("× on {older} also hid {newer}");
     }
-    if !outbox.join(&older).is_file() {
-        bail!("× on {older} removed its outbox file");
-    }
-    let written = crate::selftest::until_with(cx, WITHIN, &format!("the × to be written to {FILE}"), |_| {
-        let (reloaded, notice) = DismissedMessages::load(Some(home));
-        (notice.is_some() || reloaded.hides(WORKSPACE, &older)).then_some((reloaded, notice))
-    })
-    .await;
-    let (reloaded, notice) = written.map_err(|e| e.context(format!("{FILE}: {:?}", std::fs::read_to_string(home.join(FILE)).unwrap_or_default())))?;
-    if let Some(notice) = notice {
-        bail!("{FILE}: {notice}");
-    }
-    if reloaded.hides(WORKSPACE, &newer) {
-        bail!("{FILE} read back as a restart does: {:?}", std::fs::read_to_string(home.join(FILE)).unwrap_or_default());
-    }
-    let ticks = view.read_with(cx, |v, _| v.ticks);
-    until(view, cx, WITHIN, "a poll after the ×", |v| (v.ticks > ticks).then_some(())).await?;
-    if view.read_with(cx, |v, _| painted(v, &older_x)) {
-        bail!("{older} came back on the next poll");
-    }
-
     let rest = dismiss_all(view, cx).await?;
     until(view, cx, WITHIN, "the Messages section hidden once empty", |v| (!painted(v, "messages-area") && v.messages_count() == 0).then_some(())).await?;
-    if !outbox.join(&older).is_file() || !outbox.join(&newer).is_file() {
-        bail!("the dismissed notes' outbox files are gone");
-    }
 
-    pointer_off(view, cx).await?;
-    let again = tell(&outbox, "c", "fm-selftest ready — a newer note")?;
-    let again_x = dismiss_key(&again);
-    let shown = until(view, cx, WITHIN, "a newer note from the same sender", |v| (painted(v, &again_x) && painted(v, "messages-area")).then(|| v.messages_count())).await?;
-    if shown != 1 {
-        bail!("after the newer note the count is {shown}, not 1");
-    }
-    shot("m5-36-messages-newer", cx).await;
-    click(view, &again_x, cx).await?;
-    until(view, cx, WITHIN, "the section hidden again", |v| (!painted(v, "messages-area")).then_some(())).await?;
-    let on_disk = std::fs::read_to_string(home.join(FILE)).map_err(|e| anyhow!("{FILE}: {e}"))?;
-    if !on_disk.contains(&again) {
-        bail!("{FILE} does not hold {again}: {on_disk:?}");
-    }
-
-    Ok(format!(
-        "× on the older of 2 notes from {SENDER}: count {before} → {after}, the newer still shown, {FILE} holds it after a reload and a poll, \
-         outbox file kept; {rest} more × emptied the section and hid it; a newer note showed it again (count 1) and its × hid it"
-    ))
+    Ok(format!("× on the older of 2 notes from {SENDER}: count {before} → {after}, the newer still shown; {rest} more × emptied the section and hid it"))
 }
 
 const TABLE: [&str; 5] = [
