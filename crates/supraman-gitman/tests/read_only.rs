@@ -57,10 +57,6 @@ fn read_everything(f: &Fixture, repo: &Repo) {
     blob(repo, "HEAD", "bin.dat").unwrap();
     staged_blob(repo, "a.txt").unwrap();
     worktree_file(repo, "a.txt").unwrap();
-    let rev = f.sha("root");
-    for of in [DiffOf::Commit(f.sha("merge")), DiffOf::Revs(rev, "HEAD"), DiffOf::RevToWorktree(rev), DiffOf::RevToIndex(rev), DiffOf::IndexToWorktree] {
-        patch(repo, of, &[]).unwrap();
-    }
     status(repo).unwrap();
     dirs(repo).unwrap();
     ignored(repo, &["a.txt".into(), "target/x".into()]).unwrap();

@@ -315,7 +315,7 @@ fn removing_a_worktree_a_live_session_works_in_names_the_session_in_its_question
         bind_keys(cx);
     });
     let live = occupancy::Live::default();
-    live.set(vec![("fm-agent".into(), f.worktree.join("src"))]);
+    live.set_sessions(vec![occupancy::LiveSession { name: "fm-agent".into(), cwd: f.worktree.join("src"), activity: supraman_ui::marks::Activity::Working, attach: None }]);
     let folder = f.dir.clone();
     let (holder, cx) = cx.add_window_view(|_, cx| Holder(GitView::open_with(folder, None, HitTargets::default(), &GitSizes::default(), Arc::new(live), cx)));
     let view = holder.read_with(cx, |h, _| h.0.clone());

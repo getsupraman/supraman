@@ -217,6 +217,7 @@ impl SplitDiff {
     }
 
     /// Both sides' scroll rows, for a test.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn scroll_rows(&self, cx: &mut App) -> (f64, f64) {
         (crate::scroll_row(&self.old, cx), crate::scroll_row(&self.new, cx))
     }

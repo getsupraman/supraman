@@ -53,11 +53,6 @@ impl Wips {
     pub(crate) fn landed(&self) -> bool {
         self.read.is_some()
     }
-
-    /// Why the last read failed as a whole.
-    pub(crate) fn error(&self) -> Option<&str> {
-        self.read.as_ref()?.as_ref().err().map(String::as_str)
-    }
 }
 
 /// The [`Wips`] of the tab `id`'s repository.

@@ -62,7 +62,7 @@ pub fn check_server(auth: &Auth, claude_json: Option<&Path>) -> ServerCheck {
 mod tests {
     use std::sync::Arc;
 
-    use supraman_workman::MemoryStore;
+    use supraman_core::secret::MemoryStore;
     use supraman_workman::fake::{Answer, FakeWorkman};
 
     use super::*;

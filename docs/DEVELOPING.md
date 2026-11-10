@@ -84,6 +84,13 @@ saved log's link errors hold.
 A Defender exclusion for `P:\Projects\LarchSys\AutoWork\target` would stop the failed renames at their source and
 spare every object file a scan; it needs an administrator (the audit's Q1).
 
+## The one known linker warning
+
+Linking supraman-editor's lib test and `theme_switch` test and supraman-app's bin and bin test prints LNK4217
+(`wasm_*`/`wasmtime_*` imported as dllimport but defined in `wasmtime-c-api`, linked statically), counted by cargo as
+"1 warning". tree-sitter's `wasm` feature brings it, and Zed's `language`, `migrator` and `multi_buffer` turn that feature
+on themselves, so it cannot go without patching Zed. It is harmless and the only warning a build or test of ours prints.
+
 ## rust-lld is not used
 
 With `linker = "rust-lld.exe"` for `x86_64-pc-windows-msvc`, supraman-editor's tests, its `theme_switch` test and

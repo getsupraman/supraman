@@ -486,8 +486,6 @@ pub fn slug(path: &Path) -> String {
     path.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect()
 }
 
-pub use supraman_core::paths::claude_dir;
-
 #[derive(Clone, Serialize, Deserialize)]
 struct Cached {
     len: u64,

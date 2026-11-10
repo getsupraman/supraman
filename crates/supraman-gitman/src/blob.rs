@@ -64,6 +64,6 @@ pub fn object_sizes(repo: &Repo, objects: &[&str]) -> Result<Vec<Option<u64>>, G
 }
 
 /// Binary as git decides it: a NUL among the first 8000 bytes.
-pub fn is_binary(bytes: &[u8]) -> bool {
+pub(crate) fn is_binary(bytes: &[u8]) -> bool {
     bytes[..bytes.len().min(BINARY_PROBE)].contains(&0)
 }

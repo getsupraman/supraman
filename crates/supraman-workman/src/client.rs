@@ -35,10 +35,6 @@ fn reason_suffix(reason: &str) -> String {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-pub fn api_base(mcp_url: &str) -> String {
-    supraman_core::url::origin(mcp_url)
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BriefFor {
     Resume,
@@ -94,7 +90,7 @@ impl fmt::Debug for Client {
 }
 
 impl Client {
-    /// `base_url` is the server's origin (see [`api_base`]), `token` a fixed bearer (tests).
+    /// `base_url` is the server's origin (see [`supraman_core::url::origin`]), `token` a fixed bearer (tests).
     pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self {
         Self::with_source(base_url, Arc::new(Fixed(token.into())))
     }
@@ -242,14 +238,6 @@ fn with_query(path: &str, pairs: &[(&str, Option<&str>)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn api_base_is_the_mcp_urls_origin() {
-        assert_eq!(api_base("http://127.0.0.1:1/mcp"), "http://127.0.0.1:1");
-        assert_eq!(api_base("http://localhost:9/"), "http://localhost:9");
-        assert_eq!(api_base("http://localhost:9"), "http://localhost:9");
-        assert_eq!(api_base("https://ws.example?x=/y"), "https://ws.example", "a query is not part of the origin");
-    }
 
     #[test]
     fn queries_encode_values_and_skip_absent_ones() {

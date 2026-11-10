@@ -150,7 +150,7 @@ mod tests {
         workman_server::save(&path, &ServerJson { mcp_name: "ws".into(), ..ServerJson::new(fake.base()) }).unwrap();
         assert_eq!(switch(&auth, fake.base()), Switch::Save, "the same server under another mcpName is written as workman");
 
-        let unsigned = Auth::with_store(&dir.path().join("other"), Arc::new(supraman_workman::MemoryStore::default())).with_server_json(Some(path.clone()));
+        let unsigned = Auth::with_store(&dir.path().join("other"), Arc::new(supraman_core::secret::MemoryStore::default())).with_server_json(Some(path.clone()));
         assert_eq!(switch(&unsigned, "https://other.example"), Switch::Save, "not signed in: saved at once");
         std::fs::remove_file(&path).unwrap();
         assert_eq!(switch(&auth, "https://other.example"), Switch::Save, "no server.json: saved at once");

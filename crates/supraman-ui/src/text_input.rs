@@ -731,11 +731,6 @@ impl TextInput {
         self.lit(cx);
     }
 
-    /// Where the last frame painted the text, inside the border and padding.
-    pub fn text_bounds(&self) -> Option<Bounds<Pixels>> {
-        self.last_bounds
-    }
-
     /// Whether the caret is painted at `now`: lit for one interval after an edit or move, then blinking.
     pub fn caret_lit(&self, now: Instant) -> bool {
         blink_phase(now.saturating_duration_since(self.moved_at)).0

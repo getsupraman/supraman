@@ -17,9 +17,9 @@ use supraman_core::workman_server::{self, ServerJson};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::client::{BearerSource, api_base};
+use crate::client::BearerSource;
 use crate::http::pct_encode;
-use crate::secret::{SecretStore, default_store};
+use supraman_core::secret::{SecretStore, default_store};
 
 pub const SCOPE: &str = "workman.read workman.sessions offline_access";
 /// What DCR registers; the server ignores the port of a loopback redirect.
@@ -162,6 +162,7 @@ impl Auth {
     }
 
     /// Tests: a sign-in gives up after `timeout` instead of 5 minutes.
+    #[cfg(any(test, feature = "fake"))]
     pub fn with_sign_in_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
@@ -238,12 +239,12 @@ impl Auth {
     }
 
     pub fn issuer_of(&self, origin: &str) -> Option<String> {
-        self.load_known().ok()?.servers.remove(&api_base(origin)).map(|m| m.issuer)
+        self.load_known().ok()?.servers.remove(&supraman_core::url::origin(origin)).map(|m| m.issuer)
     }
 
     /// Without a network call: held, broken, or a refresh token stored for the origin's issuer.
     pub fn status(&self, origin: &str) -> AuthStatus {
-        let origin = api_base(origin);
+        let origin = supraman_core::url::origin(origin);
         {
             let inner = self.lock();
             if let Some(h) = inner.held.as_ref().filter(|h| h.origin == origin) {
@@ -275,7 +276,7 @@ impl Auth {
 
     /// `inner` is never held across the refresh: [`Self::status`] answers the UI meanwhile.
     pub fn access_token(&self, origin: &str) -> Result<String, AuthError> {
-        let origin = api_base(origin);
+        let origin = supraman_core::url::origin(origin);
         if let Some(access) = self.fresh(&origin) {
             return Ok(access);
         }
@@ -368,7 +369,7 @@ impl Auth {
     }
 
     pub fn bearer_for(self: &Arc<Self>, origin: &str) -> Arc<dyn BearerSource> {
-        Arc::new(AuthBearer { auth: self.clone(), origin: api_base(origin) })
+        Arc::new(AuthBearer { auth: self.clone(), origin: supraman_core::url::origin(origin) })
     }
 
     pub fn cancel_sign_in(&self) {
@@ -378,7 +379,7 @@ impl Auth {
     /// Registers a fresh client each time: a stale cached one fails on the server's page in the browser,
     /// where Supraman never sees `invalid_client`. Blocks up to 5 minutes: run it off the UI thread.
     pub fn sign_in(&self, origin: &str, browser: &dyn Fn(&str) -> Result<(), String>) -> Result<AuthStatus, AuthError> {
-        let origin = api_base(origin);
+        let origin = supraman_core::url::origin(origin);
         let signed = self.sign_in_flow(&origin, browser);
         match &signed {
             Ok(AuthStatus::SignedIn { who, .. }) => log::info!("Workman at {origin}: signed in{}", who.as_ref().map(|w| format!(" as {w}")).unwrap_or_default()),
@@ -455,7 +456,7 @@ impl Auth {
 
     /// Local tokens go before the revoke, so no other call waits on it. `Err` is a notice: the revoke failed.
     pub fn sign_out(&self, origin: &str) -> Result<(), String> {
-        let origin = api_base(origin);
+        let origin = supraman_core::url::origin(origin);
         let revoked = self.sign_out_flow(&origin);
         match &revoked {
             Ok(true) => log::info!("Workman at {origin}: signed out; the grant is revoked, with every session token minted under it"),
@@ -794,7 +795,7 @@ mod tests {
         let path = dir.path().join("user").join(".workman").join("server.json");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, r#"{"url":"https://old.example","mcpName":"ws"}"#).unwrap();
-        let auth = Auth::with_store(dir.path(), Arc::new(crate::secret::MemoryStore::default())).with_server_json(Some(path.clone()));
+        let auth = Auth::with_store(dir.path(), Arc::new(supraman_core::secret::MemoryStore::default())).with_server_json(Some(path.clone()));
         auth.save_server("https://new.example").unwrap();
         let raw: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(raw, serde_json::json!({"url": "https://new.example", "mcpName": "workman"}));

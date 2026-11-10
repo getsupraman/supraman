@@ -123,7 +123,7 @@ impl Fixture {
     }
 
     fn auth(&self) -> Arc<Auth> {
-        let auth = Arc::new(Auth::with_store(&self.home, Arc::new(supraman_workman::MemoryStore::default())).with_server_json(self.server_json.clone()));
+        let auth = Arc::new(Auth::with_store(&self.home, Arc::new(supraman_core::secret::MemoryStore::default())).with_server_json(self.server_json.clone()));
         if self.signed_in {
             auth.sign_in(self.fake.base(), &http_browser()).unwrap();
         }

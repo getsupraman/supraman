@@ -28,11 +28,6 @@ struct Shared {
 pub struct Live(Arc<Mutex<Shared>>);
 
 impl Live {
-    /// Each `(name, cwd)` a working session that cannot be attached.
-    pub fn set(&self, live: Vec<(String, PathBuf)>) {
-        self.set_sessions(live.into_iter().map(|(name, cwd)| LiveSession { name, cwd, activity: Activity::Working, attach: None }).collect());
-    }
-
     /// Every watcher is nudged when the sessions differ from the last set.
     pub fn set_sessions(&self, sessions: Vec<LiveSession>) {
         let mut shared = self.0.lock().unwrap_or_else(PoisonError::into_inner);

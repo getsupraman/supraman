@@ -126,7 +126,7 @@ fn undo_where_a_live_session_works_runs_without_a_question(cx: &mut TestAppConte
     let before = head(&f, &f.worktree);
     commit_recorded(&f.worktree, &f, "Watched");
     let live = occupancy::Live::default();
-    live.set(vec![("fm-alpha".into(), f.worktree.join("src"))]);
+    live.set_sessions(vec![occupancy::LiveSession { name: "fm-alpha".into(), cwd: f.worktree.join("src"), activity: supraman_ui::marks::Activity::Working, attach: None }]);
     let (view, cx) = open(&f.worktree, live, cx);
     click(&view, UNDO_KEY, cx);
     assert_eq!(head(&f, &f.worktree), before);

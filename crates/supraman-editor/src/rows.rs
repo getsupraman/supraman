@@ -97,6 +97,7 @@ pub fn on_scroll(editor: &Entity<Editor>, f: impl Fn(&mut App) + 'static, cx: &m
 }
 
 /// Selects `rows` of `editor`'s text whole.
+#[cfg(any(test, feature = "test-support"))]
 pub fn select_rows(editor: &Entity<Editor>, rows: Range<u32>, window: &mut Window, cx: &mut App) {
     editor.update(cx, |e, cx| {
         let range = text::Point::new(rows.start, 0)..text::Point::new(rows.end, 0);

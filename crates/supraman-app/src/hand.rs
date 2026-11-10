@@ -8,7 +8,7 @@ use std::time::Duration;
 use supraman_core::home::home_env;
 use supraman_core::paths::{path_key, within};
 use supraman_core::{Workspace, owners};
-use supraman_supervisor::{Bearer, HAND_ROLE, HttpMinter, Keeper, LaunchConfig, MintError, MintRepo, MintRequest, Minted, MintedSession, MintedSessions, Minter, api_base, git_repo, launched_by, mint_as};
+use supraman_supervisor::{Bearer, HAND_ROLE, HttpMinter, Keeper, LaunchConfig, MintError, MintRepo, MintRequest, Minted, MintedSession, MintedSessions, Minter, git_repo, launched_by, mint_as};
 use supraman_workman::Auth;
 
 pub const EXTERNAL_ROLE: &str = "hand";
@@ -491,7 +491,7 @@ impl Hands {
         }
         self.picked.insert(name.clone(), request.name.clone());
         let former = self.minted.launched_by(&request.name).map(str::to_string);
-        Ok(Pending { base: api_base(&url), url, bearer, minter: self.minter.clone(), request, former, name, notice, new_session, claude_session })
+        Ok(Pending { base: supraman_core::url::origin(&url), url, bearer, minter: self.minter.clone(), request, former, name, notice, new_session, claude_session })
     }
 
     /// The next free name after a 409 for the launch holding `held`, held for it instead; never `wanted` or one `tried`.
@@ -566,7 +566,7 @@ impl Hands {
     /// The sign-out of `origin`, whose grant revoke took the tokens minted there: each hand minted there is
     /// [`Keeper::signed_out`].
     pub fn signed_out(&mut self, origin: &str) -> Vec<String> {
-        let origin = api_base(origin);
+        let origin = supraman_core::url::origin(origin);
         let names: Vec<String> = self.minted.names().filter(|n| self.minted.get(n).is_some_and(|m| m.origin.as_deref() == Some(origin.as_str()))).cloned().collect();
         self.keeper().signed_out(&names)
     }
@@ -678,7 +678,7 @@ mod tests {
             }
             None => {
                 let server_json = crate::test_auth::server_json(&home, &supraman_workman::fake::closed_base());
-                let auth = Arc::new(Auth::with_store(&home, Arc::new(supraman_workman::MemoryStore::default())).with_server_json(Some(server_json)));
+                let auth = Arc::new(Auth::with_store(&home, Arc::new(supraman_core::secret::MemoryStore::default())).with_server_json(Some(server_json)));
                 (home, auth)
             }
         }
@@ -1195,7 +1195,7 @@ mod tests {
     fn hand_without_server_json_starts_without_workman_saying_run_workman_setup() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
-        let auth = Arc::new(Auth::with_store(&home, Arc::new(supraman_workman::MemoryStore::default())));
+        let auth = Arc::new(Auth::with_store(&home, Arc::new(supraman_core::secret::MemoryStore::default())));
         let (mut hands, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
         let Launch::Unminted(notice) = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!("a tab without Workman") };
         assert!(notice.contains("runs without Workman") && notice.contains("run /workman:setup"), "{notice}");

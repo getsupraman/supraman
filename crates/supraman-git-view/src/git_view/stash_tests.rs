@@ -139,7 +139,7 @@ fn a_pop_that_conflicts_says_so_and_keeps_the_stash(cx: &mut TestAppContext) {
 fn toolbar_stash_runs_while_a_session_works_here(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let live = occupancy::Live::default();
-    live.set(vec![("fm-alpha".to_string(), f.dir.clone())]);
+    live.set_sessions(vec![occupancy::LiveSession { name: "fm-alpha".into(), cwd: f.dir.clone(), activity: supraman_ui::marks::Activity::Working, attach: None }]);
     let (view, cx) = open(&f.dir, live, cx);
     click(&view, STASH_KEY, cx);
     assert_eq!(labels(&f).len(), 4, "stashed without a question");

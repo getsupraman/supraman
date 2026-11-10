@@ -51,7 +51,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `hex::{encode, decode}` — bytes as lowercase hex, two digits each, and back; every digest, key file name and MAC written as hex.
 - `update::{Manifest, sign, verify, release_keys, sha256_file, signature_path}` — a release's `supraman-update.json` (its bytes as written are what is signed), its ed25519 signature file and the release keys compiled in from `update.pub`; `Manifest::check_zip` checks a downloaded zip. `sm release` writes and signs it; the app's update check and install use it.
 - `prune::{prune, KEEP_MS}` — the one retention rule for what sessions leave in the home: event logs, relay outbox messages, sent and rejected drops, the `answered.json` entries of gone messages, and the schedules' rotated run records and spent run worktrees, after 30 days unmodified, and the state dirs of removed schedules; a drop still waiting is never removed. The supervision runs it hourly.
-- `url::origin` (re-exported as `url_origin`; `supraman_workman::api_base`) — the one origin rule; origins key `servers.json` and the minted records.
+- `url::origin` — the one origin rule; origins key `servers.json` and the minted records.
 - `process::{command, run, run_watched, git, shell_execute, alive, started, wait_any_exit}` — every child process outside the PTY: no console window, both pipes drained, a timeout that kills the child or its tree (`Kill::Child` for `claude`, whose tree holds the background service), ShellExecute, pid liveness. `run_watched` also kills the child when its `stop` returns true and returns what a killed child wrote (`Ended::{Exited, TimedOut, Stopped}`). Never `Command::new(..).output()` by hand.
 - `secret::{SecretStore, FileStore, MemoryStore, default_store}` — every secret at rest: one DPAPI-encrypted file per key under `<home>/oauth/secrets`; `MemoryStore` in tests.
 - `slug::{slugify, validate_name, FM_PREFIX}` — a repo or workspace name as a session-name part (a [+] session's `hand-<slug>` too); every Supraman session name starts with `fm-`.
@@ -109,7 +109,6 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `fake::FakeWorkman` (feature `fake`) — the one test server for anything that talks HTTP to Workman: routes by `<METHOD> <target>` or by target, `set` to change an answer, `seen()` for each request's method, target, Authorization, Content-Type and body.
 - `model` — the read API v1 shapes, lenient (v1 grows additively).
 - `fake::FakeWorkman` (feature `fake`) — the read API and its OAuth server on 127.0.0.1 for tests and selftests.
-- `secret` re-exports `supraman_core::secret`.
 
 ### supraman-claude (`crates/supraman-claude/src/`)
 
@@ -136,7 +135,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 
 - `locate`, `check`, `Git`, `FLOOR`, `GitmanSettings` (`locate.rs`) — the git GitMan runs: `[gitman] git` (`Settings::section`), else the first on `PATH`; one older than `FLOOR` is refused with its version.
 - `Repo` (`repo.rs`) — one repository's calls: `run` adds `--no-optional-locks` and `--literal-pathspecs`; `run_paths` leaves the latter out for `check-ignore`, which refuses pathspec magic.
-- `refs`, `history` (`FIRST_PAGE`, `NEXT_PAGE`), `details`, `changed_files`, `changed_between`, `tree`, `blob`, `staged_blob`, `worktree_file`, `patch`, `status`, `dirs`, `ignored` — the readers, plumbing where porcelain would refresh the index (C154).
+- `refs`, `history` (`FIRST_PAGE`, `NEXT_PAGE`), `details`, `changed_files`, `changed_between`, `tree`, `blob`, `staged_blob`, `worktree_file`, `status`, `dirs`, `ignored` — the readers, plumbing where porcelain would refresh the index (C154).
 - `Layout` (`layout/`) — the graph: a lane and colour per row, its edges, its refs grouped (`RefGroup`, the first shown and `+N`), a ref-less row's ghost (its nearest descendant's branches); `extend` lays out the next page.
 - `fixture::{Fixture, Generated}` (feature `test-support`) — a repo with a commit of every kind, a remote, a worktree and work in progress (`new`, or `new_in` a folder such as the selftest home), and a generated long history.
 

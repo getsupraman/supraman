@@ -150,10 +150,6 @@ impl Facts<'_> {
     }
 }
 
-fn act(key: String, label: String, action: RefAct) -> MenuItem<RefAct> {
-    item(key, label, action)
-}
-
 fn in_worktree(path: &Path) -> String {
     format!("It is checked out in the worktree {}", path.display())
 }
@@ -185,16 +181,16 @@ fn merge_items(menu: &mut RefMenu<RefAct>, clicked: &str, local: bool, sha: &str
         Some(path) => item.dimmed(in_worktree(path)),
         None => item,
     };
-    let merge_in = || act(format!("ref-merge-{clicked}"), format!("Merge {clicked} into {current}"), RefAct::Merge { source: clicked.into(), into: current.into() });
-    let rebase = || act(format!("ref-rebase-{clicked}"), format!("Rebase {current} onto {clicked}"), RefAct::Rebase { branch: current.into(), onto: clicked.into() });
+    let merge_in = || item(format!("ref-merge-{clicked}"), format!("Merge {clicked} into {current}"), RefAct::Merge { source: clicked.into(), into: current.into() });
+    let rebase = || item(format!("ref-rebase-{clicked}"), format!("Rebase {current} onto {clicked}"), RefAct::Rebase { branch: current.into(), onto: clicked.into() });
     match facts.relation {
         Some(Relation::Behind) if local => {
-            menu.add(Group::Merge, into_clicked(act(format!("ref-ff-{clicked}"), format!("Fast-forward {clicked} to {current}"), RefAct::FastForward { branch: clicked.into(), to: current.into() })));
-            menu.add(Group::Merge, into_clicked(act(format!("ref-merge-into-{clicked}"), format!("Merge {current} into {clicked}"), RefAct::Merge { source: current.into(), into: clicked.into() })));
+            menu.add(Group::Merge, into_clicked(item(format!("ref-ff-{clicked}"), format!("Fast-forward {clicked} to {current}"), RefAct::FastForward { branch: clicked.into(), to: current.into() })));
+            menu.add(Group::Merge, into_clicked(item(format!("ref-merge-into-{clicked}"), format!("Merge {current} into {clicked}"), RefAct::Merge { source: current.into(), into: clicked.into() })));
         }
         Some(Relation::Behind) | Some(Relation::Same) | None => {}
         Some(Relation::Ahead) => {
-            menu.add(Group::Merge, act(format!("ref-ff-head-{clicked}"), format!("Fast-forward {current} to {clicked}"), RefAct::FastForward { branch: current.into(), to: clicked.into() }));
+            menu.add(Group::Merge, item(format!("ref-ff-head-{clicked}"), format!("Fast-forward {current} to {clicked}"), RefAct::FastForward { branch: current.into(), to: clicked.into() }));
             menu.add(Group::Merge, merge_in());
             menu.add(Group::Merge, rebase());
         }
@@ -224,17 +220,17 @@ fn refs_menu(menu: &mut RefMenu<RefAct>, locals: &[String], remotes: &[String], 
     merge_items(menu, clicked, local, sha, facts);
     for name in locals.iter().filter(|l| Some(l.as_str()) != current) {
         menu.add(Group::Checkout, match facts.elsewhere(name) {
-            Some(path) => act(format!("ref-open-{name}"), format!("Open the worktree of {name}"), RefAct::OpenWorktree(path)),
-            None => act(format!("ref-checkout-{name}"), format!("Checkout {name}"), RefAct::Checkout(Target::Branch(name.clone()))),
+            Some(path) => item(format!("ref-open-{name}"), format!("Open the worktree of {name}"), RefAct::OpenWorktree(path)),
+            None => item(format!("ref-checkout-{name}"), format!("Checkout {name}"), RefAct::Checkout(Target::Branch(name.clone()))),
         });
     }
     for name in remotes {
-        menu.add(Group::Checkout, act(format!("ref-checkout-{name}"), format!("Checkout {name}"), RefAct::Checkout(Target::Remote(name.clone()))));
+        menu.add(Group::Checkout, item(format!("ref-checkout-{name}"), format!("Checkout {name}"), RefAct::Checkout(Target::Remote(name.clone()))));
     }
     commit_items(menu, sha);
     for name in locals {
-        menu.add(Group::Manage, act(format!("ref-rename-{name}"), format!("Rename {name}"), RefAct::Rename(name.clone())));
-        let delete = act(format!("ref-delete-{name}"), format!("Delete {name}"), RefAct::DeleteBranch(name.clone()));
+        menu.add(Group::Manage, item(format!("ref-rename-{name}"), format!("Rename {name}"), RefAct::Rename(name.clone())));
+        let delete = item(format!("ref-delete-{name}"), format!("Delete {name}"), RefAct::DeleteBranch(name.clone()));
         if Some(name.as_str()) == current {
             menu.add(Group::Manage, delete.dimmed(format!("{name} is checked out: check out another branch first")));
         } else if let Some(w) = held_in_linked(facts.refs, facts.top, name) {
@@ -246,7 +242,7 @@ fn refs_menu(menu: &mut RefMenu<RefAct>, locals: &[String], remotes: &[String], 
             });
         }
     }
-    menu.add(Group::Copy, act("ref-copy-name".into(), "Copy branch name".into(), RefAct::Copy { text: clicked.into(), what: "the branch name" }));
+    menu.add(Group::Copy, item("ref-copy-name", "Copy branch name", RefAct::Copy { text: clicked.into(), what: "the branch name" }));
 }
 
 /// B4: a tag.
@@ -254,19 +250,19 @@ fn tag_menu(menu: &mut RefMenu<RefAct>, name: &str, sha: &str, annotated: bool, 
     if let Some(current) = facts.current().filter(|_| facts.head_sha() != Some(sha) && !facts.under_way)
         && matches!(facts.relation, Some(Relation::Ahead | Relation::Diverged))
     {
-        menu.add(Group::Merge, act(format!("ref-merge-{name}"), format!("Merge {name} into {current}"), RefAct::Merge { source: name.into(), into: current.into() }));
-        menu.add(Group::Merge, act(format!("ref-rebase-{name}"), format!("Rebase {current} onto {name}"), RefAct::Rebase { branch: current.into(), onto: name.into() }));
+        menu.add(Group::Merge, item(format!("ref-merge-{name}"), format!("Merge {name} into {current}"), RefAct::Merge { source: name.into(), into: current.into() }));
+        menu.add(Group::Merge, item(format!("ref-rebase-{name}"), format!("Rebase {current} onto {name}"), RefAct::Rebase { branch: current.into(), onto: name.into() }));
     }
     let detached_here = matches!(&facts.refs.head, Head::Detached { sha: head } if head == sha);
     if !detached_here {
-        menu.add(Group::Checkout, act(format!("ref-checkout-{name}"), format!("Checkout the commit at {name}"), RefAct::Checkout(Target::Commit(sha.into()))));
+        menu.add(Group::Checkout, item(format!("ref-checkout-{name}"), format!("Checkout the commit at {name}"), RefAct::Checkout(Target::Commit(sha.into()))));
     }
     commit_items(menu, sha);
-    menu.add(Group::Manage, act(format!("ref-delete-tag-{name}"), format!("Delete {name} locally"), RefAct::DeleteTag(name.into())));
+    menu.add(Group::Manage, item(format!("ref-delete-tag-{name}"), format!("Delete {name} locally"), RefAct::DeleteTag(name.into())));
     if !annotated {
-        menu.add(Group::Manage, act(format!("ref-annotate-{name}"), format!("Annotate {name}"), RefAct::Annotate { name: name.into(), at: sha.into() }));
+        menu.add(Group::Manage, item(format!("ref-annotate-{name}"), format!("Annotate {name}"), RefAct::Annotate { name: name.into(), at: sha.into() }));
     }
-    menu.add(Group::Copy, act("ref-copy-name".into(), "Copy tag name".into(), RefAct::Copy { text: name.into(), what: "the tag name" }));
+    menu.add(Group::Copy, item("ref-copy-name", "Copy tag name", RefAct::Copy { text: name.into(), what: "the tag name" }));
 }
 
 /// §B part 1 item 5: a worktree's row.
@@ -319,18 +315,18 @@ pub(crate) fn drop_menu(dragged: &Dragged, target: &Dragged, relation: Relation,
     };
     if target.local {
         if relation == Relation::Ahead && dragged.local {
-            menu.add(Group::Merge, dim_held(t, act(format!("drop-ff-{t}"), format!("Fast-forward {t} to {d}"), RefAct::FastForward { branch: t.into(), to: d.into() })));
+            menu.add(Group::Merge, dim_held(t, item(format!("drop-ff-{t}"), format!("Fast-forward {t} to {d}"), RefAct::FastForward { branch: t.into(), to: d.into() })));
         }
         if relation != Relation::Behind {
-            menu.add(Group::Merge, dim_held(t, act(format!("drop-merge-{t}"), format!("Merge {d} into {t}"), RefAct::Merge { source: d.into(), into: t.into() })));
+            menu.add(Group::Merge, dim_held(t, item(format!("drop-merge-{t}"), format!("Merge {d} into {t}"), RefAct::Merge { source: d.into(), into: t.into() })));
         }
     }
     if dragged.local && relation == Relation::Behind {
-        menu.add(Group::Merge, dim_held(d, act(format!("drop-ff-{d}"), format!("Fast-forward {d} to {t}"), RefAct::FastForward { branch: d.into(), to: t.into() })));
-        menu.add(Group::Merge, dim_held(d, act(format!("drop-merge-{d}"), format!("Merge {t} into {d}"), RefAct::Merge { source: t.into(), into: d.into() })));
+        menu.add(Group::Merge, dim_held(d, item(format!("drop-ff-{d}"), format!("Fast-forward {d} to {t}"), RefAct::FastForward { branch: d.into(), to: t.into() })));
+        menu.add(Group::Merge, dim_held(d, item(format!("drop-merge-{d}"), format!("Merge {t} into {d}"), RefAct::Merge { source: t.into(), into: d.into() })));
     }
     if dragged.local && relation != Relation::Ahead {
-        menu.add(Group::Merge, dim_held(d, act(format!("drop-rebase-{d}"), format!("Rebase {d} onto {t}"), RefAct::Rebase { branch: d.into(), onto: t.into() })));
+        menu.add(Group::Merge, dim_held(d, item(format!("drop-rebase-{d}"), format!("Rebase {d} onto {t}"), RefAct::Rebase { branch: d.into(), onto: t.into() })));
     }
     menu
 }

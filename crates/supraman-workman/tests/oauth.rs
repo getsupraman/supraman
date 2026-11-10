@@ -4,10 +4,11 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use supraman_core::secret::{MemoryStore, SecretStore};
 use supraman_core::workman_server::{self, ServerJson};
 use supraman_workman::auth::{http_browser, http_browser_with};
 use supraman_workman::fake::{Answer, FakeWorkman, closed_base, location_query};
-use supraman_workman::{Auth, AuthError, AuthStatus, Client, MemoryStore, SecretStore};
+use supraman_workman::{Auth, AuthError, AuthStatus, Client};
 
 fn overview() -> Answer {
     Answer::json(r#"{"asOf":"2026-10-28T10:00:00+00:00","seq":1,"projects":[],"workingNow":[],"inboxCount":0}"#)
@@ -527,7 +528,7 @@ fn a_refresh_token_the_store_refuses_is_kept_in_memory_and_reported() {
 #[cfg(windows)]
 #[test]
 fn a_6_kb_refresh_token_rotates_through_the_file_store() {
-    use supraman_workman::secret::FileStore;
+    use supraman_core::secret::FileStore;
     let (dir, fake, oauth, _store, _auth) = setup();
     let store = || Arc::new(FileStore::new(dir.path()));
     oauth.set_access_ttl(60);

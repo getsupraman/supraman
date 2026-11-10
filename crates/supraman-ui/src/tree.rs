@@ -359,6 +359,7 @@ impl<T: 'static, A: Default + 'static> TreeState<T, A> {
     }
 
     /// [`TreeState::set_entries`] in the entries' own order ([`Tree::build_given`]).
+    #[cfg(test)]
     pub fn set_entries_given(&self, entries: impl IntoIterator<Item = (String, T)>, fold: impl Fn(&mut A, &T)) {
         self.set_tree(Tree::build_given(entries, fold));
     }

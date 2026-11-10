@@ -1821,7 +1821,7 @@ impl FleetView {
             None => self.push_tab(title, TabKind::Shell, Some(cwd.clone()), cx),
         };
         self.reveal_new(left::PendingReveal::TabSession(id));
-        let (watch, mut changed) = nudge::nudge();
+        let (watch, changed) = nudge::nudge();
         if let Some(tab) = self.tab_mut(id) {
             tab.hand = true;
             tab.watchers.push(watch);
