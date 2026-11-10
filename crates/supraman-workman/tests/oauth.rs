@@ -366,7 +366,7 @@ fn signing_out_of_an_unreachable_old_server_is_quick_once_and_blocks_no_other_to
     let origin = old.base().to_string();
     let started = std::time::Instant::now();
     let revoke = std::thread::spawn(move || signing_out.sign_out(&origin));
-    std::thread::sleep(Duration::from_millis(300));
+    assert!(!silent.seen_when(Duration::from_secs(5), |s| !s.is_empty()).is_empty(), "the revoke never reached the old server");
     let asked = std::time::Instant::now();
     auth.access_token(new.base()).unwrap();
     assert!(asked.elapsed() < Duration::from_secs(1), "the new server's token waited {:?} on the revoke", asked.elapsed());
@@ -438,14 +438,17 @@ fn concurrent_callers_share_one_refresh() {
     auth.sign_in(fake.base(), &http_browser()).unwrap();
     auth.forget_access(&auth.access_token(fake.base()).unwrap());
     oauth.stall_tokens(true);
+    let together = Arc::new(std::sync::Barrier::new(2));
     let callers: Vec<_> = (0..2)
         .map(|_| {
-            let (auth, origin) = (auth.clone(), fake.base().to_string());
-            std::thread::spawn(move || auth.access_token(&origin))
+            let (auth, origin, together) = (auth.clone(), fake.base().to_string(), together.clone());
+            std::thread::spawn(move || {
+                together.wait();
+                auth.access_token(&origin)
+            })
         })
         .collect();
     eventually(Duration::from_secs(5), "no refresh reached the token endpoint", polled(Duration::from_millis(10)), || (oauth.stalled() != 0).then_some(()));
-    std::thread::sleep(Duration::from_millis(200));
     oauth.stall_tokens(false);
     let tokens: Vec<String> = callers.into_iter().map(|c| c.join().unwrap().unwrap()).collect();
     assert_eq!(tokens[0], tokens[1]);
