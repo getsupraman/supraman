@@ -1372,7 +1372,7 @@ mod tests {
 
     #[cfg(windows)]
     fn tab_args(launch_args: impl IntoIterator<Item = String>) -> Vec<String> {
-        crate::view::powershell_args(["-NoLogo".to_string(), "-NoProfile".into()].into_iter().chain(launch_args).collect())
+        crate::view::shells::powershell_args(["-NoLogo".to_string(), "-NoProfile".into()].into_iter().chain(launch_args).collect())
     }
 
     #[cfg(windows)]

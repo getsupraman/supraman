@@ -200,8 +200,8 @@ impl FleetView {
         let ids = |this: &Self, keep: &dyn Fn(usize, u64) -> bool| -> Vec<u64> { this.tabs.iter().enumerate().filter(|(i, t)| keep(*i, t.id)).map(|(_, t)| t.id).collect() };
         match action {
             MenuAction::OpenGit(top) => {
-                let name = top.file_name().map_or_else(|| top.display().to_string(), |n| n.to_string_lossy().into_owned());
-                self.open_git(top, format!("Git · {name}"), &Default::default(), cx);
+                let title = crate::view::git_tab::title(&top);
+                self.open_git(top, title, &Default::default(), cx);
             }
             MenuAction::OpenWorkman { workspace, project } => {
                 let id = self.open_work(&workspace, cx);
