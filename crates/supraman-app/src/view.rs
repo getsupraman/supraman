@@ -461,7 +461,7 @@ impl Poller {
         let polled_at = now_ms();
         let listing = Instant::now();
         let sessions = with_sessions.then(|| {
-            let listed = if crate::selftest_shots::fixtures_only() { Ok(Vec::new()) } else { list_sessions() };
+            let listed = if crate::selftest_seams::fixtures_only() { Ok(Vec::new()) } else { list_sessions() };
             listed.map_err(|e| e.to_string()).map(|mut rows| {
                 rows.extend(self.injected.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned());
                 rows
@@ -2059,7 +2059,7 @@ impl Render for FleetView {
             self.painted_sessions = true;
             timeline("first paint with sessions", Duration::ZERO);
         }
-        crate::selftest::injected_frame_sleep();
+        crate::selftest_seams::injected_frame_sleep();
         self.persist_tabs(cx);
         self.wake_blink();
         self.hits.borrow_mut().clear();

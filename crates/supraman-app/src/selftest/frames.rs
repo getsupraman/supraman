@@ -1,10 +1,7 @@
 //! Another process's load stretches both the frame interval and the window's own work per frame, so the
 //! budgets are judged only on a quiet machine: [`baseline`] waits for one, [`judge`] skips a busy window.
 
-use std::{
-    sync::OnceLock,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use anyhow::bail;
 use supraman_ui::FrameStats;
@@ -21,17 +18,6 @@ const QUIET_P50_MS: f64 = 18.5;
 pub(crate) const BUSY_CPU: f64 = 0.35;
 const BASELINE: Duration = Duration::from_secs(1);
 const CALM_WITHIN: Duration = Duration::from_secs(60);
-
-/// `SUPRAMAN_SELFTEST_FRAME_SLEEP_MS=<n>`: every root render sleeps n ms, the red check for these checks.
-pub(crate) fn injected_frame_sleep() {
-    static SLEEP: OnceLock<Option<Duration>> = OnceLock::new();
-    let sleep = SLEEP.get_or_init(|| {
-        std::env::var("SUPRAMAN_SELFTEST_FRAME_SLEEP_MS").ok().and_then(|v| v.parse().ok()).map(Duration::from_millis)
-    });
-    if let Some(sleep) = sleep {
-        std::thread::sleep(*sleep);
-    }
-}
 
 pub(crate) struct Stretch {
     pub(crate) stats: FrameStats,

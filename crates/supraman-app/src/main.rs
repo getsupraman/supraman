@@ -1,3 +1,6 @@
+// The selftest-only items of the app's own code stay built without the feature.
+#![cfg_attr(not(feature = "selftest"), allow(dead_code, unused_imports, unused_variables))]
+
 mod brand;
 mod compose;
 mod dismissed_messages;
@@ -10,41 +13,78 @@ mod row_details;
 mod saved_tabs;
 mod schedules;
 mod search;
+#[cfg(feature = "selftest")]
 mod selftest;
+#[cfg(feature = "selftest")]
 mod selftest_clipboard;
+#[cfg(feature = "selftest")]
 mod selftest_closed;
+#[cfg(feature = "selftest")]
 mod selftest_delete;
+#[cfg(feature = "selftest")]
 mod selftest_desktop;
+#[cfg(feature = "selftest")]
 mod selftest_drop;
+#[cfg(feature = "selftest")]
 mod selftest_first_run;
+#[cfg(feature = "selftest")]
 mod selftest_font;
+#[cfg(feature = "selftest")]
 mod selftest_git;
+#[cfg(feature = "selftest")]
 mod selftest_git_media;
+#[cfg(feature = "selftest")]
 mod selftest_hand;
+#[cfg(feature = "selftest")]
 mod selftest_launch;
+#[cfg(feature = "selftest")]
 mod selftest_left;
+#[cfg(feature = "selftest")]
 mod selftest_link;
+#[cfg(feature = "selftest")]
 mod selftest_manage;
+#[cfg(feature = "selftest")]
 mod selftest_mark;
+#[cfg(feature = "selftest")]
 mod selftest_messages;
+#[cfg(feature = "selftest")]
 mod selftest_notices;
+#[cfg(feature = "selftest")]
 mod selftest_overflow;
+#[cfg(feature = "selftest")]
 mod selftest_refresh;
+#[cfg(feature = "selftest")]
 mod selftest_reopen;
+#[cfg(feature = "selftest")]
 mod selftest_responsive;
+#[cfg(feature = "selftest")]
 mod selftest_schedules;
+#[cfg(feature = "selftest")]
 mod selftest_shells;
+#[cfg(feature = "selftest")]
 mod selftest_search;
+mod selftest_seams;
+#[cfg(feature = "selftest")]
 mod selftest_shots;
+#[cfg(feature = "selftest")]
 mod selftest_start;
+#[cfg(feature = "selftest")]
 mod selftest_supervise;
+#[cfg(feature = "selftest")]
 mod selftest_tab_keys;
+#[cfg(feature = "selftest")]
 mod selftest_tab_menu;
+#[cfg(feature = "selftest")]
 mod selftest_tabs;
+#[cfg(feature = "selftest")]
 mod selftest_title;
+#[cfg(feature = "selftest")]
 mod selftest_updates;
+#[cfg(feature = "selftest")]
 mod selftest_term;
+#[cfg(feature = "selftest")]
 mod selftest_work;
+#[cfg(feature = "selftest")]
 mod selftest_zoom;
 mod settings_window;
 mod stars;
@@ -118,8 +158,22 @@ fn parse_args() -> (Mode, Option<elevate::Relaunched>) {
         unsafe { std::env::set_var(supraman_core::HOME_VAR, &relaunched.home) };
         return (Mode::App, Some(relaunched));
     }
+    if args.is_empty() {
+        return (Mode::App, None);
+    }
+    #[cfg(feature = "selftest")]
+    return (selftest_mode(&args), None);
+    #[cfg(not(feature = "selftest"))]
+    {
+        eprintln!("unknown arguments {args:?}: this supraman is built without its selftests");
+        std::process::exit(2);
+    }
+}
+
+#[cfg(feature = "selftest")]
+fn selftest_mode(args: &[&str]) -> Mode {
     let visible = args.last() == Some(&selftest_desktop::VISIBLE_FLAG);
-    let args = if visible { &args[..args.len() - 1] } else { &args[..] };
+    let args = if visible { &args[..args.len() - 1] } else { args };
     let mode = match args {
         [] => Mode::App,
         ["--selftest"] => Mode::Selftest,
@@ -159,10 +213,11 @@ fn parse_args() -> (Mode, Option<elevate::Relaunched>) {
             Err(e) => eprintln!("cannot take the heavy-job lock ({e}); running without it"),
         }
     }
-    (mode, None)
+    mode
 }
 
 /// Held while a selftest runs, so no build or other selftest shares the machine.
+#[cfg(feature = "selftest")]
 static HEAVY_JOB: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
 
 /// Tool-shell variables a tab must not inherit; see LEARNINGS fleet UI, tf/5 and tf/8.
@@ -199,28 +254,22 @@ fn main() {
     if mode == Mode::App {
         supraman_core::platform::desktop::detach_console();
     }
+    #[cfg(feature = "selftest")]
     let _machine = hold_machine(mode);
     let home = match mode {
         Mode::App => supraman_core::home_from_env(),
+        #[cfg(feature = "selftest")]
         _ => Some(selftest::home()),
+        #[cfg(not(feature = "selftest"))]
+        _ => None,
     };
     // The old instance holds the home until it quits.
     if let Some(pid) = relaunched.as_ref().and_then(|r| r.after) {
         elevate::wait_for_exit(pid, elevate::AFTER_WITHIN);
     }
     let instance = single_instance(mode, home, relaunched.is_some());
-    if mode != Mode::App
-        && let Err(error) = selftest::prepare(mode)
-    {
-        println!("FAIL setup: {error:#}");
-        selftest::cleanup();
-        std::process::exit(1);
-    }
-    // After `prepare` cleared the selftest's home.
-    if mode != Mode::App {
-        supraman_ui::init_logger(Some(&selftest::log_dir()));
-        supraman_ui::log_panics();
-    }
+    #[cfg(feature = "selftest")]
+    prepare_selftest(mode);
     let (commands, received) = futures::channel::mpsc::unbounded::<Command>();
     if let Some(instance) = &instance {
         let commands = commands.clone();
@@ -233,6 +282,7 @@ fn main() {
     }
     gpui_platform::application().run(move |cx: &mut App| run(mode, commands, received, cx));
     TRAY.with(|t| t.borrow_mut().take());
+    #[cfg(feature = "selftest")]
     if mode != Mode::App {
         selftest::finish(mode);
         selftest::cleanup();
@@ -240,6 +290,22 @@ fn main() {
     std::process::exit(EXIT_CODE.load(Ordering::SeqCst));
 }
 
+#[cfg(feature = "selftest")]
+fn prepare_selftest(mode: Mode) {
+    if mode == Mode::App {
+        return;
+    }
+    if let Err(error) = selftest::prepare(mode) {
+        println!("FAIL setup: {error:#}");
+        selftest::cleanup();
+        std::process::exit(1);
+    }
+    // After `prepare` cleared the selftest's home.
+    supraman_ui::init_logger(Some(&selftest::log_dir()));
+    supraman_ui::log_panics();
+}
+
+#[cfg(feature = "selftest")]
 fn hold_machine(mode: Mode) -> Option<selftest_clipboard::Held> {
     match mode {
         Mode::Selftest | Mode::SelftestSupervise | Mode::SelftestDetachShutdown | Mode::SelftestShots => match selftest_clipboard::hold_machine() {
@@ -354,6 +420,7 @@ fn open_main_window(mode: Mode, cx: &mut App) -> WindowHandle<FleetView> {
         },
         move |window, cx| {
             let view = cx.new(|cx| FleetView::new(window, cx));
+            #[cfg(feature = "selftest")]
             if mode != Mode::App {
                 selftest::start(mode, view.clone(), window, cx);
             }

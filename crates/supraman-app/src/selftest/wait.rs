@@ -1,5 +1,5 @@
 use std::{
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::Ordering,
     time::{Duration, Instant},
 };
 
@@ -9,15 +9,8 @@ use gpui::{AnyWindowHandle, App, AsyncWindowContext, Entity};
 use super::sleep;
 use crate::view::FleetView;
 
-static FRAME_ASKED: AtomicBool = AtomicBool::new(false);
-
-/// [`FleetView::shown`] scrolled the sidebar; the next wait redraws the window so the row is painted.
-pub(crate) fn ask_frame() {
-    FRAME_ASKED.store(true, Ordering::SeqCst);
-}
-
 pub(crate) fn frame_if_asked(cx: &mut AsyncWindowContext) {
-    if FRAME_ASKED.swap(false, Ordering::SeqCst) {
+    if crate::selftest_seams::FRAME_ASKED.swap(false, Ordering::SeqCst) {
         cx.update(|window, _| window.refresh()).ok();
     }
 }

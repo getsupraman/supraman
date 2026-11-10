@@ -480,7 +480,7 @@ impl FleetView {
             return true;
         }
         if self.reveal_hit(key) {
-            crate::selftest::ask_frame();
+            crate::selftest_seams::ask_frame();
         }
         false
     }

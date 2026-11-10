@@ -29,9 +29,8 @@ mod shell_tab;
 mod wait;
 pub(crate) mod win;
 
-pub(crate) use frames::injected_frame_sleep;
 pub(crate) use shell_tab::select_wheel_line;
-pub(crate) use wait::{ask_frame, drawn, drawn_in, frame_if_asked, until, until_app, until_with};
+pub(crate) use wait::{drawn, drawn_in, frame_if_asked, until, until_app, until_with};
 
 pub const WORKSPACE: &str = "larchsys";
 const PROMPT: &str = "Reply with the word ready and then wait for input";
