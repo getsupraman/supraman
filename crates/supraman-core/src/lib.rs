@@ -52,5 +52,4 @@ pub use settings::{
     default_terminal_font_family,
 };
 pub use slug::{FM_PREFIX, is_safe_id, is_session_name, name_char, slugify, validate_name};
-pub use url::origin as url_origin;
 pub use workman_server::validate_workman_url;

@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
 
 /// What a git operation reads or writes besides the objects (docs/research/gitkraken-12.6.1.md §2 "Locking").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -185,12 +184,14 @@ impl Scheduler {
     }
 
     /// How many requests wait for their locks.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn waiting(&self) -> usize {
         self.state().queue.len()
     }
 
     /// Waits up to `timeout` until `n` requests wait; whether they do.
-    pub fn await_waiting(&self, n: usize, timeout: Duration) -> bool {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn await_waiting(&self, n: usize, timeout: std::time::Duration) -> bool {
         let (state, _) = self.changed.wait_timeout_while(self.state(), timeout, |s| s.queue.len() < n).unwrap_or_else(PoisonError::into_inner);
         state.queue.len() >= n
     }

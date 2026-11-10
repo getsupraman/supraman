@@ -4,7 +4,7 @@ use std::sync::Arc;
 use buffer_diff::BufferDiff;
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
 use language::{Buffer, Language};
-use text::{LineEnding, Point, Rope, ToPoint as _};
+use text::{LineEnding, Point, Rope};
 
 
 /// One change: the rows it covers in the old text and in the new one (either may be empty), and the
@@ -99,11 +99,6 @@ impl Diff {
             max.row + u32::from(max.column > 0)
         };
         (count(&self.old), count(&self.new))
-    }
-
-    /// The new text's point of a byte offset, for a test.
-    pub fn new_point(&self, offset: usize, cx: &App) -> Point {
-        offset.to_point(&self.new.read(cx).snapshot())
     }
 }
 

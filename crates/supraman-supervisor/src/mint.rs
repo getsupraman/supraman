@@ -133,7 +133,7 @@ fn reason_suffix(reason: &str) -> String {
     if reason.is_empty() { String::new() } else { format!(": {reason}") }
 }
 
-/// The three calls on `/api/agent-sessions`. `base` is the server's origin ([`api_base`]).
+/// The three calls on `/api/agent-sessions`. `base` is the server's origin ([`supraman_core::url::origin`]).
 /// Implemented by [`HttpMinter`]; tests use a fake.
 pub trait Minter {
     fn mint(&self, base: &str, bearer: &str, request: &MintRequest) -> Result<Minted, MintError>;
@@ -144,7 +144,6 @@ pub trait Minter {
 }
 
 /// The server's origin, from its MCP URL; shared with the read API client.
-pub use supraman_workman::api_base;
 
 /// Blocking HTTP/1.1 (TLS for an `https://` server), no proxy, 15 s per call.
 pub struct HttpMinter {
@@ -245,7 +244,7 @@ pub struct MintedSession {
     /// last. `None` until the first tick sets it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_active: Option<crate::Millis>,
-    /// The server the token is from ([`api_base`] of its MCP URL); `None`: unknown.
+    /// The server the token is from ([`supraman_core::url::origin`] of its MCP URL); `None`: unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
 }
@@ -368,7 +367,7 @@ impl MintedSessions {
         let mut changed = false;
         for (name, m) in self.names.iter_mut().map(|(n, e)| (n, &mut e.session)).filter(|(_, m)| m.origin.is_none()) {
             if let Some(url) = supraman_claude::mcp_config_url(mcp_dir, name) {
-                m.origin = Some(api_base(&url));
+                m.origin = Some(supraman_core::url::origin(&url));
                 changed = true;
             }
         }
@@ -377,7 +376,7 @@ impl MintedSessions {
 
     /// Every session whose token is not from `origin`, with the origin it is from (`None`: unknown).
     pub fn elsewhere(&self, origin: &str) -> Vec<(String, Option<String>)> {
-        let origin = api_base(origin);
+        let origin = supraman_core::url::origin(origin);
         self.names
             .iter()
             .filter(|(_, e)| e.session.origin.as_deref() != Some(origin.as_str()))
@@ -577,11 +576,11 @@ pub fn revoke(keeper: &Keeper, minter: &dyn Minter, bearer: &Bearer, name: &str,
     let failed = match bearer {
         Bearer::SignedOut => None,
         Bearer::Unavailable(why) => Some(why.clone()),
-        Bearer::Signed { url, .. } if m.origin.as_deref().is_some_and(|o| o != api_base(url)) => {
+        Bearer::Signed { url, .. } if m.origin.as_deref().is_some_and(|o| o != supraman_core::url::origin(url)) => {
             done.left = m.origin.clone();
             None
         }
-        Bearer::Signed { url, token } => minter.revoke(&api_base(url), token, &m.session_id).err().map(|e| e.to_string()),
+        Bearer::Signed { url, token } => minter.revoke(&supraman_core::url::origin(url), token, &m.session_id).err().map(|e| e.to_string()),
     };
     if let Some(e) = failed {
         done.notices.push(format!("Cannot revoke the Workman token of {name} (session {}): {e}; unused, it lapses after its idle window", m.session_id));
@@ -621,13 +620,13 @@ fn remint(keeper: &Keeper, name: &str, bearer: Bearer, minter: &dyn Minter) -> R
     let Bearer::Signed { url, token } = bearer else {
         return Err("Supraman is not signed in to Workman".into());
     };
-    if m.origin.as_deref().is_some_and(|o| o != api_base(&url)) {
-        return Err(format!("its token is from {}, not {}", m.origin.unwrap_or_default(), api_base(&url)));
+    if m.origin.as_deref().is_some_and(|o| o != supraman_core::url::origin(&url)) {
+        return Err(format!("its token is from {}, not {}", m.origin.unwrap_or_default(), supraman_core::url::origin(&url)));
     }
     let moved = keeping::read(&keeper.home).ok().and_then(|mut t| t.remove(name)?.launched_by);
     let former = moved.unwrap_or_else(|| request.launched_by.clone());
     let request = MintRequest { launched_by: relabelled(&request.launched_by), origin: relabelled(&request.origin), ..request };
-    let minted = mint_as(minter, &api_base(&url), &token, &request, Some(&former)).map_err(|e| e.to_string())?;
+    let minted = mint_as(minter, &supraman_core::url::origin(&url), &token, &request, Some(&former)).map_err(|e| e.to_string())?;
     keeper.keep_token(name, &minted.token)?;
     keeper.note_locked(name, minted.expires_at.as_deref(), Some(&request.launched_by));
     Ok(())
@@ -698,7 +697,7 @@ pub fn revoke_deleted_runs(keeper: &Keeper, minter: &dyn Minter, bearer: impl Fn
 
 /// After a sign-out of `origin`: each scheduled run's record of it [`Keeper::signed_out`].
 pub fn runs_signed_out(keeper: &Keeper, origin: &str) -> Vec<String> {
-    let origin = api_base(origin);
+    let origin = supraman_core::url::origin(origin);
     let names: Vec<String> = runs_of(&keeper.home)
         .iter()
         .flat_map(|(_, records)| records.names().filter(|n| records.get(n).is_some_and(|m| m.origin.as_deref() == Some(origin.as_str()))).cloned().collect::<Vec<_>>())

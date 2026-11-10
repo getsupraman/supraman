@@ -655,10 +655,11 @@ mod tests {
     fn a_detached_child_runs_on_after_the_call() {
         let dir = tempfile::tempdir().unwrap();
         let done = dir.path().join("done");
-        let script = format!("Start-Sleep -Milliseconds 300; Set-Content -LiteralPath '{}' x", done.display());
+        let lives = PIPES_SETTLE * 3;
+        let script = format!("Start-Sleep -Milliseconds {}; Set-Content -LiteralPath '{}' x", lives.as_millis(), done.display());
         let started = Instant::now();
         let pid = spawn_detached(&mut powershell(&script)).unwrap();
-        assert!(pid > 0 && started.elapsed() < Duration::from_millis(300), "returns before the child ends");
+        assert!(pid > 0 && started.elapsed() < lives && !done.exists(), "returns before the child ends");
         let deadline = Instant::now() + Duration::from_secs(30);
         while !done.exists() && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(50));

@@ -38,7 +38,7 @@ pub fn sign_in(home: &Path, origin: &str) -> Result<supraman_workman::AuthStatus
 
 pub fn forget_own_credentials() -> Vec<String> {
     let issuers = std::mem::take(&mut *ISSUERS.lock().unwrap_or_else(|e| e.into_inner()));
-    issuers.iter().filter_map(|(home, issuer)| supraman_workman::secret::default_store(home).delete(issuer).err()).collect()
+    issuers.iter().filter_map(|(home, issuer)| supraman_core::secret::default_store(home).delete(issuer).err()).collect()
 }
 
 fn open_system_browser(url: &str) -> Result<(), String> {

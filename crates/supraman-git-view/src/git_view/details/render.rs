@@ -25,10 +25,6 @@ use crate::git_view::load::initials;
 pub(crate) const PANEL_STEP: f32 = 0.025;
 const BOX_STEP: f32 = 0.06;
 
-fn short(sha: &str) -> SharedString {
-    SharedString::from(short_sha(sha).to_string())
-}
-
 /// The author's date as the graph's date column says it.
 pub(super) fn authored(shown: &Shown) -> String {
     time::stamp(shown.authored_ms)
@@ -63,7 +59,7 @@ impl CommitPanel {
             fonts::figures(button::ghost(&self.hits, "commit-sha", cx))
                 .px_1()
                 .rounded_sm()
-                .child(short(&shown.sha))
+                .child(short_sha(&shown.sha).to_string())
                 .tooltip(Tooltip::text("Copy the full sha"))
                 .on_click(move |_: &ClickEvent, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(sha.to_string()))),
         )
@@ -119,7 +115,7 @@ impl CommitPanel {
                 .px_0p5()
                 .rounded_sm()
                 .text_color(colors.text)
-                .child(short(sha))
+                .child(short_sha(sha).to_string())
                 .tooltip(Tooltip::text("Select this parent in the graph"))
                 .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(PanelEvent::Parent(full.clone()))))
         });

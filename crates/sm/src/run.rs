@@ -9,7 +9,7 @@ use std::time::Duration;
 use supraman_claude::{Claude, Health, LaunchSpec, Session};
 use supraman_core::EventReader;
 use supraman_core::schedule::{self, LiveSession, Outcome, Reported, RunEvent, Stage, Tokens};
-use supraman_supervisor::{Bearer, Keeper, Launcher, MintRequest, MintedSession, MintedSessions, Minter, TokenProvider, api_base};
+use supraman_supervisor::{Bearer, Keeper, Launcher, MintRequest, MintedSession, MintedSessions, Minter, TokenProvider};
 
 use crate::fire::RunCtx;
 
@@ -153,7 +153,7 @@ pub fn session_stage(ctx: &RunCtx, gate: Option<&str>, host: &mut dyn SessionHos
         name: spec.name.clone(),
         id: row.id.clone(),
         workstate_session: workstate_session.clone(),
-        origin: mint.as_ref().map(|m| api_base(&m.url)),
+        origin: mint.as_ref().map(|m| supraman_core::url::origin(&m.url)),
     });
     let ts = host.now_ms();
     log.event(
@@ -170,8 +170,8 @@ pub fn session_stage(ctx: &RunCtx, gate: Option<&str>, host: &mut dyn SessionHos
     if let Some(m) = &mint
         && !row.session_id.is_empty()
         && let Ok(Some(t)) = host.tokens().token(crate::schedule::RUN_ROLE)
-        && api_base(&t.url) == api_base(&m.url)
-        && let Err(e) = host.minter().bind(&api_base(&t.url), &t.token, &m.session_id, &row.session_id)
+        && supraman_core::url::origin(&t.url) == supraman_core::url::origin(&m.url)
+        && let Err(e) = host.minter().bind(&supraman_core::url::origin(&t.url), &t.token, &m.session_id, &row.session_id)
     {
         crate::fire::log(ctx.home, &format!("{}/{} {}: cannot tell Workman the claude session: {e}", w.name, s.id, ctx.run));
     }
@@ -267,14 +267,14 @@ fn mint(ctx: &RunCtx, spec: &LaunchSpec, host: &mut dyn SessionHost) -> Result<O
         claude_session_id: None,
         takeover_from: None,
     };
-    let minted = host.minter().mint(&api_base(&t.url), &t.token, &request).map_err(|e| format!("cannot mint a Workman token for {}: {e}", spec.name))?;
+    let minted = host.minter().mint(&supraman_core::url::origin(&t.url), &t.token, &request).map_err(|e| format!("cannot mint a Workman token for {}: {e}", spec.name))?;
     let mut record = MintedSessions::empty(Some(MintedSessions::run_path(ctx.home, &spec.name)));
     let session = MintedSession {
         session_id: minted.session_id.clone(),
         role: crate::schedule::RUN_ROLE.into(),
         claude_session_id: None,
         last_active: None,
-        origin: Some(api_base(&t.url)),
+        origin: Some(supraman_core::url::origin(&t.url)),
     };
     record.insert_minted(&spec.name, session, &request);
     record.save().map_err(|e| format!("cannot record the Workman session of {}: {e}", spec.name))?;

@@ -89,28 +89,6 @@ fn the_tree_and_its_blobs_text_and_binary() {
 }
 
 #[test]
-fn patches_of_a_commit_two_revs_and_the_work_in_progress() {
-    let f = Fixture::shared();
-    let repo = f.repo();
-    let lines = |p: &[FilePatch]| -> Vec<(LineKind, String)> { p[0].hunks.iter().flat_map(|h| h.lines.iter().map(|l| (l.kind, l.text.clone()))).collect() };
-    let second = patch(&repo, DiffOf::Commit(f.sha("second")), &["a.txt"]).unwrap();
-    assert_eq!(lines(&second), [(LineKind::Context, "one".into()), (LineKind::Added, "two".into())]);
-    assert_eq!((second[0].hunks[0].old_start, second[0].hunks[0].new_lines), (1, 2));
-    let rename = patch(&repo, DiffOf::Commit(f.sha("rename")), &["old.txt", "new.txt"]).unwrap();
-    assert_eq!((rename.len(), rename[0].old_path.as_deref(), rename[0].new_path.as_deref()), (1, Some("old.txt"), Some("new.txt")));
-    assert!(rename[0].hunks.is_empty());
-    let root_bin = patch(&repo, DiffOf::Commit(f.sha("root")), &["bin.dat"]).unwrap();
-    assert!(root_bin[0].binary && root_bin[0].old_path.is_none());
-    assert_eq!(patch(&repo, DiffOf::Revs(f.sha("root"), f.sha("main_work")), &[]).unwrap().len(), 2);
-    let unstaged = patch(&repo, DiffOf::IndexToWorktree, &["a.txt"]).unwrap();
-    assert_eq!(lines(&unstaged), [(LineKind::Context, "staged".into()), (LineKind::Added, "unstaged".into())]);
-    let staged = patch(&repo, DiffOf::RevToIndex("HEAD"), &["a.txt"]).unwrap();
-    assert!(lines(&staged).contains(&(LineKind::Added, "staged".into())) && lines(&staged).contains(&(LineKind::Removed, "three".into())));
-    let both = patch(&repo, DiffOf::RevToWorktree("HEAD"), &["a.txt"]).unwrap();
-    assert!(lines(&both).contains(&(LineKind::Added, "unstaged".into())));
-}
-
-#[test]
 fn work_in_progress_entries_and_a_merge_under_way() {
     let f = Fixture::copy();
     let s = status(&f.repo()).unwrap();

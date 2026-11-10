@@ -238,12 +238,12 @@ fn maintenance_waits_while_a_session_works_there_an_index_is_locked_or_a_heavy_j
     start(None, BackgroundSettings { fetch_every_minutes: Some(0), maintenance: None, ..Default::default() }, cx);
     let cx = window(cx);
     let live = occupancy::Live::default();
-    live.set(vec![("fm-alpha".into(), f.worktree.join("src"))]);
+    live.set_sessions(vec![occupancy::LiveSession { name: "fm-alpha".into(), cwd: f.worktree.join("src"), activity: supraman_ui::marks::Activity::Working, attach: None }]);
     let _view = open(&f.dir, None, live.clone(), cx);
     tick(AFTER + Duration::from_secs(1), cx);
     assert!(!graph(&dirs), "a session works in the repository's other worktree");
 
-    live.set(Vec::new());
+    live.set_sessions(Vec::new());
     let lock = dirs.git_dir.join("index.lock");
     std::fs::write(&lock, b"").unwrap();
     tick(RETRY, cx);

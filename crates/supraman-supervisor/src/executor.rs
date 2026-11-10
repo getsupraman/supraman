@@ -7,7 +7,7 @@ use supraman_core::AGENTS_SERVER;
 use crate::mint::{Absent, Bearer, Keeper};
 use crate::{
     Action, Budget, DesiredState, Failure, HttpMinter, MintRepo, MintRequest, Minted, MintedSession, MintedSessions, Millis, Minter, NeedsKind,
-    NeedsYou, Policy, Remedy, SECOND, SupervisorMemory, WantedSession, adopt_prompt, api_base, is_live, mid_turn, reconcile,
+    NeedsYou, Policy, Remedy, SECOND, SupervisorMemory, WantedSession, adopt_prompt, is_live, mid_turn, reconcile,
 };
 
 /// The three `claude` writes the supervisor performs. Implemented for [`Claude`]; tests use a fake.
@@ -140,11 +140,6 @@ impl LaunchConfig {
             env.push((k.to_string(), v.to_string()));
         }
         env
-    }
-
-    /// The `--settings` JSON for one session, `None` when there is nothing to set.
-    pub fn session_settings(&self, workspace: &str, name: &str, role: &str, repo: Option<&str>) -> Option<String> {
-        self.settings_with(workspace, name, role, repo, &[])
     }
 
     fn settings_with(&self, workspace: &str, name: &str, role: &str, repo: Option<&str>, extra: &[(&str, &str)]) -> Option<String> {
@@ -306,7 +301,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
 
     /// [`Self::signed_out`] queued in sign-in `generation`: a session minted on a later sign-in stays.
     pub fn signed_out_as_of(&mut self, origin: &str, generation: u64) {
-        let origin = api_base(origin);
+        let origin = supraman_core::url::origin(origin);
         let names: Vec<String> = self
             .minted
             .names()
@@ -344,7 +339,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     /// tick and resumed (by its full uuid) with a token minted on `origin`, `replace: true`, in the same
     /// config file; a stopped one gets it at its next resume anyway. Returns those (name, its origin).
     pub fn server_changed(&mut self, origin: Option<&str>) -> Vec<(String, Option<String>)> {
-        let was = std::mem::replace(&mut self.origin, origin.map(api_base));
+        let was = std::mem::replace(&mut self.origin, origin.map(supraman_core::url::origin));
         self.mint_unminted_due |= was.is_none() && self.origin.is_some();
         let Some(origin) = self.origin.clone() else {
             return Vec::new();
@@ -367,7 +362,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     /// Whether `m`'s token is from another server than `url`'s: its PATCH and DELETE would name another
     /// server's session, so they are left to that server's grant revoke.
     fn elsewhere(m: &MintedSession, url: &str) -> bool {
-        m.origin.as_deref().is_some_and(|o| o != api_base(url))
+        m.origin.as_deref().is_some_and(|o| o != supraman_core::url::origin(url))
     }
 
     #[cfg(test)]
@@ -575,14 +570,14 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             claude_session_id: claude_session_id.map(str::to_string),
             takeover_from: None,
         };
-        let minted = crate::mint::mint_as(&*self.minter, &api_base(&t.url), &t.token, &request, self.minted.launched_by(&w.name))
+        let minted = crate::mint::mint_as(&*self.minter, &supraman_core::url::origin(&t.url), &t.token, &request, self.minted.launched_by(&w.name))
             .map_err(|e| Failure::Other(format!("cannot mint a Workman token for {}: {e}", w.name)))?;
         let session = MintedSession {
             session_id: minted.session_id.clone(),
             role: w.role.clone(),
             claude_session_id: claude_session_id.map(str::to_string),
             last_active: Some(now),
-            origin: Some(api_base(&t.url)),
+            origin: Some(supraman_core::url::origin(&t.url)),
         };
         self.minted.insert_minted(&w.name, session, &request);
         self.generations.insert(w.name.clone(), generation);
@@ -670,7 +665,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             let (role, session_id, m) = (m.role.clone(), m.session_id.clone(), m.clone());
             let result = match self.tokens.token(&role) {
                 Ok(Some(t)) if Self::elsewhere(&m, &t.url) => Ok(()),
-                Ok(Some(t)) => self.minter.bind(&api_base(&t.url), &t.token, &session_id, &claude_session_id).map_err(|e| e.to_string()),
+                Ok(Some(t)) => self.minter.bind(&supraman_core::url::origin(&t.url), &t.token, &session_id, &claude_session_id).map_err(|e| e.to_string()),
                 Ok(None) => Err(format!("role {role} has no Workman token any more")),
                 Err(e) => Err(e),
             };
@@ -2058,7 +2053,7 @@ mod tests {
                 "worktree": { "bgIsolation": "none" }
             })
         );
-        assert_eq!(LaunchConfig::default().session_settings("demo", "fm-demo-workspace", "workspace", None), None);
+        assert_eq!(LaunchConfig::default().settings_with("demo", "fm-demo-workspace", "workspace", None, &[]), None);
     }
 
     fn workspace(name: &str, mcp_dir: &Path) -> Supervisor<FakeLauncher, FakeTokens> {

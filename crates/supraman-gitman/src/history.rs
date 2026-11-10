@@ -56,6 +56,7 @@ pub struct Details {
 }
 
 /// `count` commits reachable from `tips` in date order, after the first `skip`.
+#[cfg(any(test, feature = "test-support"))]
 pub fn history(repo: &Repo, tips: &[String], skip: usize, count: usize) -> Result<Page, GitError> {
     if tips.is_empty() || count == 0 {
         return Ok(Page { commits: Vec::new(), more: false });
@@ -98,6 +99,7 @@ impl History {
     }
 
     /// git's pid while it runs.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn pid(&self) -> Option<u32> {
         self.git.as_ref().map(Streaming::pid)
     }

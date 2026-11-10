@@ -2,12 +2,11 @@
 
 use std::time::Duration;
 
-use crate::client::api_base;
 
 /// `Err` is one short line: `HTTP 503`, `connection refused`, `timed out`.
 pub fn health(mcp_url: &str, timeout: Duration) -> Result<(), String> {
     let agent = crate::http::agent(timeout);
-    let res = agent.get(format!("{}/health", api_base(mcp_url))).call().map_err(|e| transport(&e))?;
+    let res = agent.get(format!("{}/health", supraman_core::url::origin(mcp_url))).call().map_err(|e| transport(&e))?;
     let status = res.status().as_u16();
     if (200..300).contains(&status) { Ok(()) } else { Err(format!("HTTP {status}")) }
 }

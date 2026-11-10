@@ -7,7 +7,7 @@ use crate::parse::text;
 use crate::{GitError, OperationState, Repo, dirs, operation_state};
 
 /// The hooks a `git commit` runs.
-pub const COMMIT_HOOKS: [&str; 4] = ["pre-commit", "prepare-commit-msg", "commit-msg", "post-commit"];
+pub(crate) const COMMIT_HOOKS: [&str; 4] = ["pre-commit", "prepare-commit-msg", "commit-msg", "post-commit"];
 
 /// Whether the hooks folder git uses (`core.hooksPath` or the repo's own) holds one of [`COMMIT_HOOKS`]; blocking.
 pub fn commit_hooks(repo: &Repo) -> Result<bool, GitError> {

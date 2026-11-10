@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use super::{Bearer, Keeper, Minter, api_base, record_files, remint};
+use super::{Bearer, Keeper, Minter, record_files, remint};
 use crate::{Millis, MintedSessions};
 
 /// How often the app checks every kept token.
@@ -99,7 +99,7 @@ impl Keeping {
         let Bearer::Signed { url, .. } = &bearer else {
             return Vec::new();
         };
-        let origin = api_base(url);
+        let origin = supraman_core::url::origin(url);
         let mut notices = Vec::new();
         let table = read(&keeper.home).unwrap_or_else(|e| {
             notices.push(format!("{}{}; every kept Workman token is pinged instead", e[..1].to_uppercase(), &e[1..]));
@@ -109,7 +109,7 @@ impl Keeping {
             let (Some(token), Some(config)) = (keeper.kept(&name), supraman_claude::mcp_config_url(&keeper.mcp_dir, &name)) else {
                 continue;
             };
-            if api_base(&config) != origin {
+            if supraman_core::url::origin(&config) != origin {
                 continue;
             }
             let kept = table.get(&name).cloned().unwrap_or_default();

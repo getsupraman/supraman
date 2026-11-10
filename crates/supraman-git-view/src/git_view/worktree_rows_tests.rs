@@ -111,7 +111,7 @@ fn a_worktree_row_shows_above_its_head_only_while_changed_or_worked_in_and_not_w
     reread(&view, cx);
     assert_eq!(worktree_rows(&view, cx), [(path_key(&f.worktree), head(&f.worktree, &f))], "a change: its row right above its HEAD");
 
-    live.set(vec![("fm-alpha".into(), extra.join("src"))]);
+    live.set_sessions(vec![occupancy::LiveSession { name: "fm-alpha".into(), cwd: extra.join("src"), activity: supraman_ui::marks::Activity::Working, attach: None }]);
     reread(&view, cx);
     let mut rows = worktree_rows(&view, cx);
     rows.sort();
@@ -155,7 +155,7 @@ fn a_worktree_row_says_its_counts_and_branch_or_detached_head_or_shows_the_sessi
     assert!(painted(&view, &format!("git-worktree-wip-{side}"), cx), "muted WIP");
     assert!(painted(&view, &format!("git-worktree-ref-{side}"), cx));
 
-    live.set(vec![("fm-alpha".into(), extra.clone())]);
+    live.set_sessions(vec![occupancy::LiveSession { name: "fm-alpha".into(), cwd: extra.clone(), activity: supraman_ui::marks::Activity::Working, attach: None }]);
     redraw(&view, cx);
     let detached = row_of(&view, &extra, cx);
     let said = view.update(cx, |v, cx| v.worktree_view(detached, cx)).expect("read");

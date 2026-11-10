@@ -19,10 +19,6 @@ use supraman_ui::open::Link;
 /// What Update does with the release the banner names.
 pub type UpdateAction = fn(&mut FleetView, &Available, &mut Context<FleetView>);
 
-pub fn open_release_page(view: &mut FleetView, available: &Available, cx: &mut Context<FleetView>) {
-    view.open_web(&available.page_url.clone(), cx);
-}
-
 /// Downloads, verifies and unpacks the release, then hands the install over to `sm update apply` and quits;
 /// a build that is not an installed release (no `VERSION` beside it) or a release without its zip opens the page.
 pub fn install_update(view: &mut FleetView, available: &Available, cx: &mut Context<FleetView>) {
@@ -30,7 +26,7 @@ pub fn install_update(view: &mut FleetView, available: &Available, cx: &mut Cont
         return;
     }
     if available.zip_url.is_none() || !view.updates.target.install.join(install::VERSION).is_file() {
-        open_release_page(view, available, cx);
+        view.open_web(&available.page_url.clone(), cx);
         return;
     }
     if let Some(question) = view.updates.target.quit.then(|| question(available.version(), view.has_attach_tabs(), view.running_hand_tabs())).flatten() {
@@ -392,7 +388,7 @@ mod tests {
             checking: false,
             checks: 0,
             dismissed: None,
-            action: open_release_page,
+            action: |view, available, cx| view.open_web(&available.page_url.clone(), cx),
             target: Target { install: PathBuf::new(), wait_pid: None, quit: false, restart_args: Vec::new() },
             stage: Stage::Idle,
             cancel: Arc::default(),

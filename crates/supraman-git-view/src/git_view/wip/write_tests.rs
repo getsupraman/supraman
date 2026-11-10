@@ -153,7 +153,7 @@ fn wip_write_file_and_all_buttons_stage_unstage_and_discard_after_asking(cx: &mu
 fn wip_write_a_session_in_the_worktree_is_not_asked_about(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let live = occupancy::Live::default();
-    live.set(vec![("fm-alpha".into(), f.dir.join("src"))]);
+    live.set_sessions(vec![occupancy::LiveSession { name: "fm-alpha".into(), cwd: f.dir.join("src"), activity: supraman_ui::marks::Activity::Working, attach: None }]);
     let (view, cx) = open(&f.dir, live, cx);
     click(&view, "wip-stage-u.txt", cx);
     let (unstaged, staged) = lists(&view, cx);

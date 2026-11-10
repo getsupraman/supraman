@@ -6,7 +6,7 @@ use crate::changes::ChangeKind;
 use crate::{Entry, EntryKind, GitError, Repo, Status, Worktree, status, worktrees};
 
 /// How many worktrees [`wips`] reads at once.
-pub const WIP_READERS: usize = 4;
+pub(crate) const WIP_READERS: usize = 4;
 
 /// A worktree's changed files by kind, a conflict counted as modified.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

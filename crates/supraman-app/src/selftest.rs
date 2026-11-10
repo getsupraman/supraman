@@ -53,7 +53,7 @@ pub(crate) fn forget_own_transcript(session_id: &str, cwd: &Path) {
 
 /// From the claude dir `claude` itself writes to (not the fake one).
 fn forget_transcripts(transcripts: &[(String, PathBuf)]) -> bool {
-    let Some(dir) = supraman_claude::claude_dir() else {
+    let Some(dir) = supraman_core::paths::claude_dir() else {
         return transcripts.is_empty();
     };
     let mut ok = true;

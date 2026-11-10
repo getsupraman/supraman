@@ -73,7 +73,6 @@ pub use daemon::{
     task_run_level,
 };
 pub use error::{ClaudeError, Result};
-pub use supraman_core::process::Output;
 pub use forget::{ForgetError, Forgotten, find_transcript, forget_transcript, is_session_id};
 pub use human::{Route, SendError, Sent, Sender, send_from_human};
 pub use launch::{
@@ -84,4 +83,4 @@ pub use plugin_server::plugin_server;
 pub use session::{
     Health, Kind, ORPHAN_AFTER, Session, SessionState, Status, now_ms, parse,
 };
-pub use transcript::{Launcher, Transcript, Transcripts, Usage, chains, claude_dir, continued_in, first_prompt, newest, newest_in};
+pub use transcript::{Launcher, Transcript, Transcripts, Usage, chains, continued_in, first_prompt, newest, newest_in};

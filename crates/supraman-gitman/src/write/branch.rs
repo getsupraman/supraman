@@ -112,7 +112,7 @@ pub enum Plan {
 }
 
 /// `remote`'s branch name below its remote: `main` for `origin/main`.
-pub fn local_name<'a>(refs: &Refs, remote: &'a str) -> &'a str {
+pub(crate) fn local_name<'a>(refs: &Refs, remote: &'a str) -> &'a str {
     let remotes = refs.remotes.iter().filter(|r| r.name == remote).count();
     let cut = remote.split_once('/').map_or(remote, |(_, rest)| rest);
     if remotes > 0 { cut } else { remote }

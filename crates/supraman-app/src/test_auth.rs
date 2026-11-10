@@ -10,7 +10,7 @@ pub fn server_json(home: &std::path::Path, base: &str) -> std::path::PathBuf {
 }
 
 pub fn signed_in(home: &std::path::Path, base: &str) -> Arc<Auth> {
-    let auth = Arc::new(Auth::with_store(home, Arc::new(supraman_workman::MemoryStore::default())).with_server_json(Some(server_json(home, base))));
+    let auth = Arc::new(Auth::with_store(home, Arc::new(supraman_core::secret::MemoryStore::default())).with_server_json(Some(server_json(home, base))));
     auth.sign_in(base, &supraman_workman::auth::http_browser()).unwrap();
     auth
 }
@@ -32,7 +32,7 @@ mod tests {
         let fake = FakeWorkman::start(vec![]);
         let oauth = fake.enable_oauth();
         let unsigned = AppTokens {
-            auth: Arc::new(Auth::with_store(&home, Arc::new(supraman_workman::MemoryStore::default())).with_server_json(Some(server_json(&home, fake.base())))),
+            auth: Arc::new(Auth::with_store(&home, Arc::new(supraman_core::secret::MemoryStore::default())).with_server_json(Some(server_json(&home, fake.base())))),
         };
         assert_eq!(unsigned.token("workspace"), Ok(None), "not signed in: no Workman");
 

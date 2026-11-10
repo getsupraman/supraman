@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use supraman_claude::{Claude, Health, LaunchSpec, Removal, claude_dir, is_session_id, new_session_id, now_ms};
+use supraman_claude::{Claude, Health, LaunchSpec, Removal, is_session_id, new_session_id, now_ms};
+use supraman_core::paths::claude_dir;
 use supraman_core::process::{self, Kill};
 
 use crate::probe::{Fleet, cargo_root, describe, hex6, mkdir, wait_until_stopped, yes};

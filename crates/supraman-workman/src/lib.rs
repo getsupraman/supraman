@@ -11,15 +11,13 @@ mod health;
 mod http;
 pub mod model;
 pub mod repo;
-pub mod secret;
 pub mod status;
 mod stream;
 pub mod updates;
 
 pub use auth::{Auth, AuthError, AuthStatus};
-pub use client::{API_VERSION, BearerSource, BriefFor, Client, Error, JournalQuery, Result, SessionsQuery, api_base};
+pub use client::{API_VERSION, BearerSource, BriefFor, Client, Error, JournalQuery, Result, SessionsQuery};
 pub use health::{health, refuses};
 pub use http::{Reply, agent as http_agent, agent_following as http_agent_following, pct_encode, read as read_reply, server_reason};
 pub use model::*;
-pub use secret::{MemoryStore, SecretStore};
 pub use stream::{Stream, StreamConfig, StreamSignal};

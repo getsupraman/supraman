@@ -55,7 +55,7 @@ impl GitView {
         cx.notify();
     }
 
-    /// The WIP row selected with `summary` in the commit area, as typed (the README's shot).
+    /// A selftest hook (`selftest_shots`): the WIP row selected with `summary` in the commit area, as typed.
     pub fn draft_commit(&mut self, summary: &str, cx: &mut Context<Self>) {
         self.select_wip(cx);
         self.wip_panel.update(cx, |p, cx| {

@@ -53,7 +53,7 @@ pub fn inbox(args: &[&str]) -> Result<(), Failure> {
     }
 }
 
-/// `sm send` speaks as the human; every Supraman-launched session carries `SUPRAMAN_ROLE` (`supraman_supervisor` `session_settings`).
+/// `sm send` speaks as the human; every Supraman-launched session carries `SUPRAMAN_ROLE` (`supraman_supervisor::LaunchConfig::launch_spec`).
 pub fn refuse_inside_supraman() -> Result<(), Failure> {
     match std::env::var_os("SUPRAMAN_ROLE") {
         Some(role) if !role.is_empty() => Err(Failure::Refused(format!(

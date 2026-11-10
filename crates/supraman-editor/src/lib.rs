@@ -72,6 +72,7 @@ fn bind_keys(cx: &mut App) {
 }
 
 /// A buffer nobody can edit, highlighted as `language` with what it injects (Markdown's inline text and fenced code).
+#[cfg(any(test, feature = "test-support"))]
 pub fn read_only_buffer(text: String, language: Option<Arc<Language>>, cx: &mut App) -> Entity<Buffer> {
     cx.new(|cx| read_only(Buffer::local(text, cx), language, cx))
 }
@@ -127,6 +128,7 @@ pub fn select_row(editor: &Entity<Editor>, row: u32, scroll: bool, window: &mut 
 }
 
 /// The row of `editor`'s newest selection head.
+#[cfg(any(test, feature = "test-support"))]
 pub fn cursor_row(editor: &Entity<Editor>, cx: &mut App) -> u32 {
     editor.update(cx, |editor, cx| {
         let snapshot = editor.display_snapshot(cx);

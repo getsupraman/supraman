@@ -209,7 +209,7 @@ fn a_stashs_box_edits_its_message_through_the_stash_writes_and_a_session_working
     let labels: Vec<String> = supraman_gitman::stashes(&f.repo()).unwrap().iter().map(|s| s.label()).collect();
     assert_eq!(labels[0], "Better stash words", "the stash keeps its commit and goes on top");
 
-    live.set(vec![("fm-alpha".to_string(), f.dir.clone())]);
+    live.set_sessions(vec![occupancy::LiveSession { name: "fm-alpha".into(), cwd: f.dir.clone(), activity: supraman_ui::marks::Activity::Working, attach: None }]);
     let top = head(&f);
     select(&view, &top, cx);
     click(&view, EDIT_KEY, cx);

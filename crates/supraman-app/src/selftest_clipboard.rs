@@ -271,10 +271,6 @@ mod win {
         }
     }
 
-    pub(crate) fn put_test_image() -> anyhow::Result<()> {
-        anyhow::bail!("windows only")
-    }
-
     pub(crate) fn sequence() -> u32 {
         0
     }
