@@ -35,9 +35,10 @@ what each costs. The release itself is docs/RELEASE.md.
   (by default the working tree against its merge base with master, untracked files included) and every member that
   depends on one of them; a change to `Cargo.toml`, `Cargo.lock`, `.cargo\` or `rust-toolchain*` means all. It prints
   nothing (and says so on stderr) when no crate changed: a bare `cargo test` would then test the whole workspace.
+- Where a test lives and the shared test helpers: docs/ARCHITECTURE.md "Testing". GitMan's integration tests are one
+  binary: `cargo test --profile unit -p supraman-gitman --test it <filter>` runs them without its lib's tests.
 - The `unit` profile (`Cargo.toml`) is `release` with the workspace members incremental in 256 codegen units; the
-  dependencies stay as in `release`. Tests run as fast as under `release` (the suite's test time is the same, ~4 min
-  summed); only the members' compile changes. Its artifacts live in `target\unit`: 48 GB on 2026-11-10 with its
+  dependencies stay as in `release`. Tests run as fast as under `release`; only the members' compile changes. Its artifacts live in `target\unit`: 48 GB on 2026-11-10 with its
   three dependency variants, 23 GB of it `incremental\` (one `<crate>-<hash>` folder per member, target kind and
   feature set, never collected); 40 GB once heavy-lock had removed the 116 members' unfinalized sessions (below).
 - `-p <crate>`, `cargo test --workspace` and `cargo build --workspace` unify the dependencies' features differently
@@ -117,4 +118,5 @@ and the time holding the lock (compile and tests); each step run twice, the seco
 | The same in one unit worktree after a branch switch that changed supraman-gitman and supraman-app | — | 34 s |
 | Cold build of every dependency (once per profile) | ~15 min (LEARNINGS refactor3/3) | 11 m 01 s |
 
-The suite's tests take ~4 min summed under either profile. With rust-lld the unit edit cycle was 59 s.
+The suite's tests take ~2.5 min summed (`unit`, 2026-11-10: 1,617 tests, 148 s of `finished in` over 48 binaries,
+155 s holding the lock with nothing to compile). With rust-lld the unit edit cycle was 59 s.
