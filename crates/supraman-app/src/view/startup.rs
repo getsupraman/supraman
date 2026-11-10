@@ -156,7 +156,7 @@ impl FleetView {
         self.refreshes += 1;
         self.refreshes_answered = asks;
         self.check_loaded(cx);
-        let left = std::mem::take(&mut self.left_pending);
+        let left = std::mem::take(&mut self.workman_state.left_pending);
         self.leave_servers(left, cx);
         self.resolve_tabs(cx);
         self.reopen_tabs(cx);

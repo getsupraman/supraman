@@ -82,6 +82,7 @@ mod term;
 mod term_look;
 mod work_tab;
 mod workman_url;
+mod workman_state;
 pub(crate) mod workspace_dialog;
 pub(crate) mod writes;
 
@@ -301,11 +302,6 @@ pub struct FleetView {
     pub open_with: fn(&Path) -> Result<(), String>,
     pub open_link_with: fn(&Link, &mut App),
     pub workman: WorkmanStatus,
-    workman_dismissed: Option<String>,
-    workman_recheck: Nudge,
-    pub start_warning: Option<String>,
-    pub signing_in: Option<String>,
-    pub sign_in_error: Option<String>,
     hands: Option<Arc<Mutex<Hands>>>,
     /// The last run's hand tokens are released, so a reopened tab's mint is not revoked with them.
     hands_ready: bool,
@@ -313,9 +309,6 @@ pub struct FleetView {
     hands_released: bool,
     quit_release: Option<gpui::Task<()>>,
     desired_writes: futures::channel::mpsc::UnboundedSender<DesiredWrite>,
-    synced_server: Option<String>,
-    left_servers: std::collections::HashSet<String>,
-    left_pending: Vec<String>,
     pub closed: Vec<Session>,
     /// A selftest's closed sessions, kept across transcript scans.
     pub injected_closed: Vec<Session>,
@@ -343,6 +336,7 @@ pub struct FleetView {
     pub saving: tab_saving::TabSaving,
     pub sidebar: sidebar::Sidebar,
     pub term_look: term_look::TermLook,
+    pub workman_state: workman_state::WorkmanState,
     pub scheduling: schedule_state::ScheduleState,
     pub(crate) tab_keys: Entity<tab_keys::TabKeyState>,
 }
@@ -618,20 +612,12 @@ impl FleetView {
                 Link::Path(path) => open::open_off_thread(path.clone(), cx).detach(),
             },
             workman: WorkmanStatus::Checking,
-            workman_dismissed: None,
-            workman_recheck,
-            start_warning: None,
-            signing_in: None,
-            sign_in_error: None,
             hands_ready: hands.is_none(),
             hands,
             hand_notices: Vec::new(),
             hands_released: false,
             quit_release: None,
             desired_writes,
-            synced_server: None,
-            left_servers: Default::default(),
-            left_pending: Vec::new(),
             closed: Vec::new(),
             injected_closed: Vec::new(),
             closed_repos: StdHashMap::new(),
@@ -657,6 +643,7 @@ impl FleetView {
             saving: tab_saving::TabSaving::new(tabs_writes),
             sidebar: sidebar::Sidebar::new(cx),
             term_look,
+            workman_state: workman_state::WorkmanState::new(workman_recheck),
             scheduling,
             tab_keys: cx.new(|_| tab_keys::TabKeyState::new(defaults.window.tab_keys())),
         }
@@ -758,13 +745,13 @@ impl FleetView {
                 let alive = this.update(cx, |this, cx| {
                     if this.workman != status {
                         if matches!(status, WorkmanStatus::Ready { .. }) {
-                            this.start_warning = None;
+                            this.workman_state.start_warning = None;
                         }
                         this.workman = status;
                         cx.notify();
                     }
                     if let WorkmanStatus::Ready { url, .. } = &this.workman
-                        && this.synced_server.as_ref() != Some(url)
+                        && this.workman_state.synced_server.as_ref() != Some(url)
                     {
                         let url = url.clone();
                         this.sync_server(url, cx);
@@ -781,7 +768,7 @@ impl FleetView {
     }
 
     pub fn recheck_workman(&self) {
-        self.workman_recheck.wake();
+        self.workman_state.workman_recheck.wake();
     }
 
     pub fn sign_in(&mut self, cx: &mut Context<Self>) {
@@ -795,11 +782,11 @@ impl FleetView {
         let Some(home) = self.home.clone() else {
             return;
         };
-        if self.signing_in.is_some() {
+        if self.workman_state.signing_in.is_some() {
             return;
         }
-        self.signing_in = Some(origin.clone());
-        self.sign_in_error = None;
+        self.workman_state.signing_in = Some(origin.clone());
+        self.workman_state.sign_in_error = None;
         let task = {
             let (home, origin) = (home.clone(), origin.clone());
             cx.background_executor().spawn(async move { crate::signin::sign_in(&home, &origin) })
@@ -807,16 +794,16 @@ impl FleetView {
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
-                this.signing_in = None;
+                this.workman_state.signing_in = None;
                 match result {
                     Ok(_) => {
-                        this.left_servers.remove(&origin);
+                        this.workman_state.left_servers.remove(&origin);
                         if let Some(from) = from {
                             this.save_workman_url(home.clone(), origin.clone(), Some(from), cx);
                         }
-                        this.synced_server = None;
+                        this.workman_state.synced_server = None;
                     }
-                    Err(e) => this.sign_in_error = Some(format!("Signing in to {origin} did not work: {e}")),
+                    Err(e) => this.workman_state.sign_in_error = Some(format!("Signing in to {origin} did not work: {e}")),
                 }
                 this.workman = WorkmanStatus::Checking;
                 this.recheck_workman();
@@ -855,12 +842,12 @@ impl FleetView {
     }
 
     pub fn dismiss_workman_notice(&mut self, cx: &mut Context<Self>) {
-        self.workman_dismissed = self.workman.problem();
+        self.workman_state.workman_dismissed = self.workman.problem();
         cx.notify();
     }
 
     pub fn workman_notice(&self) -> Option<String> {
-        self.workman.problem().filter(|p| self.workman_dismissed.as_ref() != Some(p))
+        self.workman.problem().filter(|p| self.workman_state.workman_dismissed.as_ref() != Some(p))
     }
 
     fn apply(&mut self, refresh: Refresh, cx: &mut Context<Self>) {
@@ -944,7 +931,7 @@ impl FleetView {
         self.supervise_errors = report.errors;
         supraman_ui::notices::keep_dismissed(&mut self.supervise_dismissed, &self.supervise_errors);
         self.daemon_hold = report.daemon_hold;
-        self.left_pending.extend(report.left_servers);
+        self.workman_state.left_pending.extend(report.left_servers);
         self.last_attempt = report.last_attempt.into_iter().collect();
         self.relays = report.relays;
         self.messages = report.messages;
@@ -1047,7 +1034,7 @@ impl FleetView {
                             this.desired.insert(name.clone(), (true, names));
                             this.invalidate_tree();
                             this.action_error = None;
-                            this.start_warning = this.workman.start_warning(&name);
+                            this.workman_state.start_warning = this.workman.start_warning(&name);
                         }
                         Ok(None) => {
                             if let Some(entry) = this.desired.get_mut(&name) {
@@ -1055,7 +1042,7 @@ impl FleetView {
                             }
                             this.invalidate_tree();
                             this.action_error = None;
-                            this.start_warning = None;
+                            this.workman_state.start_warning = None;
                         }
                         Err(e) => this.action_error = Some(format!("Cannot {verb} {name}: {e:#}")),
                     }

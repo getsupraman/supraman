@@ -370,7 +370,7 @@ impl FleetView {
             notices.push(self.render_workman_notice(problem, cx));
         }
         notices.extend(self.render_update_notice(cx));
-        if let Some(warning) = &self.start_warning {
+        if let Some(warning) = &self.workman_state.start_warning {
             notices.push(notice(warning.clone(), banner::tinted(status.warning)));
         }
         for (name, r) in &self.removing {
@@ -691,7 +691,7 @@ impl FleetView {
         let color = if self.workman.unreachable() { status.error } else { status.warning };
         let mut actions = div().flex().flex_wrap().gap_2().pt_1();
         if self.workman.signed_out() {
-            actions = match self.signing_in {
+            actions = match self.workman_state.signing_in {
                 Some(_) => actions.child(button::bordered(&self.hits, "ws-setup-cancel", "Cancel sign-in", cx).on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
                         cx.stop_propagation();
@@ -735,10 +735,10 @@ impl FleetView {
                 dismiss,
             ))
             .children(self.workman.fix().map(|fix| div().text_xs().text_color(colors.text).child(SharedString::from(fix))))
-            .children(self.signing_in.as_ref().map(|url| {
+            .children(self.workman_state.signing_in.as_ref().map(|url| {
                 div().text_xs().text_color(colors.text).child(SharedString::from(format!("Waiting for the sign-in to {url} in your browser…")))
             }))
-            .children(self.sign_in_error.clone().map(|e| div().text_xs().text_color(status.error).child(SharedString::from(e))))
+            .children(self.workman_state.sign_in_error.clone().map(|e| div().text_xs().text_color(status.error).child(SharedString::from(e))))
             .child(actions)
             .child(hit_target(&self.hits, "ws-setup-notice".into()))
             .into_any_element()

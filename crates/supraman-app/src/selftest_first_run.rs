@@ -22,7 +22,7 @@ const WITHIN: Duration = Duration::from_secs(15);
 async fn until<T>(view: &Entity<FleetView>, cx: &mut AsyncWindowContext, what: &str, f: impl Fn(&FleetView) -> Option<T>) -> anyhow::Result<T> {
     let result = crate::selftest::until(view, cx, WITHIN, what, f).await;
     result.map_err(|e| {
-        let now = view.read_with(cx, |v, _| format!("status {:?}, sign-in error {:?}", v.workman, v.sign_in_error));
+        let now = view.read_with(cx, |v, _| format!("status {:?}, sign-in error {:?}", v.workman, v.workman_state.sign_in_error));
         e.context(now)
     })
 }
@@ -202,7 +202,7 @@ async fn switch_url(view: &Entity<FleetView>, handle: &WindowHandle<SettingsView
 async fn failed_switch(view: &Entity<FleetView>, handle: &WindowHandle<SettingsView>, closed: &str, other: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     handle.update(cx, |s, _, cx| s.set_url_text(closed, cx)).map_err(|e| anyhow!("settings window: {e}"))?;
     handle.update(cx, |s, _, cx| s.apply_url(cx)).map_err(|e| anyhow!("settings window: {e}"))?;
-    let error = until(view, cx, "the failed switch's error", |v| v.signing_in.is_none().then(|| v.sign_in_error.clone()).flatten()).await?;
+    let error = until(view, cx, "the failed switch's error", |v| v.workman_state.signing_in.is_none().then(|| v.workman_state.sign_in_error.clone()).flatten()).await?;
     if !error.contains(closed) || saved_url()? != other {
         bail!("a failed switch to {closed}: {error:?}, URL now {}", saved_url()?);
     }
