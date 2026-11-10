@@ -29,13 +29,13 @@ fn set(live: &Live, sessions: Vec<LiveSession>, view: &Entity<GitView>, cx: &mut
 }
 
 fn agents(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<(usize, String)> {
-    view.read_with(cx, |v, _| v.agent_rows())
+    view.read_with(cx, |v, cx| v.agent_rows(cx))
 }
 
 /// Each row's kind, top down, for the first `n` rows.
 fn kinds(view: &Entity<GitView>, n: usize, cx: &mut VisualTestContext) -> Vec<String> {
-    view.read_with(cx, |v, _| {
-        v.rows.iter().take(n).map(|r| match (&r.agent, r.wip()) {
+    view.read_with(cx, |v, cx| {
+        v.pages.read(cx).rows.iter().take(n).map(|r| match (&r.agent, r.wip()) {
             (Some(name), _) => format!("agent {name}"),
             (None, true) => "wip".into(),
             (None, false) => r.sha.to_string(),
@@ -50,20 +50,20 @@ fn a_session_working_here_shows_as_a_row_over_the_wip_row_with_its_state_and_goe
     std::fs::write(f.dir.join("new.txt"), b"new\n").unwrap();
     let live = Live::default();
     let (view, cx) = open(f.dir.clone(), live.clone(), cx);
-    let before = view.read_with(cx, |v, _| (v.rows.len(), v.rows[0].row.clone()));
+    let before = view.read_with(cx, |v, cx| (v.pages.read(cx).rows.len(), v.pages.read(cx).rows[0].row.clone()));
     assert_eq!(agents(&view, cx), []);
 
     set(&live, vec![session("fm-beta", f.dir.join("src"), Activity::Waiting, None), session("fm-alpha", f.dir.clone(), Activity::Working, Some("a1"))], &view, cx);
     assert_eq!(kinds(&view, 3, cx), ["agent fm-alpha", "agent fm-beta", "wip"], "one row per session, by name, over the WIP row");
     assert!(painted(&view, "git-agent-0", cx) && painted(&view, "git-agent-1", cx) && painted(&view, "git-graph-0", cx));
     assert_eq!(view.read_with(cx, |v, _| v.agents.shown.iter().map(|s| s.activity.word()).collect::<Vec<_>>()), ["working", "waiting"]);
-    assert_eq!(view.read_with(cx, |v, _| v.wip_row()), Some(2));
-    assert_eq!(view.read_with(cx, |v, _| v.commits), view.read_with(cx, |v, _| v.rows.iter().filter(|r| r.commit()).count()), "agent rows count as no commits");
+    assert_eq!(view.read_with(cx, |v, cx| v.wip_row(cx)), Some(2));
+    assert_eq!(view.read_with(cx, |v, cx| v.pages.read(cx).commits), view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().filter(|r| r.commit()).count()), "agent rows count as no commits");
 
     view.update(cx, |v, cx| v.select_wip(cx));
     set(&live, vec![session("fm-alpha", f.dir.clone(), Activity::Idle, Some("a1"))], &view, cx);
     assert_eq!(kinds(&view, 2, cx), ["agent fm-alpha", "wip"], "fm-beta ended");
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Wip), "the selection stays on its row");
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Wip), "the selection stays on its row");
     assert_eq!(view.read_with(cx, |v, _| v.agents.shown[0].activity), Activity::Idle, "the state follows the session");
 
     view.update(cx, |v, cx| v.refresh_graph(None, cx));
@@ -73,9 +73,9 @@ fn a_session_working_here_shows_as_a_row_over_the_wip_row_with_its_state_and_goe
     let elsewhere = f.temp.path().join("elsewhere");
     set(&live, vec![session("fm-alpha", elsewhere, Activity::Working, Some("a1"))], &view, cx);
     assert_eq!(agents(&view, cx), [], "the session left the worktree");
-    let after = view.read_with(cx, |v, _| (v.rows.len(), v.rows[0].row.clone()));
+    let after = view.read_with(cx, |v, cx| (v.pages.read(cx).rows.len(), v.pages.read(cx).rows[0].row.clone()));
     assert_eq!(after, before, "the rows as laid out without it");
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Wip));
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Wip));
 }
 
 #[gpui::test]
@@ -85,8 +85,8 @@ fn on_a_clean_tree_the_agent_row_stands_over_heads_row(cx: &mut TestAppContext) 
     live.set_sessions(vec![session("fm-alpha", f.worktree.clone(), Activity::Working, None)]);
     let (view, cx) = open(f.worktree.clone(), live.clone(), cx);
     let head = f.at(&f.worktree, &["rev-parse", "HEAD"]);
-    let at = view.read_with(cx, |v, _| v.rows.iter().position(|r| r.sha.as_ref() == head)).expect("HEAD's row");
-    assert_eq!(view.read_with(cx, |v, _| v.wip_row()), None);
+    let at = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| r.sha.as_ref() == head)).expect("HEAD's row");
+    assert_eq!(view.read_with(cx, |v, cx| v.wip_row(cx)), None);
     assert_eq!(agents(&view, cx), [(at - 1, "fm-alpha".to_string())], "already working when the tab opened");
 }
 
@@ -103,13 +103,13 @@ fn selecting_an_agent_row_shows_the_session_and_attach_asks_for_it(cx: &mut Test
     cx.update(|_, cx| cx.subscribe(&view, move |_, e: &AttachAgent, _| seen.borrow_mut().push(e.0.clone())).detach());
 
     press(&view, "git-agent-0", MouseButton::Left, 1, cx);
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Agent("fm-alpha".into())));
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Agent("fm-alpha".into())));
     assert!(painted(&view, "git-agent-section-session", cx), "the session's page");
     press(&view, "git-agent-attach", MouseButton::Left, 1, cx);
     assert_eq!(*heard.borrow(), [alpha.clone()], "Attach asks for the session");
 
     press(&view, "git-agent-1", MouseButton::Left, 1, cx);
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Agent("fm-beta".into())));
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Agent("fm-beta".into())));
     press(&view, "git-agent-attach", MouseButton::Left, 1, cx);
     assert_eq!(heard.borrow().len(), 1, "a session that cannot be attached: Attach is dimmed");
 
@@ -117,9 +117,9 @@ fn selecting_an_agent_row_shows_the_session_and_attach_asks_for_it(cx: &mut Test
     assert_eq!(heard.borrow().len(), 2, "a double-click attaches too");
 
     set(&live, vec![session("fm-gamma", f.dir.clone(), Activity::Working, None), alpha.clone()], &view, cx);
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Agent("fm-alpha".into())), "the selection follows its session's row");
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Agent("fm-alpha".into())), "the selection follows its session's row");
     set(&live, vec![session("fm-gamma", f.dir.clone(), Activity::Working, None)], &view, cx);
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), None, "the selected session ended");
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), None, "the selected session ended");
 }
 
 #[gpui::test]
@@ -143,7 +143,7 @@ fn a_session_starting_in_another_worktree_shows_its_row_with_the_pills_state_dot
     let f = Fixture::copy();
     let live = Live::default();
     let (view, cx) = open(f.dir.clone(), live.clone(), cx);
-    let row = |view: &Entity<GitView>, cx: &mut VisualTestContext| view.read_with(cx, |v, _| v.rows.iter().position(|r| r.worktree().is_some()));
+    let row = |view: &Entity<GitView>, cx: &mut VisualTestContext| view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| r.worktree().is_some()));
     assert_eq!(row(&view, cx), None, "the other worktree is clean and nobody works there");
 
     set(&live, vec![session("fm-side", f.worktree.join("src"), Activity::Waiting, None)], &view, cx);

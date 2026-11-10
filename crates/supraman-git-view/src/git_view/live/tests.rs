@@ -63,12 +63,12 @@ fn live_refresh_shows_a_new_commit_and_its_refs_within_a_second_and_an_edit_with
     f.git(&["commit", "-q", "--no-verify", "-m", "Made while watched"]);
     let head = f.git(&["rev-parse", "HEAD"]);
     let took = until("the new commit", DEADLINE, cx, |cx| {
-        view.read_with(cx, |v, _| {
-            v.rows.iter().find(|r| r.sha.as_ref() == head).is_some_and(|r| ref_cell(&r.row, false).first.is_some_and(|g| g.name == "main" && g.head()))
+        view.read_with(cx, |v, cx| {
+            v.pages.read(cx).rows.iter().find(|r| r.sha.as_ref() == head).is_some_and(|r| ref_cell(&r.row, false).first.is_some_and(|g| g.name == "main" && g.head()))
         })
     });
     eprintln!("the commit and main on it after {took:?}");
-    let ahead = view.read_with(cx, |v, _| v.rows.iter().find(|r| r.sha.as_ref() == f.sha("ahead")).map(|r| r.row.refs.len()));
+    let ahead = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().find(|r| r.sha.as_ref() == f.sha("ahead")).map(|r| r.row.refs.len()));
     assert_eq!(ahead, Some(0), "main moved off its old commit");
 
     let added = |v: &GitView| v.wip.map_or(0, |w| w.added);
@@ -94,7 +94,7 @@ fn live_refresh_keeps_the_open_diff_and_reloads_it_when_its_file_changes(cx: &mu
     });
     view.read_with(cx, |v, cx| {
         assert_eq!(v.diff(cx).map(Entity::entity_id), Some(diff.entity_id()), "the same viewer stays open");
-        assert_eq!(v.selected(), Some(Selected::Wip));
+        assert_eq!(v.selected(cx), Some(Selected::Wip));
     });
     drop(diff);
     close(view, cx);

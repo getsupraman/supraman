@@ -179,7 +179,7 @@ fn soloed() -> (Fixture, String) {
 }
 
 fn has(view: &Entity<GitView>, sha: &str, cx: &mut VisualTestContext) -> bool {
-    view.read_with(cx, |v, _| v.rows.iter().any(|r| r.sha.as_ref() == sha))
+    view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().any(|r| r.sha.as_ref() == sha))
 }
 
 #[gpui::test]
@@ -196,7 +196,7 @@ fn hiding_a_branch_prunes_its_own_commits_from_the_graph_and_show_all_restores_t
     let keys = panel.read_with(cx, |p, _| p.tree.aggregate("stashes").unwrap().hide);
     panel.update(cx, |p, cx| p.toggle_hidden(&keys, cx));
     cx.run_until_parked();
-    assert!(!has(&view, f.sha("stash_feature_index"), cx) && view.read_with(cx, |v, _| v.rows.iter().all(|r| r.stash().is_none())), "a folder's eye hides every stash");
+    assert!(!has(&view, f.sha("stash_feature_index"), cx) && view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().all(|r| r.stash().is_none())), "a folder's eye hides every stash");
     let saved = view.read_with(cx, |v, cx| v.sizes(cx).hidden);
     assert_eq!(saved.len(), 4, "the hidden set is the tab's to save: {saved:?}");
     assert_eq!(panel.read_with(cx, |p, _| p.counts()[3]), Count { shown: 0, total: 3 });
@@ -212,10 +212,10 @@ fn picking_a_ref_selects_its_commit_and_loads_pages_until_it_is_there(cx: &mut T
     let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
     panel.update(cx, |p, cx| p.picked("local/feature", cx));
     cx.run_until_parked();
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(f.sha("rename").into())));
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Commit(f.sha("rename").into())));
     panel.update(cx, |p, cx| p.picked("local", cx));
     cx.run_until_parked();
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(f.sha("rename").into())), "a section's header picks nothing");
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Commit(f.sha("rename").into())), "a section's header picks nothing");
 
     let g = Generated::shared(4000);
     let deep = g.repo();
@@ -228,7 +228,7 @@ fn picking_a_ref_selects_its_commit_and_loads_pages_until_it_is_there(cx: &mut T
     assert!(!has(&view, &t1, cx), "t1 lies past the first page");
     panel.update(cx, |p, cx| p.picked("tags/t1", cx));
     cx.run_until_parked();
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(t1.into())), "pages load until its row is there");
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Commit(t1.into())), "pages load until its row is there");
 }
 
 /// A branch with one commit of its own on `main`'s merge.
@@ -251,7 +251,7 @@ fn a_solo_walks_only_its_branch_and_head_and_persists_with_the_layout(cx: &mut T
     assert!(!view.read_with(cx, |v, _| v.hits.borrow().contains_key("menu-ref-solo")), "a pick closes the menu");
     assert!(has(&view, &only, cx) && has(&view, f.sha("ahead"), cx), "the soloed branch and HEAD walk");
     assert!(!has(&view, &other, cx), "another branch's own commit leaves the graph");
-    assert!(view.read_with(cx, |v, _| v.rows.iter().all(|r| r.stash().is_none())), "and every stash");
+    assert!(view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().all(|r| r.stash().is_none())), "and every stash");
     assert_eq!(view.read_with(cx, |v, cx| v.sizes(cx).solo), ["refs/heads/topic/solo"], "the solo is the tab's to save");
     let local = panel.read_with(cx, |p, _| p.counts()[0]);
     assert_eq!(local.shown, 2, "LOCAL counts main and topic/solo: {local:?}");
@@ -296,7 +296,7 @@ fn ctrl_j_collapses_the_panel_to_its_strip(cx: &mut TestAppContext) {
     let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
     assert_eq!(panel.read_with(cx, |p, _| p.counts()), want, "each section counts the fixture's refs");
     click(&view, "refpanel-row-local/feature", cx);
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(f.sha("rename").into())), "a ref's row selects its commit");
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Commit(f.sha("rename").into())), "a ref's row selects its commit");
     cx.simulate_keystrokes("ctrl-j");
     hits.borrow_mut().clear();
     redraw(&view, cx);
@@ -331,7 +331,7 @@ fn a_strip_icon_opens_its_sections_overlay_over_the_graph_and_a_pick_selects_and
     assert!(card.left() >= STRIP && card.left() < graph.right() && card.intersects(&graph), "beside the strip, over the graph: {card:?}");
     assert!(panel.read_with(cx, |p, _| p.shut()) && hits.borrow().contains_key("refpanel-overlay-mark-feature"), "the panel stays collapsed; the rows have their marks");
     click(&view, "refpanel-overlay-row-feature", cx);
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(f.sha("rename").into())), "a pick selects its commit");
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Commit(f.sha("rename").into())), "a pick selects its commit");
     assert_eq!(overlay(cx), None, "and closes the overlay");
     click(&view, "refpanel-strip-tags", cx);
     assert_eq!(overlay(cx), Some(Section::Tags));
@@ -472,7 +472,7 @@ fn a_double_click_on_a_hidden_ref_shows_it_and_selects_its_commit(cx: &mut TestA
     press(&view, "refpanel-name-local/topic/solo", gpui::MouseButton::Left, 2, cx);
     cx.run_until_parked();
     assert_eq!(panel.read_with(cx, |p, _| p.walk().clone()), Walk::default(), "shown again");
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(only.into())), "and its commit selected");
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Commit(only.into())), "and its commit selected");
 }
 
 #[gpui::test]

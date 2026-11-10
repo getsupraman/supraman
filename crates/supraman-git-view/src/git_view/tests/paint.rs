@@ -20,7 +20,7 @@ fn graph_band_runs_from_the_node_to_the_next_column_and_fills_span_every_cell(cx
     let f = Fixture::shared();
     let (view, cx) = open(&f.dir, Opts::default(), cx);
     let (selected, lane) = view.update(cx, |v, cx| {
-        let (ix, row) = v.rows.iter().enumerate().find(|(_, r)| r.sha.as_ref() == f.sha("second")).expect("second's row");
+        let (ix, row) = v.pages.read(cx).rows.iter().enumerate().find(|(_, r)| r.sha.as_ref() == f.sha("second")).expect("second's row");
         let lane = row.row.lane;
         v.select_sha(f.sha("second"), cx);
         (ix, lane)
@@ -45,8 +45,8 @@ fn graph_band_runs_from_the_node_to_the_next_column_and_fills_span_every_cell(cx
 fn every_column_shares_one_inset_and_one_line_box(cx: &mut TestAppContext) {
     let f = Fixture::shared();
     let (view, cx) = open(&f.dir, Opts::default(), cx);
-    let (ix, lane) = view.read_with(cx, |v, _| {
-        let (ix, row) = v.rows.iter().enumerate().find(|(_, r)| r.sha.as_ref() == f.sha("ahead")).expect("ahead's row");
+    let (ix, lane) = view.read_with(cx, |v, cx| {
+        let (ix, row) = v.pages.read(cx).rows.iter().enumerate().find(|(_, r)| r.sha.as_ref() == f.sha("ahead")).expect("ahead's row");
         (ix, row.row.lane)
     });
     let hits = repaint(&view, cx);
@@ -67,7 +67,7 @@ fn every_column_shares_one_inset_and_one_line_box(cx: &mut TestAppContext) {
 fn two_rows_bands_are_inset_3_px_and_6_px_apart(cx: &mut TestAppContext) {
     let f = Fixture::shared();
     let (view, cx) = open(&f.dir, Opts::default(), cx);
-    let ix = view.read_with(cx, |v, _| v.rows.iter().position(|r| r.sha.as_ref() == f.sha("ahead")).expect("ahead's row"));
+    let ix = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| r.sha.as_ref() == f.sha("ahead")).expect("ahead's row"));
     let hits = repaint(&view, cx);
     let (row, fill, next) = (at(&hits, &format!("git-row-{ix}")), at(&hits, &format!("git-fill-{ix}")), at(&hits, &format!("git-fill-{}", ix + 1)));
     assert!(near(fill.top() - row.top(), px(3.)) && near(row.bottom() - fill.bottom(), px(3.)), "GitKraken's inset: {fill:?} {row:?}");
@@ -78,7 +78,7 @@ fn two_rows_bands_are_inset_3_px_and_6_px_apart(cx: &mut TestAppContext) {
 fn a_menu_paints_over_an_open_pill_group(cx: &mut TestAppContext) {
     let f = Fixture::shared();
     let (view, cx) = open(&f.dir, Opts::default(), cx);
-    let ix = view.read_with(cx, |v, _| v.rows.iter().position(|r| r.sha.as_ref() == f.sha("second")).expect("second's row"));
+    let ix = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| r.sha.as_ref() == f.sha("second")).expect("second's row"));
     let hits = repaint(&view, cx);
     let cell = at(&hits, &format!("git-refs-{ix}"));
     cx.simulate_mouse_move(point(cell.right() - px(3.), cell.center().y), None, Modifiers::none());

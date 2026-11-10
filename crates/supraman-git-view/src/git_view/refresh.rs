@@ -2,10 +2,11 @@
 //! the UI thread, a late read dropped by its token, applied without losing the user's place.
 
 use std::collections::HashSet;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use futures::StreamExt as _;
-use gpui::{AnyElement, AppContext as _, Context, Pixels, SharedString, Subscription, Task, Window, px};
+use gpui::{AnyElement, App, AppContext as _, Context, Pixels, SharedString, Subscription, Task, Window, px};
 use supraman_gitman::{FIRST_PAGE, Layout, Repo, Status};
 use supraman_ui::hit::SNAP;
 use supraman_ui::stall;
@@ -13,6 +14,7 @@ use supraman_ui::stall;
 use super::live::{self, FOCUS_DELAY, Live, Refresh};
 use super::load::{self, First, GraphRow, Kept, Wip};
 use super::ref_panel::Walk;
+use super::pages::Pages;
 use super::splice::Loaded;
 use super::{GitView, Selected, graph};
 
@@ -190,9 +192,10 @@ impl GitView {
         self.follow.graph_token += 1;
         self.follow.wip_token += 1;
         let token = self.follow.graph_token;
-        self.history = None;
+        self.pages.update(cx, |p, _| p.history = None);
         let walk = self.ref_panel.read(cx).walk().clone();
-        let loaded = (self.commits > FIRST_PAGE && walk == self.follow.walked).then(|| self.loaded());
+        let pages = self.pages.read(cx);
+        let loaded = (pages.commits > FIRST_PAGE && walk == self.follow.walked).then(|| pages.loaded());
         self.worktree_rows = self.wanted_worktrees(cx);
         let worktrees = self.worktree_rows.clone();
         let read = cx.background_spawn(async move { load::read(repo, &walk, loaded.as_ref(), &worktrees) });
@@ -217,29 +220,26 @@ impl GitView {
         let _stall = stall::section("git tab: refresh");
         self.follow.graph_failed = None;
         self.follow.wip_failed = None;
-        let (selected, anchor) = (self.selected(), self.anchor());
+        let (selected, anchor) = (self.selected(cx), self.anchor(cx));
         let (mut rows, mut more, mut layout) = (first.page.rows, first.page.more, first.page.layout);
-        if let Some((kept, kept_layout, kept_more)) = first.kept.and_then(|k| self.take_kept(k)) {
+        if let Some((kept, kept_layout, kept_more)) = first.kept.and_then(|k| self.pages.update(cx, |p, _| p.take_kept(k))) {
             rows.extend(kept);
             (more, layout) = (kept_more, kept_layout);
         }
         self.follow.generation += 1;
         self.follow.walked = first.walk;
-        self.paging = false;
-        self.page_error = None;
-        self.commits = rows.iter().filter(|r| r.commit()).count();
-        self.rows = rows;
-        self.more = more;
-        self.marks.reset(self.rows.len(), self.commits, &layout);
-        self.layout = Some(layout);
-        self.history = first.history;
-        self.tips = first.tips.into();
+        let (history, tips) = (first.history, first.tips);
+        self.pages.update(cx, |p, _| {
+            p.paging = false;
+            p.page_error = None;
+            p.start(rows, more, layout, history, tips);
+        });
         self.heads = first.heads;
-        self.stack_fresh();
+        self.stack_fresh(cx);
         let before = std::mem::replace(&mut self.wip, first.wip);
         self.ref_panel.update(cx, |p, cx| p.set_built(first.refs, cx));
         self.hand_refs(&first.repo, first.all.clone(), &first.status, cx);
-        self.measure_lanes();
+        self.measure_lanes(cx);
         self.seek = None;
         match self.reveal_after.take() {
             Some(sha) => self.reveal_sha(sha, cx),
@@ -247,7 +247,7 @@ impl GitView {
         }
         self.select_conflict(before, cx);
         if let Some(anchor) = anchor {
-            self.restore(anchor);
+            self.restore(anchor, cx);
         }
         self.reload_diff(files.as_ref(), cx);
         self.refresh_undo(cx);
@@ -258,6 +258,9 @@ impl GitView {
         cx.notify();
     }
 
+}
+
+impl Pages {
     fn loaded(&self) -> Loaded {
         let commits = self.rows.iter().filter(|r| r.commit()).map(|r| (r.sha.clone(), r.parents.clone())).collect();
         Loaded { tips: self.tips.clone(), commits, more: self.more }
@@ -270,7 +273,8 @@ impl GitView {
         if loaded.len() < shas.len() || loaded.iter().zip(&shas).any(|(g, sha)| g.sha.as_ref() != *sha) {
             return None;
         }
-        let mut old = std::mem::take(&mut self.rows).into_iter().filter(GraphRow::commit).skip(kept.from);
+        let taken = Rc::try_unwrap(std::mem::take(&mut self.rows)).unwrap_or_else(|shared| (*shared).clone());
+        let mut old = taken.into_iter().filter(GraphRow::commit).skip(kept.from);
         let rows = kept
             .rows
             .into_iter()
@@ -281,22 +285,25 @@ impl GitView {
             .collect();
         Some((rows, kept.layout, kept.more))
     }
+}
+
+impl GitView {
 
     /// The same commit selected at its new row; the WIP row while there is one; else nothing.
     fn keep_selection(&mut self, selected: Option<Selected>, status: &Arc<Status>, cx: &mut Context<Self>) {
         let row = match &selected {
             None => return,
-            Some(Selected::Commit(sha)) => self.rows.iter().position(|r| r.sha == *sha),
-            Some(Selected::Stash(stash)) => self.rows.iter().position(|r| r.stash().is_some_and(|s| s.sha == stash.sha)),
-            Some(Selected::Wip) => self.wip_row(),
-            Some(Selected::Worktree(path)) => self.rows.iter().position(|r| r.worktree() == Some(path.as_ref())),
-            Some(Selected::Agent(name)) => self.agent_row(name),
+            Some(Selected::Commit(sha)) => self.pages.read(cx).rows.iter().position(|r| r.sha == *sha),
+            Some(Selected::Stash(stash)) => self.pages.read(cx).rows.iter().position(|r| r.stash().is_some_and(|s| s.sha == stash.sha)),
+            Some(Selected::Wip) => self.wip_row(cx),
+            Some(Selected::Worktree(path)) => self.pages.read(cx).rows.iter().position(|r| r.worktree() == Some(path.as_ref())),
+            Some(Selected::Agent(name)) => self.agent_row(name, cx),
         };
         self.table.select(row);
         match (row, selected) {
             (None, _) => self.selection_moved(cx),
             (Some(_), Some(Selected::Wip)) => {
-                let colours = self.ref_colours();
+                let colours = self.ref_colours(cx);
                 self.wip_panel.update(cx, |p, cx| {
                     p.set_ref_colours(colours);
                     p.refresh(status.clone(), cx)
@@ -306,19 +313,20 @@ impl GitView {
         }
     }
 
-    fn anchor(&self) -> Option<Anchor> {
+    fn anchor(&self, cx: &App) -> Option<Anchor> {
+        let rows = &self.pages.read(cx).rows;
         let (top, row) = (self.table.scroll_top(), px(graph::ROW));
         let shown = |ix: usize| row * ix as f32 >= top - SNAP && self.table.viewport().is_some_and(|v| row * (ix + 1) as f32 <= top + v + SNAP);
-        let selected = self.table.selected().filter(|ix| shown(*ix)).and_then(|ix| self.rows.get(ix).filter(|r| r.commit()).map(|r| (ix, r)));
+        let selected = self.table.selected().filter(|ix| shown(*ix)).and_then(|ix| rows.get(ix).filter(|r| r.commit()).map(|r| (ix, r)));
         let first = (top / row).floor().max(0.) as usize;
-        let (ix, r) = selected.or_else(|| self.rows.iter().enumerate().skip(first).find(|(_, r)| r.commit()))?;
+        let (ix, r) = selected.or_else(|| rows.iter().enumerate().skip(first).find(|(_, r)| r.commit()))?;
         Some(Anchor { sha: r.sha.clone(), offset: row * ix as f32 - top, top })
     }
 
     /// Rows added above the anchor take the view to the top when it was there or the selected row stays wholly in
     /// view at the top; otherwise the anchor keeps its place.
-    fn restore(&self, anchor: Anchor) {
-        let Some(ix) = self.rows.iter().position(|r| r.sha == anchor.sha) else { return };
+    fn restore(&self, anchor: Anchor, cx: &App) {
+        let Some(ix) = self.pages.read(cx).rows.iter().position(|r| r.sha == anchor.sha) else { return };
         let row = px(graph::ROW);
         let kept = row * ix as f32 - anchor.offset;
         let fits = |ix: usize| self.table.viewport().is_some_and(|v| row * (ix + 1) as f32 <= v + SNAP);
@@ -351,11 +359,11 @@ impl GitView {
             }
         };
         self.follow.wip_failed = None;
-        if wip.is_some() != self.wip_row().is_some() {
+        if wip.is_some() != self.wip_row(cx).is_some() {
             return self.refresh_graph(files, cx);
         }
         let before = std::mem::replace(&mut self.wip, wip);
-        if self.selected() == Some(Selected::Wip) {
+        if self.selected(cx) == Some(Selected::Wip) {
             self.wip_panel.update(cx, |p, cx| p.refresh(status, cx));
         }
         self.select_conflict(before, cx);

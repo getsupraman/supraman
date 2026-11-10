@@ -65,7 +65,7 @@ fn commit_details_show_a_commit_a_merge_and_the_root(cx: &mut TestAppContext) {
     let second = painted.borrow()["commit-parent-1"].bounds.center();
     cx.simulate_click(second, Modifiers::none());
     cx.run_until_parked();
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(f.sha("rename").to_string().into())), "the second parent's click selects it");
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Commit(f.sha("rename").to_string().into())), "the second parent's click selects it");
     select(&view, f.sha("merge"), cx);
     let painted = repaint(&view, cx);
 
@@ -73,7 +73,7 @@ fn commit_details_show_a_commit_a_merge_and_the_root(cx: &mut TestAppContext) {
     cx.simulate_click(parent, Modifiers::none());
     cx.run_until_parked();
     let main_work = Selected::Commit(f.sha("main_work").to_string().into());
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(main_work), "a parent's click selects it in the graph");
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(main_work), "a parent's click selects it in the graph");
     assert_eq!(shown(&panel, cx).summary.as_ref(), "Main work");
 
     select(&view, f.sha("root"), cx);
@@ -240,7 +240,7 @@ fn commit_details_a_second_click_on_the_open_file_closes_its_diff(cx: &mut TestA
         assert_eq!(open_path(cx).as_deref(), Some("src/util.rs"), "{list:?}: another file switches the viewer to it");
         click(&view, &format!("{row}-src/util.rs"), cx);
         assert_eq!(open_path(cx), None, "{list:?}: a second click on the open file closes the viewer");
-        assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(sha.clone().into())), "the commit stays selected");
+        assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Commit(sha.clone().into())), "the commit stays selected");
         assert!(repaint(&view, cx).borrow().contains_key("git-col-sha"), "the graph is back");
         assert_eq!(panel.read_with(cx, |p, _| (p.paths.selected(), p.tree().0.selected())), (None, None), "the file is deselected");
         assert_eq!(shown(&panel, cx).sha.as_ref(), sha, "the panel keeps the commit");
@@ -255,7 +255,7 @@ fn commit_details_show_a_stash_its_branch_time_and_files_against_its_base(cx: &m
     let (view, cx) = open(&f.dir, Opts::default(), cx);
     let panel = panel_of(&view, cx);
     select(&view, f.sha("stash_feature_index"), cx);
-    let Some(Selected::Stash(stash)) = view.read_with(cx, |v, _| v.selected()) else { panic!("the stash row selects its stash") };
+    let Some(Selected::Stash(stash)) = view.read_with(cx, |v, cx| v.selected(cx)) else { panic!("the stash row selects its stash") };
     assert_eq!(stash.sha, f.sha("stash_feature"));
     let s = shown(&panel, cx);
     assert_eq!((s.sha.as_ref(), s.summary.as_ref(), s.body.as_ref()), (f.sha("stash_feature"), supraman_gitman::fixture::FEATURE_STASH, ""));
@@ -270,7 +270,7 @@ fn commit_details_show_a_stash_its_branch_time_and_files_against_its_base(cx: &m
     let parent = painted.borrow()["commit-parent-0"].bounds.center();
     cx.simulate_click(parent, Modifiers::none());
     cx.run_until_parked();
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(f.sha("rename").to_string().into())), "the base's click selects it");
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Commit(f.sha("rename").to_string().into())), "the base's click selects it");
 }
 
 /// Whether `key` painted wider than `min`.

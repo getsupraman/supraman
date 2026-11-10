@@ -56,7 +56,7 @@ fn c1_ctrl_p_finds_a_branch_a_file_and_a_commit_by_its_sha(cx: &mut TestAppConte
     assert_eq!(listed(&view, cx).2.first().map(String::as_str), Some("ref:Local:feature"));
     keys(&view, "enter", cx);
     assert!(!is_open(&view, cx), "Enter closes it");
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), commit(f.sha("rename")), "the branch's commit selected in the graph");
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), commit(f.sha("rename")), "the branch's commit selected in the graph");
 
     keys(&view, "ctrl-p", cx);
     typed(&view, "/new", cx);
@@ -71,7 +71,7 @@ fn c1_ctrl_p_finds_a_branch_a_file_and_a_commit_by_its_sha(cx: &mut TestAppConte
     typed(&view, &format!("#{}", &f.sha("second")[..6]), cx);
     assert_eq!(listed(&view, cx).2.first().cloned(), Some(format!("commit:{}", f.sha("second"))));
     keys(&view, "enter", cx);
-    assert_eq!(view.read_with(cx, |v, cx| (v.selected(), v.diff(cx).is_some())), (commit(f.sha("second")), false), "the commit selected, the viewer closed");
+    assert_eq!(view.read_with(cx, |v, cx| (v.selected(cx), v.diff(cx).is_some())), (commit(f.sha("second")), false), "the commit selected, the viewer closed");
 }
 
 #[gpui::test]

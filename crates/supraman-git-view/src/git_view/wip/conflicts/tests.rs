@@ -48,7 +48,7 @@ fn a_merge_conflict_selects_the_wip_row_and_the_panel_resolves_unresolves_takes_
     let f = Fixture::copy();
     f.conflict();
     let (view, cx) = open_as(&f.worktree, occupancy::Live::default(), cx);
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Wip), "the conflict selects the WIP row");
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Wip), "the conflict selects the WIP row");
     assert!(painted(&view, "git-conflict-node", cx), "the conflict node in place of the WIP row");
     assert_eq!(header(&view, cx), "Merge conflicts detected");
     assert!(painted(&view, "wip-conflict-incoming", cx) && painted(&view, "wip-conflict-current", cx), "merging main into side");
@@ -83,12 +83,12 @@ fn a_merge_conflict_selects_the_wip_row_and_the_panel_resolves_unresolves_takes_
 fn a_conflict_appearing_later_selects_the_wip_row(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let (view, cx) = open_as(&f.worktree, occupancy::Live::default(), cx);
-    assert_ne!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Wip));
+    assert_ne!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Wip));
     f.conflict();
     view.update(cx, |v, cx| v.refresh_after_write(cx));
     cx.run_until_parked();
     redraw(&view, cx);
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Wip));
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Wip));
     assert!(painted(&view, "git-conflict-node", cx));
 }
 

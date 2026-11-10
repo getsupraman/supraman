@@ -35,7 +35,7 @@ fn asking(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<String> 
 }
 
 fn group_of(view: &Entity<GitView>, ix: usize, name: &str, cx: &mut VisualTestContext) -> usize {
-    view.read_with(cx, |v, _| v.rows[ix].row.refs.iter().position(|g| g.name == name)).unwrap_or_else(|| panic!("a pill {name}"))
+    view.read_with(cx, |v, cx| v.pages.read(cx).rows[ix].row.refs.iter().position(|g| g.name == name)).unwrap_or_else(|| panic!("a pill {name}"))
 }
 
 /// The menu of the pill `name` on the row of `at`.
@@ -100,7 +100,7 @@ fn a_pills_double_click_checks_out_and_its_menu_fast_forwards_merges_and_makes_a
     pill_menu(&view, f.sha("rename"), "feature", cx);
     click(&view, "menu-ref-create-branch", cx);
     let ix = row_of(&view, f.sha("rename"), cx);
-    assert!(view.read_with(cx, |v, cx| v.branch.read(cx).inline_field(&v.rows[ix].sha).is_some()), "the name field stands in the row");
+    assert!(view.read_with(cx, |v, cx| v.branch.read(cx).inline_field(&v.pages.read(cx).rows[ix].sha).is_some()), "the name field stands in the row");
     view.update(cx, |v, cx| v.branch.update(cx, |b, cx| b.naming().unwrap().type_in("bad name", "", cx)));
     view.update(cx, |v, cx| v.branch.update(cx, |b, cx| b.submit_name(cx)));
     cx.run_until_parked();
@@ -198,7 +198,7 @@ fn a_pill_dropped_on_another_fast_forwards_that_branch_without_a_checkout(cx: &m
     let status = f.at(&f.dir, &["status", "--porcelain"]);
     let (main_ix, stale_ix) = (row_of(&view, f.sha("ahead"), cx), row_of(&view, f.sha("main_work"), cx));
     let (main_group, stale_group) = (group_of(&view, main_ix, "main", cx), group_of(&view, stale_ix, "stale", cx));
-    let pill = view.read_with(cx, |v, _| DraggedPill { group: v.rows[main_ix].row.refs[main_group].clone(), sha: v.rows[main_ix].sha.clone() });
+    let pill = view.read_with(cx, |v, cx| DraggedPill { group: v.pages.read(cx).rows[main_ix].row.refs[main_group].clone(), sha: v.pages.read(cx).rows[main_ix].sha.clone() });
     cx.update(|window, cx| view.update(cx, |v, cx| v.pill_dropped(&pill, stale_ix, stale_group, window, cx)));
     cx.run_until_parked();
     redraw(&view, cx);
@@ -217,7 +217,7 @@ fn a_branch_in_a_linked_worktree_shows_the_tree_and_every_menu_of_it_offers_the_
     let side = sha(&f, "side");
     let ix = row_of(&view, &side, cx);
     let group = group_of(&view, ix, "side", cx);
-    let icons = view.read_with(cx, |v, _| crate::git_view::cells::kind_icons(&v.rows[ix].row.refs[group]));
+    let icons = view.read_with(cx, |v, cx| crate::git_view::cells::kind_icons(&v.pages.read(cx).rows[ix].row.refs[group]));
     assert_eq!(icons.last(), Some(&Icon::Worktree), "the pill of a branch in a linked worktree ends with the tree: {icons:?}");
     let leads = view.read_with(cx, |v, cx| {
         let panel = v.ref_panel.read(cx);
@@ -261,7 +261,7 @@ fn the_main_worktrees_branch_keeps_its_local_pill_and_dimmed_delete_and_a_pills_
     let main = sha(&f, "main");
     let ix = row_of(&view, &main, cx);
     let group = group_of(&view, ix, "main", cx);
-    let icons = view.read_with(cx, |v, _| crate::git_view::cells::kind_icons(&v.rows[ix].row.refs[group]));
+    let icons = view.read_with(cx, |v, cx| crate::git_view::cells::kind_icons(&v.pages.read(cx).rows[ix].row.refs[group]));
     assert!(!icons.contains(&Icon::Worktree), "the main worktree's branch never gets the tree: {icons:?}");
     pill_menu(&view, &main, "main", cx);
     let labels = menu(&view, cx);
@@ -269,7 +269,7 @@ fn the_main_worktrees_branch_keeps_its_local_pill_and_dimmed_delete_and_a_pills_
     click(&view, "menu-ref-delete-main", cx);
     assert!(asking(&view, cx).is_none(), "its Delete is dimmed: a no-op");
 
-    let first = view.read_with(cx, |v, _| v.rows.iter().position(|r| !r.row.refs.is_empty())).expect("a row with a pill");
+    let first = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| !r.row.refs.is_empty())).expect("a row with a pill");
     let below = cx.update(|window, _| {
         let mut style = window.text_style();
         style.font_size = gpui::rems(0.75).into();

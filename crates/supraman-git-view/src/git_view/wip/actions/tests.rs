@@ -326,7 +326,7 @@ fn a_stopped_reword_shows_skip_then_continue_once_staged_which_finishes_it_and_u
 
     let head = f.at(&f.worktree, &["rev-parse", "HEAD"]);
     assert_eq!(f.at(&f.worktree, &["log", "--format=%s", "-2", "HEAD"]), "W three\nReworded");
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(crate::git_view::Selected::Commit(head.into())), "the new HEAD is selected");
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(crate::git_view::Selected::Commit(head.into())), "the new HEAD is selected");
     click(&view, UNDO_KEY, cx);
     assert_eq!(f.at(&f.worktree, &["rev-parse", "HEAD"]), old, "Undo puts the old tip back");
 }

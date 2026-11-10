@@ -179,13 +179,13 @@ fn the_worktree_panel_header_says_its_upstreams_ahead_and_behind(cx: &mut TestAp
     reread(&view, cx);
     let wt = row(&view, &t.f.worktree, cx);
     let upstream = summary(&view, &wt, cx).unwrap().trim_end_matches("+1").trim().to_string();
-    let ix = view.read_with(cx, |v, _| v.rows.iter().position(|r| r.worktree().is_some_and(|p| path_key(p) == path_key(&t.f.worktree)))).expect("its graph row");
+    let ix = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| r.worktree().is_some_and(|p| path_key(p) == path_key(&t.f.worktree)))).expect("its graph row");
     view.update(cx, |v, cx| {
         v.table.select(Some(ix));
         v.selection_moved(cx);
     });
     settle(&view, cx);
-    assert!(matches!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Worktree(_))));
+    assert!(matches!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Worktree(_))));
     let said = view.update(cx, |v, cx| v.worktree_read(cx).1).expect("read");
     assert_eq!(said.upstream, upstream, "the ref panel's words");
     assert!(painted(&view, "worktree-upstream", cx));

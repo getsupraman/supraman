@@ -122,7 +122,7 @@ impl GitView {
 
     /// A graph cell of row `ix`, taking the right-click of a stash's row.
     pub(super) fn stash_row(&self, ix: usize, cell: AnyElement, cx: &mut Context<Self>) -> AnyElement {
-        let Some(stash) = self.rows.get(ix).and_then(|r| r.stash()) else { return cell };
+        let Some(stash) = self.pages.read(cx).rows.get(ix).and_then(|r| r.stash()) else { return cell };
         let stash = StashRef { sha: stash.sha.clone(), label: stash.label() };
         div()
             .size_full()

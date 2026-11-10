@@ -33,7 +33,7 @@ fn wip_view_lists_each_file_in_its_section_with_its_mark(cx: &mut TestAppContext
     let f = Fixture::shared();
     let (view, cx) = open(&f.dir, Opts::default(), cx);
     select_wip(&view, cx);
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Wip));
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Wip));
 
     let s = shown(&view, cx);
     assert_eq!(listed(&s.unstaged), [("a.txt", ChangeKind::Modified), ("b.txt", ChangeKind::Deleted), ("u.txt", ChangeKind::Untracked)]);
@@ -125,7 +125,7 @@ fn wip_view_banner_view_change_selects_the_wip_row(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert!(repaint(&view, cx).borrow().contains_key("wip-banner-view-change"), "the banner over a commit of a dirty tree");
     click(&view, "wip-banner-view-change", cx);
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Wip), "View Change selects the WIP row");
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Wip), "View Change selects the WIP row");
     assert_eq!(shown(&view, cx).total, 5);
     assert!(!repaint(&view, cx).borrow().contains_key("wip-banner-view-change"), "no banner over the WIP panel");
     assert_eq!(file_changes(1), "1 file change");
@@ -141,7 +141,7 @@ fn wip_view_a_second_click_on_the_open_file_closes_its_diff(cx: &mut TestAppCont
     assert_eq!(view.read_with(cx, |v, cx| v.diff(cx).map(|d| d.read(cx).target.of.clone())), Some(Of::Staged), "the same path in the other list is another file");
     click(&view, "wip-staged-files-row-a.txt", cx);
     assert!(view.read_with(cx, |v, cx| v.diff(cx).is_none()), "a second click on the open file closes the viewer");
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Wip));
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Wip));
     let deselected = view.read_with(cx, |v, cx| {
         let p = v.wip_panel().read(cx);
         [&p.unstaged, &p.staged].iter().all(|l| l.paths.selected().is_none() && l.tree.selected().is_none())

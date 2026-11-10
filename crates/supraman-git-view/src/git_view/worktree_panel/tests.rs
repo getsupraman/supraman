@@ -43,7 +43,7 @@ fn reread(view: &Entity<GitView>, cx: &mut VisualTestContext) {
 }
 
 fn select_worktree(view: &Entity<GitView>, dir: &Path, cx: &mut VisualTestContext) {
-    let ix = view.read_with(cx, |v, _| v.rows.iter().position(|r| r.worktree().is_some_and(|p| path_key(p) == path_key(dir)))).expect("a row of the worktree");
+    let ix = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| r.worktree().is_some_and(|p| path_key(p) == path_key(dir)))).expect("a row of the worktree");
     view.update(cx, |v, cx| {
         v.table.select(Some(ix));
         v.selection_moved(cx);
@@ -77,7 +77,7 @@ fn worktree_panel_shows_the_header_and_the_worktrees_files_in_path_and_tree(cx: 
     let f = fixture();
     let (view, cx) = open(&f, cx);
     select_worktree(&view, &f.worktree, cx);
-    assert!(matches!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Worktree(_))));
+    assert!(matches!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Worktree(_))));
 
     let shown = view.read_with(cx, |v, cx| v.worktree_panel.read(cx).shown()).expect("the worktree is shown");
     assert_eq!(path_key(&shown.path), path_key(&f.worktree));
@@ -123,7 +123,7 @@ fn worktree_panel_follows_a_new_read_and_clears_when_the_row_goes(cx: &mut TestA
     f.at(&f.worktree, &["reset", "-q", "--hard"]);
     f.at(&f.worktree, &["clean", "-q", "-fd"]);
     reread(&view, cx);
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), None, "a clean worktree's row goes, and its selection with it");
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), None, "a clean worktree's row goes, and its selection with it");
 }
 
 #[gpui::test]

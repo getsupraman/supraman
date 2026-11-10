@@ -311,9 +311,9 @@ fn diff_view_closes_back_to_the_graph_as_it_was(cx: &mut TestAppContext) {
     view.update(cx, |v, cx| v.select_sha(&r.change, cx));
     redraw(&view, cx);
     let at = |view: &Entity<GitView>, cx: &mut VisualTestContext| {
-        view.read_with(cx, |v, _| {
+        view.read_with(cx, |v, cx| {
             let ix = v.table.selected().expect("a row is selected");
-            (v.selected(), v.hits.borrow().get(&format!("git-row-{ix}")).map(|h| h.bounds.origin))
+            (v.selected(cx), v.hits.borrow().get(&format!("git-row-{ix}")).map(|h| h.bounds.origin))
         })
     };
     let before = at(&view, cx);

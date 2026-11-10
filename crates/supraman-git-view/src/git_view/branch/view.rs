@@ -111,7 +111,7 @@ impl GitView {
             NameAsk::Branch { at } | NameAsk::Tag { at } => Some(at.clone()),
             _ => None,
         };
-        let row = at.as_ref().and_then(|sha| self.rows.iter().position(|r| r.sha.as_ref() == sha.as_str()));
+        let row = at.as_ref().and_then(|sha| self.pages.read(cx).rows.iter().position(|r| r.sha.as_ref() == sha.as_str()));
         if let Some(ix) = row {
             self.table.reveal(ix);
         }
@@ -153,7 +153,7 @@ impl GitView {
 
     /// The graph pill of row `ix`'s group `group` right-clicked.
     pub(crate) fn pill_menu(&mut self, ix: usize, group: usize, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let Some(row) = self.rows.get(ix) else { return };
+        let Some(row) = self.pages.read(cx).rows.get(ix).cloned() else { return };
         let Some(g) = row.row.refs.get(group).cloned() else { return };
         let refs = self.branch.read(cx).refs().clone();
         let Some(subject) = group_subject(&refs, &g, &row.sha) else { return };
@@ -165,7 +165,7 @@ impl GitView {
     /// The graph pill of row `ix`'s group `group` double-clicked: its local branch checked out, else its one remote
     /// branch, else a menu of its remote branches; a tag's or HEAD's nothing.
     pub(crate) fn pill_double_clicked(&mut self, ix: usize, group: usize, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let Some(g) = self.rows.get(ix).and_then(|r| r.row.refs.get(group)).cloned() else { return };
+        let Some(g) = self.pages.read(cx).rows.get(ix).and_then(|r| r.row.refs.get(group)).cloned() else { return };
         let (locals, remotes, _) = split(&g);
         let target = match (locals.first(), remotes.as_slice()) {
             (Some(local), _) => Target::Branch(local.clone()),
@@ -181,7 +181,7 @@ impl GitView {
 
     /// `pill` dropped on row `ix`'s group `group`.
     pub(crate) fn pill_dropped(&mut self, pill: &DraggedPill, ix: usize, group: usize, window: &Window, cx: &mut Context<Self>) {
-        let Some(row) = self.rows.get(ix) else { return };
+        let Some(row) = self.pages.read(cx).rows.get(ix).cloned() else { return };
         let Some(target) = row.row.refs.get(group).and_then(|g| dragged(g, &row.sha)) else { return };
         let Some(source) = dragged(&pill.group, &pill.sha) else { return };
         let position = window.mouse_position();

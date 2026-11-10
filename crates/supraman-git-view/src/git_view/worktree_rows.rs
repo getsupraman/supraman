@@ -89,14 +89,14 @@ impl GitView {
     /// The selected worktree row's read and words, as last read.
     pub(super) fn worktree_read(&self, cx: &Context<Self>) -> (Option<WorktreeWip>, Option<WorktreeView>) {
         let Some(ix) = self.table.selected() else { return (None, None) };
-        let Some(path) = self.rows.get(ix).and_then(GraphRow::worktree) else { return (None, None) };
+        let Some(path) = self.pages.read(cx).rows.get(ix).and_then(GraphRow::worktree) else { return (None, None) };
         let wip = background::wips(cx.entity_id(), cx).and_then(|w| w.read(cx).get(path).cloned());
         (wip, self.worktree_view(ix, cx))
     }
 
     /// The selected worktree's panel, and its open file, read again when its read changed.
     fn worktree_panel_read(&mut self, cx: &mut Context<Self>) {
-        let Some(Selected::Worktree(path)) = self.selected() else { return };
+        let Some(Selected::Worktree(path)) = self.selected(cx) else { return };
         let (wip, said) = self.worktree_read(cx);
         if !self.worktree_panel.update(cx, |p, cx| p.refresh(wip, said, cx)) {
             return;
@@ -111,7 +111,7 @@ impl GitView {
     }
 
     pub(crate) fn worktree_view(&self, ix: usize, cx: &Context<Self>) -> Option<WorktreeView> {
-        let path = self.rows.get(ix)?.worktree()?;
+        let path = self.pages.read(cx).rows.get(ix)?.worktree()?;
         let wip = background::wips(cx.entity_id(), cx)?.read(cx).get(path).cloned()?;
         let session = self.gate.read(cx).occupancy().who_works_in(path).into_iter().next();
         Some(WorktreeView::of(&wip, session))
@@ -119,7 +119,7 @@ impl GitView {
 
     /// Asks the workspace for row `ix`'s worktree's Git tab; a detached worktree's only when `detached_too`.
     pub(crate) fn open_worktree(&mut self, ix: usize, detached_too: bool, cx: &mut Context<Self>) {
-        let Some(path) = self.rows.get(ix).and_then(|r| r.row.worktree.clone()) else { return };
+        let Some(path) = self.pages.read(cx).rows.get(ix).and_then(|r| r.row.worktree.clone()) else { return };
         if !detached_too && self.worktree_view(ix, cx).is_none_or(|v| v.detached) {
             return;
         }
@@ -129,7 +129,8 @@ impl GitView {
     /// Row `ix`'s cell of column `col`, row `ix` a worktree's: its cells double-click to open it, and it has no menu.
     pub(super) fn worktree_cell(&mut self, ix: usize, col: usize, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let view = self.worktree_view(ix, cx);
-        let row = &self.rows[ix];
+        let rows = self.pages.read(cx).rows.clone();
+        let row = &rows[ix];
         let cell = match (col, view) {
             (1, _) => graph::cell(ix, row, false, palette, &self.hits),
             (0, Some(view)) => self.worktree_ref(ix, &view, palette, cx),
@@ -163,7 +164,7 @@ impl GitView {
 
     /// The `on <branch>` label, then Open Worktree shown on the row's hover or selection.
     fn worktree_ref(&self, ix: usize, view: &WorktreeView, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
-        let colour = self.rows[ix].row.colour;
+        let colour = self.pages.read(cx).rows[ix].row.colour;
         let label = cells::pill_box(colour, palette)
             .relative()
             .text_color(palette.muted)

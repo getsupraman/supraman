@@ -26,7 +26,7 @@ fn key_up(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
 }
 
 fn selected_sha(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<Selected> {
-    view.read_with(cx, |v, _| v.selected())
+    view.read_with(cx, |v, cx| v.selected(cx))
 }
 
 fn commit(sha: &str) -> Option<Selected> {
@@ -75,16 +75,16 @@ fn graph_keys_walk_parents_children_head_and_upstream(cx: &mut TestAppContext) {
     }
     keys(&view, "shift-h", cx);
     assert_eq!(selected_sha(&view, cx), commit(&upstream), "Shift+H: HEAD's upstream");
-    let rename = view.read_with(cx, |v, _| v.rows.iter().position(|r| r.sha.as_ref() == f.sha("rename")).unwrap());
+    let rename = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| r.sha.as_ref() == f.sha("rename")).unwrap());
     click_row(&view, rename, cx);
     keys(&view, "shift-up", cx);
     assert_eq!(selected_sha(&view, cx), commit(f.sha("merge")), "a merged commit's child is the merge");
-    let stash = view.read_with(cx, |v, _| v.rows.iter().position(|r| r.sha.as_ref() == f.sha("stash_message_index")).unwrap());
+    let stash = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| r.sha.as_ref() == f.sha("stash_message_index")).unwrap());
     click_row(&view, stash, cx);
     keys(&view, "shift-down", cx);
     assert_eq!(selected_sha(&view, cx), commit(f.sha("merge")), "Shift+Down from a stash: its base");
     keys(&view, "ctrl-end", cx);
-    let last = view.read_with(cx, |v, _| v.rows.last().map(|r| r.sha.to_string()));
+    let last = view.read_with(cx, |v, cx| v.pages.read(cx).rows.last().map(|r| r.sha.to_string()));
     assert_eq!(selected_sha(&view, cx), last.as_deref().and_then(commit), "Ctrl+End: the last loaded commit");
     keys(&view, "ctrl-up k j", cx);
     assert_eq!(selected_sha(&view, cx), commit(f.sha("ahead")), "Ctrl+Up the WIP row, K up (stays), J down");
@@ -119,7 +119,7 @@ fn a_held_key_reads_the_commit_once_it_comes_up_or_settles(cx: &mut TestAppConte
     let start = token(cx);
     keys(&view, "down down down down down", cx);
     assert_eq!(token(cx), start, "five rows moved and not one read");
-    let fifth = view.read_with(cx, |v, _| v.rows[5].sha.to_string());
+    let fifth = view.read_with(cx, |v, cx| v.pages.read(cx).rows[5].sha.to_string());
     assert_eq!(selected_sha(&view, cx), commit(&fifth), "the selection moved at once");
     key_up(&view, "down", cx);
     assert_eq!(token(cx), start + 1, "one read when the key comes up");
@@ -134,7 +134,7 @@ fn a_held_key_reads_the_commit_once_it_comes_up_or_settles(cx: &mut TestAppConte
     cx.executor().advance_clock(SETTLE);
     cx.run_until_parked();
     assert_eq!(token(cx), start + 2, "read once it settles");
-    let seventh = view.read_with(cx, |v, _| v.rows[7].sha.to_string());
+    let seventh = view.read_with(cx, |v, cx| v.pages.read(cx).rows[7].sha.to_string());
     assert_eq!(shown(cx).as_deref(), Some(seventh.as_str()));
 }
 
@@ -142,7 +142,7 @@ fn a_held_key_reads_the_commit_once_it_comes_up_or_settles(cx: &mut TestAppConte
 fn right_opens_the_first_file_and_left_or_escape_go_back_to_the_row(cx: &mut TestAppContext) {
     let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
-    let root = view.read_with(cx, |v, _| v.rows.iter().position(|r| r.sha.as_ref() == f.sha("root")).unwrap());
+    let root = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| r.sha.as_ref() == f.sha("root")).unwrap());
     click_row(&view, root, cx);
     let files = view.read_with(cx, |v, cx| v.panel.read(cx).file_order(f.sha("root")));
     assert_eq!(paths(&files), ["a.txt", "b.txt", "bin.dat", "old.txt"]);
@@ -162,7 +162,7 @@ fn right_opens_the_first_file_and_left_or_escape_go_back_to_the_row(cx: &mut Tes
     assert!(view.read_with(cx, |v, cx| v.panel.read(cx).selected_file().is_none()), "the file deselected");
     assert!(cx.update(|window, cx| view.read(cx).table.focus_handle().is_focused(window)), "the graph's row has the keyboard");
     keys(&view, "up right", cx);
-    let above = view.read_with(cx, |v, _| v.rows[root - 1].sha.to_string());
+    let above = view.read_with(cx, |v, cx| v.pages.read(cx).rows[root - 1].sha.to_string());
     assert_eq!(selected_sha(&view, cx), commit(&above), "keys walk the graph again");
     key_up(&view, "up", cx);
     keys(&view, "right", cx);
@@ -175,7 +175,7 @@ fn right_opens_the_first_file_and_left_or_escape_go_back_to_the_row(cx: &mut Tes
 fn up_and_down_in_the_viewer_walk_the_files_and_wrap(cx: &mut TestAppContext) {
     let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
-    let root = view.read_with(cx, |v, _| v.rows.iter().position(|r| r.sha.as_ref() == f.sha("root")).unwrap());
+    let root = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| r.sha.as_ref() == f.sha("root")).unwrap());
     click_row(&view, root, cx);
     keys(&view, "right", cx);
     let path = |cx: &mut VisualTestContext| open_target(&view, cx).map(|t| t.path).unwrap_or_default();

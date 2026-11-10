@@ -179,7 +179,7 @@ pub(crate) fn toast(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Optio
 
 /// The graph's row of the commit `sha`.
 pub(crate) fn row_of(view: &Entity<GitView>, sha: &str, cx: &mut VisualTestContext) -> usize {
-    view.read_with(cx, |v, _| v.rows.iter().position(|r| r.sha.as_ref() == sha)).unwrap_or_else(|| panic!("no row of {sha}"))
+    view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| r.sha.as_ref() == sha)).unwrap_or_else(|| panic!("no row of {sha}"))
 }
 
 pub(crate) fn select_wip(view: &Entity<GitView>, cx: &mut VisualTestContext) {

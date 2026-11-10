@@ -37,7 +37,7 @@ impl Probe {
 
 impl GitView {
     pub fn probe(&self, cx: &App) -> Probe {
-        let rows = self.rows.iter().map(|r| ProbeRow { sha: r.sha.to_string() }).collect();
+        let rows = self.pages.read(cx).rows.iter().map(|r| ProbeRow { sha: r.sha.to_string() }).collect();
         let commit = match self.panel.read(cx).state() {
             PanelState::Shown(s) => Some((s.sha.to_string(), s.parents.iter().map(|p| p.to_string()).collect())),
             _ => None,
@@ -47,6 +47,6 @@ impl GitView {
             ProbeDiff { path: d.target.path.clone(), shown: d.shown() }
         });
         let hidden = self.ref_panel().read(cx).walk().hidden.iter().cloned().collect();
-        Probe { rows, selected: self.selected(), commit, diff, panel_width: self.panel_width, hidden }
+        Probe { rows, selected: self.selected(cx), commit, diff, panel_width: self.panel_width, hidden }
     }
 }

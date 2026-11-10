@@ -21,13 +21,15 @@ impl GitView {
     /// The summary's field and the counts; `// WIP` and the counts until the field is made.
     pub(super) fn wip_message(&mut self, ix: usize, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         if let Some(conflicts) = self.wip.map(|w| w.conflicts).filter(|n| *n > 0) {
-            return cells::wip_message(&self.rows[ix], conflict_node(conflicts, &self.hits, palette, cx), String::new(), palette);
+            let rows = self.pages.read(cx).rows.clone();
+            return cells::wip_message(&rows[ix], conflict_node(conflicts, &self.hits, palette, cx), String::new(), palette);
         }
         let counts = self.wip.map(|w| w.counts()).unwrap_or_default();
         let input = self.wip_panel.read(cx).composer().map(|c| c.row.clone());
-        let row = &self.rows[ix];
+        let rows = self.pages.read(cx).rows.clone();
+        let row = &rows[ix];
         let Some(input) = input else { return cells::message(ix, row, Some(counts.as_str()), palette, &self.hits) };
-        if self.selected() != Some(Selected::Wip) {
+        if self.selected(cx) != Some(Selected::Wip) {
             let summary = input.read(cx).text().to_string();
             return cells::wip_message(row, still_field(summary, palette, cx), counts, palette);
         }
@@ -49,7 +51,7 @@ impl GitView {
 
     /// Ctrl+Shift+M: the WIP row selected and the summary given the keyboard on the next frame.
     pub(super) fn focus_message(&mut self, cx: &mut Context<Self>) {
-        if self.selected() != Some(Selected::Wip) {
+        if self.selected(cx) != Some(Selected::Wip) {
             self.select_wip(cx);
         }
         self.focus_summary = true;
@@ -70,21 +72,23 @@ impl GitView {
     /// The WIP row selected when files became conflicted since `before`.
     pub(super) fn select_conflict(&mut self, before: Option<Wip>, cx: &mut Context<Self>) {
         let conflicted = |wip: Option<Wip>| wip.is_some_and(|w| w.conflicts > 0);
-        if conflicted(self.wip) && !conflicted(before) && self.selected() != Some(Selected::Wip) {
+        if conflicted(self.wip) && !conflicted(before) && self.selected(cx) != Some(Selected::Wip) {
             self.select_wip(cx);
         }
     }
 
     /// Each branch's lane colour in the loaded rows, by its pill's name and each ref's.
-    pub(super) fn ref_colours(&self) -> HashMap<String, usize> {
-        self.rows
+    pub(super) fn ref_colours(&self, cx: &App) -> HashMap<String, usize> {
+        self.pages
+            .read(cx)
+            .rows
             .iter()
             .flat_map(|r| r.row.refs.iter().flat_map(move |g| std::iter::once(g.name.clone()).chain(g.refs.iter().map(|l| l.name.clone())).map(move |n| (n, r.row.colour))))
             .collect()
     }
 
     pub(super) fn take_focus_summary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if std::mem::take(&mut self.focus_summary) && self.selected() == Some(Selected::Wip) {
+        if std::mem::take(&mut self.focus_summary) && self.selected(cx) == Some(Selected::Wip) {
             self.wip_panel.update(cx, |p, cx| p.focus_message(window, cx));
         }
     }

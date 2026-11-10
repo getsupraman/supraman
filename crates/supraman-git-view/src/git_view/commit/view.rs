@@ -23,7 +23,7 @@ fn wip_items() -> Vec<supraman_ui::menu::MenuItem<RefAct>> {
 impl GitView {
     /// Row `ix`'s cell taking the row's right-click: a commit's menu, the WIP row's; a stash row has its own.
     pub(crate) fn commit_row(&self, ix: usize, cell: AnyElement, cx: &mut Context<Self>) -> AnyElement {
-        if self.rows.get(ix).is_none_or(|r| r.stash().is_some()) {
+        if self.pages.read(cx).rows.get(ix).is_none_or(|r| r.stash().is_some()) {
             return cell;
         }
         div()
@@ -38,7 +38,7 @@ impl GitView {
 
     /// Row `ix`'s menu at `position`: the WIP row's, else its commit's with its branch groups.
     pub(crate) fn row_menu(&mut self, ix: usize, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let Some(row) = self.rows.get(ix) else { return };
+        let Some(row) = self.pages.read(cx).rows.get(ix).cloned() else { return };
         if row.wip() {
             return self.branch.update(cx, |b, cx| b.show_menu("Work in progress".into(), wip_items(), position, cx));
         }

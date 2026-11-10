@@ -2,8 +2,12 @@
 //! dropped and that page's layout kept, so scrolling back down pages them in again from there.
 
 use gpui::{AppContext as _, Context, px};
+use std::rc::Rc;
+
 use supraman_gitman::{FIRST_PAGE, Layout, NEXT_PAGE};
 
+use super::load::GraphRow;
+use super::pages::Pages;
 use super::{GitView, graph};
 
 /// The most rows kept loaded once the view is far above the last of them.
@@ -52,21 +56,31 @@ impl GitView {
     /// Drops the rows below a page's end while more than [`MAX_ROWS`] are loaded and the view's top is more
     /// than twice [`KEEP_BELOW`] above the last; the selected row stays.
     pub(super) fn trim_tail(&mut self, cx: &mut Context<Self>) {
-        if self.rows.len() <= MAX_ROWS || self.paging || self.seek.is_some() || self.layout.is_none() {
+        let pages = self.pages.read(cx);
+        if pages.rows.len() <= MAX_ROWS || pages.paging || self.seek.is_some() || pages.layout.is_none() {
             return;
         }
         let top = (self.table.scroll_top() / px(graph::ROW)).floor().max(0.) as usize;
         let keep = (top + KEEP_BELOW).max(self.table.selected().map_or(0, |s| s + 1));
-        if keep + KEEP_BELOW > self.rows.len() {
-            return;
-        }
-        let Some(mark) = self.marks.cut_at(keep).filter(|m| m.rows < self.rows.len()) else { return };
-        let (rows, commits, layout) = (mark.rows, mark.commits, mark.layout.clone());
-        let tail = self.rows.split_off(rows);
+        let Some((rows, tail)) = self.pages.update(cx, |p, _| p.cut(keep)) else { return };
         self.agents.dropped_from(rows);
+        cx.background_spawn(async move { drop(tail) }).detach();
+    }
+}
+
+impl Pages {
+    /// The rows below the page end at or below `keep` dropped, unless fewer than [`KEEP_BELOW`] lie below it: where
+    /// they were cut and the rows dropped.
+    fn cut(&mut self, keep: usize) -> Option<(usize, Vec<GraphRow>)> {
+        if keep + KEEP_BELOW > self.rows.len() {
+            return None;
+        }
+        let mark = self.marks.cut_at(keep).filter(|m| m.rows < self.rows.len())?;
+        let (rows, commits, layout) = (mark.rows, mark.commits, mark.layout.clone());
+        let tail = Rc::make_mut(&mut self.rows).split_off(rows);
         self.commits = commits;
         self.layout = Some(layout);
         self.more = true;
-        cx.background_spawn(async move { drop(tail) }).detach();
+        Some((rows, tail))
     }
 }

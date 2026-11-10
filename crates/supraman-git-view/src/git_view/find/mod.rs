@@ -88,7 +88,8 @@ impl GitView {
         let picks = frecency::snapshot(cx);
         let now = supraman_core::time::now_ms();
         let refs = entries::refs(&self.ref_panel.read(cx).entries(), self.ref_panel.read(cx).walk());
-        let modes = modes(refs, &self.rows, self.commits);
+        let pages = self.pages.read(cx);
+        let modes = modes(refs, &pages.rows, pages.commits);
         let hits = self.hits.clone();
         cx.new(|cx| {
             let mut p = Palette::new(ID, hits, top, Rc::new(entries::paint), window, cx);
@@ -182,7 +183,7 @@ impl GitView {
         let pulls = [PullMode::FastForwardIfPossible, PullMode::FastForwardOnly, PullMode::Rebase].map(|mode| (Command::Pull(mode), dim(Button::Pull(Some(mode)))));
         let walk = self.ref_panel.read(cx).walk().clone();
         let view = self.panel.read(cx).view();
-        let rows = !self.rows.is_empty();
+        let rows = !self.pages.read(cx).rows.is_empty();
         [
             (Command::Refresh, why(self.repo.is_some(), "The history is still loading.")),
             (Command::ToggleRefs, None),
@@ -190,7 +191,7 @@ impl GitView {
             (Command::ShowAllRefs, why(walk != Default::default(), "No ref is hidden or soloed.")),
             (Command::GoToHead, why(self.heads.head.is_some() && rows, "This repository has no commit yet.")),
             (Command::GoToUpstream, why(self.heads.upstream.is_some(), "The current branch has no upstream.")),
-            (Command::GoToWip, why(self.wip_row().is_some(), "The working tree is clean.")),
+            (Command::GoToWip, why(self.wip_row(cx).is_some(), "The working tree is clean.")),
             if view == FileView::Tree { (Command::FilesAsPaths, None) } else { (Command::FilesAsTree, None) },
             (Command::CloseViewer, why(self.diff(cx).is_some(), "No file is open in the viewer.")),
             (Command::Push, dim(Button::Push)),
