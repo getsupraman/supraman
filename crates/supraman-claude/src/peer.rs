@@ -1,12 +1,4 @@
-//! Writing into a session's own message pipe, as another session's `SendMessage` does
-//! (`docs/peer-messaging.md`). Read-only on `~/.claude/sessions`: Supraman never registers a pipe, a
-//! `.json` or a `.key` of its own, so a session cannot answer it there (it answers with `sm tell`).
-//!
-//! Registry: `<pid>.json` (`name`, `messagingSocketPath`, `peerProtocol`, `procStart` = the process
-//! creation FILETIME) and `<pid>.<sha256(canonical pipe)>.key` (`peerToken`). A `.json` outlives its
-//! process, so a row counts only while its pid runs with the same start time. One connection per
-//! message: an `auth` line, then a `user` line with no `from` and no `from-mode` (claiming a mode is
-//! spoofing; with none, a prompting or auto receiver accepts and a bypass one holds).
+//! Writing into a session's own message pipe as `SendMessage` does (see `docs/peer-messaging.md`); read-only on `~/.claude/sessions`.
 
 use std::fmt;
 use std::io::{self, Write as _};
@@ -20,8 +12,7 @@ use sha2::{Digest, Sha256};
 pub const PEER_PROTOCOL: i64 = 1;
 /// The sender side's own bound (SendMessage uses the same).
 pub const DELIVER_TIMEOUT: Duration = Duration::from_secs(5);
-/// What the receiver shows as the sender's name; its wrapper is only honoured when it re-renders
-/// byte-identical, which `from-name` alone does (measured).
+/// What the receiver shows as the sender's name; only `from-name` re-renders byte-identical, as its wrapper needs (measured).
 pub const FROM_NAME: &str = "supraman";
 const CLOSE_TAG: &str = "</cross-session-message>";
 /// Under `cfg(test)`, [`deliver`] writes to no other pipe: a test can never reach a live session.
@@ -67,8 +58,7 @@ pub fn sessions_dir() -> Option<PathBuf> {
     supraman_core::paths::claude_dir().map(|d| d.join("sessions"))
 }
 
-/// `\\.\pipe\` + the rest of the name lowercased: what the key file's name hashes. Unix socket
-/// paths are hashed as they are.
+/// `\\.\pipe\` + the rest of the name lowercased: what the key file's name hashes; unix socket paths as they are.
 pub fn canonical_pipe(path: &str) -> String {
     let lower = path.to_ascii_lowercase();
     for prefix in [r"\\.\pipe\", r"\\?\pipe\", "//./pipe/", "//?/pipe/"] {
@@ -156,15 +146,12 @@ pub fn entry_of(dir: &Path, pid: u32, live: &impl Liveness) -> Option<RegistryEn
 /// The shortest `[ref]` ListAgents prints: 6 hex digits, longer only where two refs share them.
 const REF_MIN: usize = 6;
 
-/// ListAgents' ref before shortening: sha256 hex of `session:<messagingSocketPath>`, the path as
-/// registered (measured on 2.1.312 for 7 live sessions; with the `tengu_session_stable_address` flag on,
-/// claude hashes `session:sid:<sessionId>` instead).
+/// ListAgents' ref before shortening: sha256 hex of `session:<messagingSocketPath>` as registered (measured on 2.1.312).
 pub fn ref_hash(pipe: &str) -> String {
     supraman_core::hex::encode(&Sha256::digest(format!("session:{pipe}").as_bytes()))
 }
 
-/// What SendMessage takes for the session `session_id`: its registered name, or `name [ref]` when
-/// another session in `live` has the same name. `None` without a live entry, a name or a pipe.
+/// What SendMessage takes for `session_id`: its registered name, or `name [ref]` when another live session shares it.
 pub fn send_name(live: &[RegistryEntry], session_id: &str) -> Option<String> {
     let listed: Vec<&RegistryEntry> = live.iter().filter(|e| e.pipe.is_some() && !e.name.trim().is_empty()).collect();
     let own = listed.iter().filter(|e| e.session_id.as_deref() == Some(session_id)).max_by_key(|e| e.proc_start.unwrap_or(0))?;
@@ -232,8 +219,7 @@ fn read_token(target: &PeerTarget) -> Result<Option<Token>, PeerError> {
     Ok(Some(Token(token.to_string())))
 }
 
-/// `content` as the receiver shows a message from [`FROM_NAME`]: the wrapper on its own lines, as
-/// SendMessage writes it. A body that contains the closing tag goes unwrapped (it could not re-render).
+/// `content` wrapped as SendMessage writes it; a body holding the closing tag goes unwrapped, as it could not re-render.
 pub fn wrap(body: &str) -> String {
     if body.contains(CLOSE_TAG) || body.contains("<cross-session-message") {
         return body.to_string();
@@ -256,8 +242,7 @@ fn auth_line(token: &Token) -> String {
     serde_json::json!({ "type": "auth", "token": token.0 }).to_string()
 }
 
-/// Writes `content` into `target`'s pipe: fire and forget, nothing comes back on the connection. Bounded
-/// by [`DELIVER_TIMEOUT`]; a write that hangs is left to its thread.
+/// Writes `content` into `target`'s pipe, fire and forget, bounded by [`DELIVER_TIMEOUT`]; a hung write is left to its thread.
 pub fn deliver(target: &PeerTarget, content: &str) -> Result<(), PeerError> {
     #[cfg(test)]
     if !canonical_pipe(&target.pipe).contains(TEST_PIPE_PREFIX) {
