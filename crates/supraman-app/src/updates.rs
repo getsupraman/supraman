@@ -338,13 +338,18 @@ impl FleetView {
 
     pub fn dismiss_update(&mut self, cx: &mut Context<Self>) {
         let Some(version) = self.updates.offered().map(|a| a.version().to_string()) else { return };
-        if let Some(home) = &self.home
-            && let Err(e) = updates::dismiss(home, &version)
-        {
-            self.action_error = Some(format!("Cannot keep the dismissed update: {e}"));
-        }
         self.updates.dismissed = Version::parse(&version).ok();
         cx.notify();
+        let Some(home) = self.home.clone() else { return };
+        cx.spawn(async move |this, cx| {
+            let Err(e) = cx.background_spawn(async move { updates::dismiss(&home, &version) }).await else { return };
+            this.update(cx, |this, cx| {
+                this.action_error = Some(format!("Cannot keep the dismissed update: {e}"));
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 }
 
