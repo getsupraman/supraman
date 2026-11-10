@@ -242,6 +242,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         }
     }
 
+    #[cfg(test)]
     pub fn with_daemon_check(mut self, check: fn() -> Option<String>) -> Self {
         self.daemon_check = check;
         self
@@ -259,11 +260,13 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         self.held.as_ref().map(|(why, _)| why.as_str())
     }
 
+    #[cfg(test)]
     pub fn with_minter(mut self, minter: impl Minter + Send + 'static) -> Self {
         self.minter = Box::new(minter);
         self
     }
 
+    #[cfg(test)]
     pub fn with_repo_of(mut self, repo_of: fn(&Path) -> Option<MintRepo>) -> Self {
         self.repo_of = repo_of;
         self
