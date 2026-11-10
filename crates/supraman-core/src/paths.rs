@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 /// `USERPROFILE`, else `HOME`; an empty value counts as unset.
 pub fn user_home() -> Option<PathBuf> {
-    home_of(std::env::var_os("USERPROFILE"), std::env::var_os("HOME"))
+    home_of(crate::platform::paths::user_profile(), std::env::var_os("HOME"))
 }
 
 fn home_of(userprofile: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
@@ -148,8 +148,7 @@ pub fn normalize(path: &Path) -> String {
 
 /// [`normalize`], lowercased on Windows: equal keys name the same path.
 pub fn path_key(path: &Path) -> String {
-    let normal = normalize(path);
-    if cfg!(windows) { normal.to_lowercase() } else { normal }
+    crate::platform::paths::compared_case(normalize(path))
 }
 
 /// `dir` is `root` or below it, compared by [`path_key`]; a sibling sharing a prefix is not.

@@ -4,6 +4,7 @@
 pub mod fs;
 pub mod locale;
 pub mod open;
+pub mod paths;
 pub mod process;
 
 /// What a stub says off Windows, the one platform implemented.
