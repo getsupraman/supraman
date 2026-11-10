@@ -41,6 +41,7 @@ impl SettingsView {
         cx.notify();
     }
 
+    #[cfg(feature = "selftest")]
     pub fn shown_font_size(&self) -> Option<Pixels> {
         self.shown_font_size.get()
     }
@@ -56,6 +57,7 @@ impl SettingsView {
         cx.notify();
     }
 
+    #[cfg(feature = "selftest")]
     pub fn mono_fonts(&self) -> Option<Arc<Vec<String>>> {
         self.mono_fonts.clone()
     }

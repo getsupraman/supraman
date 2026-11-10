@@ -2,10 +2,12 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(feature = "selftest")]
 pub(crate) static FRAME_ASKED: AtomicBool = AtomicBool::new(false);
 pub(crate) static FIXTURES_ONLY: AtomicBool = AtomicBool::new(false);
 
 /// `FleetView::shown` scrolled the sidebar; the next wait redraws the window so the row is painted.
+#[cfg(feature = "selftest")]
 pub(crate) fn ask_frame() {
     FRAME_ASKED.store(true, Ordering::SeqCst);
 }

@@ -45,6 +45,7 @@ pub fn sign_out(auth: &supraman_workman::Auth, hands: Option<std::sync::Arc<Mute
     notices
 }
 
+#[cfg(feature = "selftest")]
 pub fn disable_and_wait() {
     ENABLED.store(false, Ordering::SeqCst);
     drop(TICK.lock().unwrap_or_else(|e| e.into_inner()));

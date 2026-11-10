@@ -33,11 +33,13 @@ impl SettingsView {
         .detach();
     }
 
+    #[cfg(feature = "selftest")]
     pub fn server_check(&self) -> Option<&ServerCheck> {
         self.server_check.as_ref()
     }
 
     /// The selftest types into the URL field.
+    #[cfg(feature = "selftest")]
     pub fn set_url_text(&mut self, text: &str, cx: &mut Context<Self>) {
         self.url_input.update(cx, |input, cx| input.set_text(text, cx));
     }
@@ -207,6 +209,7 @@ impl SettingsView {
         })))
     }
 
+    #[cfg(feature = "selftest")]
     pub fn workman(&self) -> &WorkmanStatus {
         &self.workman
     }

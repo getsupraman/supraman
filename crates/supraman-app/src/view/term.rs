@@ -161,6 +161,7 @@ impl FleetView {
         }));
     }
 
+    #[cfg(feature = "selftest")]
     pub fn font_save_pending(&self) -> bool {
         self.font_save.is_some()
     }

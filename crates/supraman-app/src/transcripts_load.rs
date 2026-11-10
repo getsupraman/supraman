@@ -38,6 +38,7 @@ impl TranscriptsLoad {
         self.scans == 1
     }
 
+    #[cfg(feature = "selftest")]
     pub fn read(&self) -> bool {
         self.read
     }

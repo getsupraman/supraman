@@ -189,7 +189,7 @@ pub fn show(window: &Window, cx: &mut App) {
     window.activate_window();
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, feature = "selftest"))]
 pub fn is_shown(window: &Window) -> bool {
     hwnd(window).is_some_and(desktop::is_window_visible)
 }
@@ -232,7 +232,7 @@ pub fn show(window: &Window, _cx: &mut App) {
     window.activate_window();
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), feature = "selftest"))]
 pub fn is_shown(_window: &Window) -> bool {
     true
 }
