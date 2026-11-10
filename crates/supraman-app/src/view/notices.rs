@@ -32,7 +32,7 @@ impl FleetView {
     pub(super) fn plain_notices(&self, cx: &App) -> Vec<(Notice, String)> {
         let setup = self.setup_notices.iter().map(|t| (Notice::Setup, t.clone()));
         let supervise = undismissed(&self.supervise_errors, &self.supervise_dismissed).map(|t| (Notice::Supervise, t));
-        let schedule = undismissed(&self.schedule_errors, &self.schedule_errors_dismissed).map(|t| (Notice::Schedule, t));
+        let schedule = undismissed(&self.scheduling.schedule_errors, &self.scheduling.schedule_errors_dismissed).map(|t| (Notice::Schedule, t));
         let hand = self.hand_notices.iter().map(|t| (Notice::Hand, t.clone()));
         let tabs = self.tab_notices.iter().map(|t| (Notice::Tabs, t.clone()));
         let inbox = self.work_inbox.read(cx).notice.clone().map(|t| (Notice::Inbox, t));
@@ -44,7 +44,7 @@ impl FleetView {
         match kind {
             Notice::Setup => remove_one(&mut self.setup_notices, text),
             Notice::Supervise => self.supervise_dismissed.push(text.to_string()),
-            Notice::Schedule => self.schedule_errors_dismissed.push(text.to_string()),
+            Notice::Schedule => self.scheduling.schedule_errors_dismissed.push(text.to_string()),
             Notice::Hand => remove_one(&mut self.hand_notices, text),
             Notice::Tabs => remove_one(&mut self.tab_notices, text),
             Notice::Inbox => self.work_inbox.update(cx, |inbox, _| {

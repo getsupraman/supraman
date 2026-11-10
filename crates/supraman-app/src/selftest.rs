@@ -455,7 +455,7 @@ pub fn start(mode: Mode, view: Entity<FleetView>, window: &mut Window, cx: &mut 
             let own = lock().as_ref().and_then(|s| s.name_prefix.clone()).unwrap_or_else(|| format!("fm-selftest-{}", run_hex()));
             view.update(cx, |v, _| {
                 v.own_prefix = Some(own);
-                v.registrar = crate::selftest_schedules::registrar();
+                v.scheduling.registrar = crate::selftest_schedules::registrar();
             });
             let result = match mode {
                 Mode::Selftest => gate(&view, cx).await,

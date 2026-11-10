@@ -60,9 +60,9 @@ impl FleetView {
         self.save_off_thread(save, "Cannot save the starred sessions", cx);
         let save = absorbed(&mut self.dismissed_messages, messages.0);
         self.save_off_thread(save, "Cannot save the dismissed messages", cx);
-        let save = absorbed(&mut self.runs_dismissed, runs.0);
+        let save = absorbed(&mut self.scheduling.runs_dismissed, runs.0);
         self.save_off_thread(save, "Cannot save the dismissed runs", cx);
-        let save = absorbed(&mut self.waiting_dismissed, waiting.0);
+        let save = absorbed(&mut self.scheduling.waiting_dismissed, waiting.0);
         self.save_off_thread(save, "Cannot save the dismissed approvals", cx);
         self.action_error = stars.1.or(messages.1).or(runs.1).or(waiting.1).or(self.action_error.take());
         if !self.stars.ids().is_empty() {
@@ -142,7 +142,7 @@ impl FleetView {
         self.apply(refresh, cx);
         self.refresh_details(cx);
         self.read_tab_branches(cx);
-        if self.other_scans == 0 {
+        if self.scheduling.other_scans == 0 {
             self.scan_other_schedules(cx);
         }
         cx.notify();

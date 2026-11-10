@@ -167,7 +167,7 @@ enum Failed {
 
 impl FleetView {
     pub fn schedule_row(&self, workspace: &str, id: &str) -> Option<&ScheduleRow> {
-        self.schedules.get(workspace)?.iter().find(|r| r.schedule.id == id)
+        self.scheduling.schedules.get(workspace)?.iter().find(|r| r.schedule.id == id)
     }
 
     fn registered_workspace(&self, workspace: &str) -> Option<Workspace> {
@@ -245,7 +245,7 @@ impl FleetView {
 
     /// The app's only approval (see C100).
     pub fn approve_schedule(&mut self, workspace: String, id: String, fingerprint: String, cx: &mut Context<Self>) {
-        let store = self.schedule_store.clone();
+        let store = self.scheduling.schedule_store.clone();
         self.change_schedule(workspace, id, "approved; its task is registered", cx, move |home, w, id| {
             let s = schedule::load(home, &w.name).map_err(|e| e.to_string())?.into_iter().find(|s| s.id == id).ok_or("the schedule is gone")?;
             let now = schedule::covered(w, &s).map_err(|e| e.to_string())?;
@@ -303,7 +303,7 @@ impl FleetView {
         let (Some(home), Some(w)) = (self.home.clone(), self.registered_workspace(&workspace)) else {
             return;
         };
-        let (registrar, store) = (self.registrar.clone(), self.schedule_store.clone());
+        let (registrar, store) = (self.scheduling.registrar.clone(), self.scheduling.schedule_store.clone());
         let row = key(&workspace, &id);
         let task = cx.background_executor().spawn(async move {
             edit(&home, &w, &id).map_err(Failed::Edit)?;
@@ -316,12 +316,12 @@ impl FleetView {
             this.update(cx, |this, cx| {
                 match result {
                     Ok(id) => {
-                        this.sync_errors.retain(|k, _| !k.starts_with(&format!("{ws}/")));
+                        this.scheduling.sync_errors.retain(|k, _| !k.starts_with(&format!("{ws}/")));
                         this.show_toast(format!("Schedule {id} of {ws} {done}."), cx);
                     }
                     Err(Failed::Edit(e)) => this.action_error = Some(format!("Cannot change schedule of {ws}: {e}")),
                     Err(Failed::Sync(e)) => {
-                        this.sync_errors.insert(row, e);
+                        this.scheduling.sync_errors.insert(row, e);
                     }
                 }
                 this.poll_nudge.wake();
@@ -425,7 +425,7 @@ impl FleetView {
         let max_tokens = input("3000000", &form.max_tokens, window, cx);
         name.update(cx, |n, cx| n.focus_all(window, cx));
         self.menu = None;
-        self.schedule_edit = Some(ScheduleEdit {
+        self.scheduling.schedule_edit = Some(ScheduleEdit {
             workspace: workspace.to_string(),
             id: id.to_string(),
             kind: form.kind,
@@ -448,11 +448,11 @@ impl FleetView {
         match event {
             InputEvent::Confirm | InputEvent::ConfirmBack | InputEvent::Submit => self.save_schedule_edit(cx),
             InputEvent::Cancel => {
-                self.schedule_edit = None;
+                self.scheduling.schedule_edit = None;
                 self.focus.focus(window, cx);
             }
             InputEvent::Edited | InputEvent::Refused(_) => {
-                if let Some(e) = &mut self.schedule_edit {
+                if let Some(e) = &mut self.scheduling.schedule_edit {
                     e.error = None;
                 }
             }
@@ -462,7 +462,7 @@ impl FleetView {
 
     /// A covered change makes the schedule pending, so it needs Approve again.
     pub fn save_schedule_edit(&mut self, cx: &mut Context<Self>) {
-        let Some(edit) = &self.schedule_edit else {
+        let Some(edit) = &self.scheduling.schedule_edit else {
             return;
         };
         if edit.saving {
@@ -472,10 +472,10 @@ impl FleetView {
             return;
         };
         let (form, id) = (edit.form(cx), edit.id.clone());
-        if let Some(edit) = &mut self.schedule_edit {
+        if let Some(edit) = &mut self.scheduling.schedule_edit {
             edit.saving = true;
         }
-        let (registrar, store) = (self.registrar.clone(), self.schedule_store.clone());
+        let (registrar, store) = (self.scheduling.registrar.clone(), self.scheduling.schedule_store.clone());
         let task = {
             let (w, id) = (w.clone(), id.clone());
             cx.background_executor().spawn(async move {
@@ -491,21 +491,21 @@ impl FleetView {
         cx.spawn(async move |this, cx| {
             let saved = task.await;
             this.update(cx, |this, cx| {
-                let editing = this.schedule_edit.as_ref().is_some_and(|e| e.workspace == w.name && e.id == id);
+                let editing = this.scheduling.schedule_edit.as_ref().is_some_and(|e| e.workspace == w.name && e.id == id);
                 match saved {
                     Ok((status, synced)) => {
                         if editing {
-                            this.schedule_edit = None;
+                            this.scheduling.schedule_edit = None;
                         }
                         let pending = if status == Status::Pending { "; it is pending until you Approve it" } else { "" };
                         this.show_toast(format!("Saved schedule {id} of {}{pending}.", w.name), cx);
                         if let Err(e) = synced {
-                            this.sync_errors.insert(key(&w.name, &id), e);
+                            this.scheduling.sync_errors.insert(key(&w.name, &id), e);
                         }
                         this.poll_nudge.wake();
                     }
                     Err(e) => {
-                        if let Some(edit) = this.schedule_edit.as_mut().filter(|_| editing) {
+                        if let Some(edit) = this.scheduling.schedule_edit.as_mut().filter(|_| editing) {
                             edit.saving = false;
                             edit.error = Some(e);
                         }
@@ -520,7 +520,7 @@ impl FleetView {
     }
 
     pub fn dismiss_schedule_notice(&mut self, workspace: &str, run: &str, cx: &mut Context<Self>) {
-        let save = self.runs_dismissed.dismiss(workspace, run);
+        let save = self.scheduling.runs_dismissed.dismiss(workspace, run);
         self.save_off_thread(save, "Cannot save the dismissed run", cx);
         cx.notify();
     }
@@ -578,7 +578,7 @@ impl FleetView {
     }
 
     pub(super) fn render_schedule_edit(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let edit = self.schedule_edit.as_ref()?;
+        let edit = self.scheduling.schedule_edit.as_ref()?;
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let label = |text: &'static str| div().flex_none().w(px(88.)).text_xs().text_color(colors.text_muted).child(text);
@@ -592,7 +592,7 @@ impl FleetView {
         let mut kinds = line("Every");
         for (kind, text) in [(TriggerKind::Weekly, "weekly"), (TriggerKind::Daily, "daily"), (TriggerKind::Interval, "interval")] {
             kinds = kinds.child(choice(format!("sched-edit-kind-{text}"), text, edit.kind == kind, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                if let Some(e) = &mut this.schedule_edit {
+                if let Some(e) = &mut this.scheduling.schedule_edit {
                     e.kind = kind;
                 }
                 cx.notify();
@@ -602,7 +602,7 @@ impl FleetView {
         for day in Day::ALL {
             days = days.child(choice(format!("sched-edit-day-{}", day.as_str()), day.as_str(), edit.days.contains(&day), cx).on_click(cx.listener(
                 move |this, _: &ClickEvent, _, cx| {
-                    if let Some(e) = &mut this.schedule_edit {
+                    if let Some(e) = &mut this.scheduling.schedule_edit {
                         match e.days.iter().position(|d| *d == day) {
                             Some(i) => {
                                 e.days.remove(i);
@@ -618,7 +618,7 @@ impl FleetView {
         for p in [Profile::Read, Profile::Edit, Profile::Auto] {
             profiles = profiles.child(choice(format!("sched-edit-profile-{}", p.as_str()), p.as_str(), edit.profile == p, cx).on_click(cx.listener(
                 move |this, _: &ClickEvent, _, cx| {
-                    if let Some(e) = &mut this.schedule_edit {
+                    if let Some(e) = &mut this.scheduling.schedule_edit {
                         e.profile = p;
                     }
                     cx.notify();
@@ -629,7 +629,7 @@ impl FleetView {
         for (o, text) in [(Overlap::Skip, "skip"), (Overlap::Queue, "queue"), (Overlap::Restart, "restart")] {
             overlaps = overlaps.child(choice(format!("sched-edit-overlap-{text}"), text, edit.overlap == o, cx).on_click(cx.listener(
                 move |this, _: &ClickEvent, _, cx| {
-                    if let Some(e) = &mut this.schedule_edit {
+                    if let Some(e) = &mut this.scheduling.schedule_edit {
                         e.overlap = o;
                     }
                     cx.notify();
@@ -646,7 +646,7 @@ impl FleetView {
             })))
             .child(button::bordered(&self.hits, "sched-edit-cancel", "Cancel", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();
-                this.schedule_edit = None;
+                this.scheduling.schedule_edit = None;
                 cx.notify();
             })));
         Some(
@@ -696,7 +696,7 @@ impl FleetView {
 impl FleetView {
     /// A run whose schedule is gone stays under the workspace.
     pub(super) fn render_schedules(&self, node: &WorkspaceNode, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let rows = self.schedules.get(&node.name).cloned().unwrap_or_default();
+        let rows = self.scheduling.schedules.get(&node.name).cloned().unwrap_or_default();
         let others = self.others();
         let others = others.of_workspace(&node.name);
         let mut out = Vec::new();
@@ -759,22 +759,22 @@ impl FleetView {
 
     /// Reads Task Scheduler off the UI thread, read only; a later scan's answer replaces an earlier one's.
     pub fn scan_other_schedules(&mut self, cx: &mut Context<Self>) {
-        self.other_scans += 1;
-        let scan = self.other_scans;
-        let registrar = self.registrar.clone();
+        self.scheduling.other_scans += 1;
+        let scan = self.scheduling.other_scans;
+        let registrar = self.scheduling.registrar.clone();
         let task = cx.background_executor().spawn(async move { schedule::scan_foreign(&*registrar) });
         cx.spawn(async move |this, cx| {
             let found = task.await;
             this.update(cx, |this, cx| {
-                if this.other_scans != scan {
+                if this.scheduling.other_scans != scan {
                     return;
                 }
                 match found {
                     Ok(found) => {
-                        this.other_schedules = Some(found);
-                        this.other_scan_error = None;
+                        this.scheduling.other_schedules = Some(found);
+                        this.scheduling.other_scan_error = None;
                     }
-                    Err(e) => this.other_scan_error = Some(format!("Cannot read Task Scheduler: {e}")),
+                    Err(e) => this.scheduling.other_scan_error = Some(format!("Cannot read Task Scheduler: {e}")),
                 }
                 cx.notify();
             })
@@ -784,7 +784,7 @@ impl FleetView {
     }
 
     pub fn others(&self) -> schedules::Others {
-        self.other_schedules.as_ref().map(|f| schedules::Others::of(f, &self.workspaces)).unwrap_or_default()
+        self.scheduling.other_schedules.as_ref().map(|f| schedules::Others::of(f, &self.workspaces)).unwrap_or_default()
     }
 
     /// The top-level Other schedules: tasks that run claude in no workspace's folder.
@@ -956,7 +956,7 @@ impl FleetView {
             }))
             .child(div().flex_1())
             .child(div().flex().flex_none().items_center().child(action));
-        let error = self.sync_errors.get(&k).cloned();
+        let error = self.scheduling.sync_errors.get(&k).cloned();
         let target = MenuTarget::Schedule { workspace: w.clone(), id: id.clone() };
         div()
             .id(SharedString::from(format!("sched-row-{k}")))
@@ -994,13 +994,13 @@ impl FleetView {
 
     /// The runs whose Inbox notice is not dismissed, and the failed syncs.
     pub fn schedule_attention(&self) -> (Vec<schedules::Attention>, Vec<(String, String)>) {
-        let runs = schedules::attention(&self.schedules).into_iter().filter(|a| !self.runs_dismissed.hides(&a.workspace, &a.run)).collect();
-        (runs, self.sync_errors.iter().map(|(k, e)| (k.clone(), e.clone())).collect())
+        let runs = schedules::attention(&self.scheduling.schedules).into_iter().filter(|a| !self.scheduling.runs_dismissed.hides(&a.workspace, &a.run)).collect();
+        (runs, self.scheduling.sync_errors.iter().map(|(k, e)| (k.clone(), e.clone())).collect())
     }
 
     /// The pending schedules whose Inbox entry is not dismissed for what they cover now.
     pub fn schedules_waiting(&self) -> Vec<Waiting> {
-        schedules::waiting(&self.schedules).into_iter().filter(|w| !self.waiting_dismissed.hides(&w.workspace, &w.key)).collect()
+        schedules::waiting(&self.scheduling.schedules).into_iter().filter(|w| !self.scheduling.waiting_dismissed.hides(&w.workspace, &w.key)).collect()
     }
 
     pub fn tray_tooltip(&self) -> String {
@@ -1057,7 +1057,7 @@ impl FleetView {
             let dismiss = button::bordered(&self.hits, format!("inbox-sched-later-{k}"), "Dismiss", cx).on_click(cx.listener({
                 let (ws, dismissed) = (w.workspace.clone(), w.key.clone());
                 move |this, _: &ClickEvent, _, cx| {
-                    let save = this.waiting_dismissed.dismiss(&ws, &dismissed);
+                    let save = this.scheduling.waiting_dismissed.dismiss(&ws, &dismissed);
                     this.save_off_thread(save, "Cannot save the dismissed approval", cx);
                     cx.notify();
                 }
@@ -1090,7 +1090,7 @@ impl FleetView {
             let dismiss = button::bordered(&self.hits, format!("inbox-sync-dismiss-{k}"), "Dismiss", cx).on_click(cx.listener({
                 let k = k.clone();
                 move |this, _: &ClickEvent, _, cx| {
-                    this.sync_errors.remove(&k);
+                    this.scheduling.sync_errors.remove(&k);
                     cx.notify();
                 }
             }));

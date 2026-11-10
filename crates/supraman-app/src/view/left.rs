@@ -380,7 +380,7 @@ impl FleetView {
                 banner::plain(cx),
             ));
         }
-        if let Some(e) = &self.other_scan_error {
+        if let Some(e) = &self.scheduling.other_scan_error {
             notices.push(notice(e.clone(), banner::tinted(status.warning)));
         }
         notices.extend(self.render_confirm(cx));

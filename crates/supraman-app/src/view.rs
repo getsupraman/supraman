@@ -72,6 +72,7 @@ mod results;
 mod right;
 pub(crate) mod shells;
 pub(crate) mod schedules;
+mod schedule_state;
 mod startup;
 pub(crate) mod start;
 pub(crate) mod tab_keys;
@@ -365,20 +366,7 @@ pub struct FleetView {
     tabs_saved: Option<crate::saved_tabs::SavedTabs>,
     tabs_writes: futures::channel::mpsc::UnboundedSender<crate::saved_tabs::SavedTabs>,
     pub tab_notices: Vec<String>,
-    pub schedules: BTreeMap<String, Vec<crate::schedules::ScheduleRow>>,
-    pub schedule_errors: Vec<String>,
-    schedule_errors_dismissed: Vec<String>,
-    /// A failed `sync` by `<ws>/<id>` of the schedule acted on: on its row and in the Inbox until a sync succeeds.
-    pub sync_errors: BTreeMap<String, String>,
-    pub registrar: schedules::SharedRegistrar,
-    /// Task Scheduler's tasks that run claude outside Supraman, as the last scan found them; read only.
-    pub other_schedules: Option<supraman_core::schedule::Foreign>,
-    pub other_scan_error: Option<String>,
-    pub(crate) other_scans: u64,
-    pub schedule_store: Arc<dyn supraman_core::secret::SecretStore>,
-    pub schedule_edit: Option<schedules::ScheduleEdit>,
-    pub runs_dismissed: DismissedMessages,
-    pub waiting_dismissed: DismissedMessages,
+    pub scheduling: schedule_state::ScheduleState,
     pub(crate) tab_keys: Entity<tab_keys::TabKeyState>,
 }
 
@@ -585,10 +573,7 @@ impl FleetView {
         })
         .detach();
         let hands = home.as_deref().map(|home| Self::open_hands(home, cx));
-        let schedule_store: Arc<dyn supraman_core::secret::SecretStore> = match home.as_deref() {
-            Some(h) => supraman_core::secret::default_store(h),
-            None => Arc::new(supraman_core::secret::MemoryStore::default()),
-        };
+        let scheduling = schedule_state::ScheduleState::new(home.as_deref());
         let (transcripts_nudge, transcripts_nudged) = nudge::nudge();
         let claude_dir = claude_dir_or(CLAUDE_DIR_OVERRIDE.get().map(PathBuf::as_path));
         Self::watch_transcripts(claude_dir.clone(), home.as_deref().map(|h| h.join(TRANSCRIPTS_CACHE)), transcripts_nudged, cx);
@@ -725,18 +710,7 @@ impl FleetView {
             tabs_saved: None,
             tabs_writes,
             tab_notices: Vec::new(),
-            schedules: BTreeMap::new(),
-            schedule_errors: Vec::new(),
-            schedule_errors_dismissed: Vec::new(),
-            sync_errors: BTreeMap::new(),
-            registrar: Arc::new(supraman_core::schedule::WindowsRegistrar),
-            other_schedules: None,
-            other_scan_error: None,
-            other_scans: 0,
-            schedule_store,
-            schedule_edit: None,
-            runs_dismissed: DismissedMessages::default(),
-            waiting_dismissed: DismissedMessages::default(),
+            scheduling,
             tab_keys: cx.new(|_| tab_keys::TabKeyState::new(defaults.window.tab_keys())),
         }
     }
@@ -994,10 +968,10 @@ impl FleetView {
             self.desired = desired;
         }
         if let Some((schedules, errors)) = refresh.schedules {
-            self.schedules = schedules;
-            self.schedule_errors = errors;
-            supraman_ui::notices::keep_dismissed(&mut self.schedule_errors_dismissed, &self.schedule_errors);
-            let (_, save) = self.waiting_dismissed.prune_keys(&crate::schedules::waiting_keys(&self.schedules));
+            self.scheduling.schedules = schedules;
+            self.scheduling.schedule_errors = errors;
+            supraman_ui::notices::keep_dismissed(&mut self.scheduling.schedule_errors_dismissed, &self.scheduling.schedule_errors);
+            let (_, save) = self.scheduling.waiting_dismissed.prune_keys(&crate::schedules::waiting_keys(&self.scheduling.schedules));
             self.save_off_thread(save, "Cannot save the dismissed approvals", cx);
             self.find_asked_schedules();
         }
