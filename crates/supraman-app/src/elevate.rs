@@ -77,7 +77,6 @@ mod tests {
         let args = arguments(Path::new(r"C:\Users\o neil\Supraman"), None);
         assert_eq!(args, r#"--elevated --home "C:\Users\o neil\Supraman""#);
         assert_eq!(arguments(Path::new("C:\\fm\\"), Some(42)), r#"--elevated --home "C:\fm" --after 42"#);
-        // as the C runtime splits them
         assert_eq!(
             parse_relaunch(&["--elevated", "--home", r"C:\fm", "--after", "42"]),
             Some(Relaunched { home: r"C:\fm".into(), after: Some(42) })

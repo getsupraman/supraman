@@ -1,5 +1,4 @@
-//! The app's loop over [`Keeping`]: every kept Workman token checked at start, every [`CHECK_EVERY`], and at once
-//! after a sign-in, on the background executor.
+//! The app's loop over [`Keeping`]: kept Workman tokens checked at start, every [`CHECK_EVERY`] and after a sign-in.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;

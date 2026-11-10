@@ -1,6 +1,4 @@
-//! The settings window's GitMan page: an open Git tab's background fetch interval, background `git maintenance` and
-//! the other worktrees' WIP rows, `[gitman] fetch_every_minutes`, `maintenance` and `worktree_wip`, read and saved off the UI thread with the table's other keys
-//! kept; each save reaches the open tabs at once.
+//! The settings window's GitMan page: `[gitman] fetch_every_minutes`, `maintenance` and `worktree_wip`.
 
 use std::path::PathBuf;
 

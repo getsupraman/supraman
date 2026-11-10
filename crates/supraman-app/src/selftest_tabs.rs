@@ -22,9 +22,7 @@ pub(crate) const READER: &str = "[Console]::TreatControlCAsInput = $true\n\
 Write-Host 'fm-keys ready'\n\
 while ($true) { $k = [Console]::ReadKey($true); Write-Host ('fm-key ' + $k.Key + ' ' + [int]$k.Modifiers) }\n";
 
-/// Ctrl+Tab and friends cycle three tabs both ways and never reach a shell; then the same tabs dragged: below the
-/// strip (nothing), the second before the first, and to the end, with the chords following the new order; then 30 tabs
-/// overflowing the strip (`selftest_overflow`).
+/// The tab chords cycle three tabs both ways and never reach a shell, then follow the tabs' order after drags.
 pub(crate) async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let script = crate::selftest::home().join(format!("fm-selftest-keys-{}.ps1", hex6()));
     std::fs::write(&script, READER).context("the key reader script")?;

@@ -1,5 +1,5 @@
 //! The ⌄ beside + opens a cmd tab whose prompt shows; under a `cmd` default + starts cmd too, and a [+] claude
-//! tab still starts PowerShell (C113). A unit test cannot do it: the prompt shows only from a real PTY running the shell.
+//! tab still starts PowerShell. A unit test cannot do it: the prompt shows only from a real PTY running the shell.
 
 use std::path::Path;
 use std::time::Duration;

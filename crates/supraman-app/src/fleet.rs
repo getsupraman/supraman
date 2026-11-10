@@ -53,8 +53,7 @@ pub struct SessionRow {
     pub starred: bool,
     /// From its transcript: an interactive session `claude agents` does not list.
     pub closed: bool,
-    /// Set on every occurrence but the first of a session shown under several workspaces: the workspace
-    /// that supervises it, else the first that shows it. Such a row's keys end in `@<its workspace>`.
+    /// The supervising (else first) workspace, on every other occurrence of a session; its keys end in `@<that workspace>`.
     pub also_in: Option<String>,
 }
 
@@ -264,8 +263,7 @@ fn sort(rows: &mut [SessionRow]) {
     });
 }
 
-/// `closed` without each session that continued (`continued`: to the newest of its chain) in one listed or closed:
-/// that one is its row.
+/// `closed` without each session that continued into one listed or closed, which is its row.
 pub fn without_continued(closed: Vec<Session>, continued: &HashMap<String, String>, listed: &[Session]) -> Vec<Session> {
     let known: HashSet<&str> = listed.iter().chain(&closed).map(|s| s.session_id.as_str()).collect();
     let gone: HashSet<String> = closed
@@ -276,8 +274,7 @@ pub fn without_continued(closed: Vec<Session>, continued: &HashMap<String, Strin
     closed.into_iter().filter(|s| !gone.contains(&s.session_id)).collect()
 }
 
-/// The first instant after `now_ms` at which [`build`] would say something else of the same inputs: a background
-/// session turns orphaned (`Session::health`), a closed one leaves [`CLOSED_WINDOW_MS`].
+/// The first instant after `now_ms` at which [`build`] would say something else of the same inputs.
 pub fn next_change(sessions: &[Session], closed: &[Session], now_ms: i64) -> Option<i64> {
     use supraman_claude::SessionState as S;
     let orphaned = sessions
@@ -504,8 +501,7 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
     }
 }
 
-/// The folder of the home that `cwd` lies in, named after its first path segment below the home; the home
-/// itself, named after its own folder, for a session in the home.
+/// The home's folder `cwd` lies in, named by its first segment below the home; the home itself for a session there.
 fn home_folder(home: &Path, cwd: &Path) -> (String, PathBuf) {
     let (home_n, cwd_n) = (normalize(home), normalize(cwd));
     let below = cwd_n.get(home_n.len()..).unwrap_or("").trim_start_matches('/');
@@ -515,8 +511,7 @@ fn home_folder(home: &Path, cwd: &Path) -> (String, PathBuf) {
     }
 }
 
-/// A session under several workspaces: the occurrence in the workspace that wants it, else the first, keeps
-/// its keys; the others name that workspace.
+/// A session under several workspaces: the wanting (else first) occurrence keeps its keys; the others name it.
 fn mark_second_occurrences(nodes: &mut [WorkspaceNode], desired: Option<&BTreeMap<String, (bool, Vec<String>)>>) {
     let wants = |ws: &str, name: &str| desired.and_then(|d| d.get(ws)).is_some_and(|(_, wanted)| wanted.iter().any(|w| w == name));
     let mut seen: HashMap<String, Vec<(usize, bool)>> = HashMap::new();
@@ -592,7 +587,6 @@ impl Open {
     }
 }
 
-/// Adopt on a session row (m5/61).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Adoption {
     /// It continues as `name`, `fm-<workspace>-<folder>`.
@@ -601,9 +595,7 @@ pub enum Adoption {
     No(String),
 }
 
-/// `None` unless `row` is a background session Supraman did not start, running or stopped, under `folder`
-/// enabled here and supervised by this workspace ([`owners`]). An interactive session runs in someone's
-/// terminal, and a muted row is another Supraman's.
+/// Only a background session Supraman did not start, under `folder` enabled here and supervised by this workspace.
 pub fn adoption(
     workspaces: &[Workspace],
     workspace: &str,
@@ -642,8 +634,7 @@ pub fn display_name(session: &Session) -> &str {
     if session.name.is_empty() { short_id(session) } else { &session.name }
 }
 
-/// The home of the workspace holding `active` (the deepest home or folder containing it), else of the first
-/// workspace, else `home`.
+/// The home of the workspace holding `active` (the deepest), else of the first workspace, else `home`.
 pub fn shell_cwd(active: Option<&Path>, workspaces: &[Workspace], home: Option<PathBuf>) -> Option<PathBuf> {
     let holder = active.and_then(|cwd| holder_of(cwd, workspaces));
     holder.or(workspaces.first()).and_then(|w| w.home()).map(Path::to_path_buf).or(home)
@@ -1091,8 +1082,7 @@ mod tests {
         assert_eq!(find(larchsys, "loose").also_in, None, "shown once");
     }
 
-    /// René's registry: supraman {AutoWork, Skills}, gaia {Gaia, NodeApi, node-api-dotnet}, larchsys a scan of
-    /// P:\L that found AutoWork, Gaia and Skills disabled (supervised elsewhere), plus Healthy and Old (disabled).
+    /// René's registry: three workspaces, the scanned larchsys holding the other two's folders disabled.
     fn renes() -> Vec<Workspace> {
         let off = |name: &str| Folder { enabled: false, ..Folder::new(name, format!(r"P:\L\{name}")) };
         let on = |name: &str| Folder::new(name, format!(r"P:\L\{name}"));

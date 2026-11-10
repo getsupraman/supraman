@@ -1,5 +1,4 @@
-//! `--selftest` step 7g's media diff: a changed png painted on both sides in Split and Inline. A gpui test's sprite
-//! atlas is a stand-in; only the window's own renderer uploads the decoded images to the GPU.
+//! `--selftest` step 7g's media diff: a png on both sides; only the window's renderer uploads decoded images.
 
 use std::sync::Arc;
 

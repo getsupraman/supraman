@@ -1,5 +1,4 @@
-//! `--selftest` step 7b: managing workspaces through the window: the add-workspace dialog, its folder rows and keys posted
-//! through the window procedure, and the registry they write; FleetView and its dialog are not buildable in a gpui test.
+//! `--selftest` step 7b: the add-workspace dialog driven through the window procedure; FleetView is not buildable in a gpui test.
 
 use std::{
     cell::Cell,
@@ -78,7 +77,7 @@ async fn post_click(view: &Entity<FleetView>, key: &str, dx: f32, cx: &mut Async
     Ok(())
 }
 
-/// A key that types goes on to `TranslateMessage`'s WM_CHAR, queued behind it: read what it typed with [`until_app`], never right after this returns (F-04).
+/// A key that types goes on to `TranslateMessage`'s WM_CHAR: read what it typed with [`until_app`], never right after this returns.
 pub(crate) async fn post_keys(keys: &[&str], cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     // a held modifier would turn End into Alt+End
     let stale = win::held_modifiers();
@@ -185,8 +184,7 @@ async fn cut_label_tooltip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext
     Ok(format!("{ADDED}'s root path painted cut ({:.0} px); hovered, its tooltip reads the whole path", f32::from(bounds.size.width)))
 }
 
-/// Resting on a workspace, a folder and a session row shows no card while each row's icon keeps its tooltip;
-/// Details in the row's menu opens the row's Details tab, and a second Details focuses it.
+/// Resting on each kind of row shows no card but its icon's tooltip; Details opens the row's Details tab, then focuses it.
 async fn row_details(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let folder = until(view, cx, WITHIN, &format!("a folder row of {ADDED}"), |v| {
         v.hits.borrow().keys().find_map(|k| k.strip_prefix(&format!("repo-row-{ADDED}/")).map(str::to_string))
@@ -281,8 +279,7 @@ async fn details_tab(view: &Entity<FleetView>, row: &str, title: &str, cx: &mut 
     Ok(found)
 }
 
-/// Rests the pointer near the row's left edge, off its icons and labels, long past the tooltip delay: no card shows.
-/// Then on the row's `icon`, whose tooltip shows, so the rest was a real hover.
+/// Resting off the row's icons and labels past the tooltip delay shows no card; resting on `icon` shows its tooltip.
 async fn no_card_on(view: &Entity<FleetView>, row: &str, icon: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let bounds = crate::selftest::scrolled_into_view(view, row, cx).await?;
     let position = point(bounds.left() + px(4.), bounds.top() + px(6.));
@@ -428,8 +425,7 @@ async fn edit_folders(view: &Entity<FleetView>, registry: &Registry, root: &Path
     Ok(format!("Edit folders… of {ADDED}: beta removed by × (into the parent's exclude), {} added by its typed path, home moved to alpha; saved at once by Save (no wanted session in the fixture, so no question)", extra.display()))
 }
 
-/// Rescan offers a new subfolder unticked; Save leaves it unticked and unskipped, so the next Rescan offers it again;
-/// ticked and saved, it is a folder and the third Rescan offers nothing. Beta (×) and notes are never offered.
+/// Rescan offers a new subfolder until it is ticked and saved; Beta (×) and notes are never offered.
 async fn rescan(view: &Entity<FleetView>, registry: &Registry, root: &Path, ws_key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let fresh = root.join("fresh");
     std::fs::create_dir_all(&fresh)?;
@@ -547,8 +543,7 @@ pub(crate) async fn press_painted(view: &Entity<FleetView>, key: &str, button: M
 
 static OPENED_ON: Mutex<Option<ThreadId>> = Mutex::new(None);
 
-/// As ShellExecuteW does while Explorer answers a folder's open (shell32, then gpui's window procedure
-/// running a foreground task): the calling thread's messages are dispatched. Then the real call.
+/// Dispatches this thread's messages first, as ShellExecuteW does while Explorer answers, then opens for real.
 fn pumping_open(path: &Path) -> Result<(), String> {
     *OPENED_ON.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::thread::current().id());
     let until = Instant::now() + Duration::from_millis(300);
@@ -559,8 +554,7 @@ fn pumping_open(path: &Path) -> Result<(), String> {
     supraman_ui::open::open(path.as_os_str())
 }
 
-/// Open folder from the workspace menu while foreground tasks keep arriving, as they do in a working Supraman; the
-/// folder does not exist, so no Explorer opens and the refusal must come back as the action error.
+/// Open folder on a missing folder while foreground tasks arrive: the refusal comes back as the action error.
 async fn open_folder(view: &Entity<FleetView>, ws_key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let missing = cargo_root().join("target").join("selftest-open-folder-missing");
     let _ = std::fs::remove_dir_all(&missing);

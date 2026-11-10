@@ -51,8 +51,7 @@ async fn settled<T>(
     }
 }
 
-/// Writes `<selftest home>/user/.claude.json` (the path `selftest::prepare` set in place of the user's): first
-/// without a user-scope workman entry, then with one naming `base`'s /mcp and a header value nothing may read.
+/// Writes the selftest's `.claude.json`: first with no user-scope workman entry, then one naming `base`'s /mcp.
 async fn claude_entry_checked(handle: &WindowHandle<SettingsView>, base: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let path = crate::selftest::claude_json();
     let project_only = format!(r#"{{"projects":{{"C:/x":{{"mcpServers":{{"workman":{{"type":"http","url":"{base}/mcp"}}}}}}}}}}"#);

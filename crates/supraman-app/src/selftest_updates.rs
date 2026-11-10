@@ -136,10 +136,7 @@ fn stage_painted(v: &FleetView) -> bool {
     v.hits.borrow().contains_key("update-stage")
 }
 
-/// Update on a fake endpoint over a temp install, never this build's folder (C109). The zip shows its
-/// progress, `sm update apply` (the release's own sm.exe, copied out) swaps it in, removes the file
-/// the old FILES named, and starts the release's supraman.exe: a stub, a copy of sm.exe, whose
-/// `plugin install <marker>` leaves the marker.
+/// Update on a fake endpoint over a temp install, never this build's folder; the release's supraman.exe is a stub sm.exe.
 pub async fn install(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let sm_exe = supraman_core::install::sm_exe()?;
     let sm = std::fs::read(&sm_exe).map_err(|e| anyhow!("{}: {e}", sm_exe.display()))?;

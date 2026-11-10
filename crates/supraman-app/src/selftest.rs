@@ -159,13 +159,13 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
 fn isolate() -> anyhow::Result<()> {
     // The sign-in never opens a browser; its refresh tokens stay in the scratch home.
     crate::signin::use_http_browser();
-    // The Workman URL is read from the scratch home's server.json, never the user's ~/.workman (C185).
+    // The Workman URL is read from the scratch home's server.json, never the user's ~/.workman.
     supraman_core::paths::set_workman_server_json_for_selftest(workman_server_json()).map_err(|e| anyhow!(e))?;
-    // claude's config is read from the scratch home's user folder, never the user's ~/.claude.json (C185).
+    // claude's config is read from the scratch home's user folder, never the user's ~/.claude.json.
     supraman_core::paths::set_claude_json_for_selftest(claude_json()).map_err(|e| anyhow!(e))?;
     // Closed sessions are read from a fake claude dir in the scratch home, never the user's.
     crate::view::use_claude_dir(crate::selftest_closed::claude_dir(&home()));
-    // A closed loopback port as the releases API, never GitHub (C109); step 7+u serves its own fake.
+    // A closed loopback port as the releases API, never GitHub; step 7+u serves its own fake.
     unsafe { std::env::set_var(supraman_workman::updates::API_VAR, supraman_workman::closed_base()) };
     Ok(())
 }
@@ -1305,8 +1305,7 @@ pub fn finish(mode: Mode) {
 /// Step 8's idle window: long enough for a poll (every 2 s) to refresh the panel.
 const IDLE_WINDOW: Duration = Duration::from_secs(4);
 
-/// The measurements: the first list's paint after `claude agents`, the Work tab's and an idle panel's frame
-/// budget, keystroke-to-paint under fixture load (step 7+r), and memory and frames with 1 and 10 shells.
+/// First-list paint, Work tab and idle frame budgets, keystroke-to-paint, and memory and frames with 1 and 10 shells.
 async fn perf(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let started = Instant::now();
     while view.read_with(cx, |v, _| v.refreshes) == 0 {

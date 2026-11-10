@@ -220,7 +220,7 @@ fn selftest_mode(args: &[&str]) -> Mode {
 #[cfg(feature = "selftest")]
 static HEAVY_JOB: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
 
-/// Tool-shell variables a tab must not inherit; see LEARNINGS fleet UI, tf/5 and tf/8.
+/// Tool-shell variables a tab must not inherit; see docs/LEARNINGS.md, fleet UI.
 fn env_scrub(get: impl Fn(&str) -> Option<String>) -> Vec<&'static str> {
     let mut scrub = vec!["CLAUDE_CODE_CHILD_SESSION"];
     if get("CLAUDECODE").as_deref() == Some("1") {
