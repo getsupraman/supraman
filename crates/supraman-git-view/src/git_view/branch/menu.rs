@@ -139,10 +139,7 @@ impl Facts<'_> {
     }
 
     fn head_sha(&self) -> Option<&str> {
-        match &self.refs.head {
-            Head::Branch { sha, .. } => sha.as_deref(),
-            Head::Detached { sha } => Some(sha),
-        }
+        self.refs.head.sha()
     }
 
     fn elsewhere(&self, branch: &str) -> Option<PathBuf> {

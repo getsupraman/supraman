@@ -107,8 +107,7 @@ pub(crate) fn start(home: Option<PathBuf>, cx: &mut App) {
     }
     cx.set_global(Frecency { store: None, notice: None });
     let read = cx.background_executor().spawn(async move {
-        let (store, notice) = JsonStore::load(home.as_deref().map(path), LOST);
-        if notice.is_some() { (JsonStore::in_memory(File::default()), notice) } else { (store, None) }
+        JsonStore::load_kept(home.as_deref().map(path), LOST)
     });
     cx.spawn(async move |cx| {
         let (store, notice) = read.await;

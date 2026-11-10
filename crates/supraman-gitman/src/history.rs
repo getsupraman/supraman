@@ -149,7 +149,7 @@ impl History {
         if out.success() {
             return Ok(());
         }
-        Err(GitError::Failed { args: self.args.clone(), code: out.code, stderr: String::from_utf8_lossy(&out.stderr).trim().to_string() })
+        Err(GitError::failed(self.args.clone(), &out))
     }
 }
 

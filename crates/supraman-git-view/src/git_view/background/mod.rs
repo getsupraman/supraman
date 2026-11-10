@@ -15,7 +15,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, Subscription, Task, WeakEntity};
-use supraman_core::Settings;
 use supraman_core::paths::path_key;
 use supraman_gitman::write::remote::{self, Fetched};
 use supraman_gitman::write::{LockSet, WriteError, Writer};
@@ -97,19 +96,11 @@ impl Background {
         Background { home, settings, repos: HashMap::new(), heavy: Arc::new(heavy_job_lock), clock: supraman_core::time::now_ms, ran: maintain::Ran::default(), #[cfg(test)] on: false }
     }
 
-    /// Created with `home`'s `[gitman]` read off the UI thread, once.
+    /// Created once; its settings come from the first tab that read them ([`offer`]).
     fn ensure(home: Option<PathBuf>, cx: &mut App) {
-        if cx.has_global::<Background>() {
-            return;
+        if !cx.has_global::<Background>() {
+            cx.set_global(Background::new(home));
         }
-        cx.set_global(Background::new(home.clone()));
-        let Some(home) = home else { return };
-        let read = cx.background_spawn(async move { Settings::load(&home).map(|s| supraman_gitman::background_settings(&s)).unwrap_or_default() });
-        cx.spawn(async move |cx| {
-            let settings = read.await;
-            cx.update(|cx| apply(settings, cx));
-        })
-        .detach();
     }
 
     /// Unread settings show the rows: `[gitman] worktree_wip` is on by default.
@@ -125,6 +116,20 @@ impl Background {
     /// The live tabs of `key`'s schedule.
     fn views(&self, key: &str) -> Vec<Entity<GitView>> {
         self.repos.get(key).map(|s| s.tabs.iter().filter_map(|(_, t)| t.view.upgrade()).collect()).unwrap_or_default()
+    }
+}
+
+/// The background keys a tab read from its home, taken while none are: `None` (they did not parse) leaves the
+/// schedules unset, so nothing runs on a default the user did not choose.
+pub(super) fn offer(home: Option<PathBuf>, settings: Option<BackgroundSettings>, cx: &mut App) {
+    if !enabled(cx) {
+        return;
+    }
+    Background::ensure(home, cx);
+    if cx.global::<Background>().settings.is_none()
+        && let Some(settings) = settings
+    {
+        apply(settings, cx);
     }
 }
 
@@ -313,12 +318,6 @@ async fn fetch_loop(key: String, mut nudged: Nudged, cx: &mut AsyncApp) {
     }
 }
 
-/// What git said of a failed fetch: its `fatal:` line, else its last.
-fn reason(why: &str) -> String {
-    let fatal = why.lines().find_map(|l| l.split_once("fatal: ").map(|(_, r)| r));
-    fatal.or_else(|| why.lines().rev().find(|l| !l.trim().is_empty())).unwrap_or(why).trim().to_string()
-}
-
 /// The fetch's failures kept per remote, a success forgetting its remote's; the tabs read the repo again when a
 /// ref moved.
 fn fetched_into(key: &str, fetched: Option<Result<Fetched, WriteError>>, cx: &mut App) {
@@ -339,7 +338,7 @@ fn fetched_into(key: &str, fetched: Option<Result<Fetched, WriteError>>, cx: &mu
         match done {
             Ok(()) => drop(schedule.failures.remove(&remote)),
             Err(why) => {
-                let reason = reason(&why);
+                let reason = supraman_gitman::write::reason(&why);
                 let failure = schedule.failures.entry(remote).or_insert(Failure { count: 0, reason: String::new() });
                 failure.count += 1;
                 failure.reason = reason;

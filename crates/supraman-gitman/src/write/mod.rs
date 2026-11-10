@@ -44,6 +44,9 @@ pub const PINNED: &[&str] = &[
     "-c", "log.showSignature=false",
 ];
 
+/// Why a write is refused while a merge, rebase, cherry-pick, revert or am is under way.
+pub const UNDER_WAY: &str = "Finish or abort the operation under way first";
+
 #[derive(Debug, thiserror::Error)]
 pub enum WriteError {
     #[error(transparent)]
@@ -71,6 +74,14 @@ pub enum WriteError {
     Remote(String),
 }
 
+impl WriteError {
+    /// The failure of `verb` (`read`, `write`, …) on `path`.
+    pub fn io(verb: &str, path: &Path) -> impl FnOnce(std::io::Error) -> WriteError + use<> {
+        let what = format!("{verb} {}", path.display());
+        move |source| WriteError::Io { what, source }
+    }
+}
+
 impl From<GitError> for WriteError {
     fn from(e: GitError) -> WriteError {
         let stderr = match &e {
@@ -82,6 +93,12 @@ impl From<GitError> for WriteError {
             None => WriteError::Git(e),
         }
     }
+}
+
+/// What git said of a failure: its `fatal:` line, else its last.
+pub fn reason(said: &str) -> String {
+    let fatal = said.lines().find_map(|l| l.split_once("fatal: ").map(|(_, r)| r));
+    fatal.or_else(|| said.lines().rev().find(|l| !l.trim().is_empty())).unwrap_or(said).trim().to_string()
 }
 
 /// The repository git's "dubious ownership" refusal names.
@@ -306,6 +323,22 @@ impl Session<'_> {
         Err(crate::repo::failed(call.label(), &self.writer.dirs.top, &out).into())
     }
 
+    /// `call`'s stdout as one trimmed line, an error unless git exited 0.
+    pub fn line(&self, call: &Call) -> Result<String, WriteError> {
+        Ok(text(&self.output(call)?).trim().to_string())
+    }
+
+    /// The object `name` names, `None` when it names none.
+    pub fn verify(&self, name: &str) -> Result<Option<String>, WriteError> {
+        let out = self.run(&Call::new(&["rev-parse", "-q", "--verify", name]))?;
+        Ok(out.success().then(|| text(&out.stdout).trim().to_string()))
+    }
+
+    /// The object `name` names, an error when it names none.
+    pub fn rev(&self, name: &str) -> Result<String, WriteError> {
+        self.line(&Call::new(&["rev-parse", "--verify", name]))
+    }
+
     /// Runs `f` holding `locks` as well, what this session holds not asked again.
     pub fn nested<T>(&self, locks: LockSet, f: impl FnOnce(&Session<'_>) -> Result<T, WriteError>) -> Result<T, WriteError> {
         match self.held.nested(locks) {
@@ -325,6 +358,12 @@ impl Session<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reason_is_gits_fatal_line_else_its_last() {
+        assert_eq!(reason("remote: x\nfatal: could not read from remote\nmore"), "could not read from remote");
+        assert_eq!(reason("first\nlast line\n\n"), "last line");
+    }
 
     #[test]
     fn dubious_ownership_is_its_own_error_naming_the_folder() {

@@ -1,5 +1,6 @@
 //! What changed in a file whose two sides decode to the same text: the bytes the text does not show.
 
+use supraman_core::text::count;
 use supraman_core::text::{Encoding, byte_size, decode};
 
 /// The header's encoding: one side's, or `old → new` when they differ.
@@ -31,7 +32,7 @@ fn line_endings(old: &str, new: &str) -> Vec<String> {
             _ => {}
         }
     }
-    let lines = |n: usize| if n == 1 { "1 line".to_string() } else { format!("{n} lines") };
+    let lines = |n: usize| count(n, "line", "lines");
     let mut said = Vec::new();
     if to_lf > 0 {
         said.push(format!("Line endings changed from CRLF to LF on {}", lines(to_lf)));

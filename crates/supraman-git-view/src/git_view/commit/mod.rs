@@ -10,6 +10,7 @@ mod view;
 #[cfg(test)]
 mod tests;
 
+use supraman_core::text::count;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -67,10 +68,6 @@ enum Ask {
     Restore { sha: String, paths: Vec<String> },
 }
 
-fn files_words(n: usize) -> String {
-    if n == 1 { "1 file".into() } else { format!("{n} files") }
-}
-
 impl Ask {
     fn question(&self) -> Confirm<Ask> {
         let ask = |text: String, yes: &str| Confirm::ask(text, yes, self.clone());
@@ -82,13 +79,13 @@ impl Ask {
             }
             Ask::Reset { branch, sha, .. } => ask(format!("{branch} was already pushed. Resetting it to {} rewrites it, and the next push must force. Reset anyway?", short_sha(sha)), "Reset"),
             Ask::Rebase { branch, .. } => ask(format!("{branch} was already pushed. Rebasing rewrites it, and the next push must force. Rebase anyway?"), "Rebase"),
-            Ask::DiscardAll(paths) => ask(format!("Discard the staged and unstaged changes to {}? You can undo it.", files_words(paths.len())), "Discard").danger(),
+            Ask::DiscardAll(paths) => ask(format!("Discard the staged and unstaged changes to {}? You can undo it.", count(paths.len(), "file", "files")), "Discard").danger(),
             Ask::Ignore { ignore, untrack } => {
                 let question = ask(format!("Add {} to .gitignore?", ignore.pattern()), "Ignore");
                 if untrack.is_empty() { question } else { question.or("Ignore and stop tracking", self.clone()) }
             }
             Ask::Delete(path) => ask(format!("Delete {path}? A file git does not track cannot be brought back."), "Delete").danger(),
-            Ask::Restore { paths, sha } => ask(format!("Restoring {} from {} replaces your changes to it. You can undo it.", files_words(paths.len()), short_sha(sha)), "Restore"),
+            Ask::Restore { paths, sha } => ask(format!("Restoring {} from {} replaces your changes to it. You can undo it.", count(paths.len(), "file", "files"), short_sha(sha)), "Restore"),
         }
     }
 }
@@ -228,7 +225,7 @@ impl CommitActions {
                 self.request(Doing::Rebase { branch, sha }, LockSet::rebase(), job, cx);
             }
             Ask::DiscardAll(paths) => {
-                let words = format!("Discarded the changes to {}", files_words(paths.len()));
+                let words = format!("Discarded the changes to {}", count(paths.len(), "file", "files"));
                 self.request(Doing::Plain(words), LockSet::reset(), move |s| journal::discard(s, &paths), cx);
             }
             Ask::Ignore { ignore, untrack } => {
@@ -238,7 +235,7 @@ impl CommitActions {
             }
             Ask::Delete(path) => self.request(Doing::Plain(format!("Deleted {path}")), index_write(), move |s| file_writes::delete(s, &path), cx),
             Ask::Restore { sha, paths } => {
-                let words = format!("Restored {} from {}", files_words(paths.len()), short_sha(&sha));
+                let words = format!("Restored {} from {}", count(paths.len(), "file", "files"), short_sha(&sha));
                 self.request(Doing::Plain(words), LockSet::reset(), move |s| file_writes::restore(s, &sha, &paths), cx);
             }
         }

@@ -104,10 +104,7 @@ pub fn mark_resolved(s: &Session, paths: Option<&[String]>, anyway: bool) -> Res
 /// The base, current and incoming commits of the conflict under way, as revisions; `None` for a side git keeps
 /// none of (a root commit's base).
 fn sides(s: &Session) -> Result<[Option<String>; 3], WriteError> {
-    let rev = |name: &str| -> Result<Option<String>, WriteError> {
-        let out = s.run(&Call::new(&["rev-parse", "-q", "--verify", &format!("{name}^{{commit}}")]))?;
-        Ok(out.success().then(|| text(&out.stdout).trim().to_string()))
-    };
+    let rev = |name: &str| s.verify(&format!("{name}^{{commit}}"));
     let state = operation_state(&s.writer().dirs().git_dir);
     let (base, incoming) = match state {
         OperationState::Merge => {
@@ -209,11 +206,9 @@ pub(super) fn sequence_step(s: &Session, sequence: Sequence, step: &'static str)
         return Ok(Rebased::Conflicted);
     }
     if !out.success() {
-        let said = [text(&out.stderr), text(&out.stdout)].map(|t| t.trim().to_string());
-        let stderr = said.into_iter().filter(|t| !t.is_empty()).collect::<Vec<_>>().join("\n");
-        return Err(GitError::Failed { args: format!("{} {step}", sequence.command()), code: out.code, stderr }.into());
+        return Err(GitError::said(format!("{} {step}", sequence.command()), &out, None).into());
     }
-    let head = text(&s.output(&Call::new(&["rev-parse", "HEAD"]))?).trim().to_string();
+    let head = s.rev("HEAD")?;
     Ok(Rebased::Done { head, autostash: Autostash::None })
 }
 

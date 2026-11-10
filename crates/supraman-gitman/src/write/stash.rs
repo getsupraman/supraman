@@ -45,10 +45,6 @@ fn message_or_default(s: &Session, message: &str) -> Result<String, WriteError> 
     if message.trim().is_empty() { default_message(s) } else { Ok(message.trim().to_string()) }
 }
 
-fn has_head(s: &Session) -> Result<bool, WriteError> {
-    Ok(s.run(&Call::new(&["rev-parse", "-q", "--verify", "HEAD"]))?.success())
-}
-
 /// `stash push`, then HEAD's reflog line of the reset it ran taken out, so Undo's walk goes past it.
 fn push(s: &Session, call: Call) -> Result<(), WriteError> {
     s.output(&call)?;
@@ -86,7 +82,7 @@ pub fn stash_files(s: &Session, files: &[FileChange], message: &str) -> Result<(
     if files.iter().any(|f| f.kind == ChangeKind::Unmerged) {
         return Err(WriteError::Refused(CONFLICTED));
     }
-    if !has_head(s)? {
+    if !s.verify("HEAD")?.is_some() {
         return Err(WriteError::Refused(NO_COMMIT));
     }
     let top = s.writer().dirs().top.clone();
@@ -98,8 +94,8 @@ pub fn stash_files(s: &Session, files: &[FileChange], message: &str) -> Result<(
     if tracked.is_empty() && untracked.is_empty() {
         return Err(WriteError::Refused(NO_CHANGES));
     }
-    let (branch, short) = (branch_name(s)?, text(&s.output(&Call::new(&["rev-parse", "--short", "HEAD"]))?).trim().to_string());
-    let head = text(&s.output(&Call::new(&["rev-parse", "HEAD"]))?).trim().to_string();
+    let (branch, short) = (branch_name(s)?, s.line(&Call::new(&["rev-parse", "--short", "HEAD"]))?);
+    let head = s.rev("HEAD")?;
     let temp = s.temp_index("stash");
     s.output(&temp.on(Call::new(&["read-tree", "HEAD"])))?;
     let removed: Vec<String> = tracked.iter().filter(|p| !index.contains_key(*p)).cloned().collect();
@@ -151,11 +147,11 @@ fn staged_entries(s: &Session) -> Result<HashMap<String, String>, WriteError> {
 }
 
 fn write_tree(s: &Session, index: &TempIndex) -> Result<String, WriteError> {
-    Ok(text(&s.output(&index.on(Call::new(&["write-tree"])))?).trim().to_string())
+    s.line(&index.on(Call::new(&["write-tree"])))
 }
 
 fn commit(s: &Session, tree: &str, parents: &[&str], message: &str) -> Result<String, WriteError> {
-    Ok(text(&s.output(&commit_tree_call(tree, parents, message))?).trim().to_string())
+    s.line(&commit_tree_call(tree, parents, message))
 }
 
 fn listed(s: &Session, args: &[&str]) -> Result<HashSet<String>, WriteError> {
@@ -175,7 +171,7 @@ fn reflog_name(n: usize) -> String {
 /// Applies the stash `sha` (its staged changes not kept apart) with everything back unstaged, and with `pop`
 /// drops it, unless the apply left conflicts. Refused while anything is staged.
 pub fn apply(s: &Session, sha: &str, pop: bool) -> Result<Applied, WriteError> {
-    let head = has_head(s)?;
+    let head = s.verify("HEAD")?.is_some();
     if head && !s.run(&Call::new(&["diff", "--cached", "--quiet"]))?.success() {
         return Err(WriteError::Refused(STAGED));
     }
@@ -190,7 +186,7 @@ pub fn apply(s: &Session, sha: &str, pop: bool) -> Result<Applied, WriteError> {
         if said.contains("would be overwritten") || said.contains("already exists, no checkout") {
             return Err(WriteError::Refused(OVERWRITE));
         }
-        return Err(crate::GitError::Failed { args: format!("stash apply {name}"), code: out.code, stderr: text(&out.stderr).trim().to_string() }.into());
+        return Err(crate::GitError::failed(format!("stash apply {name}"), &out).into());
     }
     if head {
         s.output(&Call::new(&["reset", "-q", "HEAD"]))?;
@@ -213,7 +209,7 @@ pub fn apply_files(s: &Session, sha: &str, files: &[FileChange]) -> Result<(), W
     }
     let source = format!("--source={sha}");
     s.output(&Call::new(&["restore", "-q", "--worktree", &source]).paths(paths.clone()))?;
-    if has_head(s)? {
+    if s.verify("HEAD")?.is_some() {
         s.output(&Call::new(&["reset", "-q", "HEAD"]).paths(paths))?;
     }
     Ok(())

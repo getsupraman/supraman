@@ -17,7 +17,7 @@ use gpui::{AppContext as _, ClipboardItem, Context, Entity, EventEmitter, Pixels
 use supraman_gitman::write::branch::{self, CheckedOut, Merged, Plan, Target, relation};
 use supraman_gitman::write::rebase::{self, Autostash, Rebased};
 use supraman_gitman::write::{LockSet, Session, WriteError, Writer};
-use supraman_gitman::{Head, Refs, Repo, short_sha};
+use supraman_gitman::{Refs, Repo, short_sha};
 use supraman_ui::confirm::{Answer, Confirm};
 use supraman_ui::hit::HitTargets;
 use supraman_ui::menu::{ContextMenu, MenuItem};
@@ -150,7 +150,7 @@ impl BranchActions {
     pub(crate) fn new(gate: Entity<WriteGate>, hits: HitTargets, cx: &mut Context<Self>) -> BranchActions {
         let written = cx.subscribe(&gate, |this: &mut BranchActions, _, w: &Written, cx| this.written(w, cx));
         cx.observe(&gate, |_, _, cx| cx.notify()).detach();
-        BranchActions { hits, gate, writer: None, refs: Arc::new(Refs { head: Head::Detached { sha: String::new() }, branches: Vec::new(), remotes: Vec::new(), tags: Vec::new(), worktrees: Vec::new(), stashes: Vec::new() }), under_way: false, doing: None, outcome: Arc::default(), asking: None, menu: None, naming: None, remote: Arc::default(), _written: written }
+        BranchActions { hits, gate, writer: None, refs: Arc::new(Refs::empty()), under_way: false, doing: None, outcome: Arc::default(), asking: None, menu: None, naming: None, remote: Arc::default(), _written: written }
     }
 
     /// The repo's writer, opened off the UI thread.
@@ -448,10 +448,7 @@ impl BranchActions {
     /// `graph` the ref panel's own items for it.
     pub(crate) fn open_menu(&mut self, subject: Subject, graph: Vec<MenuItem<RefAct>>, position: Point<Pixels>, cx: &mut Context<Self>) {
         let Some(writer) = self.writer.clone() else { return cx.emit(BranchEvent::Why(STILL_OPENING.into())) };
-        let head = match &self.refs.head {
-            Head::Branch { sha, .. } => sha.clone(),
-            Head::Detached { sha } => Some(sha.clone()),
-        };
+        let head = self.refs.head.sha().map(str::to_string);
         let pair = subject.sha().map(str::to_string).zip(head);
         let read = cx.background_spawn(async move { pair.and_then(|(sha, head)| relation(writer.repo(), &sha, &head).ok()) });
         cx.spawn(async move |this, cx| {
@@ -473,10 +470,7 @@ impl BranchActions {
     /// once its relation to HEAD and its parents are read off the UI thread; `graph` the ref panel's items.
     pub(crate) fn open_commit_menu(&mut self, subjects: Vec<Subject>, sha: String, graph: Vec<MenuItem<RefAct>>, position: Point<Pixels>, cx: &mut Context<Self>) {
         let Some(writer) = self.writer.clone() else { return cx.emit(BranchEvent::Why(STILL_OPENING.into())) };
-        let head = match &self.refs.head {
-            Head::Branch { sha, .. } => sha.clone(),
-            Head::Detached { sha } => Some(sha.clone()),
-        };
+        let head = self.refs.head.sha().map(str::to_string);
         let at = sha.clone();
         let read = cx.background_spawn(async move {
             let relation = head.and_then(|head| relation(writer.repo(), &at, &head).ok());

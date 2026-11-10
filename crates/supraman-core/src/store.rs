@@ -37,6 +37,15 @@ impl<T: Serialize + DeserializeOwned + Default> JsonStore<T> {
         (Self { path: Some(path), value, pending: Arc::default() }, notice)
     }
 
+    /// [`JsonStore::load`], except that an unreadable file is kept as it is: the store then lives in memory only,
+    /// and the notice says why.
+    pub fn load_kept(path: Option<PathBuf>, lost: &str) -> (Self, Option<String>) {
+        match Self::load(path, lost) {
+            (_, Some(notice)) => (Self::default(), Some(notice)),
+            loaded => loaded,
+        }
+    }
+
     /// A store of `value` in memory only.
     pub fn in_memory(value: T) -> Self {
         Self { path: None, value, pending: Arc::default() }
@@ -106,6 +115,19 @@ mod tests {
         first.write().unwrap();
         assert_eq!(set(&path).0.get().len(), 2);
         assert_eq!(store.path(), Some(path.as_path()));
+    }
+
+    #[test]
+    fn a_kept_load_of_an_unreadable_file_lives_in_memory_and_leaves_the_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("keys.json");
+        std::fs::write(&path, "not json").unwrap();
+        let (mut store, notice) = JsonStore::<BTreeSet<String>>::load_kept(Some(path.clone()), "nothing is kept");
+        assert!(notice.is_some_and(|n| n.contains("nothing is kept")) && store.path().is_none());
+        assert!(store.edit(|s| s.insert("a".into())).is_none(), "no save over the unreadable file");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "not json");
+        let (store, notice) = JsonStore::<BTreeSet<String>>::load_kept(Some(tmp.path().join("new.json")), "x");
+        assert!(notice.is_none() && store.path().is_some());
     }
 
     #[test]

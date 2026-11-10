@@ -11,7 +11,6 @@ use crate::operation::{OperationState, operation_state};
 use crate::parse::text;
 use crate::{GitError, Repo};
 
-pub const UNDER_WAY: &str = "Finish or abort the operation under way first";
 
 /// What a reset keeps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,7 +55,7 @@ pub fn is_merge(repo: &Repo, sha: &str) -> Result<bool, GitError> {
 fn idle(s: &Session) -> Result<(), WriteError> {
     match operation_state(&s.writer().dirs().git_dir) {
         OperationState::None => Ok(()),
-        _ => Err(WriteError::Refused(UNDER_WAY)),
+        _ => Err(WriteError::Refused(super::UNDER_WAY)),
     }
 }
 
@@ -91,13 +90,11 @@ fn apply_commit(s: &Session, verb: &str, sha: &str, commit: bool) -> Result<Pick
     if under_way {
         s.run(&Call::new(&[verb, "--abort"]))?;
     }
-    let said = [text(&out.stderr), text(&out.stdout)].map(|t| t.trim().to_string());
     let kept = match pop(s, stashed.as_ref()) {
         Autostash::Kept { name, why } => Some(format!("Your changes stay in the stash \"{name}\": {why}")),
         _ => None,
     };
-    let stderr = said.into_iter().chain(kept).filter(|t| !t.is_empty()).collect::<Vec<_>>().join("\n");
-    Err(GitError::Failed { args: verb.to_string(), code: out.code, stderr }.into())
+    Err(GitError::said(verb, &out, kept).into())
 }
 
 fn conflicted(s: &Session) -> Result<bool, WriteError> {
@@ -124,7 +121,7 @@ pub fn format_patch(repo: &Repo, sha: &str, folder: &Path) -> Result<PathBuf, Gi
     let folder_text = folder.to_string_lossy();
     let out = repo.run(&["format-patch", "-1", "--no-signature", "-o", &folder_text, sha], None)?;
     if !out.success() {
-        return Err(GitError::Failed { args: "format-patch".into(), code: out.code, stderr: text(&out.stderr).trim().to_string() });
+        return Err(GitError::failed("format-patch", &out));
     }
     let name = text(&out.stdout).lines().last().unwrap_or_default().trim().to_string();
     Ok(PathBuf::from(name))

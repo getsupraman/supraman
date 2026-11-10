@@ -37,7 +37,6 @@ pub(crate) use menu::RemoteFacts;
 
 pub(crate) const DETACHED: &str = "HEAD is detached: check out a branch first";
 pub(crate) const NO_REMOTE: &str = "This repository has no remote";
-pub(crate) const UNDER_WAY: &str = "Finish or abort the operation under way first";
 
 /// What a remote item or the toolbar asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,14 +185,13 @@ impl RemoteActions {
         let written = cx.subscribe(&gate, |this: &mut RemoteActions, _, w: &Written, cx| this.written(w, cx));
         cx.observe(&gate, |_, _, cx| cx.notify()).detach();
         let store = home.as_deref().map(supraman_core::secret::default_store);
-        let empty = Refs { head: Head::Detached { sha: String::new() }, branches: Vec::new(), remotes: Vec::new(), tags: Vec::new(), worktrees: Vec::new(), stashes: Vec::new() };
-        let mut this = RemoteActions {
+        RemoteActions {
             hits,
             gate,
             home,
             store,
             writer: None,
-            refs: Arc::new(empty),
+            refs: Arc::new(Refs::empty()),
             under_way: false,
             remotes: Vec::new(),
             pull: PullChoice::default(),
@@ -207,24 +205,14 @@ impl RemoteActions {
             editing: None,
             prompting: None,
             _written: written,
-        };
-        this.read_settings(cx);
-        this
+        }
     }
 
-    fn read_settings(&mut self, cx: &mut Context<Self>) {
-        let Some(home) = self.home.clone() else { return };
-        let read = cx.background_spawn(async move { Settings::load(&home).map(|s| supraman_gitman::remote_settings(&s)).unwrap_or_default() });
-        cx.spawn(async move |this, cx| {
-            let settings = read.await;
-            this.update(cx, |this, cx| {
-                this.pull = settings.pull.unwrap_or_default();
-                this.prune = settings.prune.unwrap_or(true);
-                this.said_facts(cx);
-            })
-            .ok();
-        })
-        .detach();
+    /// `[gitman]`'s remote keys, read by the tab's first load.
+    pub(crate) fn set_settings(&mut self, settings: supraman_gitman::RemoteSettings, cx: &mut Context<Self>) {
+        self.pull = settings.pull.unwrap_or_default();
+        self.prune = settings.prune.unwrap_or(true);
+        self.said_facts(cx);
     }
 
     /// The refs a read found; the repo's writer and remotes read again off the UI thread.
@@ -515,7 +503,7 @@ impl RemoteActions {
         } else if matches!(self.refs.head, Head::Detached { .. }) {
             Some(DETACHED)
         } else if self.under_way {
-            Some(UNDER_WAY)
+            Some(supraman_gitman::write::UNDER_WAY)
         } else {
             None
         }

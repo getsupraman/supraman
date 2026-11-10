@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use supraman_core::paths::within;
-use supraman_gitman::write::{Occupancy, working_in};
+use supraman_gitman::write::Occupancy;
 use supraman_ui::marks::Activity;
 use supraman_ui::nudge::{Nudge, Nudged, nudge};
 
@@ -59,7 +59,6 @@ impl Live {
 
 impl Occupancy for Live {
     fn who_works_in(&self, worktree: &Path) -> Vec<String> {
-        let shared = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        working_in(shared.sessions.iter().map(|s| (s.name.as_str(), s.cwd.as_path())), worktree)
+        self.working_in(worktree).into_iter().map(|s| s.name).collect()
     }
 }

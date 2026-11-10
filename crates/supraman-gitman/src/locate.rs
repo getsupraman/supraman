@@ -72,6 +72,34 @@ pub fn background_settings(settings: &Settings) -> BackgroundSettings {
     settings.section(SECTION).unwrap_or_default()
 }
 
+/// What a Git tab reads of `[gitman]`, once per tab: [`read_settings`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabSettings {
+    pub git: Option<PathBuf>,
+    /// `None` when its keys do not parse: the notice says why, and the tab does not take the defaults for them.
+    pub remote: Option<RemoteSettings>,
+    pub background: Option<BackgroundSettings>,
+}
+
+impl Default for TabSettings {
+    /// A tab with no home: every key's default.
+    fn default() -> TabSettings {
+        TabSettings { git: None, remote: Some(RemoteSettings::default()), background: Some(BackgroundSettings::default()) }
+    }
+}
+
+/// `[gitman]` of `home`'s `settings.toml` for a Git tab; blocking. `Err` (the tab's problem) when the file is not
+/// read or the table is not GitMan's; a remote or background key that does not parse leaves its part `None` and is
+/// the notice.
+pub fn read_settings(home: &Path) -> Result<(TabSettings, Option<String>), String> {
+    let settings = Settings::load(home).map_err(|e| format!("[gitman] git is not read: {e}"))?;
+    let git = section(&settings)?.git;
+    let remote = settings.section_or_notice::<RemoteSettings>(SECTION).map(Option::unwrap_or_default);
+    let background = settings.section_or_notice::<BackgroundSettings>(SECTION).map(Option::unwrap_or_default);
+    let notice = [remote.as_ref().err(), background.as_ref().err()].into_iter().flatten().next().cloned();
+    Ok((TabSettings { git, remote: remote.ok(), background: background.ok() }, notice))
+}
+
 /// `[gitman] <key> = value`, the table's other keys kept; the caller saves it (`Settings::update`).
 pub fn set_setting(settings: &mut Settings, key: &str, value: impl Serialize) -> Result<(), String> {
     let mut table: serde_json::Map<String, serde_json::Value> = settings.section(SECTION).unwrap_or_default();
@@ -129,11 +157,14 @@ fn section(settings: &Settings) -> Result<GitmanSettings, String> {
 
 /// The `[gitman] git` override, else the first git on `PATH`, checked once by running it.
 pub fn locate(settings: &Settings) -> Located {
-    let section = match section(settings) {
-        Ok(section) => section,
-        Err(notice) => return Located::BadSetting(notice),
-    };
-    match section.git.or_else(|| supraman_core::paths::executable_on_path("git")) {
+    match section(settings) {
+        Ok(section) => locate_at(section.git),
+        Err(notice) => Located::BadSetting(notice),
+    }
+}
+
+fn locate_at(setting: Option<PathBuf>) -> Located {
+    match setting.or_else(|| supraman_core::paths::executable_on_path("git")) {
         Some(path) => check(&path),
         None => Located::Missing { at: None },
     }
@@ -141,16 +172,20 @@ pub fn locate(settings: &Settings) -> Located {
 
 /// [`locate`], a git it found kept for the process per `[gitman] git` setting while its file is there.
 pub fn located(settings: &Settings) -> Located {
+    match section(settings) {
+        Ok(section) => located_at(section.git),
+        Err(notice) => Located::BadSetting(notice),
+    }
+}
+
+/// [`located`] of a `[gitman] git` already read ([`TabSettings::git`]).
+pub fn located_at(setting: Option<PathBuf>) -> Located {
     static FOUND: Mutex<Vec<(Option<PathBuf>, Git)>> = Mutex::new(Vec::new());
-    let setting = match section(settings) {
-        Ok(section) => section.git,
-        Err(notice) => return Located::BadSetting(notice),
-    };
     let kept = FOUND.lock().unwrap_or_else(PoisonError::into_inner).iter().find(|(s, _)| *s == setting).map(|(_, git)| git.clone());
     if let Some(git) = kept.filter(|g| g.path.is_file()) {
         return Located::Found(git);
     }
-    let located = locate(settings);
+    let located = locate_at(setting.clone());
     let mut found = FOUND.lock().unwrap_or_else(PoisonError::into_inner);
     found.retain(|(s, _)| *s != setting);
     if let Located::Found(git) = &located {
@@ -193,5 +228,25 @@ mod tests {
         set_setting(&mut settings, "pull", PullChoice::Rebase).unwrap();
         assert_eq!(remote_settings(&settings), RemoteSettings { pull: Some(PullChoice::Rebase), prune: None });
         assert_eq!(section(&settings).unwrap().git.as_deref(), Some(Path::new("C:/git.exe")));
+    }
+
+    fn read(toml: &str) -> Result<(TabSettings, Option<String>), String> {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(Settings::path(home.path()), toml).unwrap();
+        read_settings(home.path())
+    }
+
+    #[test]
+    fn a_tabs_settings_are_read_whole_and_a_key_that_does_not_parse_is_said_never_defaulted() {
+        let (settings, notice) = read("[gitman]\nfetch_every_minutes = 0\npull = \"rebase\"\n").unwrap();
+        assert!(notice.is_none());
+        assert_eq!(settings.background.map(|b| b.fetch_every()), Some(0));
+        assert_eq!(settings.remote.and_then(|r| r.pull), Some(PullChoice::Rebase));
+        let (settings, notice) = read("[gitman]\nfetch_every_minutes = \"often\"\n").unwrap();
+        assert!(notice.is_some_and(|n| n.starts_with("[gitman] in settings.toml is ignored")));
+        assert_eq!(settings.background, None, "never the default of a fetch every minute");
+        assert_eq!(settings.remote, Some(RemoteSettings::default()));
+        assert!(read("[gitman]\ngit = 5\n").is_err_and(|e| e.starts_with("[gitman] in settings.toml is ignored")));
+        assert!(read("not toml [").is_err_and(|e| e.starts_with("[gitman] git is not read")));
     }
 }

@@ -29,7 +29,7 @@ pub use history::{Commit, Details, FIRST_PAGE, History, NEXT_PAGE, Page, Person,
 #[cfg(any(test, feature = "test-support"))]
 pub use history::history;
 pub use layout::{Edge, EdgeKind, LANE_COLOURS, Layout, RefGroup, RefKind, RefLabel, Row, WorktreeRow};
-pub use locate::{FLOOR, Git, GitmanSettings, Located, SECTION, Version, check, judge, locate, located, RemoteSettings, remote_settings, set_setting, BackgroundSettings, background_settings, FETCH_EVERY_MINUTES};
+pub use locate::{FLOOR, Git, GitmanSettings, Located, SECTION, Version, check, judge, locate, located, located_at, read_settings, TabSettings, RemoteSettings, remote_settings, set_setting, BackgroundSettings, background_settings, FETCH_EVERY_MINUTES};
 pub use operation::{OperationState, REBASE_MARKER, UnderWay, operation_state, under_way};
 pub use refs::{Branch, Head, Refs, RemoteBranch, Tag, Upstream, Worktree, refs, worktrees};
 pub use remotes::{Link, Remote, mask_userinfo, remotes, web_link};

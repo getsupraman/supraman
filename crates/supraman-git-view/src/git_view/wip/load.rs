@@ -1,6 +1,7 @@
 //! What the WIP panel reads, blocking, for `cx.background_spawn`: the status, split into the conflicted, the
 //! unstaged and the staged files, each as a list and a tree.
 
+use supraman_core::text::count;
 use std::collections::HashMap;
 
 use supraman_gitman::{ChangeKind, Conflict, EntryKind, FileChange, OperationState, Repo, Status, UnderWay, short_sha};
@@ -76,7 +77,7 @@ pub(crate) struct Loaded {
 
 /// `1 file change`, `3 file changes`.
 pub(crate) fn file_changes(n: usize) -> String {
-    if n == 1 { "1 file change".into() } else { format!("{n} file changes") }
+    count(n, "file change", "file changes")
 }
 
 /// Each entry's unstaged side and staged side: a partly staged file is in both, a conflicted or untracked one

@@ -25,10 +25,7 @@ pub(crate) struct CommitFacts<'a> {
 
 impl CommitFacts<'_> {
     fn head_sha(&self) -> Option<&str> {
-        match &self.refs.head {
-            Head::Branch { sha, .. } => sha.as_deref(),
-            Head::Detached { sha } => Some(sha),
-        }
+        self.refs.head.sha()
     }
 
     fn is_head(&self) -> bool {

@@ -5,10 +5,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use gpui::SharedString;
-use supraman_core::Settings;
 use super::ref_panel::{self, Walk};
 use super::splice::{self, Loaded};
-use supraman_gitman::{ChangeKind, Commit, EntryKind, FIRST_PAGE, Head, History, Layout, Located, NEXT_PAGE, Refs, Repo, Row, Stash, Status, WorktreeRow};
+use supraman_gitman::{ChangeKind, Commit, EntryKind, FIRST_PAGE, Head, History, Layout, Located, NEXT_PAGE, Refs, Repo, Row, Stash, Status, TabSettings, WorktreeRow};
 
 /// One row of the graph, its texts ready to paint.
 #[derive(Debug, Clone)]
@@ -117,9 +116,10 @@ pub(crate) struct Heads {
 
 impl Heads {
     pub(crate) fn of(refs: &Refs) -> Heads {
-        let (head, branch) = match &refs.head {
-            Head::Branch { name, sha } => (sha.clone(), Some(name)),
-            Head::Detached { sha } => (Some(sha.clone()), None),
+        let head = refs.head.sha().map(str::to_string);
+        let branch = match &refs.head {
+            Head::Branch { name, .. } => Some(name),
+            Head::Detached { .. } => None,
         };
         let upstream = branch
             .and_then(|name| refs.branches.iter().find(|b| &b.name == name))
@@ -146,6 +146,8 @@ pub(crate) struct First {
     pub(crate) kept: Option<Kept>,
     /// The walk's `rev-list` read on below the first page, unless rows were kept below it.
     pub(crate) history: Option<History>,
+    /// The tab's `[gitman]` and why some of it is not taken, read by its first load only.
+    pub(crate) settings: Option<(TabSettings, Option<String>)>,
 }
 
 /// The commits loaded below a refresh's first page, laid out again after it.
@@ -171,18 +173,19 @@ pub(crate) fn git_problem(located: &Located) -> Option<String> {
 
 /// git located per the settings in `home`, the repo's dirs, the refs, the status and the first page of `walk`.
 pub(crate) fn first(home: Option<&Path>, folder: &Path, walk: &Walk) -> Result<First, Problem> {
-    let settings = match home.map(Settings::load_with_notices).transpose() {
-        Ok(loaded) => loaded.map(|(settings, _)| settings).unwrap_or_default(),
-        Err(e) => return Err(Problem::Git(format!("[gitman] git is not read: {e}"))),
+    let (settings, notice) = match home.map(supraman_gitman::read_settings).transpose() {
+        Ok(read) => read.unwrap_or_default(),
+        Err(why) => return Err(Problem::Git(why)),
     };
-    let located = supraman_gitman::located(&settings);
+    let located = supraman_gitman::located_at(settings.git.clone());
     if let Some(problem) = git_problem(&located) {
         return Err(Problem::Git(problem));
     }
     let Located::Found(git) = located else { unreachable!() };
     let repo = Repo::new(git, folder);
     let dirs = supraman_gitman::dirs(&repo).map_err(|e| Problem::Failed(e.to_string()))?;
-    read(repo.with_dirs(dirs), walk, None, &[]).map_err(Problem::Failed)
+    let first = read(repo.with_dirs(dirs), walk, None, &[]).map_err(Problem::Failed)?;
+    Ok(First { settings: Some((settings, notice)), ..first })
 }
 
 /// The refs, the status and the first page of `repo` walked as `walk` says, laid out afresh with the WIP rows of
@@ -206,7 +209,7 @@ pub(crate) fn read(repo: Repo, walk: &Walk, loaded: Option<&Loaded>, worktrees: 
     });
     let wip = page.rows.first().filter(|r| r.wip()).map(|_| Wip::of(&status));
     let history = (kept.is_none() && page.more).then_some(walker);
-    Ok(First { repo, heads: Heads::of(&walked), refs: ref_panel::build(&refs), all: Arc::new(refs.clone()), tips, wip, status: Arc::new(status), page, walk: walk.clone(), kept, history })
+    Ok(First { repo, heads: Heads::of(&walked), refs: ref_panel::build(&refs), all: Arc::new(refs.clone()), tips, wip, status: Arc::new(status), page, walk: walk.clone(), kept, history, settings: None })
 }
 
 fn dirty(status: &Status) -> bool {

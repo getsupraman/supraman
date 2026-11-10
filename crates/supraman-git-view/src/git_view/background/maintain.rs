@@ -10,7 +10,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use gpui::{App, AsyncApp};
-use supraman_core::store::JsonStore;
+use supraman_core::fs::{load_json_or_notice, lock_file};
+use supraman_core::store::{JsonStore, Save};
 use supraman_gitman::write::{LockSet, Writer, maintain};
 use supraman_ui::nudge::Nudged;
 
@@ -22,9 +23,11 @@ pub(crate) const RETRY: Duration = Duration::from_secs(60);
 
 const LOST: &str = "GitMan runs git maintenance again on each repository";
 
+type Runs = BTreeMap<String, i64>;
+
 /// The last run per common git dir, epoch milliseconds; read on the first maintenance, off the UI thread.
 #[derive(Clone, Default)]
-pub(crate) struct Ran(Arc<Mutex<Option<JsonStore<BTreeMap<String, i64>>>>>);
+pub(crate) struct Ran(Arc<Mutex<Option<JsonStore<Runs>>>>);
 
 pub(crate) fn path(home: &Path) -> PathBuf {
     home.join("gitman").join("maintenance.json")
@@ -35,7 +38,7 @@ impl Ran {
     fn last(&self, home: Option<&Path>, key: &str) -> Option<i64> {
         let mut store = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         let store = store.get_or_insert_with(|| {
-            let (store, notice) = JsonStore::load(home.map(path), LOST);
+            let (store, notice) = JsonStore::load_kept(home.map(path), LOST);
             if let Some(notice) = notice {
                 log::warn!("{notice}");
             }
@@ -46,11 +49,36 @@ impl Ran {
 
     /// `key` ran at `now`; blocking.
     fn record(&self, key: &str, now: i64) {
-        let save = self.0.lock().unwrap_or_else(PoisonError::into_inner).as_mut().and_then(|s| s.edit(|ran| ran.insert(key.to_string(), now) != Some(now)));
-        if let Some(Err(why)) = save.map(|s| s.write()) {
+        let mut store = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(Err(why)) = store.as_mut().map(|store| record_in(store, key, now)) {
             log::warn!("git maintenance: {why}");
         }
     }
+}
+
+/// `key` ran at `now`, written under the file's lock over the runs other processes wrote since; a file that
+/// cannot be read is left as it is.
+fn record_in(store: &mut JsonStore<Runs>, key: &str, now: i64) -> Result<(), String> {
+    let ran = |runs: &mut Runs| runs.insert(key.to_string(), now) != Some(now);
+    let Some(path) = store.path().map(Path::to_path_buf) else {
+        let _ = store.edit(ran);
+        return Ok(());
+    };
+    let lock = path.with_extension("lock");
+    let _held = lock_file(&lock).map_err(|e| format!("cannot lock {}: {e}", lock.display()))?;
+    let (on_disk, notice) = load_json_or_notice::<Runs>(&path, LOST);
+    if let Some(notice) = notice {
+        let _ = store.edit(ran);
+        return Err(notice);
+    }
+    let save = store.edit(|runs| {
+        on_disk.into_iter().for_each(|(k, v)| {
+            runs.entry(k).and_modify(|last| *last = (*last).max(v)).or_insert(v);
+        });
+        ran(runs);
+        true
+    });
+    save.map_or(Ok(()), Save::write)
 }
 
 struct Job {
@@ -117,5 +145,44 @@ pub(super) async fn run_loop(key: String, mut nudged: Nudged, cx: &mut AsyncApp)
             Step::Run(Some(job)) => executor.spawn(async move { maintain(job) }).await,
         };
         nudged.wait(&executor, wait).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn file_in(home: &Path, text: &str) -> PathBuf {
+        let file = path(home);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, text).unwrap();
+        file
+    }
+
+    #[test]
+    fn an_unreadable_record_keeps_the_runs_in_memory_and_is_never_written_over() {
+        let home = tempfile::tempdir().unwrap();
+        let file = file_in(home.path(), "not json");
+        let ran = Ran::default();
+        assert_eq!(ran.last(Some(home.path()), "repo"), None);
+        assert!(ran.0.lock().unwrap().as_ref().is_some_and(|store| store.path().is_none()), "the store lives in memory");
+        ran.record("repo", 5);
+        assert_eq!(ran.last(Some(home.path()), "repo"), Some(5));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "not json");
+    }
+
+    #[test]
+    fn a_record_keeps_what_another_process_wrote_and_leaves_a_file_broken_since_as_it_is() {
+        let home = tempfile::tempdir().unwrap();
+        let ran = Ran::default();
+        assert_eq!(ran.last(Some(home.path()), "a"), None);
+        let file = file_in(home.path(), r#"{"b": 7}"#);
+        ran.record("a", 5);
+        let on_disk: Runs = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(on_disk, Runs::from([("a".to_string(), 5), ("b".to_string(), 7)]));
+        std::fs::write(&file, "broken").unwrap();
+        ran.record("a", 9);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "broken");
+        assert_eq!(ran.last(Some(home.path()), "a"), Some(9));
     }
 }

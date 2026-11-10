@@ -17,7 +17,6 @@ pub const TAG_EXISTS: &str = "A tag of that name exists";
 pub const DELETE_CURRENT: &str = "The checked-out branch cannot be deleted: check out another one first";
 pub const NOT_FAST_FORWARD: &str = "The branch has commits the other does not: it cannot be fast-forwarded";
 pub const IN_WORKTREE: &str = "The branch is checked out in another worktree: change it there";
-pub const UNDER_WAY: &str = "Finish or abort the operation under way first";
 pub const DETACHED: &str = "HEAD is detached: check out a branch first";
 
 /// Why `name` cannot name a branch or a tag, after git's `check-ref-format`; `None` when it can.
@@ -63,14 +62,6 @@ fn checked_name(s: &Session, name: &str) -> Result<(), WriteError> {
     Ok(())
 }
 
-fn exists(s: &Session, full: &str) -> Result<bool, WriteError> {
-    Ok(s.run(&Call::new(&["rev-parse", "-q", "--verify", full]))?.success())
-}
-
-fn rev(s: &Session, name: &str) -> Result<String, WriteError> {
-    Ok(text(&s.output(&Call::new(&["rev-parse", "--verify", &format!("{name}^{{commit}}")]))?).trim().to_string())
-}
-
 /// HEAD's branch, `None` when detached.
 fn current(s: &Session) -> Result<Option<String>, WriteError> {
     let name = text(&s.run(&Call::new(&["symbolic-ref", "-q", "--short", "HEAD"]))?.stdout).trim().to_string();
@@ -80,7 +71,7 @@ fn current(s: &Session) -> Result<Option<String>, WriteError> {
 fn idle(s: &Session) -> Result<(), WriteError> {
     match operation_state(&s.writer().dirs().git_dir) {
         OperationState::None => Ok(()),
-        _ => Err(WriteError::Refused(UNDER_WAY)),
+        _ => Err(WriteError::Refused(super::UNDER_WAY)),
     }
 }
 
@@ -112,10 +103,8 @@ pub enum Plan {
 }
 
 /// `remote`'s branch name below its remote: `main` for `origin/main`.
-pub(crate) fn local_name<'a>(refs: &Refs, remote: &'a str) -> &'a str {
-    let remotes = refs.remotes.iter().filter(|r| r.name == remote).count();
-    let cut = remote.split_once('/').map_or(remote, |(_, rest)| rest);
-    if remotes > 0 { cut } else { remote }
+pub(crate) fn local_name<'a>(refs: &'a Refs, remote: &'a str) -> &'a str {
+    refs.remotes.iter().find(|r| r.name == remote).map_or(remote, crate::RemoteBranch::branch)
 }
 
 fn is_ancestor(repo: &Repo, a: &str, b: &str) -> Result<bool, GitError> {
@@ -269,17 +258,17 @@ fn put_back(s: &Session, stashed: Option<&Autostashed>) -> Option<String> {
 /// A new branch `name` at `at` (a commit or a ref); not checked out.
 pub fn create_branch(s: &Session, name: &str, at: &str) -> Result<(), WriteError> {
     checked_name(s, name)?;
-    if exists(s, &format!("refs/heads/{name}"))? {
+    if s.verify(&format!("refs/heads/{name}"))?.is_some() {
         return Err(WriteError::Refused(BRANCH_EXISTS));
     }
-    let at = rev(s, at)?;
+    let at = s.rev(&format!("{at}^{{commit}}"))?;
     s.output(&Call::new(&["branch", "--no-track", name, &at])).map(drop)
 }
 
 /// The local branch `from` renamed `to`, its upstream and reflog kept.
 pub fn rename_branch(s: &Session, from: &str, to: &str) -> Result<(), WriteError> {
     checked_name(s, to)?;
-    if exists(s, &format!("refs/heads/{to}"))? {
+    if s.verify(&format!("refs/heads/{to}"))?.is_some() {
         return Err(WriteError::Refused(BRANCH_EXISTS));
     }
     s.output(&Call::new(&["branch", "-m", from, to])).map(drop)
@@ -307,10 +296,10 @@ pub fn only_here(repo: &Repo, name: &str) -> Result<bool, GitError> {
 /// A tag `name` at `at`: annotated with `message`, else lightweight; `force` replaces one of that name.
 pub fn create_tag(s: &Session, name: &str, at: &str, message: Option<&str>, force: bool) -> Result<(), WriteError> {
     checked_name(s, name)?;
-    if !force && exists(s, &format!("refs/tags/{name}"))? {
+    if !force && s.verify(&format!("refs/tags/{name}"))?.is_some() {
         return Err(WriteError::Refused(TAG_EXISTS));
     }
-    let at = rev(s, at)?;
+    let at = s.rev(&format!("{at}^{{commit}}"))?;
     let mut args = match message {
         Some(_) => vec!["tag", "--create-reflog", "--annotate", "-F", "-"],
         None => vec!["-c", "tag.gpgSign=false", "tag", "--create-reflog"],
@@ -336,7 +325,7 @@ pub fn delete_tag(s: &Session, name: &str) -> Result<(), WriteError> {
 /// checkout. Refused when `to` is not ahead of it, or another worktree has it checked out.
 pub fn fast_forward(s: &Session, branch: &str, to: &str) -> Result<(), WriteError> {
     idle(s)?;
-    let to = rev(s, to)?;
+    let to = s.rev(&format!("{to}^{{commit}}"))?;
     if current(s)?.as_deref() == Some(branch) {
         return s.output(&Call::new(&["merge", "--ff-only", "-q", &to])).map(drop);
     }
@@ -345,7 +334,7 @@ pub fn fast_forward(s: &Session, branch: &str, to: &str) -> Result<(), WriteErro
         return Err(WriteError::Refused(IN_WORKTREE));
     }
     let full = format!("refs/heads/{branch}");
-    let old = rev(s, &full)?;
+    let old = s.rev(&format!("{full}^{{commit}}"))?;
     if !is_ancestor(s.writer().repo(), &old, &to)? {
         return Err(WriteError::Refused(NOT_FAST_FORWARD));
     }
@@ -380,8 +369,8 @@ fn conflicted(s: &Session) -> bool {
 /// out for it with the work in progress stashed, then the checkout before put back and the stash popped.
 pub fn merge(s: &Session, source: &str, into: &str) -> Result<Merged, WriteError> {
     idle(s)?;
-    let source_sha = rev(s, source)?;
-    let into_sha = rev(s, &format!("refs/heads/{into}"))?;
+    let source_sha = s.rev(&format!("{source}^{{commit}}"))?;
+    let into_sha = s.rev(&format!("refs/heads/{into}^{{commit}}"))?;
     if is_ancestor(s.writer().repo(), &source_sha, &into_sha)? {
         return Ok(Merged::UpToDate);
     }
@@ -395,7 +384,7 @@ pub fn merge(s: &Session, source: &str, into: &str) -> Result<Merged, WriteError
     }
     let back = match here {
         Some(branch) => branch,
-        None => rev(s, "HEAD")?,
+        None => s.rev("HEAD^{commit}")?,
     };
     let stashed = autostash(s, &format!("GitMan: before merging into {into}"))?;
     let out = s.run(&Call::new(&["checkout", "-q", into, "--"]))?;
@@ -426,7 +415,7 @@ fn merge_here(s: &Session, source: &str, away: Option<Away>) -> Result<Merged, W
 
 /// The checkout before an [`Away`] put back and its stash popped.
 fn go_back(s: &Session, away: &Away) -> Result<Autostash, WriteError> {
-    let detached = !exists(s, &format!("refs/heads/{}", away.back))?;
+    let detached = s.verify(&format!("refs/heads/{}", away.back))?.is_none();
     let args: Vec<&str> = if detached { vec!["checkout", "-q", "--detach", &away.back, "--"] } else { vec!["checkout", "-q", &away.back, "--"] };
     s.output(&Call::new(&args))?;
     Ok(pop(s, away.autostash.as_ref()))

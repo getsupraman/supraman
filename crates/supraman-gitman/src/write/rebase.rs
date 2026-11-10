@@ -15,7 +15,6 @@ use crate::GitError;
 
 pub const DETACHED: &str = "HEAD is detached: check out a branch to reword its commits";
 pub const NOT_REWORDABLE: &str = "Only a commit below HEAD on its first-parent line, above every merge and not the root, can be reworded";
-pub const UNDER_WAY: &str = "Finish or abort the operation under way first";
 pub const STAGE_FIRST: &str = "Stage the resolved files first";
 pub const EMPTY_MESSAGE: &str = "A commit needs a message";
 
@@ -77,7 +76,7 @@ pub fn reword(s: &Session, sha: &str, message: &str) -> Result<Rebased, WriteErr
         return Err(WriteError::Refused(EMPTY_MESSAGE));
     }
     if operation_state(&s.writer().dirs().git_dir) != OperationState::None {
-        return Err(WriteError::Refused(UNDER_WAY));
+        return Err(WriteError::Refused(super::UNDER_WAY));
     }
     let branch = s.run(&Call::new(&["symbolic-ref", "-q", "--short", "HEAD"]))?;
     let branch = text(&branch.stdout).trim().to_string();
@@ -98,7 +97,7 @@ pub fn reword(s: &Session, sha: &str, message: &str) -> Result<Rebased, WriteErr
 /// popped after; kept for Undo when `branch` is HEAD's.
 pub fn onto(s: &Session, branch: &str, onto: &str) -> Result<Rebased, WriteError> {
     if operation_state(&s.writer().dirs().git_dir) != OperationState::None {
-        return Err(WriteError::Refused(UNDER_WAY));
+        return Err(WriteError::Refused(super::UNDER_WAY));
     }
     start(s, onto, branch, None, &format!("GitMan autostash before rebasing {branch}"))
 }
@@ -106,7 +105,7 @@ pub fn onto(s: &Session, branch: &str, onto: &str) -> Result<Rebased, WriteError
 /// `rebase -i <base> <branch>`: with `script` its todo and message copied in by its editors, else git's own
 /// todo; the work in progress stashed as `stash_name` first and popped after.
 pub(crate) fn start(s: &Session, base: &str, branch: &str, script: Option<(&str, &str)>, stash_name: &str) -> Result<Rebased, WriteError> {
-    let from = rev(s, &format!("refs/heads/{branch}"))?;
+    let from = s.rev(&format!("refs/heads/{branch}"))?;
     let head = text(&s.run(&Call::new(&["symbolic-ref", "-q", "--short", "HEAD"]))?.stdout).trim().to_string();
     let autostash = autostash(s, stash_name)?;
     let marker = Marker { from, autostash, unrecorded: head != branch };
@@ -156,7 +155,7 @@ pub fn abort(s: &Session) -> Result<Rebased, WriteError> {
     let marker = read_marker(s);
     s.output(&Call::new(&["rebase", "--abort"]))?;
     let autostash = marker.map_or(Autostash::None, |m| pop(s, m.autostash.as_ref()));
-    Ok(Rebased::Done { head: rev(s, "HEAD")?, autostash })
+    Ok(Rebased::Done { head: s.rev("HEAD")?, autostash })
 }
 
 fn step_call(step: &str) -> Call {
@@ -172,7 +171,7 @@ fn stepped(s: &Session, marker: Option<Marker>, what: &str, out: &supraman_core:
         }
         return match marker {
             Some(marker) => done(s, &marker),
-            None => Ok(Rebased::Done { head: rev(s, "HEAD")?, autostash: Autostash::None }),
+            None => Ok(Rebased::Done { head: s.rev("HEAD")?, autostash: Autostash::None }),
         };
     }
     if conflicted(s)? {
@@ -186,13 +185,13 @@ fn stepped(s: &Session, marker: Option<Marker>, what: &str, out: &supraman_core:
 fn done(s: &Session, marker: &Marker) -> Result<Rebased, WriteError> {
     let autostash = pop(s, marker.autostash.as_ref());
     if marker.unrecorded {
-        return Ok(Rebased::Done { head: rev(s, "HEAD")?, autostash });
+        return Ok(Rebased::Done { head: s.rev("HEAD")?, autostash });
     }
     let status = crate::status(s.writer().repo())?;
     let paths: Vec<&str> = status.entries.iter().flat_map(|e| [Some(e.path.as_str()), e.orig_path.as_deref()]).flatten().collect();
     let snapshot = s.snapshot(&paths, "After reword")?;
     journal::record(s, Action::Rebase { from: marker.from.clone() }, Some(&snapshot))?;
-    Ok(Rebased::Done { head: rev(s, "HEAD")?, autostash })
+    Ok(Rebased::Done { head: s.rev("HEAD")?, autostash })
 }
 
 /// Stashes the work in progress as `name`, untracked files too, when there is any.
@@ -201,7 +200,7 @@ pub(crate) fn autostash(s: &Session, name: &str) -> Result<Option<Autostashed>, 
         return Ok(None);
     }
     stash::stash_all(s, name, false)?;
-    Ok(Some(Autostashed { sha: rev(s, "refs/stash")?, name: name.to_string() }))
+    Ok(Some(Autostashed { sha: s.rev("refs/stash")?, name: name.to_string() }))
 }
 
 /// Puts `autostash` back and drops it; a conflict or a refusal keeps it, saying why.
@@ -223,10 +222,6 @@ fn put_back(s: &Session, marker: &Marker) -> Option<String> {
     }
 }
 
-fn rev(s: &Session, name: &str) -> Result<String, WriteError> {
-    Ok(text(&s.output(&Call::new(&["rev-parse", "--verify", name]))?).trim().to_string())
-}
-
 fn rebase_dir(s: &Session) -> PathBuf {
     s.writer().dirs().git_dir.join("rebase-merge")
 }
@@ -236,15 +231,13 @@ fn under_way(s: &Session) -> bool {
 }
 
 fn failed(what: &str, out: &supraman_core::process::RawOutput, note: Option<String>) -> WriteError {
-    let said = [text(&out.stderr), text(&out.stdout)].map(|t| t.trim().to_string());
-    let stderr = said.into_iter().chain(note).filter(|t| !t.is_empty()).collect::<Vec<_>>().join("\n");
-    GitError::Failed { args: what.to_string(), code: out.code, stderr }.into()
+    GitError::said(what, out, note).into()
 }
 
 fn write_marker(s: &Session, marker: &Marker) -> Result<(), WriteError> {
     let path = rebase_dir(s).join(REBASE_MARKER);
     let json = serde_json::to_string(marker).map_err(|e| WriteError::Journal(e.to_string()))?;
-    std::fs::write(&path, json).map_err(|source| WriteError::Io { what: format!("write {}", path.display()), source })
+    supraman_core::fs::write_atomic(&path, json).map_err(WriteError::io("write", &path))
 }
 
 /// GitMan's marker of the rebase under way; `None` for another's.
@@ -285,7 +278,7 @@ fn strip_conflicts(path: &Path) -> Result<(), WriteError> {
     if stripped == message {
         return Ok(());
     }
-    std::fs::write(path, stripped).map_err(|source| WriteError::Io { what: format!("write {}", path.display()), source })
+    std::fs::write(path, stripped).map_err(WriteError::io("write", path))
 }
 
 /// The todo and the message a reword's editors copy into place, in the git dir; removed when it drops.
@@ -298,10 +291,7 @@ struct Prepared {
 impl Prepared {
     fn new(git_dir: &Path, todo: &str, message: &str) -> Result<Prepared, WriteError> {
         let dir = git_dir.join(format!("gitman-reword-{}", supraman_core::time::hex6()));
-        let io = |what: &Path| {
-            let what = format!("write {}", what.display());
-            move |source| WriteError::Io { what, source }
-        };
+        let io = |what: &Path| WriteError::io("write", what);
         std::fs::create_dir_all(&dir).map_err(io(&dir))?;
         let prepared = Prepared { todo: dir.join("todo"), message: dir.join("message"), dir };
         std::fs::write(&prepared.todo, todo).map_err(io(&prepared.todo))?;
