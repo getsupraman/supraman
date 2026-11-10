@@ -1036,7 +1036,7 @@ impl FleetView {
             self.hover_icon(format!("git-graph-{w}/{}", repo.name), Icon::GitGraph, "Show this folder's commit graph", &group, false, cx).on_click(cx.listener(
                 move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
-                    this.open_git(folder.clone(), title.clone(), &Default::default(), cx);
+                    this.open_git(folder.clone(), title.clone(), cx);
                 },
             ))
         });

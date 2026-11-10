@@ -32,20 +32,15 @@ pub(crate) struct Opening {
     pub(crate) sizes: GitSizes,
     /// The graph column's width is the repo's own, not one to fit to the lanes.
     pub(crate) own_graph: bool,
-    /// A saved tab's sizes taken in: the repo's entry from now on.
-    pub(crate) adopt: bool,
 }
 
 impl File {
-    /// The repo's entry, else `saved` (a tab's own sizes), else the last layout used.
-    pub(crate) fn opening(&self, key: &str, saved: &GitSizes) -> Opening {
-        if let Some(own) = self.repos.get(key) {
-            return Opening { sizes: own.clone(), own_graph: has_graph(own), adopt: false };
+    /// The repo's entry, else the last layout used.
+    pub(crate) fn opening(&self, key: &str) -> Opening {
+        match self.repos.get(key) {
+            Some(own) => Opening { sizes: own.clone(), own_graph: own.widths.get(1).is_some_and(|w| *w > 0) },
+            None => Opening { sizes: self.last.clone().unwrap_or_default(), own_graph: false },
         }
-        if *saved != GitSizes::default() {
-            return Opening { sizes: saved.clone(), own_graph: has_graph(saved), adopt: true };
-        }
-        Opening { sizes: self.last.clone().unwrap_or_default(), own_graph: false, adopt: false }
     }
 
     /// Keeps `sizes` as `key`'s and as the last used; whether anything changed.
@@ -56,10 +51,6 @@ impl File {
         self.last = Some(last);
         changed
     }
-}
-
-fn has_graph(sizes: &GitSizes) -> bool {
-    sizes.widths.get(1).is_some_and(|w| *w > 0)
 }
 
 pub(crate) fn path(home: &Path) -> PathBuf {
@@ -110,14 +101,9 @@ pub(crate) fn ready(home: Option<PathBuf>, cx: &mut App) -> Ready {
     ready
 }
 
-/// What `key` opens at, once [`ready`]; the save of a saved tab's sizes taken in.
-pub(crate) fn opening(key: &str, saved: &GitSizes, cx: &mut App) -> (Opening, Option<Save>) {
-    let Some(store) = layouts(cx).and_then(|l| l.store.as_mut()) else {
-        return (File::default().opening(key, saved), None);
-    };
-    let opening = store.get().opening(key, saved);
-    let save = if opening.adopt { store.edit(|f| f.remember(key, &opening.sizes)) } else { None };
-    (opening, save)
+/// What `key` opens at, once [`ready`].
+pub(crate) fn opening(key: &str, cx: &mut App) -> Opening {
+    layouts(cx).and_then(|l| l.store.as_ref()).map_or_else(|| File::default().opening(key), |store| store.get().opening(key))
 }
 
 pub(crate) fn remember(key: &str, sizes: &GitSizes, cx: &mut App) -> Option<Save> {
@@ -176,25 +162,15 @@ mod tests {
         assert!(store.edit(|f| f.remember("p:/b", &b)).is_none(), "no change, no save");
         let (back, _) = load(Some(home.path()));
         let file = back.get();
-        assert_eq!(file.opening("p:/a", &GitSizes::default()), Opening { sizes: a.clone(), own_graph: true, adopt: false });
-        assert_eq!(file.opening("p:/b", &a).sizes, b, "the repo's entry wins over a saved tab's sizes");
-        let new = file.opening("p:/c", &GitSizes::default());
-        assert_eq!(new, Opening { sizes: b.clone(), own_graph: false, adopt: false }, "the last widths, its graph still fitted");
+        assert_eq!(file.opening("p:/a"), Opening { sizes: a.clone(), own_graph: true });
+        assert_eq!(file.opening("p:/b").sizes, b);
+        let new = file.opening("p:/c");
+        assert_eq!(new, Opening { sizes: b.clone(), own_graph: false }, "the last widths, its graph still fitted");
         let mut file = file.clone();
         file.remember("p:/a", &a);
-        let fresh = file.opening("p:/c", &GitSizes::default()).sizes;
+        let fresh = file.opening("p:/c").sizes;
         assert!(fresh.hidden.is_empty() && fresh.collapsed.is_empty() && fresh.solo.is_empty() && fresh.widths == a.widths, "{fresh:?}");
         assert!(home.path().join("gitman").join("layout.json").is_file());
-    }
-
-    #[test]
-    fn git_layout_adopts_a_saved_tabs_sizes_once_when_the_repo_has_no_entry() {
-        let saved = sizes(90);
-        let opening = File::default().opening("p:/a", &saved);
-        assert_eq!(opening, Opening { sizes: saved.clone(), own_graph: true, adopt: true });
-        let mut file = File::default();
-        assert!(file.remember("p:/a", &opening.sizes));
-        assert!(!file.opening("p:/a", &GitSizes::default()).adopt);
     }
 
     #[test]
@@ -206,7 +182,7 @@ mod tests {
         let (mut store, notice) = load(Some(home.path()));
         assert!(notice.is_some_and(|n| n.contains("layout.json") && n.contains("default layout")));
         assert!(store.edit(|f| f.remember("p:/a", &sizes(80))).is_none(), "kept in memory only");
-        assert_eq!(store.get().opening("p:/a", &GitSizes::default()).sizes, sizes(80));
+        assert_eq!(store.get().opening("p:/a").sizes, sizes(80));
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "{ not json");
     }
 

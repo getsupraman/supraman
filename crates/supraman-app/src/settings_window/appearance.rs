@@ -314,8 +314,11 @@ impl SettingsView {
             );
         }
         row(
-            "Ctrl+T and Ctrl+W",
-            "Ctrl+T opens a new task tab and Ctrl+W closes the active tab. Outside terminals, the default, leaves both              to the program in a terminal tab; Everywhere takes them from terminals too. Ctrl+Shift+T and Ctrl+Shift+W              work in every tab, Ctrl+Alt+T reopens the last closed tab. Applied at once and kept in settings.toml              ([window] tab_keys).",
+            "Tab keys in a terminal",
+            "Ctrl+T opens a new task tab, Ctrl+W closes the active tab and Ctrl+Shift+PgUp/PgDn move it. Outside terminals, the \
+             default, leaves Ctrl+T and Ctrl+W to the program in a terminal tab and makes Ctrl+Shift+PgUp/PgDn scroll it a page; \
+             Everywhere takes all four from terminals too. Ctrl+Shift+T and Ctrl+Shift+W work in every tab, Ctrl+Alt+T reopens \
+             the last closed tab. Applied at once and kept in settings.toml ([window] tab_keys).",
             choices.into_any_element(),
             None,
             cx,

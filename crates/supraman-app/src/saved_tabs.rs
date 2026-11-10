@@ -6,7 +6,6 @@ use supraman_core::fs::{load_json_or_notice, write_atomic};
 use serde::{Deserialize, Serialize};
 
 use crate::fleet;
-use crate::git_view::GitSizes;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -22,29 +21,7 @@ pub enum SavedTab {
     Claude { title: String, cwd: PathBuf, session_id: Option<String>, name: String },
     Attach { title: String, cwd: PathBuf, id: String, session_id: Option<String>, name: String },
     Work { title: String, workspace: String },
-    /// The sizes are read only, as a repo's layout until `git_view::layout` keeps one; dropped in 0.1.13.
-    Git {
-        title: String,
-        folder: PathBuf,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        widths: Vec<u32>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        panel: Option<u32>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        message: Option<u32>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        refs: Option<u32>,
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        refs_shut: bool,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        hidden: Vec<String>,
-    },
-}
-
-impl SavedTab {
-    pub fn git(title: String, folder: PathBuf) -> SavedTab {
-        SavedTab::Git { title, folder, widths: Vec::new(), panel: None, message: None, refs: None, refs_shut: false, hidden: Vec::new() }
-    }
+    Git { title: String, folder: PathBuf },
 }
 
 impl SavedTab {
@@ -129,7 +106,7 @@ pub enum Reopen {
     /// A tab with a Resume button; nothing runs until it is clicked.
     Placeholder(SavedTab),
     Work { workspace: String },
-    Git { title: String, folder: PathBuf, sizes: GitSizes },
+    Git { title: String, folder: PathBuf },
 }
 
 pub struct World<'a> {
@@ -156,10 +133,7 @@ pub fn plan(saved: &SavedTab, world: &World) -> Result<Reopen, String> {
         SavedTab::Shell { title, cwd, shell } => Ok(Reopen::Shell { title: title.clone(), cwd: cwd.clone(), shell: shell.clone().filter(|s| (world.is_file)(&s.program)) }),
         SavedTab::Work { workspace, .. } if world.workspaces.contains(workspace) => Ok(Reopen::Work { workspace: workspace.clone() }),
         SavedTab::Work { workspace, .. } => Err(format!("workspace {workspace} is gone")),
-        SavedTab::Git { title, folder, widths, panel, message, refs, refs_shut, hidden } => {
-            let sizes = GitSizes { widths: widths.clone(), panel: *panel, message: *message, refs: *refs, refs_shut: *refs_shut, hidden: hidden.clone(), collapsed: Vec::new(), solo: Vec::new(), sections: Vec::new() };
-            Ok(Reopen::Git { title: title.clone(), folder: folder.clone(), sizes })
-        }
+        SavedTab::Git { title, folder } => Ok(Reopen::Git { title: title.clone(), folder: folder.clone() }),
         SavedTab::Claude { title, .. } => {
             let session = saved.session().ok_or_else(|| "it has no conversation to resume".to_string())?;
             let live = world.sessions.iter().find(|s| s.session_id == session.session_id && fleet::is_alive(&s.health(world.now)));
@@ -239,24 +213,21 @@ mod tests {
     }
 
     #[test]
-    fn a_git_tab_comes_back_with_the_layout_files_sizes_and_one_saved_before_it_with_its_own() {
+    fn a_git_tab_comes_back_with_its_title_and_folder() {
         let folder = PathBuf::from("C:/demo/repo");
-        let saved = SavedTab::git("Git · repo".into(), folder.clone());
+        let saved = SavedTab::Git { title: "Git · repo".into(), folder: folder.clone() };
         let home = tempfile::tempdir().unwrap();
         save(home.path(), &SavedTabs { tabs: vec![saved.clone()], active: Some(0) }).unwrap();
         let (back, notice) = load(home.path());
         assert_eq!((back.tabs.as_slice(), notice), (std::slice::from_ref(&saved), None));
         let has = |_: &str, _: &Path| false;
         let world = world(&[], &[], false, &has);
-        let Ok(Reopen::Git { title, folder: reopened, sizes: back }) = plan(&back.tabs[0], &world) else { panic!("a Git tab reopens") };
-        assert_eq!((title.as_str(), reopened.as_path(), back), ("Git · repo", folder.as_path(), GitSizes::default()), "the sizes are the layout file's, not the tab's");
-        let gone = SavedTab::git("Git · x".into(), PathBuf::from("C:/demo/gone"));
+        assert_eq!(plan(&back.tabs[0], &world), Ok(Reopen::Git { title: "Git · repo".into(), folder: folder.clone() }));
+        let gone = SavedTab::Git { title: "Git · x".into(), folder: PathBuf::from("C:/demo/gone") };
         assert!(plan(&gone, &world).unwrap_err().contains("is gone"));
 
-        let old = serde_json::json!({ "kind": "git", "title": "Git · repo", "folder": folder, "widths": [200, 90, 300, 130, 70], "panel": 360, "message": 150, "refs": 210, "refs_shut": true, "hidden": ["refs/heads/feature", "stash/0123"] });
-        let old: SavedTab = serde_json::from_value(old).unwrap();
-        let Ok(Reopen::Git { sizes: back, .. }) = plan(&old, &world) else { panic!("a Git tab reopens") };
-        assert_eq!(back, supraman_git_view::git_view::test_support::sizes(), "a tab saved before the layout file still hands over its sizes");
+        let old = serde_json::json!({ "kind": "git", "title": "Git · repo", "folder": folder, "widths": [200, 90, 300, 130, 70], "panel": 360 });
+        assert_eq!(serde_json::from_value::<SavedTab>(old).unwrap(), saved, "a tab saved with its sizes loads without them");
     }
 
     #[test]

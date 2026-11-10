@@ -72,7 +72,7 @@ async fn open(view: &Entity<FleetView>, script: &std::path::Path, cx: &mut Async
         })
     })?;
     let work = view.update(cx, |v, cx| v.open_work(WORKSPACE, cx));
-    let git = view.update(cx, |v, cx| v.open_git(home(), "Git · tab keys".into(), &Default::default(), cx));
+    let git = view.update(cx, |v, cx| v.open_git(home(), "Git · tab keys".into(), cx));
     if order(view, cx).0 != [shell, work, git] {
         bail!("expected tabs [{shell}, {work}, {git}], found {:?}", order(view, cx).0);
     }
@@ -96,24 +96,35 @@ async fn jumps(view: &Entity<FleetView>, [shell, work, git]: [u64; 3], cx: &mut 
     Ok(format!("{} Ctrl+digit jumps from the shell, Work and Git tabs; Ctrl+8 of 3 tabs did nothing", count))
 }
 
+/// Ctrl+Shift+PageUp/PageDown move the Git tab; in the shell they and Shift+PageUp/PageDown scroll it, and its
+/// program reads none of them (`outside_terminals` checks the reader's next keys).
 async fn moves(view: &Entity<FleetView>, [shell, work, git]: [u64; 3], cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    click(view, &format!("tab-{git}"), cx).await?;
     let steps = [
-        ("pageup", vec![shell, work, git]),
-        ("pagedown", vec![work, shell, git]),
-        ("pagedown", vec![work, git, shell]),
-        ("pagedown", vec![work, git, shell]),
-        ("pageup", vec![work, shell, git]),
-        ("pageup", vec![shell, work, git]),
+        ("pagedown", vec![shell, work, git]),
+        ("pageup", vec![shell, git, work]),
+        ("pageup", vec![git, shell, work]),
+        ("pageup", vec![git, shell, work]),
+        ("pagedown", vec![shell, git, work]),
+        ("pagedown", vec![shell, work, git]),
     ];
     let count = steps.len();
     for (i, (key, expected)) in steps.into_iter().enumerate() {
         press(cx, key, ctrl_shift())?;
         let now = order(view, cx);
-        if now != (expected.clone(), Some(shell)) {
-            bail!("press {} (ctrl-shift-{key}): (order, active) {now:?}, expected ({expected:?}, {shell})", i + 1);
+        if now != (expected.clone(), Some(git)) {
+            bail!("press {} (ctrl-shift-{key}): (order, active) {now:?}, expected ({expected:?}, {git})", i + 1);
         }
     }
-    Ok(format!("{} Ctrl+Shift+PageUp/PageDown moved the shell tab one place each, never past an end", count))
+    click(view, &format!("tab-{shell}"), cx).await?;
+    for (key, modifiers) in [("pageup", ctrl_shift()), ("pagedown", ctrl_shift()), ("pageup", Modifiers::shift()), ("pagedown", Modifiers::shift())] {
+        press(cx, key, modifiers)?;
+        let now = order(view, cx);
+        if now != (vec![shell, work, git], Some(shell)) {
+            bail!("{key} {modifiers:?} in the shell moved a tab: (order, active) {now:?}");
+        }
+    }
+    Ok(format!("{count} Ctrl+Shift+PageUp/PageDown moved the Git tab one place each, never past an end; in the shell they moved nothing"))
 }
 
 async fn until_new(view: &Entity<FleetView>, before: &[u64], what: &str, cx: &mut AsyncWindowContext, kind: fn(&TabKind) -> bool) -> anyhow::Result<u64> {
@@ -176,7 +187,7 @@ fn ctrl_alt() -> Modifiers {
     Modifiers { control: true, alt: true, ..Default::default() }
 }
 
-/// The other mode, chosen in the settings window and applied without a restart: Ctrl+T and Ctrl+W never reach the shell.
+/// The other mode, chosen in the settings window and applied without a restart: Ctrl+T, Ctrl+W and the moves never reach the shell.
 async fn everywhere(view: &Entity<FleetView>, shell: u64, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     set_mode(view, TabKeys::Everywhere, cx).await?;
     let terminal = reader(view, shell, cx).await?;
@@ -185,6 +196,13 @@ async fn everywhere(view: &Entity<FleetView>, shell: u64, cx: &mut AsyncWindowCo
     press(cx, "t", ctrl())?;
     until_new(view, &open, "Ctrl+T in the shell: a New task tab active", cx, |k| matches!(k, TabKind::Start(_))).await?;
     click(view, &format!("tab-{shell}"), cx).await?;
+    let at = |cx: &mut AsyncWindowContext| order(view, cx).0.iter().position(|id| *id == shell);
+    let before = at(cx);
+    let (key, step) = if before == Some(0) { ("pagedown", 1) } else { ("pageup", -1) };
+    press(cx, key, ctrl_shift())?;
+    if at(cx) != before.map(|i| i.saturating_add_signed(step)) {
+        bail!("everywhere: ctrl-shift-{key} in the shell left it at {:?}, it was at {before:?}", at(cx));
+    }
     press(cx, "tab", Modifiers::default())?;
     let got = keys(&terminal, 1, cx).await.context("the reopened shell's reader")?;
     if got != ["fm-key Tab 0"] {
@@ -192,7 +210,7 @@ async fn everywhere(view: &Entity<FleetView>, shell: u64, cx: &mut AsyncWindowCo
     }
     press(cx, "w", ctrl())?;
     until(view, cx, WITHIN, "Ctrl+W: the shell closed", |v| v.tab(shell).is_none().then_some(())).await?;
-    Ok("everywhere (set in Settings, applied at once): Ctrl+T opened a task tab from the shell, Ctrl+W closed it, its program read neither".into())
+    Ok("everywhere (set in Settings, applied at once): Ctrl+T opened a task tab from the shell, Ctrl+Shift+PageUp/PageDown moved it, Ctrl+W closed it, its program read none of them".into())
 }
 
 async fn set_mode(view: &Entity<FleetView>, mode: TabKeys, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {

@@ -11,8 +11,8 @@ paste on Ctrl+V, find on Ctrl+Shift+F, no copy on select, plain-text copy). Code
 | Ctrl+Tab, Ctrl+PgDn | next tab |
 | Ctrl+Shift+Tab, Ctrl+PgUp | previous tab |
 | Ctrl+1 … Ctrl+8, Ctrl+9 | the nth tab, Ctrl+9 the last; in every tab, terminals too |
-| Ctrl+Shift+PgUp / PgDn | move the active tab one place left / right; in every tab, terminals too |
-| Ctrl+T | a New task tab in the active tab's workspace and folder, else the first workspace; in a terminal tab the program gets it unless Settings → Appearance → Ctrl+T and Ctrl+W is Everywhere (`[window] tab_keys`) |
+| Ctrl+Shift+PgUp / PgDn | move the active tab one place left / right; in a terminal tab they scroll it a page instead unless Settings → Appearance → Tab keys in a terminal is Everywhere (`[window] tab_keys`) |
+| Ctrl+T | a New task tab in the active tab's workspace and folder, else the first workspace; in a terminal tab the program gets it unless Settings → Appearance → Tab keys in a terminal is Everywhere (`[window] tab_keys`) |
 | Ctrl+W | close the active tab, as its × does; in a terminal tab as Ctrl+T |
 | Ctrl+Shift+T, Ctrl+Shift+W | as Ctrl+T and Ctrl+W, in every tab |
 | Ctrl+Alt+T | reopen the last tab closed in this run (the last 20 are kept; a New task, Schedule or Details tab is not) |
@@ -60,10 +60,12 @@ back to the window (the terminal).
 | Ctrl+= (Ctrl++), Ctrl+-, Ctrl+0 | font size up, down, reset — every terminal, kept in settings.toml (m5/41) |
 | Ctrl+wheel | font size up / down, every terminal |
 | Ctrl+Shift+Up / Down | scroll one line |
+| Shift+PgUp / PgDn | scroll one page; the program never gets them |
+| Ctrl+Shift+PgUp / PgDn | scroll one page, unless Tab keys in a terminal is Everywhere (then they move the tab) |
 | Ctrl+Shift+Home / End | scroll to the top / bottom |
 | Shift+Enter | ESC CR (a new line in Claude Code's prompt) |
 
-Everything else goes to the program, including Shift+PgUp/PgDn (Windows Terminal binds no default to them).
+Everything else goes to the program.
 
 ## Mouse in a terminal
 

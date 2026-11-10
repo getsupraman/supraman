@@ -59,7 +59,12 @@ pub fn chord(k: &Keystroke, has_selection: bool) -> Option<Chord> {
             "end" => Some(Chord::ScrollBottom),
             _ => None,
         },
-        (false, true) => (key == "insert").then_some(Chord::Paste),
+        (false, true) => match key {
+            "insert" => Some(Chord::Paste),
+            "pageup" => Some(Chord::ScrollPage(1)),
+            "pagedown" => Some(Chord::ScrollPage(-1)),
+            _ => None,
+        },
         (false, false) => None,
     }
 }
@@ -490,8 +495,10 @@ mod tests {
         assert_eq!(chord(&k("0", true, false), false), Some(Chord::FontReset));
         assert_eq!(chord(&k("up", true, true), false), Some(Chord::ScrollLines(1)));
         assert_eq!(chord(&k("down", true, true), false), Some(Chord::ScrollLines(-1)));
-        assert_eq!(chord(&k("pageup", true, true), false), Some(Chord::ScrollPage(1)));
-        assert_eq!(chord(&k("pagedown", true, true), false), Some(Chord::ScrollPage(-1)));
+        for shift_or_ctrl_shift in [false, true] {
+            assert_eq!(chord(&k("pageup", shift_or_ctrl_shift, true), false), Some(Chord::ScrollPage(1)));
+            assert_eq!(chord(&k("pagedown", shift_or_ctrl_shift, true), false), Some(Chord::ScrollPage(-1)));
+        }
         assert_eq!(chord(&k("home", true, true), false), Some(Chord::ScrollTop));
         assert_eq!(chord(&k("end", true, true), false), Some(Chord::ScrollBottom));
     }
@@ -504,7 +511,7 @@ mod tests {
             ("pageup", true, false),
             ("pagedown", true, false),
             ("enter", false, true),
-            ("pageup", false, true),
+            ("home", false, true),
             ("a", true, false),
             ("d", true, false),
             ("f", true, false),

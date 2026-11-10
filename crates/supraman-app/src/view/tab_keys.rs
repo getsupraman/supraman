@@ -13,7 +13,7 @@ use crate::saved_tabs::SavedTab;
 pub enum TabKey {
     Next,
     Previous,
-    /// Ctrl+T and Ctrl+W: a terminal's program keeps them under [`TabKeys::OutsideTerminals`].
+    /// Ctrl+T and Ctrl+W: a terminal's program keeps them under [`TabKeys::OutsideTerminals`], as the terminal keeps `Move`'s page scroll.
     New,
     Close,
     NewAnywhere,
@@ -60,7 +60,7 @@ pub fn bind(cx: &mut gpui::App) {
 
 /// Whether the chord goes on to the active tab's terminal instead.
 pub fn passes(key: TabKey, mode: TabKeys, terminal_active: bool) -> bool {
-    matches!(key, TabKey::New | TabKey::Close) && mode == TabKeys::OutsideTerminals && terminal_active
+    matches!(key, TabKey::New | TabKey::Close | TabKey::Move(_)) && mode == TabKeys::OutsideTerminals && terminal_active
 }
 
 pub struct TabKeyState {
@@ -182,9 +182,9 @@ mod tests {
     }
 
     #[test]
-    fn only_ctrl_t_and_ctrl_w_reach_a_terminal_and_only_outside_terminals_mode() {
+    fn only_ctrl_t_ctrl_w_and_the_moves_reach_a_terminal_and_only_outside_terminals_mode() {
         for (_, key) in CHORDS {
-            let through = matches!(key, TabKey::New | TabKey::Close);
+            let through = matches!(key, TabKey::New | TabKey::Close | TabKey::Move(_));
             assert_eq!(passes(key, TabKeys::OutsideTerminals, true), through, "{key:?} in a terminal, mode A");
             assert!(!passes(key, TabKeys::OutsideTerminals, false), "{key:?} outside a terminal, mode A");
             assert!(!passes(key, TabKeys::Everywhere, true), "{key:?} in a terminal, mode B");

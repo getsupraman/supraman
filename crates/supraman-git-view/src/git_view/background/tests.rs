@@ -13,7 +13,7 @@ use supraman_ui::hit::HitTargets;
 
 use super::maintain::{AFTER, EVERY, RETRY};
 use super::*;
-use crate::git_view::{GitSizes, bind_keys};
+use crate::git_view::bind_keys;
 use crate::occupancy;
 
 const MINUTE: Duration = Duration::from_secs(60);
@@ -47,7 +47,7 @@ fn start(home: Option<&Path>, settings: BackgroundSettings, cx: &mut TestAppCont
 
 fn open(folder: &Path, home: Option<&Path>, live: occupancy::Live, cx: &mut VisualTestContext) -> Entity<GitView> {
     let (folder, home) = (folder.to_path_buf(), home.map(Path::to_path_buf));
-    let view = cx.update(|_, cx| GitView::open_with(folder, home, HitTargets::default(), &GitSizes::default(), Arc::new(live), cx));
+    let view = cx.update(|_, cx| GitView::open_with(folder, home, HitTargets::default(), Arc::new(live), cx));
     cx.run_until_parked();
     crate::git_view::test_support::assert_loaded(&view, cx);
     view
