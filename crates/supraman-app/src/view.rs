@@ -1,5 +1,4 @@
 use std::{
-    cell::RefCell,
     collections::{BTreeMap, HashMap as StdHashMap, HashSet},
     path::{Path, PathBuf},
     rc::Rc,
@@ -71,6 +70,8 @@ mod reopen;
 mod results;
 mod right;
 pub(crate) mod shells;
+mod sidebar;
+use sidebar::CachedTree;
 pub(crate) mod schedules;
 mod schedule_state;
 mod startup;
@@ -251,7 +252,6 @@ pub struct FleetView {
     pub show_stopped: bool,
     /// Set only by a selftest: see [`fleet::Supervised::own_prefix`].
     pub own_prefix: Option<String>,
-    collapsed: HashSet<String>,
     pub tabs: Vec<Tab>,
     pub active: Option<u64>,
     next_tab_id: u64,
@@ -282,8 +282,6 @@ pub struct FleetView {
     pub injected: Arc<Mutex<Vec<Session>>>,
     /// Bumped by every registry write from this window; a poll that read the registry before one is not applied.
     registry_writes: Arc<AtomicU64>,
-    pub left_width: Pixels,
-    left_saves: Entity<left_width::LeftWidth>,
     pub term_font_size: Pixels,
     pub term_font_family: SharedString,
     pub term_ligatures: bool,
@@ -294,11 +292,7 @@ pub struct FleetView {
     last_alive: StdHashMap<String, i64>,
     pub relays: BTreeMap<String, RelayStatus>,
     pub messages: BTreeMap<String, Vec<OutboxMessage>>,
-    pub expanded: HashSet<String>,
     pub dismissed_messages: DismissedMessages,
-    left_hold: Option<left::Hold>,
-    left_hold_timer: Option<gpui::Task<()>>,
-    pub left_holds: u64,
     pub answered:BTreeMap<String, BTreeMap<String, String>>,
     pub answered_route: BTreeMap<String, String>,
     pub compose: Option<Compose>,
@@ -331,10 +325,6 @@ pub struct FleetView {
     pub closed: Vec<Session>,
     /// A selftest's closed sessions, kept across transcript scans.
     pub injected_closed: Vec<Session>,
-    tree_cache: RefCell<Option<CachedTree>>,
-    left_list: supraman_ui::keyed_list::KeyedList,
-    reveal_pending: Option<(left::PendingReveal, Instant)>,
-    left_rows: Rc<(Rc<Tree>, Vec<left::LeftRow>)>,
     closed_repos: StdHashMap<PathBuf, Option<PathBuf>>,
     pub transcripts_nudge: Nudge,
     pub poll_nudge: Nudge,
@@ -347,10 +337,8 @@ pub struct FleetView {
     /// Every source of the tree has completed once (`loading`); until then the action bar says what is loading.
     pub loaded: bool,
     pub stars: Stars,
-    pub closed_expanded: HashSet<String>,
     pub claude_command: String,
     pub search: Entity<TextInput>,
-    search_marks: StdHashMap<String, crate::search::Marks>,
     blink: term::CursorBlink,
     pub toast: ToastSlot,
     pub pane_toast: ToastSlot,
@@ -360,6 +348,7 @@ pub struct FleetView {
     pub deleting: HashSet<String>,
     painted_sessions: bool,
     pub saving: tab_saving::TabSaving,
+    pub sidebar: sidebar::Sidebar,
     pub scheduling: schedule_state::ScheduleState,
     pub(crate) tab_keys: Entity<tab_keys::TabKeyState>,
 }
@@ -590,7 +579,6 @@ impl FleetView {
             refreshes: 0,
             show_stopped: false,
             own_prefix: None,
-            collapsed: HashSet::new(),
             tabs: Vec::new(),
             active: None,
             next_tab_id: 1,
@@ -619,8 +607,6 @@ impl FleetView {
             #[cfg(feature = "selftest")]
             injected,
             registry_writes,
-            left_width: DEFAULT_LEFT_WIDTH,
-            left_saves: cx.new(|_| left_width::LeftWidth::default()),
             term_font_size,
             term_font_family,
             term_ligatures,
@@ -631,11 +617,7 @@ impl FleetView {
             last_alive: StdHashMap::new(),
             relays: BTreeMap::new(),
             messages: BTreeMap::new(),
-            expanded: HashSet::new(),
             dismissed_messages: DismissedMessages::default(),
-            left_hold: None,
-            left_hold_timer: None,
-            left_holds: 0,
             answered: BTreeMap::new(),
             answered_route: BTreeMap::new(),
             compose: None,
@@ -669,10 +651,6 @@ impl FleetView {
             left_pending: Vec::new(),
             closed: Vec::new(),
             injected_closed: Vec::new(),
-            tree_cache: RefCell::new(None),
-            left_list: Default::default(),
-            reveal_pending: None,
-            left_rows: Rc::new((Rc::new(Tree { workspaces: Vec::new(), hidden_stopped: 0 }), Vec::new())),
             closed_repos: StdHashMap::new(),
             transcripts_nudge,
             poll_nudge,
@@ -684,10 +662,8 @@ impl FleetView {
             loaded: false,
             action_error: None,
             stars: Stars::default(),
-            closed_expanded: HashSet::new(),
             claude_command: "claude".into(),
             search,
-            search_marks: StdHashMap::new(),
             blink,
             toast: ToastSlot::default(),
             pane_toast: ToastSlot::default(),
@@ -697,6 +673,7 @@ impl FleetView {
             deleting: HashSet::new(),
             painted_sessions: false,
             saving: tab_saving::TabSaving::new(tabs_writes),
+            sidebar: sidebar::Sidebar::new(cx),
             scheduling,
             tab_keys: cx.new(|_| tab_keys::TabKeyState::new(defaults.window.tab_keys())),
         }
@@ -767,7 +744,7 @@ impl FleetView {
     pub fn dismiss_message(&mut self, workspace: &str, file: &str, cx: &mut Context<Self>) {
         let save = self.dismissed_messages.dismiss(workspace, file);
         self.save_off_thread(save, "Cannot save the dismissed message", cx);
-        self.expanded.remove(&format!("{workspace}/{file}"));
+        self.sidebar.expanded.remove(&format!("{workspace}/{file}"));
         cx.notify();
     }
 
@@ -1002,7 +979,7 @@ impl FleetView {
     /// The tree built once per change of its inputs; a mutation of one calls [`Self::invalidate_tree`].
     pub fn tree(&self) -> Rc<Tree> {
         let now = now_ms();
-        if let Some(cached) = self.tree_cache.borrow().as_ref()
+        if let Some(cached) = self.sidebar.tree_cache.borrow().as_ref()
             && cached.show_stopped == self.show_stopped
             && cached.own_prefix == self.own_prefix
             && cached.until.is_none_or(|until| now < until)
@@ -1015,12 +992,12 @@ impl FleetView {
         tree_check::BUILDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let tree = Rc::new(self.build_tree(now));
         let until = fleet::next_change(&self.sessions, &self.closed, now);
-        *self.tree_cache.borrow_mut() = Some(CachedTree { at: now, until, show_stopped: self.show_stopped, own_prefix: self.own_prefix.clone(), tree: tree.clone() });
+        *self.sidebar.tree_cache.borrow_mut() = Some(CachedTree { at: now, until, show_stopped: self.show_stopped, own_prefix: self.own_prefix.clone(), tree: tree.clone() });
         tree
     }
 
     pub fn invalidate_tree(&self) {
-        self.tree_cache.borrow_mut().take();
+        self.sidebar.tree_cache.borrow_mut().take();
     }
 
     fn build_tree(&self, now: i64) -> Tree {
@@ -1032,7 +1009,7 @@ impl FleetView {
             main_repos: Some(&self.main_repos),
             closed: &self.closed,
             starred: Some(self.stars.ids()),
-            expanded: Some(&self.closed_expanded),
+            expanded: Some(&self.sidebar.closed_expanded),
             disabled_folders: false,
             own_prefix: self.own_prefix.as_deref(),
         };
@@ -1859,8 +1836,8 @@ impl FleetView {
     }
 
     fn toggle(&mut self, key: String, cx: &mut Context<Self>) {
-        if !self.collapsed.remove(&key) {
-            self.collapsed.insert(key);
+        if !self.sidebar.collapsed.remove(&key) {
+            self.sidebar.collapsed.insert(key);
         }
         cx.notify();
     }
@@ -2078,14 +2055,6 @@ fn tab_sessions(shells: &[(u64, u32)]) -> StdHashMap<u64, String> {
             Some((tab, entry.session_id?))
         })
         .collect()
-}
-
-struct CachedTree {
-    at: i64,
-    until: Option<i64>,
-    show_stopped: bool,
-    own_prefix: Option<String>,
-    tree: Rc<Tree>,
 }
 
 /// A selftest's check that every cached tree equals a fresh build at its instant: a missed invalidation is a mismatch.

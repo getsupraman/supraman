@@ -702,13 +702,13 @@ impl FleetView {
         let mut out = Vec::new();
         if !rows.is_empty() || !others.is_empty() {
             let gkey = format!("schedules:{}", node.name);
-            let open = !self.collapsed.contains(&gkey);
+            let open = !self.sidebar.collapsed.contains(&gkey);
             out.push(self.render_schedules_row(&node.name, rows.len() + others.len(), open, cx));
             if open {
                 for row in &rows {
                     let runs = node.scheduled.get(&row.schedule.id).map(Vec::as_slice).unwrap_or_default();
                     let skey = format!("schedule:{}", key(&node.name, &row.schedule.id));
-                    let sopen = !self.collapsed.contains(&skey);
+                    let sopen = !self.sidebar.collapsed.contains(&skey);
                     out.push(self.render_schedule_row(row, runs.len(), sopen, cx));
                     if sopen {
                         out.extend(runs.iter().map(|r| self.render_session(&node.name, &row.schedule.id, r, grid::indent(3), cx)));
@@ -800,7 +800,7 @@ impl FleetView {
         let colors = cx.theme().colors().clone();
         let scope = workspace.unwrap_or_default();
         let gkey = format!("others:{scope}");
-        let open = !self.collapsed.contains(&gkey);
+        let open = !self.sidebar.collapsed.contains(&gkey);
         let (hit, tree_key) = if scope.is_empty() { ("others-row".to_string(), "others".to_string()) } else { (format!("others-row-{scope}"), format!("others-{scope}")) };
         let group = div()
             .id(SharedString::from(hit.clone()))

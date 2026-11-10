@@ -128,8 +128,8 @@ impl FleetView {
             .children(self.message_attach(workspace, m, &key, now, cx))
             .child(dismiss)
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                if !this.expanded.remove(&key) {
-                    this.expanded.insert(key.clone());
+                if !this.sidebar.expanded.remove(&key) {
+                    this.sidebar.expanded.insert(key.clone());
                 }
                 cx.notify();
             }))
@@ -138,7 +138,7 @@ impl FleetView {
 
     fn message_body(&self, key: &str, m: &OutboxMessage, cx: &mut Context<Self>) -> Div {
         let lines: Vec<&str> = m.body.lines().collect();
-        let shown = if self.expanded.contains(key) { lines.len() } else { lines.len().min(MESSAGE_LINES) };
+        let shown = if self.sidebar.expanded.contains(key) { lines.len() } else { lines.len().min(MESSAGE_LINES) };
         let mut body = div().flex().flex_col().min_w_0().text_xs().text_color(cx.theme().colors().text);
         for (n, segment) in segments(&lines[..shown]).into_iter().enumerate() {
             body = body.child(match segment {

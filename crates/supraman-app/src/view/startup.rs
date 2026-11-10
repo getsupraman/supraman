@@ -83,8 +83,8 @@ impl FleetView {
     }
 
     fn settings_loaded(&mut self, loaded: Settings, cx: &mut Context<Self>) {
-        if let Some(width) = self.left_saves.read(cx).loaded(loaded.window.left_width) {
-            self.left_width = width;
+        if let Some(width) = self.sidebar.left_saves.read(cx).loaded(loaded.window.left_width) {
+            self.sidebar.left_width = width;
         }
         self.term_font_size = px(loaded.terminal.font_size() as f32);
         self.term_font_family = SharedString::from(loaded.terminal.font_family(&self.installed_fonts));

@@ -91,10 +91,10 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     let fixture = Arc::new(cx.background_executor().spawn(async move { Fixture::new_in(&parent) }).await);
     let registry = Registry::at(home);
     registry.save(&Workspace::new(WS, &fixture.dir, vec![Folder::new(FOLDER, &fixture.dir)]), true)?;
-    let (window, left) = (viewport(cx).await?, view.read_with(cx, |v, _| v.left_width));
+    let (window, left) = (viewport(cx).await?, view.read_with(cx, |v, _| v.sidebar.left_width));
     let result = check(view, &fixture, cx).await;
     view.update(cx, |v, cx| {
-        v.left_width = left;
+        v.sidebar.left_width = left;
         let tabs: Vec<u64> = git_tabs(v, cx, &fixture.dir).into_iter().map(|(id, _)| id).collect();
         tabs.into_iter().for_each(|id| v.close_tab(id, cx));
     });
@@ -159,8 +159,8 @@ fn outside(v: &FleetView, left: Pixels, right: Pixels, prefixes: &[&str], whole:
 async fn narrow(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     tap(view, &row_key(&probe(view, git, cx), f.sha("ahead"))?, cx).await?;
     show(view, git, f.sha("ahead"), 1, cx).await?;
-    let (window, saved) = (viewport(cx).await?, view.read_with(cx, |v, _| v.left_width));
-    view.update(cx, |v, _| v.left_width = MIN_LEFT_WIDTH);
+    let (window, saved) = (viewport(cx).await?, view.read_with(cx, |v, _| v.sidebar.left_width));
+    view.update(cx, |v, _| v.sidebar.left_width = MIN_LEFT_WIDTH);
     resize(view, size(px(MIN_WINDOW), window.height), cx).await?;
     let (left, right) = (MIN_LEFT_WIDTH, px(MIN_WINDOW));
     let fit = until(view, cx, WITHIN, "the Git tab inside the window at its minimum width", |v| {
@@ -169,7 +169,7 @@ async fn narrow(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, cx
     })
     .await;
     let fit = fit.map_err(|e| e.context(format!("outside the tab: {:?}", view.read_with(cx, |v, _| outside(v, left, right, &["git-col-", "git-refs-", "git-more-"], &TOOLBAR)))));
-    view.update(cx, |v, _| v.left_width = saved);
+    view.update(cx, |v, _| v.sidebar.left_width = saved);
     resize(view, window, cx).await?;
     fit?;
     Ok(format!("at the {MIN_WINDOW:.0} px window (sidebar {:.0} px) the header cells, ref pills and the commit toolbar stay inside the tab", f32::from(MIN_LEFT_WIDTH)))

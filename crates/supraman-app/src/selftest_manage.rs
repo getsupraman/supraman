@@ -323,10 +323,10 @@ async fn edit_folders_fit(view: &Entity<FleetView>, registry: &Registry, workspa
     std::fs::create_dir_all(long.join(".git"))?;
     std::fs::write(long.join(".git").join("HEAD"), format!("ref: refs/heads/{BRANCH}\n"))?;
     let before = registry.load(workspace)?;
-    let width = view.read_with(cx, |v, _| v.left_width);
+    let width = view.read_with(cx, |v, _| v.sidebar.left_width);
     cx.update(|window, cx| {
         view.update(cx, |v, cx| {
-            v.left_width = crate::view::MIN_LEFT_WIDTH;
+            v.sidebar.left_width = crate::view::MIN_LEFT_WIDTH;
             v.edit_folders(workspace, window, cx);
         })
     })?;
@@ -377,7 +377,7 @@ async fn edit_folders_fit(view: &Entity<FleetView>, registry: &Registry, workspa
     }
     shot("m5-63-edit-folders-min", cx).await;
     view.update(cx, |v, cx| {
-        v.left_width = width;
+        v.sidebar.left_width = width;
         cx.notify();
     });
     click(view, "edit-cancel", cx).await?;

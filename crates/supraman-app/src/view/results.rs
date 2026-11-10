@@ -41,9 +41,9 @@ impl FleetView {
     }
 
     pub(super) fn reveal(&mut self, workspace: &str, repo: Option<&str>, cx: &mut Context<Self>) {
-        self.collapsed.remove(&format!("workspace:{workspace}"));
+        self.sidebar.collapsed.remove(&format!("workspace:{workspace}"));
         if let Some(repo) = repo {
-            self.collapsed.remove(&format!("repo:{workspace}/{repo}"));
+            self.sidebar.collapsed.remove(&format!("repo:{workspace}/{repo}"));
         }
         self.clear_search(cx);
     }
@@ -58,7 +58,7 @@ impl FleetView {
     pub(super) fn render_results(&mut self, mut body: Stateful<Div>, query: &str, cx: &mut Context<Self>) -> Stateful<Div> {
         let colors = cx.theme().colors().clone();
         let results = search::search(&self.search_tree(), query);
-        self.search_marks = results
+        self.sidebar.search_marks = results
             .workspaces
             .iter()
             .flat_map(|w| w.supervised.iter().chain(w.repos.iter().flat_map(|r| &r.sessions)))

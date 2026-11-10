@@ -140,7 +140,7 @@ impl FleetView {
         let Some(w) = self.workspaces.iter().find(|x| x.name == workspace).cloned() else {
             return;
         };
-        self.collapsed.remove(&format!("workspace:{workspace}"));
+        self.sidebar.collapsed.remove(&format!("workspace:{workspace}"));
         self.open_add(Mode::Edit(w), window, cx);
     }
 
@@ -250,7 +250,7 @@ impl FleetView {
                 }
                 let live_in = self.live_in(&done);
                 if let Some(added) = done.added.first() {
-                    self.collapsed.remove(&format!("workspace:{w}"));
+                    self.sidebar.collapsed.remove(&format!("workspace:{w}"));
                     self.reveal_new(super::left::PendingReveal::Row(format!("repo:{w}/{added}")));
                 }
                 self.put_workspace(done.workspace.clone());

@@ -85,7 +85,7 @@ impl FleetView {
             DialogEvent::Saved { workspace, taken } => {
                 let name = workspace.name.clone();
                 self.close_add(window, cx);
-                self.collapsed.remove(&format!("workspace:{name}"));
+                self.sidebar.collapsed.remove(&format!("workspace:{name}"));
                 self.reveal_new(super::left::PendingReveal::Row(format!("ws:{name}")));
                 self.put_workspace(workspace.clone());
                 self.reload_workspaces(cx);
