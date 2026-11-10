@@ -176,7 +176,7 @@ pub(crate) async fn drag_between(from: Point<Pixels>, to: Point<Pixels>, shot: O
             window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: Some(MouseButton::Left), modifiers: none }), cx);
         }
     })?;
-    sleep(cx, Duration::from_millis(100)).await;
+    crate::selftest::drawn(cx).await?;
     if let Some(name) = shot {
         crate::selftest_manage::shot(name, cx).await;
     }
