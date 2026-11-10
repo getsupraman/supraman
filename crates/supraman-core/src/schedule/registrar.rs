@@ -90,9 +90,7 @@ pub struct Synced {
     pub folder_deleted: bool,
 }
 
-/// Makes `<task_root>\<workspace>` hold one task per schedule whose approval verifies and whose status is
-/// active, and nothing else. A task whose [`definition_digest`] matches stays; a changed definition, run
-/// level included, is registered again. No other task is read or written.
+/// Makes `<task_root>\<workspace>` hold one task per active, approved schedule and nothing else; touches no other task.
 pub fn sync(registrar: &dyn Registrar, target: &SyncTarget, workspace: &Workspace, schedules: &[Schedule]) -> Result<Synced> {
     let root = task_root(target.home);
     let folder = format!(r"{root}\{}", workspace.name);

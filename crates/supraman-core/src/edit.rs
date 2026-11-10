@@ -1,5 +1,4 @@
-//! What `sm workspace add-folder`/`remove-folder`/`set-home`/`add-scan`/`remove-scan` and the app's Edit
-//! folders share: one change to a registered workspace, read, checked and saved under its lock.
+//! One change to a registered workspace, read, checked and saved under the registry's lock.
 
 use std::path::{Path, PathBuf};
 
@@ -10,8 +9,7 @@ use crate::{CoreError, Folder, Registry, Result, Scan, Workspace, owners, rescan
 pub enum Edit {
     /// `enable`: the folder may have a supervised session, unless another workspace owns it.
     AddFolder { path: PathBuf, enable: bool },
-    /// By name, ignoring case, by slug or by path ([`Workspace::find_folder`]). A scan of it skips it from
-    /// now on.
+    /// As [`Workspace::find_folder`] finds it; a scan of it skips it.
     RemoveFolder(String),
     SetEnabled { folder: String, enabled: bool },
     /// `None`: the first folder.
@@ -20,7 +18,7 @@ pub enum Edit {
     AddScan { path: PathBuf, depth: usize },
     /// The folders only it found go with it.
     RemoveScan(PathBuf),
-    /// Of these folders, those a [`rescan`] no longer finds go; no scan skips them.
+    /// Of these folders, those a [`rescan`] does not find go; no scan skips them.
     DropGone(Vec<String>),
 }
 
@@ -71,8 +69,7 @@ impl Workspace {
 }
 
 impl Registry {
-    /// Applies `edit` to workspace `name` and saves it; nothing is written when it is refused. The lock is the
-    /// registry's, not the workspace's: an enable reads every other workspace's folders.
+    /// Under the registry's lock, not the workspace's: an enable reads every other workspace's folders.
     pub fn edit(&self, name: &str, edit: Edit) -> Result<Edited> {
         let path = self.path_of(name)?;
         let lock = path.with_file_name("registry.lock");

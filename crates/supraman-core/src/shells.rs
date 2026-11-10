@@ -77,8 +77,7 @@ pub struct Shell {
 }
 
 impl Shell {
-    /// The name a tab title starts with: `pwsh`, `powershell`, `cmd`, a distro, a custom exe's stem, or a
-    /// developer shell's label without its `for <Visual Studio>`.
+    /// The name a tab title starts with: `pwsh`, `cmd`, a distro, an exe's stem, a developer shell's label.
     pub fn short(&self) -> String {
         match &self.setting {
             Some(ShellSetting::Pwsh) => "pwsh".into(),
@@ -100,8 +99,7 @@ pub struct Shells {
 }
 
 impl Shells {
-    /// The shell `setting` starts, with a notice when it cannot and `auto` stands in. `args` are
-    /// `[terminal] shell_args`, which only a custom shell takes.
+    /// The shell `setting` starts, else `auto` with a notice; `args` (`shell_args`) only for a custom shell.
     pub fn resolve(&self, setting: &ShellSetting, args: &[String]) -> (Shell, Option<String>) {
         let fallback = |why: String| (self.auto.clone(), Some(format!("terminal.shell {why}; {} is used", self.auto.label)));
         let ignored = |shell: Shell| {

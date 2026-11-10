@@ -8,15 +8,12 @@ use serde::de::DeserializeOwned;
 
 static TMP_SEQ: AtomicU32 = AtomicU32::new(0);
 
-/// Replaces `path` with `bytes`, creating its folder: a temp file unique to this process and call, flushed
-/// to disk and renamed over `path` (retried while another process holds it open), so a reader never sees
-/// half a file and a crash leaves the old file or the new one.
+/// Replaces `path` with `bytes` by a flushed temp file renamed over it: a reader never sees half a file.
 pub fn write_atomic(path: &Path, bytes: impl AsRef<[u8]>) -> io::Result<()> {
     write_atomic_prepared(path, bytes, |_| Ok(()))
 }
 
-/// [`write_atomic`] that runs `prepare` on the empty temp file before `bytes` go in: a secret's file restricted
-/// to its owner before the secret is written (`supraman_claude::write_mcp_config`).
+/// [`write_atomic`] that runs `prepare` on the empty temp file first (a secret's file restricted to its owner).
 pub fn write_atomic_prepared(path: &Path, bytes: impl AsRef<[u8]>, prepare: impl FnOnce(&Path) -> io::Result<()>) -> io::Result<()> {
     const ERROR_SHARING_VIOLATION: i32 = 32;
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
@@ -55,8 +52,7 @@ fn tmp_path(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
-/// An exclusive lock on `path` (created with its folder, never truncated), held until the returned file
-/// drops: serialises a read-modify-write across threads and processes. Blocks while another holds it.
+/// An exclusive cross-process lock on `path` (never truncated), held until the returned file drops.
 pub fn lock_file(path: &Path) -> io::Result<fs::File> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         fs::create_dir_all(dir)?;
@@ -79,8 +75,7 @@ pub fn try_lock_file(path: &Path) -> io::Result<Option<fs::File>> {
     }
 }
 
-/// The machine-wide lock of one heavy job (a selftest, a cargo build or test): the file under the temp dir
-/// that `scripts/heavy-lock.ps1` locks too. Says once on stderr when it has to wait.
+/// The machine-wide lock of one heavy job, the same file `scripts/heavy-lock.ps1` locks.
 pub fn heavy_job_lock(what: &str) -> io::Result<fs::File> {
     lock_waiting(&std::env::temp_dir().join(HEAVY_JOB_LOCK), what)
 }
@@ -101,8 +96,7 @@ fn lock_waiting(path: &Path, what: &str) -> io::Result<fs::File> {
 /// The file name of [`heavy_job_lock`] under the temp dir.
 pub const HEAVY_JOB_LOCK: &str = "supraman-heavy.lock";
 
-/// `path` parsed as JSON. Missing: the default, no notice. Unreadable or not the expected JSON: the
-/// default and a notice naming the file, the error and `fallback` (what the default means to the user).
+/// `path` parsed as JSON; missing is the default, unreadable the default and a notice ending in `fallback`.
 pub fn load_json_or_notice<T: DeserializeOwned + Default>(path: &Path, fallback: &str) -> (T, Option<String>) {
     let notice = |e: &dyn std::fmt::Display| Some(format!("Cannot read {} ({e}): {fallback}", path.display()));
     match fs::read_to_string(path) {
@@ -115,8 +109,7 @@ pub fn load_json_or_notice<T: DeserializeOwned + Default>(path: &Path, fallback:
     }
 }
 
-/// Appends `bytes` to `path`, first moving a file of `cap` bytes or more to `<path>.1` (replacing an
-/// older one). A rotation that fails (the file held open elsewhere) does not cost the append.
+/// Appends `bytes` to `path`, first rotating a file of `cap` bytes or more to `<path>.1`.
 pub fn append_capped(path: &Path, bytes: &[u8], cap: u64) -> io::Result<()> {
     if fs::metadata(path).is_ok_and(|m| m.len() >= cap) {
         let _ = fs::rename(path, rotated(path));

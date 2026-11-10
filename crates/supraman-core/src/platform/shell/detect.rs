@@ -33,9 +33,7 @@ impl Machine {
     }
 }
 
-/// This machine's shells; blocks on `vswhere` and `wsl.exe` (each up to [`PROBE_TIMEOUT`]), so call it off
-/// the UI thread. Only plain shell tabs start them: a tab that starts or attaches claude stays on PowerShell
-/// (C113).
+/// This machine's shells; blocks on `vswhere` and `wsl.exe` (each up to [`PROBE_TIMEOUT`]); see C113.
 #[cfg(windows)]
 pub fn detect() -> Shells {
     detect_on(&Machine::current(), &mut probe)
@@ -104,8 +102,7 @@ pub struct VsInstance {
     pub name: String,
 }
 
-/// The installs in `vswhere -format json` output; an entry without an id, a path or a name is skipped, and
-/// text that is not that JSON lists none.
+/// The installs in `vswhere -format json` output; an entry without an id, a path or a name is skipped.
 pub fn parse_vswhere(json: &str) -> Vec<VsInstance> {
     let Ok(serde_json::Value::Array(items)) = serde_json::from_str(json) else { return Vec::new() };
     items
@@ -139,8 +136,7 @@ fn dev_shells(vs: &VsInstance, powershell: &Path, cmd: &Path) -> Vec<Shell> {
     out
 }
 
-/// The distros in `wsl.exe -l -q` output, UTF-8 or UTF-16LE with or without a BOM, without Docker Desktop's own
-/// `docker-desktop*`.
+/// The distros in `wsl.exe -l -q` output (UTF-8 or UTF-16LE, BOM or not), without `docker-desktop*`.
 pub fn parse_wsl(bytes: &[u8]) -> Vec<String> {
     let text = match crate::text::decode(bytes) {
         (_, crate::text::Encoding::Utf8 | crate::text::Encoding::Unknown) if bytes.contains(&0) => crate::text::utf16(bytes, true),

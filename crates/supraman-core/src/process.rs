@@ -1,5 +1,4 @@
-//! Spawning a child: no console window, both pipes drained on threads, a deadline, and on timeout a
-//! kill of the child or of its whole tree.
+//! Spawning a child: no console window, both pipes drained, and a timeout that kills the child or its tree.
 
 use std::ffi::OsStr;
 use std::io::Read;
@@ -52,8 +51,7 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
     command
 }
 
-/// Starts `cmd` with no pipes and does not wait for it: a child that outlives the call (Run now's `smw`).
-/// Its exit is never reaped by the caller; it returns the pid.
+/// Starts `cmd` with no pipes and no wait, a child that outlives the call (Run now's `smw`); its pid.
 pub fn spawn_detached(cmd: &mut Command) -> std::io::Result<u32> {
     let child = cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn()?;
     Ok(child.id())
@@ -76,8 +74,7 @@ pub fn run(cmd: &mut Command, timeout: Duration, kill: Kill) -> Result<Output, R
     }
 }
 
-/// [`run`] that also kills the child once `stop` returns true (asked every 20 ms). A killed child's output is
-/// what it wrote until then, and `code` is `None`.
+/// [`run`] that also kills the child once `stop` returns true, keeping what it wrote (`code` `None`).
 pub fn run_watched(cmd: &mut Command, timeout: Duration, kill: Kill, stop: &mut dyn FnMut() -> bool) -> std::io::Result<(Ended, Output)> {
     let (ended, raw) = run_raw(cmd, None, timeout, kill, Some(stop))?;
     let text = |bytes: Vec<u8>| String::from_utf8_lossy(&bytes).into_owned();
@@ -139,9 +136,7 @@ fn run_raw(cmd: &mut Command, input: Option<Vec<u8>>, timeout: Duration, kill: K
     } else {
         terminate(&mut child, tree.as_ref());
     }
-    // A descendant that outlives the child (claude's background service, a `Kill::Child` survivor) keeps the pipes
-    // open: take what was read by then.
-    // Disconnected once both readers ended, as nothing is ever sent.
+    // A descendant that outlives the child (claude's background service) keeps the pipes open: take what was read.
     let _ = settled.recv_timeout(PIPES_SETTLE);
     Ok((ended, RawOutput { code, stdout: stdout.finish(), stderr: stderr.finish() }))
 }
@@ -155,8 +150,7 @@ pub fn spawned_here() -> usize {
     SPAWNED.get()
 }
 
-/// Starts `cmd` with no window; for [`Kill::Tree`] suspended, inside its job, and only then resumed, so nothing
-/// it starts escapes the job.
+/// For [`Kill::Tree`] the child starts suspended and resumes inside its job, so nothing it starts escapes.
 fn spawn(cmd: &mut Command, kill: Kill) -> std::io::Result<(Child, Option<Job>)> {
     SPAWNED.set(SPAWNED.get() + 1);
     if kill == Kill::Child {
@@ -196,14 +190,11 @@ pub fn without_user_config(cmd: &mut Command) -> &mut Command {
     cmd.env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_CONFIG_GLOBAL", "/dev/null")
 }
 
-/// How many chunks of stdout a [`Streaming`] child's reader runs ahead of its caller; past them the child
-/// blocks on its pipe until more are asked for.
+/// Chunks a [`Streaming`] reader runs ahead of its caller before the child blocks on its pipe.
 const AHEAD: usize = 2;
 const CHUNK: usize = 64 * 1024;
 
-/// A child whose stdout (or stderr, [`stream_pipe`]) is read as it writes, chunk by chunk: no window, `input` on
-/// stdin, the other pipe kept, its tree in a job. Dropped before [`Streaming::finish`], its tree is killed without
-/// waiting.
+/// A child whose stdout (or stderr) is read chunk by chunk as it writes; dropped before `finish`, its tree is killed.
 pub struct Streaming {
     child: Child,
     tree: Option<Job>,
@@ -284,8 +275,7 @@ impl Streaming {
         }
     }
 
-    /// The next bytes within `wait`, [`Waited::Idle`] when none came; unlike [`Streaming::next`] an idle wait
-    /// kills nothing, so a caller can stop between waits by dropping it.
+    /// The next bytes within `wait`, [`Waited::Idle`] when none came; an idle wait kills nothing.
     pub fn wait(&mut self, wait: Duration) -> Waited {
         match self.chunks.recv_timeout(wait) {
             Ok(chunk) => Waited::Chunk(chunk),
@@ -294,8 +284,7 @@ impl Streaming {
         }
     }
 
-    /// After [`Streaming::next`] gave `None`: the exit code and the other pipe, the tree killed when it has not exited
-    /// within `timeout`.
+    /// After `next` gave `None`: the exit code and the other pipe; the tree killed past `timeout`.
     pub fn finish(mut self, timeout: Duration) -> Result<RawOutput, RunError> {
         self.finished = true;
         let code = match wait_exit(&mut self.child, timeout).map_err(RunError::Spawn)? {
@@ -374,8 +363,7 @@ mod tests {
     use crate::platform::process::{snapshot, started, terminate_started, wait_any_exit};
     use crate::testing::{eventually, polled, wait_until};
 
-    /// Every child of a crate or its tests starts through [`command`]: a console program started bare gets
-    /// a visible window when the parent has no console.
+    /// A console program started bare gets a visible window when the parent has no console.
     #[test]
     fn no_crate_starts_a_process_without_command() {
         let needle = concat!("Command", "::new(");

@@ -30,16 +30,13 @@ pub trait Section: Serialize + DeserializeOwned + Default {
 pub struct SessionSettings {
     /// Most of this home's `fm-` sessions mid-turn at once, across its workspaces.
     pub max_working: usize,
-    /// More plugin dirs every launch gets, as `--plugin-dir` after Supraman's own (e.g. the workman plugin
-    /// whose `/workman:controller` a repo-controller runs). Edited in the file; the app only shows them.
+    /// More `--plugin-dir`s every launch gets after Supraman's own; edited in the file, the app only shows them.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub extra_plugin_dirs: Vec<PathBuf>,
-    /// Start elevated (one UAC prompt per start), so Supraman reaches a claude background service an
-    /// elevated `claude --bg` started.
+    /// Start elevated, to reach a claude background service an elevated `claude --bg` started.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub run_as_admin: bool,
     /// How long a workspace's relay stays wanted after its last fallback send. Unset: 10 min.
-    /// Edited in the file; the selftest shortens it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relay_idle_secs: Option<u64>,
     /// Reopen the tabs open at the last close when Supraman starts.
@@ -100,8 +97,7 @@ impl Section for AppearanceSettings {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TerminalSettings {
-    /// In px, as Ctrl+= / Ctrl+- / Ctrl+wheel and Settings → Appearance leave it; read through
-    /// [`TerminalSettings::font_size`].
+    /// In px; read through [`TerminalSettings::font_size`].
     #[serde(deserialize_with = "lenient_size", skip_serializing_if = "Option::is_none")]
     pub font_size: Option<u32>,
     /// Read through [`TerminalSettings::font_family`].
@@ -232,8 +228,7 @@ impl Section for UpdateSettings {
     const FIELDS: &'static [&'static str] = &["check"];
 }
 
-/// `<SUPRAMAN_HOME>/settings.toml`, edited in the app and re-read by every supervisor tick. One table per
-/// [`Section`].
+/// `<SUPRAMAN_HOME>/settings.toml`, one table per [`Section`]; re-read by every supervisor tick.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Settings {
     pub sessions: SessionSettings,
@@ -241,8 +236,7 @@ pub struct Settings {
     pub terminal: TerminalSettings,
     pub window: WindowSettings,
     pub updates: UpdateSettings,
-    /// Every table and key Supraman does not own, as read and written back: a plugin's `[gitman]`, a newer
-    /// build's keys, a key outside any table. Read and written through [`Settings::section`].
+    /// Every table and key Supraman does not own, kept as read; see [`Settings::section`].
     pub other: Table,
 }
 
@@ -291,9 +285,7 @@ impl Settings {
         Self::load_with_notices(home).map(|(settings, _)| settings)
     }
 
-    /// The defaults when the file does not exist. A key with a value of the wrong type keeps its
-    /// default, and a section that is not a table all of its defaults, each named in a notice; only a file
-    /// that is not TOML at all is an error.
+    /// A bad key or table keeps its defaults with a notice; only a file that is not TOML is an error.
     pub fn load_with_notices(home: &Path) -> Result<(Self, Vec<String>)> {
         let path = Self::path(home);
         match read(&path)? {
@@ -356,8 +348,7 @@ impl Settings {
     }
 }
 
-/// `section`'s keys into its table in `out`, beside any keys of it Supraman does not know; no table when
-/// both are empty.
+/// `section`'s keys into its table in `out`, beside the keys Supraman does not know.
 fn put<S: Section>(out: &mut Table, section: &S) -> std::result::Result<(), toml::ser::Error> {
     let Value::Table(fields) = Value::try_from(section)? else { unreachable!("a section serializes to a table") };
     let mut table = match out.remove(S::KEY) {
@@ -395,8 +386,7 @@ fn parse(path: &Path, text: &str) -> Result<(Settings, Vec<String>)> {
     Ok((Settings { sessions, appearance, terminal, window, updates, other: table }, notices))
 }
 
-/// `S` out of its own table in `table`, each key checked on its own. What `S` does not know stays in
-/// `table` for [`Settings::other`].
+/// `S` out of its table, each key checked on its own; what `S` does not know stays for [`Settings::other`].
 fn take<S: Section>(table: &mut Table, path: &Path, notices: &mut Vec<String>) -> S {
     let at = path.display();
     let mut own = match table.remove(S::KEY) {
@@ -522,8 +512,7 @@ check = false
         assert!(!s.updates.check && notices.is_empty(), "{notices:?}");
     }
 
-    /// The shape of a home's `settings.toml` today, with made-up values: loads with no notice, and a save
-    /// writes the same tables back.
+    /// A home's `settings.toml` loads with no notice and saves the same tables back.
     #[test]
     fn a_tables_file_as_written_today_loads_and_saves_unchanged() {
         let home = tempfile::tempdir().unwrap();
@@ -549,8 +538,7 @@ url = "https://workman.example"
         assert_eq!(Settings::load(home.path()).unwrap(), s);
     }
 
-    /// A key outside any table, a former flat name or not, is named in a notice and keeps no value; the
-    /// save keeps it where it is.
+    /// A key outside any table is named in a notice and keeps no value; the save keeps it where it is.
     #[test]
     fn a_key_outside_a_table_is_a_notice_and_the_rest_of_the_file_stands() {
         let home = tempfile::tempdir().unwrap();

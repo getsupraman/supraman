@@ -54,8 +54,7 @@ pub fn set_workman_server_json_for_selftest(path: PathBuf) -> Result<(), String>
     WORKMAN_SERVER_JSON.set(path)
 }
 
-/// claude's user config where claude looks for it: `<CLAUDE_CONFIG_DIR, else user_home>/.claude.json`, or the
-/// legacy `<claude_dir>/.config.json` while it has content and that file has none.
+/// claude's user config: `<CLAUDE_CONFIG_DIR, else user_home>/.claude.json`, or the legacy `.config.json` while only it has content.
 pub fn claude_json() -> Option<PathBuf> {
     CLAUDE_JSON.get(|| claude_json_of(claude_config_dir_var(), user_home(), |p| fs::metadata(p).is_ok_and(|m| m.is_file() && m.len() > 0)))
 }
@@ -173,8 +172,7 @@ pub fn git_at(dir: &Path) -> Option<PathBuf> {
     dir.ancestors().map(|d| d.join(".git")).find(|g| g.exists())
 }
 
-/// The main checkout `dir` is in, [`normalize`]d: the folder of the [`git_at`] dir, or the
-/// `<repo>` of a linked worktree's `gitdir: <repo>/.git/worktrees/<n>`. Never runs git.
+/// The main checkout `dir` is in, [`normalize`]d, read from the `.git` walk. Never runs git.
 pub fn main_checkout(dir: &Path) -> Option<PathBuf> {
     let git = git_at(dir)?;
     if git.is_dir() {

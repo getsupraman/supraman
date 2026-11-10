@@ -422,8 +422,7 @@ fn mac_binds_the_workspace_the_id_and_the_fingerprint() {
     assert_eq!(verify(&approval, "demo", "x", "fe", &key), Err(Refusal::Changed));
 }
 
-/// Europe/Berlin under the EU rule: CEST from the last Sunday of March to the last Sunday of October, both
-/// at 01:00 UTC.
+/// Europe/Berlin: CEST from the last Sunday of March to the last Sunday of October, at 01:00 UTC.
 #[derive(Debug, Clone, Copy)]
 struct Berlin;
 
@@ -818,7 +817,6 @@ fn the_diff_names_each_covered_field_that_changed_since_the_approval() {
 }
 
 
-/// The fingerprint of the doc example as the release before `edit` computed it.
 const GOLDEN_FINGERPRINT: &str = "52cd87cf1e7c3ce22ccc64f9ea094dfeecbf02c6aa9b3510351505d88ab0061e";
 
 #[test]

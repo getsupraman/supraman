@@ -196,8 +196,7 @@ pub fn run_worktrees(home: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// The schedules' part of [`crate::prune::prune`]: rotated run records, the state dirs of removed schedules,
-/// and run worktrees older than `cutoff` that hold nothing uncommitted and no commit only they have.
+/// The schedules' part of [`crate::prune::prune`]: rotated records, removed schedules' state, spent run worktrees.
 pub(crate) fn prune(home: &Path, cutoff: i64, errors: &mut Vec<String>) {
     let dir = schedules_dir(home);
     crate::prune::remove_older(&dir.join("runs"), cutoff, |n| n.ends_with(".jsonl.1"), errors);
@@ -248,7 +247,7 @@ pub(super) fn spent(wt: &Path) -> std::result::Result<Option<(PathBuf, String)>,
     Ok(Some((main, branch)))
 }
 
-/// Removes `wt` and its branch when it is [`spent`]; leaves it otherwise, for René to see.
+/// Removes `wt` and its branch when it is [`spent`]; leaves it otherwise, for the user to see.
 fn remove_if_spent(wt: &Path) -> std::result::Result<(), String> {
     let Some((main, branch)) = spent(wt)? else { return Ok(()) };
     let wt_arg = wt.to_string_lossy();

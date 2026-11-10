@@ -1,5 +1,4 @@
-//! A release zip unpacked, and its folder swapped over an install folder while sessions' hooks may run the
-//! install's exes (docs/RELEASE.md, "How Supraman updates itself").
+//! A release zip unpacked and swapped over an install (docs/RELEASE.md, "How Supraman updates itself").
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -22,8 +21,7 @@ fn plain(rel: &str) -> bool {
         && rel.split(['/', '\\']).all(|part| !part.is_empty() && part != "." && part != ".." && !part.contains(':'))
 }
 
-/// The zip's `Supraman\` folder unpacked into `dir` (any earlier one replaced); an entry that is absolute,
-/// escapes the folder or is outside it refuses the whole zip before anything is written.
+/// The zip's `Supraman\` folder unpacked into `dir`; an entry escaping it refuses the whole zip first.
 pub fn unpack(zip: &Path, dir: &Path) -> Result<PathBuf, String> {
     let file = fs::File::open(zip).map_err(|e| format!("{}: {e}", zip.display()))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("{}: not a zip: {e}", zip.display()))?;
@@ -151,8 +149,7 @@ fn move_file(from: &Path, to: &Path) -> io::Result<()> {
     fs::rename(from, to)
 }
 
-/// One rename of `from` over `to` with POSIX semantics (`FileRenameInfoEx`, Windows 10 1709+), which replaces
-/// even a running exe; a volume without them (FAT, a network share) refuses it.
+/// A POSIX-semantics rename (`FileRenameInfoEx`) that replaces even a running exe; FAT and shares refuse it.
 #[cfg(windows)]
 fn rename_over(from: &Path, to: &Path) -> io::Result<()> {
     use windows::Win32::Foundation::CloseHandle;
@@ -239,8 +236,7 @@ thread_local! {
     static RENAME_ASIDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Makes [`apply`] on this thread take the rename-aside path for a locked file, as on a volume that refuses
-/// the one rename, until the guard drops: what a test of that path sets.
+/// Makes [`apply`] on this thread take the rename-aside path for a locked file until the guard drops.
 #[doc(hidden)]
 #[must_use]
 pub fn rename_aside_on_this_thread() -> RenameAside {
@@ -274,18 +270,7 @@ pub struct Outcome {
     pub restarted: Option<u32>,
 }
 
-/// Swaps the release at `from` over the install at `to`, then starts `restart`.
-///
-/// Sessions' hooks run `plugins\supraman\bin\sm.exe` from the install at any moment, even while Supraman is
-/// closed, so a file may be locked: `MoveFileExW` refuses to overwrite or delete a running exe. Each file is
-/// staged as `<name>.new` and moved over its target; a target that refuses is hard-linked as
-/// `<name>.old-<stamp>` (listed in [`LEFTOVERS`] first, so [`cleanup`] removes it) and the new one renamed
-/// over it in one POSIX rename, so the path never goes missing. A volume that refuses the link or that rename
-/// gets the target renamed aside to `<name>.old-<stamp>` and the new one moved in ([`cleanup`] puts it back if
-/// a kill came between the two). Every move
-/// is journalled with a backup; when even the rename aside fails, the journal is undone and the old install
-/// stands. Files the old `FILES` named and the release lacks are removed, never anything else; `FILES` and
-/// then `VERSION` go last, so a killed apply leaves each file whole (old or new) and reports the old version.
+/// Swaps the release at `from` over the install at `to`, then starts `restart`; see docs/RELEASE.md.
 pub fn apply(job: &Apply) -> Outcome {
     let mut run = Run::new(job);
     run.log(&format!("apply {} over {}", job.from.display(), job.to.display()));
@@ -374,8 +359,7 @@ impl<'a> Run<'a> {
         self.retried(from, to, move_file)
     }
 
-    /// `staged` renamed over `target` in one move, after a hard link `old` to the file it replaces; a refused
-    /// rename takes the link away again when it can.
+    /// `staged` renamed over `target` in one move, after a hard link `old` to the file it replaces.
     fn swap(&mut self, target: &Path, old: &Path, staged: &Path) -> Result<Result<(), io::Error>, Failed> {
         self.check_stop()?;
         if let Err(e) = fs::hard_link(target, old) {
@@ -556,8 +540,7 @@ impl<'a> Run<'a> {
     }
 }
 
-/// Removes the `.old-<stamp>` files [`LEFTOVERS`] lists that are no longer locked, and puts back one whose
-/// file a killed apply had not replaced yet. Cheap when there is no list; skipped while an apply runs.
+/// Removes the unlocked `.old-<stamp>` files [`LEFTOVERS`] lists and puts back one a killed apply left aside.
 pub fn cleanup(install: &Path) {
     let list = install.join(LEFTOVERS);
     let Ok(text) = fs::read_to_string(&list) else { return };

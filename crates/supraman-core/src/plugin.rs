@@ -1,5 +1,4 @@
-//! `sm plugin install <dir>` and the app's start: put `sm.exe` at `<dir>/bin/sm.exe`, where the exec-form
-//! hooks in `plugins/supraman/hooks/hooks.json` find it via `${CLAUDE_PLUGIN_ROOT}`.
+//! `sm.exe` at `<plugin>/bin/sm.exe`, where `hooks/hooks.json` finds it via `${CLAUDE_PLUGIN_ROOT}`.
 
 use std::fs;
 use std::io;
@@ -26,12 +25,7 @@ fn is_plugin(dir: &Path) -> bool {
     dir.join("hooks").join("hooks.json").is_file() && dir.join("roles").is_dir()
 }
 
-/// The Supraman plugin for `exe` (`supraman.exe` or `sm.exe`), in this order (docs/RELEASE.md):
-/// 1. `<exe dir>/plugins/supraman`, the release layout;
-/// 2. the plugin the exe sits in, for the hooks' copy at `<plugin>/bin/sm.exe`;
-/// 3. `plugins/supraman` in any folder above, a dev build at `<repo>/target/<profile>/`.
-///
-/// The error names every place it looked.
+/// The Supraman plugin beside `exe`, else the one it sits in, else `plugins/supraman` above it (docs/RELEASE.md).
 pub fn find_plugin_dir(exe: &Path) -> Result<PathBuf, String> {
     let Some(exe_dir) = exe.parent() else {
         return Err(format!("{} has no folder to look for plugins/supraman in", exe.display()));
@@ -59,10 +53,7 @@ pub fn find_plugin_dir(exe: &Path) -> Result<PathBuf, String> {
         })
 }
 
-/// Copies `exe` to `<plugin_dir>/bin/sm.exe` unless it is already byte-identical; the path of `sm.exe`, and
-/// whether it was copied. A hook may be running
-/// the old file, which Windows will not let us overwrite but will let us rename, so the new copy is
-/// written beside it and swapped in by renames; the old one is left as `<name>.old`.
+/// `exe` copied to `<plugin_dir>/bin/sm.exe` by renames (a running hook holds the old one, left as `.old`).
 pub fn install_hook_exe(plugin_dir: &Path, exe: &Path) -> io::Result<(PathBuf, bool)> {
     if !plugin_dir.join("hooks").join("hooks.json").is_file() {
         return Err(io::Error::new(

@@ -2,8 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-/// Calls `check` until it gives `Some`, `wake` (given the time left) between tries; panics naming `what` once
-/// `within` passes.
+/// Calls `check` until it gives `Some`, `wake` between tries; panics naming `what` once `within` passes.
 #[track_caller]
 pub fn eventually<T>(within: Duration, what: &str, wake: impl FnMut(Duration), check: impl FnMut() -> Option<T>) -> T {
     match until(within, wake, check) {
@@ -12,8 +11,7 @@ pub fn eventually<T>(within: Duration, what: &str, wake: impl FnMut(Duration), c
     }
 }
 
-/// Whether `done` held within `within`, `wake` between tries: for a wait whose failure the caller asserts after
-/// its own cleanup.
+/// Whether `done` held within `within`, for a caller that asserts after its own cleanup.
 pub fn wait_until(within: Duration, wake: impl FnMut(Duration), mut done: impl FnMut() -> bool) -> bool {
     until(within, wake, || done().then_some(())).is_some()
 }

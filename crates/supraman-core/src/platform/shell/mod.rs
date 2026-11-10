@@ -1,5 +1,4 @@
-//! The Windows shell's lookups: `PATHEXT`, `%NAME%` expansion, PowerShell by absolute path, Git for Windows and
-//! Git Bash; [`detect`] lists the shells a plain terminal tab can start.
+//! The Windows shell's lookups: `PATHEXT`, `%NAME%`, PowerShell, Git for Windows; [`detect`] lists a tab's shells.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -83,7 +82,6 @@ pub fn program_files_x86() -> Option<OsString> {
     std::env::var_os("ProgramFiles(x86)")
 }
 
-/// No `ProgramFiles(x86)` here.
 #[cfg(not(windows))]
 pub fn program_files_x86() -> Option<OsString> {
     None
@@ -104,7 +102,6 @@ pub fn git_roots() -> Vec<PathBuf> {
     roots
 }
 
-/// No Git for Windows here.
 #[cfg(not(windows))]
 pub fn git_roots() -> Vec<PathBuf> {
     Vec::new()
@@ -116,7 +113,6 @@ pub fn in_git_bash() -> bool {
     std::env::var_os("MSYSTEM").is_some()
 }
 
-/// No Git Bash here.
 #[cfg(not(windows))]
 pub fn in_git_bash() -> bool {
     false

@@ -10,12 +10,7 @@ use crate::time::modified_ms;
 
 pub const KEEP_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 
-/// Removes the files not modified for `keep_ms` before `now`: `events/*.jsonl` and their `.1`, and per
-/// workspace `outbox/*.json` (never `ready.json`), `inbox/sent` and `inbox/rejected`, then the
-/// `answered.json` entries of outbox files that are gone. A drop still waiting in the inbox stays. Then the
-/// schedules': `runs/*.jsonl.1`, the state of removed schedules, and spent run worktrees, and the prompt files a
-/// Send's launch left unread.
-/// Returns what could not be removed.
+/// Removes event logs, relay files and schedule leftovers idle for `keep_ms` (never `ready.json` or a waiting drop); what it could not.
 pub fn prune(home: &Path, now: i64, keep_ms: i64) -> Vec<String> {
     let cutoff = now - keep_ms;
     let mut errors = Vec::new();
