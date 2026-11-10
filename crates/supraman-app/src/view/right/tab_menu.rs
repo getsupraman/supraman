@@ -130,7 +130,7 @@ impl FleetView {
         let work = if workspace.is_some() { Work::Reading } else { Work::NoWorkspace };
         let title = tab.label();
         let items = with_workman(self.tab_menu_items(id, folder.as_deref(), &repo, cx), folder.as_deref(), &work);
-        self.menu = Some(ContextMenu { title, position, items });
+        self.dialogs.menu = Some(ContextMenu { title, position, items });
         cx.notify();
         let Some(folder) = folder else { return };
         if repo == Repo::Reading {
@@ -163,7 +163,7 @@ impl FleetView {
 
     /// The item under `item`'s key, while the menu shown is still this tab's at `position`.
     fn replace_tab_menu_item(&mut self, id: u64, position: Point<Pixels>, item: MenuItem, cx: &mut Context<Self>) {
-        let shown = self.menu.as_mut().filter(|m| m.position == position && m.items.iter().any(|i| i.action == MenuAction::CloseTab(id)));
+        let shown = self.dialogs.menu.as_mut().filter(|m| m.position == position && m.items.iter().any(|i| i.action == MenuAction::CloseTab(id)));
         if let Some(slot) = shown.and_then(|m| m.items.iter_mut().find(|i| i.key == item.key)) {
             *slot = item;
             cx.notify();

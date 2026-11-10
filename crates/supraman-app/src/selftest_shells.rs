@@ -30,7 +30,7 @@ pub(crate) async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWin
             v.term_look.shell_default.read(settings.terminal.clone());
         }
         v.claude_command = saved;
-        v.menu = None;
+        v.dialogs.menu = None;
         mine.into_iter().for_each(|id| v.close_tab(id, cx));
         cx.notify();
     });
@@ -54,7 +54,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
 
     let cwd = view.read_with(cx, |v, _| v.new_shell_cwd()).context("+ has no folder")?;
     click(view, "new-shell-menu", cx).await?;
-    let keys = until(view, cx, WITHIN, "the ⌄ menu", |v| v.menu.as_ref().map(|m| m.items.iter().map(|i| (i.key.clone(), i.label.clone())).collect::<Vec<_>>())).await?;
+    let keys = until(view, cx, WITHIN, "the ⌄ menu", |v| v.dialogs.menu.as_ref().map(|m| m.items.iter().map(|i| (i.key.clone(), i.label.clone())).collect::<Vec<_>>())).await?;
     if !keys.iter().any(|(k, l)| *k == "shell-cmd" && l.ends_with("(default)")) {
         bail!("the ⌄ menu has no Command Prompt marked as the default: {keys:?}");
     }

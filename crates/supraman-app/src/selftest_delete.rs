@@ -31,7 +31,7 @@ fn plant(home: &Path, cwd: &Path, id: &str, title: &str) -> anyhow::Result<(Path
 async fn until<T>(view: &Entity<FleetView>, cx: &mut AsyncWindowContext, what: &str, f: impl Fn(&FleetView) -> Option<T>) -> anyhow::Result<T> {
     let result = crate::selftest::until(view, cx, WITHIN, what, f).await;
     result.map_err(|e| {
-        let state = view.read_with(cx, |v, _| format!("confirm {:?}, error {:?}", v.confirm.as_ref().map(|c| c.text.clone()), v.action_error));
+        let state = view.read_with(cx, |v, _| format!("confirm {:?}, error {:?}", v.dialogs.confirm.as_ref().map(|c| c.text.clone()), v.action_error));
         e.context(state)
     })
 }
@@ -52,7 +52,7 @@ async fn delete_from_menu(view: &Entity<FleetView>, session_id: &str, name: &str
         bail!("the menu of {name} has {keys:?}, Delete… not last");
     }
     click(view, "menu-delete", cx).await?;
-    let text = until(view, cx, "the delete question", |v| v.confirm.as_ref().map(|c| c.text.clone())).await?;
+    let text = until(view, cx, "the delete question", |v| v.dialogs.confirm.as_ref().map(|c| c.text.clone())).await?;
     if !text.contains(name) || !text.starts_with("Delete ") {
         bail!("the question does not name {name}: {text}");
     }
@@ -70,7 +70,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, own: &str, cx: &mut Asyn
     let result = check(view, home, own, cx).await;
     view.update(cx, |v, cx| {
         v.show_stopped = saved;
-        v.confirm = None;
+        v.dialogs.confirm = None;
         cx.notify();
     });
     result

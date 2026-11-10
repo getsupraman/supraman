@@ -53,6 +53,7 @@ use supraman_workman::status::WorkmanStatus;
 
 mod delete;
 pub(crate) mod details;
+mod dialogs;
 mod drop;
 mod folder_list;
 mod folders;
@@ -98,7 +99,7 @@ pub(crate) use left::grid;
 pub use manage::Removing;
 #[cfg(feature = "selftest")]
 pub use menu::MenuAction;
-pub use menu::{Confirm, Confirmed, ContextMenu, MenuTarget};
+pub use menu::{Confirm, Confirmed, MenuTarget};
 
 gpui::actions!(supraman, [FocusSearch]);
 
@@ -267,11 +268,7 @@ pub struct FleetView {
     writes: writes::Writes,
     occupancy: occupancy::Live,
     pub work_inbox: Entity<WorkInbox>,
-    pub menu: Option<ContextMenu>,
-    pub confirm: Option<Confirm>,
-    pub adding: Option<(Entity<workspace_dialog::WorkspaceDialog>, gpui::Subscription)>,
     pub removing: BTreeMap<String, Removing>,
-    pub pick_folder: Option<PathBuf>,
     pub open_with: fn(&Path) -> Result<(), String>,
     pub open_link_with: fn(&Link, &mut App),
     pub workman: WorkmanStatus,
@@ -296,6 +293,7 @@ pub struct FleetView {
     pub supervising: supervising::Supervising,
     pub mail: mail::Mail,
     pub listing: listing::Listing,
+    pub dialogs: dialogs::Dialogs,
     pub scheduling: schedule_state::ScheduleState,
     pub(crate) tab_keys: Entity<tab_keys::TabKeyState>,
 }
@@ -461,13 +459,7 @@ impl FleetView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
         focus.focus(window, cx);
-        let this = cx.weak_entity();
-        window.on_window_should_close(cx, move |window, cx| {
-            if this.update(cx, |this, cx| this.should_close(window, cx)).unwrap_or(true) {
-                crate::tray::close(window, cx);
-            }
-            false
-        });
+        Self::ask_before_close(window, cx);
         let home = Registry::from_env().ok().map(|r| r.home().to_path_buf());
         let defaults = Settings::default();
         let (polls, transcripts_nudged) = polls::Polls::start(home.clone(), cx);
@@ -477,11 +469,7 @@ impl FleetView {
         let (workman_recheck, recheck) = nudge::nudge();
         Self::watch_workman(home.clone(), recheck, cx);
         let work_inbox = WorkInbox::shared(home.clone(), cx);
-        cx.observe(&work_inbox, |this, _, cx| {
-            this.check_loaded(cx);
-            cx.notify();
-        })
-        .detach();
+        Self::observe_inbox(&work_inbox, cx);
         let hands = home.as_deref().map(|home| Self::open_hands(home, cx));
         let scheduling = schedule_state::ScheduleState::new(home.as_deref());
         let claude_dir = claude_dir_or(CLAUDE_DIR_OVERRIDE.get().map(PathBuf::as_path));
@@ -514,16 +502,9 @@ impl FleetView {
             writes: writes::Writes::default(),
             occupancy: occupancy::Live::default(),
             work_inbox,
-            menu: None,
-            confirm: None,
-            adding: None,
             removing: BTreeMap::new(),
-            pick_folder: None,
             open_with: |path| open::open(path.as_os_str()),
-            open_link_with: |link, cx| match link {
-                Link::Url(url) => open::open_off_thread(url.clone(), cx).detach(),
-                Link::Path(path) => open::open_off_thread(path.clone(), cx).detach(),
-            },
+            open_link_with: startup::open_link,
             workman: WorkmanStatus::Checking,
             hand_notices: Vec::new(),
             transcripts: TranscriptsLoad::new(claude_dir.is_some()),
@@ -546,6 +527,7 @@ impl FleetView {
             supervising: supervising::Supervising::new(desired_writes),
             mail: mail::Mail::default(),
             listing: listing::Listing::default(),
+            dialogs: dialogs::Dialogs::default(),
             scheduling,
             tab_keys: cx.new(|_| tab_keys::TabKeyState::new(defaults.window.tab_keys())),
         }
@@ -1740,7 +1722,7 @@ impl FleetView {
     }
 
     fn dismiss_popup(&mut self) -> bool {
-        self.menu.take().is_some() || self.confirm.take().is_some()
+        self.dialogs.menu.take().is_some() || self.dialogs.confirm.take().is_some()
     }
 
     pub fn clear_search(&mut self, cx: &mut Context<Self>) {

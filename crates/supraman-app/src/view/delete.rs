@@ -153,7 +153,7 @@ impl FleetView {
         };
         let kind = if session.kind == Kind::Background { "background session" } else { "closed session" };
         let foreign = if fleet::is_foreign(&session.name, &self.workspaces, Some(&self.supervising.desired), self.own_prefix.as_deref()) { " It is another Supraman's session." } else { "" };
-        self.confirm = Some(Confirm::ask(
+        self.dialogs.confirm = Some(Confirm::ask(
             format!("Delete {kind} {}? {what}. This cannot be undone.{foreign}", label(&session)),
             "Delete",
             Confirmed::Delete { session, discard: None },
@@ -199,7 +199,7 @@ impl FleetView {
         let at = refusal.worktree.as_deref().map(|w| format!(" in {}", w.display())).unwrap_or_default();
         match refusal.discard {
             Some(value) => {
-                self.confirm = Some(Confirm::ask(
+                self.dialogs.confirm = Some(Confirm::ask(
                     format!(
                         "claude rm kept {}: its worktree{at} has {commits} that exist on no remote. Discard the worktree and its commits, then delete the session and its transcript?",
                         label(&session)
@@ -235,7 +235,7 @@ impl FleetView {
             let (sessions, skipped) = task.await;
             this.update(cx, |this, cx| {
                 let skip = if skipped.is_empty() { String::new() } else { format!(" Skipped {}: {}.", skipped.len(), listed(&skipped)) };
-                this.confirm = Some(if sessions.is_empty() {
+                this.dialogs.confirm = Some(if sessions.is_empty() {
                     Confirm::report(format!("No closed background session of {workspace} can be deleted.{skip}"))
                 } else {
                     let n = sessions.len();
@@ -286,7 +286,7 @@ impl FleetView {
                 if !failed.is_empty() {
                     text.push_str(&format!(" Failed: {}.", failed.join("; ")));
                 }
-                this.confirm = Some(Confirm::report(text));
+                this.dialogs.confirm = Some(Confirm::report(text));
                 cx.notify();
             })
             .ok();

@@ -3,7 +3,8 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use gpui::{AsyncApp, Context, SharedString, WeakEntity, px};
+use gpui::{App, AsyncApp, Context, Entity, SharedString, WeakEntity, Window, px};
+use supraman_ui::open::{self, Link};
 use supraman_claude::check_supported;
 use supraman_core::Settings;
 use supraman_core::store::Save;
@@ -14,6 +15,7 @@ use super::{Cli, FleetView, Poller, REFRESH_EVERY, Refresh, any_exit};
 use crate::dismissed_messages::DismissedMessages;
 use crate::stars::Stars;
 use crate::supervise::Report;
+use crate::work_view::WorkInbox;
 
 const RUNS_DISMISSED: &str = "schedules/dismissed.json";
 const WAITING_DISMISSED: &str = "schedules/waiting-dismissed.json";
@@ -42,6 +44,24 @@ fn absorbed(mine: &mut DismissedMessages, loaded: DismissedMessages) -> Option<S
 }
 
 impl FleetView {
+    pub(super) fn ask_before_close(window: &mut Window, cx: &mut Context<Self>) {
+        let this = cx.weak_entity();
+        window.on_window_should_close(cx, move |window, cx| {
+            if this.update(cx, |this, cx| this.should_close(window, cx)).unwrap_or(true) {
+                crate::tray::close(window, cx);
+            }
+            false
+        });
+    }
+
+    pub(super) fn observe_inbox(work_inbox: &Entity<WorkInbox>, cx: &mut Context<Self>) {
+        cx.observe(work_inbox, |this, _, cx| {
+            this.check_loaded(cx);
+            cx.notify();
+        })
+        .detach();
+    }
+
     // until they land nothing is starred or dismissed; a star or dismissal made meanwhile joins them
     pub(super) fn load_stores(home: Option<PathBuf>, cx: &mut Context<Self>) {
         let Some(home) = home else { return };
@@ -203,4 +223,11 @@ async fn first_poll(this: &WeakEntity<FleetView>, mut poller: Poller, cx: &mut A
     })
     .ok()?;
     Some((poller, supported, refresh))
+}
+
+pub(super) fn open_link(link: &Link, cx: &mut App) {
+    match link {
+        Link::Url(url) => open::open_off_thread(url.clone(), cx).detach(),
+        Link::Path(path) => open::open_off_thread(path.clone(), cx).detach(),
+    }
 }

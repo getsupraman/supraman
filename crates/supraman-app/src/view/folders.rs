@@ -136,7 +136,7 @@ pub fn rescan_offer(home: &Path, name: &str) -> Result<Offer, String> {
 
 impl FleetView {
     pub fn edit_folders(&mut self, workspace: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.menu = None;
+        self.dialogs.menu = None;
         let Some(w) = self.workspaces.iter().find(|x| x.name == workspace).cloned() else {
             return;
         };
@@ -193,7 +193,7 @@ impl FleetView {
             self.apply_edits(w, edits, cx);
             return;
         }
-        self.confirm = Some(Confirm::ask(
+        self.dialogs.confirm = Some(Confirm::ask(
             format!(
                 "{} in workspace {w}? Its supervised session {} is stopped (stop, never rm) and can be resumed; no files are deleted.",
                 verbs.join("; "),
@@ -246,7 +246,7 @@ impl FleetView {
         match result {
             Ok((done, stopped)) => {
                 if dialog.is_some() {
-                    self.adding = None;
+                    self.dialogs.adding = None;
                 }
                 let live_in = self.live_in(&done);
                 if let Some(added) = done.added.first() {

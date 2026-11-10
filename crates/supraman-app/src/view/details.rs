@@ -71,7 +71,7 @@ impl FleetView {
     }
 
     pub fn open_details(&mut self, target: MenuTarget, cx: &mut Context<Self>) -> Option<u64> {
-        self.menu = None;
+        self.dialogs.menu = None;
         if let Some((tab, _)) = self.details_page(&target) {
             self.activate_tab(tab, cx);
             return Some(tab);

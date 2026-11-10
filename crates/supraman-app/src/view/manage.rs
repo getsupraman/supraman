@@ -31,8 +31,8 @@ fn registry(home: Option<&Path>) -> Result<Registry, String> {
 
 impl FleetView {
     pub fn add_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.menu = None;
-        if let Some(path) = self.pick_folder.take() {
+        self.dialogs.menu = None;
+        if let Some(path) = self.dialogs.pick_folder.take() {
             self.open_add(Mode::Parent(path), window, cx);
             return;
         }
@@ -41,7 +41,7 @@ impl FleetView {
 
     pub fn open_add_menu(&mut self, cx: &mut Context<Self>) {
         let position = self.hits.borrow().get("add-workspace").map(|h| h.bounds.bottom_left()).unwrap_or_default();
-        self.menu = Some(ContextMenu { title: "Add workspace".into(), position, items: add_items() });
+        self.dialogs.menu = Some(ContextMenu { title: "Add workspace".into(), position, items: add_items() });
         cx.notify();
     }
 
@@ -49,12 +49,12 @@ impl FleetView {
         let (home, hits) = (self.home.clone(), self.hits.clone());
         let dialog = cx.new(|cx| WorkspaceDialog::new(mode, home, &self.workspaces, hits, window, cx));
         let events = cx.subscribe_in(&dialog, window, Self::on_add_event);
-        self.adding = Some((dialog, events));
+        self.dialogs.adding = Some((dialog, events));
         cx.notify();
     }
 
     pub fn add_dialog(&self) -> Option<&Entity<WorkspaceDialog>> {
-        self.adding.as_ref().map(|(d, _)| d)
+        self.dialogs.adding.as_ref().map(|(d, _)| d)
     }
 
     /// The dialog keeps Enter and Esc after a click on one of its rows took the keys from its fields.
@@ -71,7 +71,7 @@ impl FleetView {
     }
 
     pub fn close_add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.adding = None;
+        self.dialogs.adding = None;
         self.focus.focus(window, cx);
         cx.notify();
     }
@@ -143,14 +143,14 @@ impl FleetView {
     }
 
     pub fn open_menu(&mut self, target: MenuTarget, position: Point<Pixels>, cx: &mut Context<Self>) {
-        self.menu = self.menu_for(&target, None, cx).map(|(title, items)| ContextMenu { title, position, items });
+        self.dialogs.menu = self.menu_for(&target, None, cx).map(|(title, items)| ContextMenu { title, position, items });
         cx.notify();
         let session_id = match &target {
             MenuTarget::Session { session_id, .. } => Some(session_id.clone()),
             MenuTarget::Workspace(w) => self.tree().workspaces.iter().find(|n| &n.name == w).and_then(|n| n.own.as_ref()).map(|r| r.session.session_id.clone()),
             MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) | MenuTarget::OtherSchedule(_) => None,
         };
-        let (Some(menu), Some(session_id)) = (&self.menu, session_id) else {
+        let (Some(menu), Some(session_id)) = (&self.dialogs.menu, session_id) else {
             return;
         };
         let title = menu.title.clone();
@@ -160,11 +160,11 @@ impl FleetView {
                 return;
             };
             this.update(cx, |this, cx| {
-                if !this.menu.as_ref().is_some_and(|m| m.title == title && m.position == position) {
+                if !this.dialogs.menu.as_ref().is_some_and(|m| m.title == title && m.position == position) {
                     return;
                 }
                 if let Some((_, items)) = this.menu_for(&target, Some(send_name), cx)
-                    && let Some(menu) = &mut this.menu
+                    && let Some(menu) = &mut this.dialogs.menu
                 {
                     menu.items = items;
                     cx.notify();
@@ -322,7 +322,7 @@ impl FleetView {
     fn ask_remove(&mut self, w: String) {
         let started = self.supervising.desired.get(&w).is_some_and(|d| d.0);
         let stop = if started { "Its supervision stops first (Stop), then " } else { "" };
-        self.confirm = Some(Confirm::ask(
+        self.dialogs.confirm = Some(Confirm::ask(
             format!(
                 "Remove workspace {w} from Supraman? {stop}its registry entry and desired state go. No files are deleted, and no session is stopped beyond what Stop does."
             ),
@@ -332,7 +332,7 @@ impl FleetView {
     }
 
     fn ask_stop_foreign(&mut self, session: Session) {
-        self.confirm = Some(Confirm::ask(
+        self.dialogs.confirm = Some(Confirm::ask(
             format!(
                 "{} ({}) was not launched by Supraman. Stop it? Its transcript stays and it can be resumed.",
                 if session.name.is_empty() { "This session" } else { &session.name },
@@ -348,7 +348,7 @@ impl FleetView {
         let stop = if fleet::is_alive(&session.health(now_ms())) { "It is stopped (stop, never rm), then its" } else { "Its" };
         let started = self.supervising.desired.get(&workspace).is_some_and(|d| d.0);
         let later = if started { String::new() } else { format!(" Workspace {workspace} is not started: the copy starts when you Start it.") };
-        self.confirm = Some(Confirm::ask(
+        self.dialogs.confirm = Some(Confirm::ask(
             format!(
                 "Adopt {label} into {workspace}? {stop} conversation continues as {name}, supervised: a copy under a new id with a fresh Workman token. The original stays stopped and listed.{later}"
             ),
@@ -358,7 +358,7 @@ impl FleetView {
     }
 
     pub fn answer_confirm(&mut self, yes: bool, cx: &mut Context<Self>) {
-        if let Some(Confirm { action: Some(action), .. }) = self.confirm.take()
+        if let Some(Confirm { action: Some(action), .. }) = self.dialogs.confirm.take()
             && yes
         {
             match action {

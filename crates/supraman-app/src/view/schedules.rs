@@ -206,7 +206,7 @@ impl FleetView {
 
     pub fn open_schedule(&mut self, workspace: &str, id: &str, at: At, cx: &mut Context<Self>) -> Option<u64> {
         let row = self.schedule_row(workspace, id)?.clone();
-        self.menu = None;
+        self.dialogs.menu = None;
         let tab = match self.schedule_page(workspace, id) {
             Some((tab, _)) => tab,
             None => {
@@ -269,7 +269,7 @@ impl FleetView {
     }
 
     pub fn ask_remove_schedule(&mut self, workspace: &str, id: &str, cx: &mut Context<Self>) {
-        self.confirm = Some(Confirm::ask(
+        self.dialogs.confirm = Some(Confirm::ask(
             format!("Remove schedule {id} from {workspace}? Its task and its entry go. Its run records stay, and nothing in any folder is touched."),
             "Remove",
             Confirmed::RemoveSchedule { workspace: workspace.to_string(), id: id.to_string() },
@@ -424,7 +424,7 @@ impl FleetView {
         let max_runtime = input("1h", &form.max_runtime, window, cx);
         let max_tokens = input("3000000", &form.max_tokens, window, cx);
         name.update(cx, |n, cx| n.focus_all(window, cx));
-        self.menu = None;
+        self.dialogs.menu = None;
         self.scheduling.schedule_edit = Some(ScheduleEdit {
             workspace: workspace.to_string(),
             id: id.to_string(),

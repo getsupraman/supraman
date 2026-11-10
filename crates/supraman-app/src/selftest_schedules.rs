@@ -153,7 +153,7 @@ async fn others(view: &Entity<FleetView>, fake: &FakeRegistrar, dir: &Path, cx: 
     if keys != ["open-task-scheduler", "copy-action"] {
         bail!("the other schedule's menu is {keys:?}");
     }
-    let copies = view.read_with(cx, |v, _| v.menu.as_ref().and_then(|m| m.items.iter().find(|i| i.key == "copy-action")).map(|i| i.action.clone()));
+    let copies = view.read_with(cx, |v, _| v.dialogs.menu.as_ref().and_then(|m| m.items.iter().find(|i| i.key == "copy-action")).map(|i| i.action.clone()));
     if copies != Some(MenuAction::Copy("claude.exe -p review".into())) {
         bail!("Copy action copies {copies:?}");
     }
@@ -179,9 +179,9 @@ async fn others(view: &Entity<FleetView>, fake: &FakeRegistrar, dir: &Path, cx: 
 }
 
 async fn confirm_text(view: &Entity<FleetView>, what: &str, needle: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    until(view, cx, WITHIN, what, |v| v.confirm.as_ref().filter(|c| c.text.contains(needle)).map(|c| c.text.clone()))
+    until(view, cx, WITHIN, what, |v| v.dialogs.confirm.as_ref().filter(|c| c.text.contains(needle)).map(|c| c.text.clone()))
         .await
-        .map_err(|e| e.context(format!("confirm {:?}, action error {:?}", view.read_with(cx, |v, _| v.confirm.as_ref().map(|c| c.text.clone())), view.read_with(cx, |v, _| v.action_error.clone()))))
+        .map_err(|e| e.context(format!("confirm {:?}, action error {:?}", view.read_with(cx, |v, _| v.dialogs.confirm.as_ref().map(|c| c.text.clone())), view.read_with(cx, |v, _| v.action_error.clone()))))
 }
 
 async fn from_menu(view: &Entity<FleetView>, item: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {

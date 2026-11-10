@@ -39,7 +39,7 @@ pub fn install_update(view: &mut FleetView, available: &Available, cx: &mut Cont
                 return;
             }
             if let Some(question) = view.updates.target.quit.then(|| question(available.version(), view.has_attach_tabs(), view.running_hand_tabs())).flatten() {
-                view.confirm = Some(Confirm::ask(question, "Update", Confirmed::Update));
+                view.dialogs.confirm = Some(Confirm::ask(question, "Update", Confirmed::Update));
                 cx.notify();
                 return;
             }

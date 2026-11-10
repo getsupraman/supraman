@@ -86,7 +86,7 @@ fn write_prompt(home: Option<&Path>, text: &str) -> std::io::Result<PathBuf> {
 impl FleetView {
     /// A new prompt tab, one per opening; `folder` preselects one of the workspace's.
     pub fn open_start(&mut self, workspace: &str, folder: Option<PathBuf>, scheduled: bool, window: &mut Window, cx: &mut Context<Self>) -> Option<u64> {
-        self.menu = None;
+        self.dialogs.menu = None;
         let ws = self.workspaces.iter().find(|w| w.name == workspace)?;
         let choices = folders(ws);
         let folder = folder

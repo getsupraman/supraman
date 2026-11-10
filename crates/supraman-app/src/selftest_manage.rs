@@ -138,7 +138,7 @@ async fn edit_name(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> any
     view.update(cx, set_scanning(true));
     until_app(view, cx, WITHIN, "Save dimmed while the folder is read", |v, cx| dialog(v, cx).is_some_and(|d| !d.can_save(cx)).then_some(())).await?;
     post_click(view, "add-save", 4., cx).await?;
-    let (open, saved) = (view.read_with(cx, |v, _| v.adding.is_some()), registry_has(view, ADDED, cx));
+    let (open, saved) = (view.read_with(cx, |v, _| v.dialogs.adding.is_some()), registry_has(view, ADDED, cx));
     view.update(cx, set_scanning(false));
     if !open || saved {
         bail!("Save while the folder was still read: dialog open {open}, {ADDED} registered {saved}");
@@ -273,7 +273,7 @@ async fn details_tab(view: &Entity<FleetView>, row: &str, title: &str, cx: &mut 
         let tab = v.active.and_then(|id| v.tab(id))?;
         let crate::view::TabKind::Details(page) = &tab.kind else { return None };
         let text = v.details_text(&page.target, cx)?;
-        (v.confirm.is_none() && text.starts_with(title)).then_some((tab.id, text))
+        (v.dialogs.confirm.is_none() && text.starts_with(title)).then_some((tab.id, text))
     })
     .await?;
     Ok(found)
@@ -381,7 +381,7 @@ async fn edit_folders_fit(view: &Entity<FleetView>, registry: &Registry, workspa
         cx.notify();
     });
     click(view, "edit-cancel", cx).await?;
-    until(view, cx, WITHIN, "Edit folders… closed by Cancel", |v| v.adding.is_none().then_some(())).await?;
+    until(view, cx, WITHIN, "Edit folders… closed by Cancel", |v| v.dialogs.adding.is_none().then_some(())).await?;
     if registry.load(workspace)? != before {
         bail!("Cancel in Edit folders… changed {workspace}");
     }
@@ -412,7 +412,7 @@ async fn edit_folders(view: &Entity<FleetView>, registry: &Registry, root: &Path
         bail!("Edit folders… wrote {ADDED} before Save");
     }
     click(view, "edit-save", cx).await?;
-    until(view, cx, WITHIN, "Edit folders… closed on Save", |v| v.adding.is_none().then_some(())).await?;
+    until(view, cx, WITHIN, "Edit folders… closed on Save", |v| v.dialogs.adding.is_none().then_some(())).await?;
     let saved = until(view, cx, WITHIN, "the edit in the registry", |_| registry.load(ADDED).ok().filter(|w| w.folders.len() == 2 && w.home.as_deref() == Some(root.join("alpha").as_path()))).await;
     let saved = saved.map_err(|e| e.context(format!("registered {:?}", registry.load(ADDED))))?;
     let folders: Vec<&Path> = saved.folders.iter().map(|f| f.path.as_path()).collect();
@@ -430,7 +430,7 @@ async fn rescan(view: &Entity<FleetView>, registry: &Registry, root: &Path, ws_k
     let fresh = root.join("fresh");
     std::fs::create_dir_all(&fresh)?;
     let open = async |view: &Entity<FleetView>, cx: &mut AsyncWindowContext| -> anyhow::Result<Vec<(String, Option<bool>, bool)>> {
-        until(view, cx, WITHIN, "no dialog", |v| v.adding.is_none().then_some(())).await?;
+        until(view, cx, WITHIN, "no dialog", |v| v.dialogs.adding.is_none().then_some(())).await?;
         press_painted(view, ws_key, MouseButton::Right, cx).await?;
         menu_open(view, ADDED, cx).await?;
         click(view, "menu-rescan", cx).await?;
@@ -448,7 +448,7 @@ async fn rescan(view: &Entity<FleetView>, registry: &Registry, root: &Path, ws_k
     }
     shot("rescan-offer", cx).await;
     click(view, "edit-save", cx).await?;
-    until(view, cx, WITHIN, "Rescan's dialog closed on Save", |v| v.adding.is_none().then_some(())).await?;
+    until(view, cx, WITHIN, "Rescan's dialog closed on Save", |v| v.dialogs.adding.is_none().then_some(())).await?;
     let w = registry.load(ADDED)?;
     if w.folders.iter().any(|f| f.path == fresh) || w.scans.iter().any(|s| s.exclude.contains(&fresh)) {
         bail!("an unticked fresh was saved: folders {:?}, scans {:?}", w.folders, w.scans);
@@ -467,7 +467,7 @@ async fn rescan(view: &Entity<FleetView>, registry: &Registry, root: &Path, ws_k
     }
     until(view, cx, WITHIN, "Rescan's Cancel painted", |v| painted(v, "edit-cancel").then_some(())).await?;
     click(view, "edit-cancel", cx).await?;
-    until(view, cx, WITHIN, "Rescan's dialog closed on Cancel", |v| v.adding.is_none().then_some(())).await?;
+    until(view, cx, WITHIN, "Rescan's dialog closed on Cancel", |v| v.dialogs.adding.is_none().then_some(())).await?;
     Ok("Rescan offered the new fresh unticked (beta, removed by ×, and notes not); Save left it out and unskipped, the second Rescan offered it again; ticked and saved it is a folder, and the third Rescan offers nothing".into())
 }
 
@@ -512,12 +512,12 @@ pub(crate) async fn capture(out: PathBuf, title: Option<&str>, cx: &mut AsyncWin
 
 pub(crate) async fn menu_open(view: &Entity<FleetView>, title: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Vec<SharedString>> {
     let keys = until(view, cx, WITHIN, &format!("the menu of {title}"), |v| {
-        v.menu.as_ref().filter(|m| m.title == title).map(|m| m.items.iter().map(|i| i.key.clone()).collect::<Vec<_>>())
+        v.dialogs.menu.as_ref().filter(|m| m.title == title).map(|m| m.items.iter().map(|i| i.key.clone()).collect::<Vec<_>>())
     })
     .await
     .map_err(|e| {
         let state = view.read_with(cx, |v, _| {
-            format!("menu {:?}, confirm {:?}", v.menu.as_ref().map(|m| m.title.clone()), v.confirm.as_ref().map(|c| c.text.clone()))
+            format!("menu {:?}, confirm {:?}", v.dialogs.menu.as_ref().map(|m| m.title.clone()), v.dialogs.confirm.as_ref().map(|c| c.text.clone()))
         });
         e.context(state)
     })?;
@@ -561,7 +561,7 @@ async fn open_folder(view: &Entity<FleetView>, ws_key: &str, cx: &mut AsyncWindo
     press_painted(view, ws_key, MouseButton::Right, cx).await?;
     menu_open(view, ADDED, cx).await?;
     let real = view.update(cx, |v, cx| {
-        for item in v.menu.iter_mut().flat_map(|m| m.items.iter_mut()).filter(|i| i.key == "open-folder") {
+        for item in v.dialogs.menu.iter_mut().flat_map(|m| m.items.iter_mut()).filter(|i| i.key == "open-folder") {
             item.action = MenuAction::OpenFolder(missing.clone());
         }
         v.action_error = None;
@@ -615,7 +615,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     let _ = std::fs::remove_dir_all(root.join("fresh"));
     let all_in = |names: &[&str]| names.iter().map(|n| (n.to_string(), Some(true), false)).collect::<Vec<_>>();
 
-    view.update(cx, |v, _| v.pick_folder = Some(root.clone()));
+    view.update(cx, |v, _| v.dialogs.pick_folder = Some(root.clone()));
     click(view, "add-workspace", cx).await?;
     click(view, "menu-add-from-folder", cx).await?;
     let listed = until_app(view, cx, WITHIN, "the dialog's folders", |v, cx| rows(v, cx)).await?;
@@ -629,7 +629,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     let name_edit = edit_name(view, cx).await?;
     shot("add-review", cx).await;
     post_keys(&["enter"], cx).await?;
-    until(view, cx, WITHIN, "the dialog closed on Enter", |v| v.adding.is_none().then_some(())).await?;
+    until(view, cx, WITHIN, "the dialog closed on Enter", |v| v.dialogs.adding.is_none().then_some(())).await?;
     let saved = registry.load(ADDED).context("the registry after Save")?;
     let flags: Vec<(String, bool)> = saved.folders.iter().map(|r| (r.name.clone(), r.enabled)).collect();
     if flags != [("alpha".to_string(), true), ("beta".to_string(), true)] {
@@ -645,14 +645,14 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     let mut out = vec![format!("added {ADDED} from {} (alpha and beta; notes unticked, in its scan's exclude), home the parent", root.display()), name_edit];
     out.push(cut_label_tooltip(view, cx).await?);
 
-    view.update(cx, |v, _| v.pick_folder = Some(root.clone()));
+    view.update(cx, |v, _| v.dialogs.pick_folder = Some(root.clone()));
     click(view, "add-workspace", cx).await?;
     click(view, "menu-add-from-folder", cx).await?;
     until_app(view, cx, WITHIN, "the second dialog's folders", |v, cx| rows(v, cx).filter(|r| r.len() == 3)).await?;
     until(view, cx, WITHIN, "alpha's `supervised in` painted", |v| painted(v, "add-elsewhere-alpha").then_some(())).await?;
     let again = view.read_with(cx, |v, cx| dialog(v, cx).map(|d| d.name_text(cx))).unwrap_or_default();
     click(view, "add-save", cx).await?;
-    until(view, cx, WITHIN, "the second dialog closed on Save", |v| v.adding.is_none().then_some(())).await?;
+    until(view, cx, WITHIN, "the second dialog closed on Save", |v| v.dialogs.adding.is_none().then_some(())).await?;
     let second = registry.load(&again).with_context(|| format!("the same folder again, saved as {again}"))?;
     let flags: Vec<(String, bool)> = second.folders.iter().map(|r| (r.name.clone(), r.enabled)).collect();
     if flags != [("alpha".to_string(), false), ("beta".to_string(), false), ("notes".to_string(), true)] {
@@ -681,7 +681,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     let keys = menu_open(view, &own.name, cx).await?;
     shot("menu-session", cx).await;
     typed(cx, "escape", None)?;
-    until(view, cx, WITHIN, "the session menu closed on Esc", |v| v.menu.is_none().then_some(())).await?;
+    until(view, cx, WITHIN, "the session menu closed on Esc", |v| v.dialogs.menu.is_none().then_some(())).await?;
     out.push(format!("session menu {keys:?} closed by Esc"));
 
     let ws_key = format!("ws-row-{ADDED}");
@@ -698,7 +698,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
         let up = MouseUpEvent { button: MouseButton::Left, position: outside, modifiers, click_count: 1 };
         window.dispatch_event(PlatformInput::MouseUp(up), cx);
     })?;
-    until(view, cx, WITHIN, "the workspace menu closed by a click outside", |v| v.menu.is_none().then_some(())).await?;
+    until(view, cx, WITHIN, "the workspace menu closed by a click outside", |v| v.dialogs.menu.is_none().then_some(())).await?;
     out.push(format!("workspace menu {keys:?} closed by a click outside"));
 
     // a menu closed but still painted takes the next press as a click outside it
@@ -712,7 +712,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     menu_open(view, ADDED, cx).await?;
     click(view, "menu-remove", cx).await?;
     until(view, cx, WITHIN, "the Remove question", |v| painted(v, "confirm-yes").then_some(())).await?;
-    let question = view.read_with(cx, |v, _| v.confirm.as_ref().map(|c| c.text.clone())).unwrap_or_default();
+    let question = view.read_with(cx, |v, _| v.dialogs.confirm.as_ref().map(|c| c.text.clone())).unwrap_or_default();
     if !question.contains("No files are deleted") {
         bail!("the Remove question reads: {question}");
     }
@@ -755,7 +755,7 @@ async fn custom(view: &Entity<FleetView>, registry: &Registry, root: &Path, cx: 
     until_app(view, cx, WITHIN, "Save enabled", |v, cx| dialog(v, cx).is_some_and(|d| d.can_save(cx)).then_some(())).await?;
     shot("add-custom", cx).await;
     click(view, "add-save", cx).await?;
-    until(view, cx, WITHIN, "the custom dialog closed on Save", |v| v.adding.is_none().then_some(())).await?;
+    until(view, cx, WITHIN, "the custom dialog closed on Save", |v| v.dialogs.adding.is_none().then_some(())).await?;
     let saved = registry.load(CUSTOM).context("the custom workspace after Save")?;
     let folders: Vec<&Path> = saved.folders.iter().map(|f| f.path.as_path()).collect();
     if folders != [alpha.as_path(), beta.as_path()] || saved.home.as_deref() != Some(beta.as_path()) || !saved.scans.is_empty() {

@@ -278,15 +278,15 @@ pub fn is_foremans(session: &Session) -> bool {
 
 impl FleetView {
     pub(super) fn render_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let menu = self.menu.as_ref()?;
+        let menu = self.dialogs.menu.as_ref()?;
         Some(menu.render(
             &self.hits,
             |this: &mut Self, action, window, cx| {
-                this.menu = None;
+                this.dialogs.menu = None;
                 this.run_action(action, window, cx);
             },
             |this, cx| {
-                this.menu = None;
+                this.dialogs.menu = None;
                 cx.notify();
             },
             cx,
