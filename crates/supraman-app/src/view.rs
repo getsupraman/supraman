@@ -61,6 +61,7 @@ mod folders;
 pub(crate) mod git_tab;
 mod hand_tab;
 mod left;
+mod left_width;
 mod links;
 mod manage;
 mod menu;
@@ -280,6 +281,7 @@ pub struct FleetView {
     /// Bumped by every registry write from this window; a poll that read the registry before one is not applied.
     registry_writes: Arc<AtomicU64>,
     pub left_width: Pixels,
+    left_saves: Entity<left_width::LeftWidth>,
     pub term_font_size: Pixels,
     pub term_font_family: SharedString,
     pub term_ligatures: bool,
@@ -644,6 +646,7 @@ impl FleetView {
             injected,
             registry_writes,
             left_width: DEFAULT_LEFT_WIDTH,
+            left_saves: cx.new(|_| left_width::LeftWidth::default()),
             term_font_size,
             term_font_family,
             term_ligatures,
@@ -1421,16 +1424,6 @@ impl FleetView {
         }
     }
 
-    fn save_left_width(&mut self) {
-        let Some(home) = &self.home else {
-            return;
-        };
-        let width = f32::from(self.left_width).round() as u32;
-        if let Err(e) = Settings::update(home, |settings| settings.window.left_width = Some(width)) {
-            self.action_error = Some(format!("Cannot save the panel width: {e}"));
-        }
-    }
-
     pub fn resumable(&self, row: &SessionRow) -> bool {
         offers_resume(&row.session, &row.health, self.last_alive.get(&row.session.session_id).copied(), now_ms())
     }
@@ -2104,11 +2097,8 @@ impl Render for FleetView {
                     .render(
                         self.render_left(cx),
                         self.render_right(window, cx),
-                        |this: &mut Self, width, cx| {
-                            this.left_width = width;
-                            cx.notify();
-                        },
-                        |this: &mut Self, _| this.save_left_width(),
+                        Self::drag_left,
+                        Self::save_left_width,
                         cx,
                     )
                     .flex_1()

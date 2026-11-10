@@ -11,13 +11,33 @@ use crate::fs::{load_json_or_notice, write_atomic};
 pub struct JsonStore<T> {
     path: Option<PathBuf>,
     value: T,
-    pending: Arc<Pending>,
+    pending: Arc<Newest<Result<String, String>>>,
 }
 
-#[derive(Debug, Default)]
-struct Pending {
-    newest: Mutex<Option<Result<String, String>>>,
+/// The newest value of something written whole: a write never overtakes a later value with an earlier one.
+#[derive(Debug)]
+pub struct Newest<T> {
+    value: Mutex<Option<T>>,
     writing: Mutex<()>,
+}
+
+impl<T> Default for Newest<T> {
+    fn default() -> Self {
+        Self { value: Mutex::new(None), writing: Mutex::new(()) }
+    }
+}
+
+impl<T> Newest<T> {
+    pub fn put(&self, value: T) {
+        *self.value.lock().unwrap_or_else(|e| e.into_inner()) = Some(value);
+    }
+
+    /// Writes the newest value put, unless a later write already took it; blocks while another write runs.
+    pub fn write<E>(&self, write: impl FnOnce(T) -> Result<(), E>) -> Result<(), E> {
+        let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(value) = self.value.lock().unwrap_or_else(|e| e.into_inner()).take() else { return Ok(()) };
+        write(value)
+    }
 }
 
 /// The newest value of a [`JsonStore`] on its way to disk.
@@ -25,7 +45,7 @@ struct Pending {
 #[derive(Debug)]
 pub struct Save {
     path: PathBuf,
-    pending: Arc<Pending>,
+    pending: Arc<Newest<Result<String, String>>>,
 }
 
 impl<T: Serialize + DeserializeOwned + Default> JsonStore<T> {
@@ -64,7 +84,7 @@ impl<T: Serialize + DeserializeOwned + Default> JsonStore<T> {
         }
         let path = self.path.clone()?;
         let text = serde_json::to_string_pretty(&self.value).map_err(|e| e.to_string());
-        *self.pending.newest.lock().unwrap_or_else(|e| e.into_inner()) = Some(text);
+        self.pending.put(text);
         Some(Save { path, pending: self.pending.clone() })
     }
 }
@@ -72,11 +92,11 @@ impl<T: Serialize + DeserializeOwned + Default> JsonStore<T> {
 impl Save {
     /// Writes the store's newest value, unless a later save already wrote it; blocks on the disk.
     pub fn write(self) -> Result<(), String> {
-        let _writing = self.pending.writing.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(text) = self.pending.newest.lock().unwrap_or_else(|e| e.into_inner()).take() else { return Ok(()) };
         let path = &self.path;
-        let text = text.map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-        write_atomic(path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))
+        self.pending.write(|text| {
+            let text = text.map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+            write_atomic(path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))
+        })
     }
 }
 
@@ -113,6 +133,17 @@ mod tests {
         first.write().unwrap();
         assert_eq!(set(&path).0.get().len(), 2);
         assert_eq!(store.path(), Some(path.as_path()));
+    }
+
+    #[test]
+    fn newest_writes_only_the_last_value_put_and_once() {
+        let newest = Newest::default();
+        newest.put(1);
+        newest.put(2);
+        let mut written = Vec::new();
+        newest.write(|v| Ok::<_, ()>(written.push(v))).unwrap();
+        newest.write(|v| Ok::<_, ()>(written.push(v))).unwrap();
+        assert_eq!(written, [2], "the earlier value is never written, nor the same one twice");
     }
 
     #[test]
