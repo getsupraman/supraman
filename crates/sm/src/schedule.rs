@@ -1,5 +1,4 @@
-//! `sm schedule …`: the schedules of a workspace through [`supraman_core::schedule`]. Nothing here approves a
-//! schedule or registers a task (C100): an added or changed schedule stays pending until René's Approve.
+//! `sm schedule …`: nothing here approves a schedule or registers a task; see C100.
 
 use std::path::{Path, PathBuf};
 
@@ -605,8 +604,7 @@ fn local_text(t: &DateTime<Local>) -> String {
     t.format("%a %Y-%m-%d %H:%M %:z").to_string()
 }
 
-/// The `claude --bg` a run of `s` stamped `stamp` launches, before its Workman token; `plugin_dir` is
-/// Supraman's plugin, when found. Dry-run prints it and fire launches it.
+/// The `claude --bg` a run of `s` stamped `stamp` launches, before its Workman token.
 pub(crate) fn run_spec(home: &Path, w: &Workspace, s: &Schedule, stamp: &str, plugin_dir: Option<&Path>) -> Result<LaunchSpec, Failure> {
     let folder = w.folder(&s.folder).ok_or_else(|| no_folder(w, &s.folder))?;
     let prompt = s.action.prompt.as_ref().ok_or_else(|| Failure::Refused(format!("error: schedule {} runs a script alone; it has no session", s.id)))?;
@@ -764,8 +762,7 @@ fn run_now(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
     }
 }
 
-/// `<run> done|needs-you "<one line>"`, from inside the run's session: the outcome, left in the live dir for the
-/// sm that owns the run, which ends it (scheduler.md, step 9).
+/// `<run> done|needs-you "<one line>"` from the run's session, left for the sm that owns the run (scheduler.md, step 9).
 fn report(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
     let usage = || Failure::Usage("schedule report needs <run> done|needs-you \"<one line>\"".into());
     let (run, outcome, why) = match args {

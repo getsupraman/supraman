@@ -1,6 +1,4 @@
-//! `sm schedule fire` (what a schedule's task runs) and `sm schedule run` (Run now): the checks, the overlap
-//! lock and the script stage of docs/research/scheduler.md, "The life of `sm schedule fire`". The session
-//! stage is [`Host::session`], [`crate::run`] on the real host.
+//! `sm schedule fire` and `sm schedule run` (Run now) up to the session stage: docs/research/scheduler.md, "The life of `sm schedule fire`".
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -572,8 +570,7 @@ fn overlap(live: &Paths, policy: Overlap) -> Result<fs::File, Overlapped> {
     }
 }
 
-/// The app's recovery (scheduler.md, step 11): a live file whose sm is gone, while no fire holds the overlap
-/// lock, is recovered as [`recover_dead_run`] does; the run id when it was.
+/// A live file whose sm is gone, recovered as `interrupted` while no fire holds the overlap lock (scheduler.md, step 11); the run id.
 pub fn recover_if_dead(home: &Path, workspace: &str, id: &str) -> Option<String> {
     let live = Paths::new(schedule::live_dir(home, workspace).ok()?, id);
     if !live.json.exists() && !live.dead.exists() {
@@ -644,8 +641,7 @@ pub fn sm_alive(live: &Live) -> bool {
     }
 }
 
-/// A live file left under a free lock is a run whose sm died: its session is stopped, and it
-/// ends as `interrupted` unless it ended before.
+/// A live file left under a free lock is a run whose sm died: its session stopped, it ends `interrupted` unless it ended before.
 fn recover_dead_run(home: &Path, workspace: &str, id: &str, live: &Paths, now: i64, host: &mut dyn Host) {
     let Ok(bytes) = fs::read(&live.json) else {
         return;

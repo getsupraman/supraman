@@ -1,6 +1,4 @@
-//! The session stage of `sm schedule fire` (docs/research/scheduler.md, "The life of `sm schedule fire`", steps
-//! 8 to 10): the run's worktree, its minted Workman token, `claude --bg`, the watch until the run ends, and
-//! the stop (never rm). The token, its config and its record stay: a deleted run session revokes it.
+//! The session stage of `sm schedule fire`: docs/research/scheduler.md, "The life of `sm schedule fire`", steps 8 to 10.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -248,8 +246,7 @@ impl Mint {
     }
 }
 
-/// The run's own token, minted with the signed-in bearer as the supervisor mints and recorded at
-/// [`MintedSessions::run_path`]; `None` when not signed in.
+/// The run's own token, recorded at [`MintedSessions::run_path`]; `None` when not signed in.
 fn mint(ctx: &RunCtx, spec: &LaunchSpec, host: &mut dyn SessionHost) -> Result<Option<Mint>, String> {
     let Some(t) = host.tokens().token(crate::schedule::RUN_ROLE).map_err(|e| format!("cannot mint a Workman token for {}: {e}", spec.name))? else {
         return Ok(None);
@@ -281,8 +278,7 @@ fn mint(ctx: &RunCtx, spec: &LaunchSpec, host: &mut dyn SessionHost) -> Result<O
     Ok(Some(Mint { url: t.url, token: minted.token, expires_at: minted.expires_at, session_id: minted.session_id, record }))
 }
 
-/// A run that never got going: its session cannot come back, so its token is revoked ([`supraman_supervisor::revoke`])
-/// and its record goes; `Some` says what failed.
+/// A run that never got going cannot come back: its token is revoked and its record goes; `Some` says what failed.
 fn end_mint(host: &mut dyn SessionHost, keeper: &Keeper, home: &Path, name: &str, mint: Option<&Mint>) -> Option<String> {
     let mut failed = Vec::new();
     if let Some(session) = mint.and_then(|m| m.record.get(name)) {
