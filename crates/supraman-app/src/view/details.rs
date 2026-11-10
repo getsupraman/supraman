@@ -223,7 +223,7 @@ impl FleetView {
             started: node.started,
             sessions: node.session_count(),
             own: node.own.clone(),
-            relay: self.relays.get(workspace).and_then(|r| r.label(now_ms())).map(|(text, _)| text),
+            relay: self.mail.relays.get(workspace).and_then(|r| r.label(now_ms())).map(|(text, _)| text),
             project: self.tabs.iter().find_map(|t| match &t.kind {
                 TabKind::Work(view) if view.read(cx).workspace == workspace => {
                     let refs: Vec<String> = view.read(cx).projects.iter().map(|p| p.item.qualified_ref.clone()).collect();

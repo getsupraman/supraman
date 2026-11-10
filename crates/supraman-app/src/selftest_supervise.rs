@@ -1014,7 +1014,7 @@ async fn relay_step(
     if !reason.starts_with("no session named") {
         bail!("the forced fallback's reason is {reason:?}");
     }
-    let label = |cx: &mut AsyncWindowContext| view.read_with(cx, |v, _| v.relays.get(w).and_then(|r| r.label(now_ms())).map(|(t, _)| t));
+    let label = |cx: &mut AsyncWindowContext| view.read_with(cx, |v, _| v.mail.relays.get(w).and_then(|r| r.label(now_ms())).map(|(t, _)| t));
     let mut starting_after = None;
     let mut ready_after = None;
     let mut labels = Vec::new();
@@ -1060,7 +1060,7 @@ async fn relay_step(
     };
     let round_trip = sent_at.elapsed();
     let shown = loop {
-        let shown = view.read_with(cx, |v, _| v.messages.get(w).is_some_and(|m| m.iter().any(|m| m.file == reply.file)));
+        let shown = view.read_with(cx, |v, _| v.mail.messages.get(w).is_some_and(|m| m.iter().any(|m| m.file == reply.file)));
         if shown || sent_at.elapsed() > round_trip + Duration::from_secs(10) {
             break shown;
         }
@@ -1099,7 +1099,7 @@ async fn no_relay(tb: &Testbed, relay_name: &str, view: &Entity<FleetView>, cx: 
     let w = tb.a.0.as_str();
     let started = Instant::now();
     let label = loop {
-        let label = view.read_with(cx, |v, _| v.relays.get(w).and_then(|r| r.label(now_ms())));
+        let label = view.read_with(cx, |v, _| v.mail.relays.get(w).and_then(|r| r.label(now_ms())));
         if label.as_ref().is_some_and(|(t, _)| t == "direct") || started.elapsed() > Duration::from_secs(10) {
             break label;
         }
@@ -1153,7 +1153,7 @@ async fn until_compose_focused(view: &Entity<FleetView>, cx: &mut AsyncWindowCon
     let started = Instant::now();
     loop {
         let ready = cx.update(|window, cx| {
-            view.read(cx).compose.as_ref().is_some_and(|c| {
+            view.read(cx).mail.compose.as_ref().is_some_and(|c| {
                 let input = c.input.read(cx);
                 input.is_focused(window) && input.caret_painted.get()
             })
@@ -1249,7 +1249,7 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     click(view, &reply_key, cx).await?;
     wait_painted(view, "compose-box", Duration::from_secs(5), cx).await?;
     let open = cx.update(|window, cx| {
-        view.read(cx).compose.as_ref().map(|c| (c.workspace.clone(), c.reply_to.clone(), c.input.read(cx).is_focused(window)))
+        view.read(cx).mail.compose.as_ref().map(|c| (c.workspace.clone(), c.reply_to.clone(), c.input.read(cx).is_focused(window)))
     })?;
     if open != Some((w.to_string(), decide.clone(), true)) {
         bail!("Reply… opened {open:?}, not a focused reply box for {w}/{decide}");
@@ -1261,7 +1261,7 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     type_text(cx, &task)?;
     keystroke(cx, "enter", None, Modifiers::control())?;
     wait_painted(view, &format!("msg-answered-{decide_key}"), Duration::from_secs(5), cx).await?;
-    let after = view.read_with(cx, |v, _| (v.compose.is_none(), v.answered_route.get(&decide_key).cloned()));
+    let after = view.read_with(cx, |v, _| (v.mail.compose.is_none(), v.mail.answered_route.get(&decide_key).cloned()));
     let (true, Some(route)) = after else {
         bail!("after Ctrl+Enter (box closed, route) is {after:?}, expected the box closed and the reply's route");
     };
@@ -1286,7 +1286,7 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     if view.read_with(cx, |v, _| v.hits.borrow().contains_key(&approve_key)) {
         bail!("the answered row still offers Approve");
     }
-    let approve_route = view.read_with(cx, |v, _| v.answered_route.get(&key).cloned()).unwrap_or_default();
+    let approve_route = view.read_with(cx, |v, _| v.mail.answered_route.get(&key).cloned()).unwrap_or_default();
     let approve_id = direct_id(&approve_route)?;
     let approve_in = wait_delivered(transcript, w, "approve", &approve_id, cx).await?;
     let relayed: Vec<String> = drops(&tb.home, w)?.into_iter().filter(|(_, d)| d.to == ctrl).map(|(f, _)| f).collect();
@@ -1316,7 +1316,7 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     let before = (drops(&tb.home, w)?.len(), ledger_count(&tb.home, w, &ctrl)?);
     keystroke(cx, "escape", None, Modifiers::default())?;
     sleep(cx, Duration::from_millis(500)).await;
-    let closed = view.read_with(cx, |v, _| v.compose.is_none());
+    let closed = view.read_with(cx, |v, _| v.mail.compose.is_none());
     let after = (drops(&tb.home, w)?.len(), ledger_count(&tb.home, w, &ctrl)?);
     if !closed || after != before || before.1 != 2 {
         bail!("Escape: box closed={closed}, (relay drops, direct sends) {before:?} → {after:?}, expected 2 direct sends");

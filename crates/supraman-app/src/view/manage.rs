@@ -419,10 +419,10 @@ impl FleetView {
             Ok(name) => {
                 self.supervising.desired.remove(&name);
                 self.invalidate_tree();
-                self.relays.remove(&name);
-                self.messages.remove(&name);
-                if self.compose.as_ref().is_some_and(|c| c.workspace == name) {
-                    self.compose = None;
+                self.mail.relays.remove(&name);
+                self.mail.messages.remove(&name);
+                if self.mail.compose.as_ref().is_some_and(|c| c.workspace == name) {
+                    self.mail.compose = None;
                 }
                 self.workspaces.retain(|w| w.name != name);
                 self.reload_workspaces(cx);

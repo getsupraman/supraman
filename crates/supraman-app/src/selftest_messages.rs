@@ -110,7 +110,7 @@ pub async fn held(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCon
     let right = view.read_with(cx, |v, _| v.sidebar.left_width) + gpui::px(200.);
     move_to(gpui::point(right, gpui::px(300.)), cx)?;
     let msg_key = until(view, cx, WITHIN, "the held note once the pointer left", |v| {
-        (!v.left_held()).then(|| v.messages.iter().find_map(|(w, msgs)| msgs.iter().any(|m| m.file == file).then(|| format!("{w}/{file}")))).flatten()
+        (!v.left_held()).then(|| v.mail.messages.iter().find_map(|(w, msgs)| msgs.iter().any(|m| m.file == file).then(|| format!("{w}/{file}")))).flatten()
     })
     .await?;
     let x = dismiss_key(&file);
@@ -147,7 +147,7 @@ async fn held_arrival(
     let mut nudge = 0.;
     while read_after.is_none_or(|at: Duration| started.elapsed() < at + Duration::from_millis(500)) {
         let (read, now, held, holds) =
-            view.read_with(cx, |v, _| (v.messages_count() > count && v.messages.values().flatten().any(|m| m.file == file), bounds(v, key), v.left_held(), v.sidebar.left_holds));
+            view.read_with(cx, |v, _| (v.messages_count() > count && v.mail.messages.values().flatten().any(|m| m.file == file), bounds(v, key), v.left_held(), v.sidebar.left_holds));
         if holds != armed {
             return Ok(Err(format!("{file} read {:?} into the wait, the hold armed {} more time(s)", read_after, holds - armed)));
         }

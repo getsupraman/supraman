@@ -12,7 +12,7 @@ use std::{
 use futures::FutureExt as _;
 use supraman_claude::{ClaudeVersion, Sent, Session, list_sessions, now_ms, send_from_human};
 use supraman_core::{
-    Event, EventReader, FM_PREFIX, OutboxMessage, Workspace, Registry, Settings, mark_answered,
+    Event, EventReader, FM_PREFIX, Workspace, Registry, Settings, mark_answered,
 };
 use supraman_supervisor::{DesiredState, workspace_session_name};
 use supraman_term::{
@@ -43,9 +43,8 @@ use crate::compose::{self, Compose};
 use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
 use crate::hand::Extras;
 use crate::settings_window::{self, SettingsView};
-use crate::dismissed_messages::DismissedMessages;
 use crate::stars::Stars;
-use crate::supervise::{self, RelayStatus, Report, Supervision};
+use crate::supervise::{self, Report, Supervision};
 use crate::tab_card;
 use crate::transcripts_load::TranscriptsLoad;
 use crate::work_view::{WorkHub, WorkInbox, WorkView};
@@ -63,6 +62,7 @@ mod left;
 mod left_width;
 mod lifecycle;
 mod links;
+mod mail;
 mod manage;
 mod menu;
 pub(crate) use supraman_git_view::occupancy;
@@ -268,12 +268,6 @@ pub struct FleetView {
     pub setup_notices: Vec<String>,
     pub action_error: Option<String>,
     pub(crate) settings_window: Option<WindowHandle<SettingsView>>,
-    pub relays: BTreeMap<String, RelayStatus>,
-    pub messages: BTreeMap<String, Vec<OutboxMessage>>,
-    pub dismissed_messages: DismissedMessages,
-    pub answered:BTreeMap<String, BTreeMap<String, String>>,
-    pub answered_route: BTreeMap<String, String>,
-    pub compose: Option<Compose>,
     writes: writes::Writes,
     occupancy: occupancy::Live,
     pub work_inbox: Entity<WorkInbox>,
@@ -310,6 +304,7 @@ pub struct FleetView {
     lifecycle: lifecycle::Lifecycle,
     pub polls: polls::Polls,
     pub supervising: supervising::Supervising,
+    pub mail: mail::Mail,
     pub scheduling: schedule_state::ScheduleState,
     pub(crate) tab_keys: Entity<tab_keys::TabKeyState>,
 }
@@ -529,12 +524,6 @@ impl FleetView {
             plugin_dir: None,
             setup_notices: Vec::new(),
             settings_window: None,
-            relays: BTreeMap::new(),
-            messages: BTreeMap::new(),
-            dismissed_messages: DismissedMessages::default(),
-            answered: BTreeMap::new(),
-            answered_route: BTreeMap::new(),
-            compose: None,
             writes: writes::Writes::default(),
             occupancy: occupancy::Live::default(),
             work_inbox,
@@ -573,6 +562,7 @@ impl FleetView {
             lifecycle: lifecycle::Lifecycle::new(hands),
             polls,
             supervising: supervising::Supervising::new(desired_writes),
+            mail: mail::Mail::default(),
             scheduling,
             tab_keys: cx.new(|_| tab_keys::TabKeyState::new(defaults.window.tab_keys())),
         }
@@ -641,7 +631,7 @@ impl FleetView {
     }
 
     pub fn dismiss_message(&mut self, workspace: &str, file: &str, cx: &mut Context<Self>) {
-        let save = self.dismissed_messages.dismiss(workspace, file);
+        let save = self.mail.dismissed_messages.dismiss(workspace, file);
         self.save_off_thread(save, "Cannot save the dismissed message", cx);
         self.sidebar.expanded.remove(&format!("{workspace}/{file}"));
         cx.notify();
@@ -862,12 +852,12 @@ impl FleetView {
         self.supervising.daemon_hold = report.daemon_hold;
         self.workman_state.left_pending.extend(report.left_servers);
         self.supervising.last_attempt = report.last_attempt.into_iter().collect();
-        self.relays = report.relays;
-        self.messages = report.messages;
-        let (_, save) = self.dismissed_messages.prune(&self.messages);
+        self.mail.relays = report.relays;
+        self.mail.messages = report.messages;
+        let (_, save) = self.mail.dismissed_messages.prune(&self.mail.messages);
         self.save_off_thread(save, "Cannot save the dismissed messages", cx);
         for (workspace, on_disk) in report.answered {
-            let answered = self.answered.entry(workspace).or_default();
+            let answered = self.mail.answered.entry(workspace).or_default();
             for (file, line) in on_disk {
                 answered.entry(file).or_insert(line);
             }
@@ -990,19 +980,19 @@ impl FleetView {
         if self.home.is_none() {
             return Some("no Supraman home".into());
         }
-        match self.relays.get(workspace) {
+        match self.mail.relays.get(workspace) {
             Some(r) if r.started => None,
             _ => Some(format!("{workspace} is stopped")),
         }
     }
 
     pub fn open_compose(&mut self, workspace: &str, reply_to: String, window: &mut Window, cx: &mut Context<Self>) {
-        let input = match &self.compose {
+        let input = match &self.mail.compose {
             Some(c) if c.workspace == workspace && c.reply_to == reply_to => c.input.clone(),
             _ => {
                 let input = cx.new(|cx| TextInput::new("Type here; Enter adds a line.", None, window, cx).multi_line());
                 let events = cx.subscribe_in(&input, window, |this: &mut Self, _, event: &InputEvent, window, cx| this.on_compose_event(event, window, cx));
-                self.compose = Some(Compose::new(workspace, reply_to, input.clone(), events));
+                self.mail.compose = Some(Compose::new(workspace, reply_to, input.clone(), events));
                 input
             }
         };
@@ -1014,11 +1004,11 @@ impl FleetView {
         match event {
             InputEvent::Confirm => self.send_compose(cx),
             InputEvent::Cancel => {
-                self.compose = None;
+                self.mail.compose = None;
                 self.focus.focus(window, cx);
             }
             InputEvent::Edited => {
-                if let Some(c) = &mut self.compose {
+                if let Some(c) = &mut self.mail.compose {
                     c.error = None;
                 }
             }
@@ -1029,27 +1019,27 @@ impl FleetView {
 
     pub fn send_compose(&mut self, cx: &mut Context<Self>) {
         let _stall = supraman_ui::stall::section(SEND_SECTION);
-        let Some(c) = &self.compose else { return };
+        let Some(c) = &self.mail.compose else { return };
         let (workspace, reply_to, text) = (c.workspace.clone(), c.reply_to.clone(), c.text(cx).trim().to_string());
         if c.sending {
             return;
         }
         if text.is_empty() {
-            if let Some(c) = &mut self.compose {
+            if let Some(c) = &mut self.mail.compose {
                 c.error = Some("Nothing to send.".into());
             }
             cx.notify();
             return;
         }
-        if let Some(c) = &mut self.compose {
+        if let Some(c) = &mut self.mail.compose {
             c.sending = true;
         }
         let sending = (workspace.clone(), reply_to.clone());
         self.answer(&workspace, &reply_to, &text, cx, move |this, result| {
-            let still = this.compose.as_ref().is_some_and(|c| (c.workspace.clone(), c.reply_to.clone()) == sending);
+            let still = this.mail.compose.as_ref().is_some_and(|c| (c.workspace.clone(), c.reply_to.clone()) == sending);
             match result {
-                Ok(_) if still => this.compose = None,
-                Err(e) if still => this.compose.as_mut().into_iter().for_each(|c| {
+                Ok(_) if still => this.mail.compose = None,
+                Err(e) if still => this.mail.compose.as_mut().into_iter().for_each(|c| {
                     c.sending = false;
                     c.error = Some(e.clone());
                 }),
@@ -1087,8 +1077,8 @@ impl FleetView {
                 .await;
             this.update(cx, |this, cx| {
                 if let Ok(sent) = &sent {
-                    this.answered_route.insert(format!("{workspace}/{file}"), sent.label());
-                    this.answered.entry(workspace.clone()).or_default().insert(file.clone(), line);
+                    this.mail.answered_route.insert(format!("{workspace}/{file}"), sent.label());
+                    this.mail.answered.entry(workspace.clone()).or_default().insert(file.clone(), line);
                 }
                 if let Some(Err(e)) = saved {
                     this.action_error = Some(format!("Answered {file}, but cannot save that: {e}"));
@@ -1744,7 +1734,7 @@ impl FleetView {
     pub fn input_focused(&self, window: &Window, cx: &gpui::App) -> bool {
         self.search.read(cx).is_focused(window)
             || self.add_dialog().is_some_and(|d| d.read(cx).focused(window, cx))
-            || self.compose.as_ref().is_some_and(|c| c.input.read(cx).is_focused(window))
+            || self.mail.compose.as_ref().is_some_and(|c| c.input.read(cx).is_focused(window))
             || self.tabs.iter().filter_map(|t| t.find.as_ref()).any(|f| f.input.read(cx).is_focused(window))
     }
 

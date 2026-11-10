@@ -227,7 +227,7 @@ impl FleetView {
             return;
         }
         let mut keys: HashSet<String> = self.supervising.needs.iter().map(need_key).collect();
-        keys.extend(self.messages.iter().flat_map(|(w, msgs)| msgs.iter().map(move |m| messages::message_key(w, m))));
+        keys.extend(self.mail.messages.iter().flat_map(|(w, msgs)| msgs.iter().map(move |m| messages::message_key(w, m))));
         keys.extend(self.work_inbox.read(cx).rows().into_iter().map(|(w, r)| work_key(w, r)));
         self.sidebar.left_hold = Some(Hold { keys, moved: Instant::now() });
         self.sidebar.left_holds += 1;
@@ -909,7 +909,7 @@ impl FleetView {
 
     fn relay_glyph(&self, w: &str, cx: &gpui::App) -> Option<Stateful<Div>> {
         let status = cx.theme().status();
-        let relay = self.relays.get(w).and_then(|r| r.label(now_ms()));
+        let relay = self.mail.relays.get(w).and_then(|r| r.label(now_ms()));
         relay.and_then(|(text, _)| {
             let (icon, color) = match relay_word(&text) {
                 "direct" => return None,

@@ -58,7 +58,7 @@ impl FleetView {
         let absorbed_stars = self.stars.absorb(&early);
         let save = self.stars.follow(&self.transcripts.continued).or(absorbed_stars);
         self.save_off_thread(save, "Cannot save the starred sessions", cx);
-        let save = absorbed(&mut self.dismissed_messages, messages.0);
+        let save = absorbed(&mut self.mail.dismissed_messages, messages.0);
         self.save_off_thread(save, "Cannot save the dismissed messages", cx);
         let save = absorbed(&mut self.scheduling.runs_dismissed, runs.0);
         self.save_off_thread(save, "Cannot save the dismissed runs", cx);
