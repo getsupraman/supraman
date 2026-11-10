@@ -1,6 +1,4 @@
-//! Two panels side by side with a draggable divider between them, a box over a bar that drags its height,
-//! and panes stacked in a column whose borders drag height between neighbours. The owner keeps the width or
-//! heights, and persists them.
+//! Resizable splits, height bars and pane stacks; the owner keeps and persists the width or heights.
 
 use std::{cell::RefCell, rc::Rc};
 
@@ -28,8 +26,7 @@ impl Render for DraggedDivider {
 }
 
 impl SplitPane {
-    /// `on_resize` gets the first panel's new width while it is dragged and on a double-click;
-    /// `on_resize_end` follows when the button is let go and after a double-click.
+    /// `on_resize` gets the first panel's width while dragged and on a double-click; `on_resize_end` follows.
     pub fn render<V: 'static>(
         &self,
         first: impl IntoElement,
@@ -41,8 +38,7 @@ impl SplitPane {
         self.split(first, second, false, on_resize, on_resize_end, cx)
     }
 
-    /// [`SplitPane::render`] for an owner that keeps the second panel's width: `on_resize` gets that width,
-    /// and `default` is the second panel's.
+    /// [`SplitPane::render`] for an owner that keeps the second panel's width, `default` included.
     pub fn render_second<V: 'static>(
         &self,
         first: impl IntoElement,
@@ -91,9 +87,7 @@ impl SplitPane {
     }
 }
 
-/// A divider's 7 px grab strip, absolute in its parent (the caller places it): it starts a
-/// [`DraggedDivider`] drag that the parent's `on_drag_move` follows, calls `on_end` when the button is
-/// let go, and `on_reset` on a double-click.
+/// A divider's 7 px grab strip, absolute in its parent (the caller places it); see `grip`.
 pub(crate) fn handle<V: 'static>(
     id: SharedString,
     index: usize,
@@ -115,9 +109,7 @@ pub struct HeightBar {
 }
 
 impl HeightBar {
-    /// `content` sized to `height`; `on_resize` gets the new height, held within min and max, while the bar
-    /// is dragged and on a double-click; `on_resize_end` follows when the button is let go and after a
-    /// double-click.
+    /// `content` sized to `height`; `on_resize` gets the height, held within min and max; `on_resize_end` follows.
     pub fn render<V: 'static>(
         &self,
         content: impl IntoElement,
@@ -158,9 +150,7 @@ impl HeightBar {
     }
 }
 
-/// Panes in a column, each a header over a body: a closed pane is its header alone, the open ones share the
-/// rest in proportion to their heights. The border above a pane's header drags height between the nearest open
-/// pane above it and the nearest at or below it, each held at `min`; a double-click shares the height evenly.
+/// Panes in a column whose borders drag height between the open neighbours (see `dragged_heights`); a closed one is its header.
 pub struct Stack {
     /// The column's element id; its borders paint under `<id>-divider-<pane>`.
     pub id: SharedString,
@@ -180,9 +170,7 @@ pub struct Pane {
 pub struct StackState(Rc<RefCell<Vec<Option<Bounds<Pixels>>>>>);
 
 impl Stack {
-    /// `on_resize` gets every pane's height while a border is dragged (the open ones as laid out, a closed
-    /// one's its own) and all zero on a double-click; `on_resize_end` follows when the button is let go and
-    /// after a double-click.
+    /// `on_resize` gets every pane's height while a border is dragged, all zero on a double-click; `on_resize_end` follows.
     pub fn render<V: 'static>(
         &self,
         state: &StackState,

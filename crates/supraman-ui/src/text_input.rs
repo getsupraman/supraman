@@ -1,9 +1,4 @@
-//! The one text input, on one line or several ([`TextInput::multi_line`]). Built on gpui's
-//! `EntityInputHandler` as `.repos/zed/crates/gpui/examples/input.rs` is, so characters, dead keys and IME
-//! compositions come from the OS text input (WM_CHAR / WM_IME_COMPOSITION), not from `key_char`. Keys that
-//! edit or move are actions bound in the `TextInput` context ([`bind_keys`]); every other key must be left
-//! to propagate, or Windows never translates it into a character (the owning view's `key_down`).
-//! The editing itself is [`LineText`], which knows nothing of gpui; the painted rows reach it as [`Rows`].
+//! The one text input; a key not bound in its context ([`bind_keys`]) must propagate, or Windows never makes it a character.
 
 use std::{
     cell::Cell,

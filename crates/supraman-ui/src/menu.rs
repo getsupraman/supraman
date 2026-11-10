@@ -56,8 +56,7 @@ pub struct ContextMenu<A> {
 }
 
 impl<A: Clone + 'static> ContextMenu<A> {
-    /// Over everything ([`PRIORITY`]), kept inside the window, painted under `menu`. `on_pick` gets the chosen item's action; `on_dismiss` a click
-    /// outside. Both are expected to close the menu.
+    /// Over everything ([`PRIORITY`]), kept in the window, under `menu`; `on_pick` and `on_dismiss` (a click outside) must close it.
     pub fn render<V: 'static>(
         &self,
         hits: &HitTargets,

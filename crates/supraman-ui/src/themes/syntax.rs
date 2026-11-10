@@ -1,5 +1,4 @@
-//! Code colours: a theme's own `syntax` block over Supraman's defaults for its appearance, each colour held
-//! to [`SYNTAX_FLOOR`] on the theme's editor background.
+//! Code colours: a theme's `syntax` block over Supraman's defaults for its appearance.
 
 use std::{borrow::Cow, sync::Arc};
 
@@ -62,8 +61,7 @@ pub fn defaults(appearance: Appearance) -> Arc<SyntaxTheme> {
     })))
 }
 
-/// A Zed theme's `syntax` block over `base`, per key and per part: a part it leaves out or nulls keeps the
-/// base's. Each entry that sets a part counts in `applied`; any other is `ignored` as `syntax.<key>`.
+/// A Zed theme's `syntax` block over `base`, per key and part; an entry that sets nothing is `ignored` as `syntax.<key>`.
 pub fn merged(base: Arc<SyntaxTheme>, block: &Value, applied: &mut usize, ignored: &mut Vec<String>) -> Arc<SyntaxTheme> {
     let Some(block) = block.as_object() else {
         ignored.push("syntax".into());
@@ -103,9 +101,7 @@ pub fn entries(syntax: &SyntaxTheme) -> Vec<(String, HighlightStyle)> {
     (0..).map_while(|i: usize| Some((syntax.get_capture_name(i)?.to_string(), *syntax.get(i)?))).collect()
 }
 
-/// Makes each syntax colour opaque over the editor background, then moves it to the nearest lightness that holds
-/// [`SYNTAX_FLOOR`] there (the far end its theme's appearance points to where none does). Returns what changed,
-/// keyed `syntax.<capture>`.
+/// Holds each syntax colour to [`SYNTAX_FLOOR`] on the editor background; returns what changed, keyed `syntax.<capture>`.
 pub fn fit(theme: &mut Theme) -> Vec<Adjustment> {
     let bg = theme.colors().editor_background;
     let far = if theme.appearance.is_light() { 0. } else { 1. };

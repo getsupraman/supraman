@@ -1,9 +1,4 @@
-//! A Ctrl+P palette over its owner's entries: a query box, the entries its characters match in order
-//! ([`matcher::subsequence`]) ranked best first, then the owner's remote hits ([`Palette::set_remote`]);
-//! Up/Down move, Enter or a click opens ([`PaletteEvent::Open`]), Esc or a click outside closes.
-//! [`Mode`]s search other sources: entered by an entry's [`Entry::mode`], a typed prefix or [`Palette::enter_mode`],
-//! shown as a chip left of the query, left by Backspace on an empty query.
-//! The owner places it, paints each row and acts on its events; rows paint under `<id>-row-<key>`.
+//! A Ctrl+P palette over its owner's entries, ranked best first, then its remote hits and [`Mode`]s; rows paint under `<id>-row-<key>`.
 
 use std::cmp::Reverse;
 use std::ops::Range;

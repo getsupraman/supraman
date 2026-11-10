@@ -1,9 +1,4 @@
-//! A tree list over flat `/`-separated paths: folders derived from the paths and listed before files at
-//! each level, expanded and collapsed per folder, filtered by a substring of the whole path, each folder
-//! carrying an aggregate of its subtree. Its rows are a headless [`Table`], so only the rows in view are
-//! laid out. [`TreeState`] keeps the tree, the open folders (by path, so a rebuild keeps them), the
-//! filter, the order and the selection. [`Tree::build_given`] keeps the entries' own order instead, and
-//! [`TreeState::match_with`] replaces the filter's substring test.
+//! A tree list over flat `/` paths, its rows a headless [`Table`]; [`TreeState`] keeps the tree, open folders, filter, order and selection.
 
 use std::{cell::RefCell, collections::HashMap, collections::HashSet, rc::Rc};
 
@@ -350,9 +345,7 @@ impl<T: 'static, A: Default + 'static> TreeState<T, A> {
         Self { inner: Rc::new(RefCell::new(inner)), table: TableState::new(cx) }
     }
 
-    /// Rebuilds the tree from `entries`, keeping the open folders, the filter, the order and the selection
-    /// by path. Build it off the UI thread with [`Tree::build`] and hand it to [`TreeState::set_tree`]
-    /// when the entries are many.
+    /// Rebuilds the tree, keeping its state by path; for many entries, [`Tree::build`] off the UI thread and [`TreeState::set_tree`].
     pub fn set_entries(&self, entries: impl IntoIterator<Item = (String, T)>, fold: impl Fn(&mut A, &T)) {
         let order = self.inner.borrow().order;
         self.set_tree(Tree::build(entries, fold, order));
@@ -384,8 +377,7 @@ impl<T, A> TreeState<T, A> {
         self.inner.borrow().order
     }
 
-    /// The top-level folders are no rows, their rows a level less deep: the owner paints them (the ref panel's
-    /// section headers). A closed one still hides its rows.
+    /// The top-level folders are no rows, the owner paints them; a closed one still hides its rows.
     pub fn hide_roots(&self) {
         let mut inner = self.inner.borrow_mut();
         inner.roots_hidden = true;
@@ -663,15 +655,13 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
         self
     }
 
-    /// A slot `width` wide at every row's left edge, whatever its depth, holding what `mark` paints for the row;
-    /// the rows' contents start right of it.
+    /// A slot `width` wide at every row's left edge, whatever its depth, holding what `mark` paints for the row.
     pub fn mark(mut self, width: Pixels, mark: impl Fn(&mut V, Row<'_, T, A>, &mut Window, &mut Context<V>) -> Option<AnyElement> + 'static) -> Self {
         self.mark = Some((width, Rc::new(mark)));
         self
     }
 
-    /// A file's [`LEAD`]-wide slot where a folder has its chevron, holding what `lead` paints for it (a change's mark,
-    /// a kind's icon) on its name's letters; the file's content starts right of it.
+    /// A file's [`LEAD`]-wide slot where a folder has its chevron, holding what `lead` paints on its name's letters.
     pub fn lead(mut self, lead: impl Fn(&mut V, Row<'_, T, A>, &mut Window, &mut Context<V>) -> Option<AnyElement> + 'static) -> Self {
         self.lead = Some(Rc::new(lead));
         self
