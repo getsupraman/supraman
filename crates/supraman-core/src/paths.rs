@@ -465,6 +465,25 @@ pub fn program_files_x86() -> Option<OsString> {
     std::env::var_os("ProgramFiles(x86)")
 }
 
+/// Where Git for Windows may be installed: the usual folders and the one holding `git.exe` on this process's `PATH`.
+pub fn git_roots() -> Vec<PathBuf> {
+    let program_files = [std::env::var_os("ProgramFiles"), std::env::var_os("ProgramW6432"), program_files_x86()];
+    let mut roots: Vec<PathBuf> = program_files.into_iter().flatten().map(|d| PathBuf::from(d).join("Git")).collect();
+    roots.extend(std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("Programs").join("Git")));
+    roots.extend(std::env::var_os("EXEPATH").map(PathBuf::from));
+    for dir in folders_holding("git.exe", &process_path()) {
+        let up = dir.parent().map(Path::to_path_buf);
+        let mingw = up.as_deref().filter(|u| u.file_name().is_some_and(|n| n.to_string_lossy().to_ascii_lowercase().starts_with("mingw")));
+        roots.extend(mingw.and_then(Path::parent).map(Path::to_path_buf).or(up));
+    }
+    roots
+}
+
+/// Whether this process runs under Git Bash (`MSYSTEM` set), whose argument conversion rewrites `/name` into a path.
+pub fn in_git_bash() -> bool {
+    std::env::var_os("MSYSTEM").is_some()
+}
+
 /// [`powershell`] for this process's `PATH`, `PATHEXT` and `SystemRoot`, looked up once: every terminal tab's.
 pub fn terminal_powershell() -> &'static PowerShell {
     static SHELL: std::sync::OnceLock<PowerShell> = std::sync::OnceLock::new();
