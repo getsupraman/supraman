@@ -10,8 +10,7 @@ use theme::{ActiveTheme as _, Theme};
 
 use compiled::{COMPILED, Compiled};
 
-/// The grammars Zed bundles natively, by their folder in the `grammars` crate; `javascript` and `jsonc`
-/// reuse another's grammar, and the last three have no file of their own: only injections reach them.
+/// Zed's bundled grammars by `grammars` folder; the last three have no file of their own, only injections reach them.
 const ZED: &[&str] = &[
     "bash", "c", "cpp", "css", "diff", "go", "gomod", "gowork", "javascript", "json", "jsonc", "markdown", "python", "rust", "tsx", "typescript", "yaml",
     "markdown-inline", "jsdoc", "regex",
@@ -57,8 +56,7 @@ fn built() -> &'static HashMap<&'static str, Arc<Language>> {
     })
 }
 
-/// The language a path is highlighted as, by its file name or extension. The first call builds every
-/// language, so call it off the UI thread.
+/// The language a path is highlighted as; the first call builds every language, so call it off the UI thread.
 pub fn language_for(path: &str) -> Option<Arc<Language>> {
     let file = path.rsplit(['/', '\\']).next().unwrap_or(path);
     let ext = file.rsplit_once('.').map(|(_, e)| e);
@@ -75,8 +73,7 @@ pub(crate) fn warm(cx: &App) {
 
 static REGISTRY: OnceLock<Arc<LanguageRegistry>> = OnceLock::new();
 
-/// The registry of every language, where a buffer's injections resolve, coloured by the active theme.
-/// Only call it once `language_for` has returned a language: before, it would build them all here.
+/// Where a buffer's injections resolve; call it only once `language_for` has returned, else it builds them all here.
 pub(crate) fn registry(cx: &App) -> Arc<LanguageRegistry> {
     let registry = REGISTRY.get_or_init(|| {
         let registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));

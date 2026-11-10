@@ -1,5 +1,4 @@
-//! Zed's editor without a Project, read-only: a file at a revision, and the diff of two
-//! texts inline or split side by side, highlighted by the grammars Zed bundles and those `languages` compiles in.
+//! Zed's editor without a Project, read-only: a file at a revision, and a diff inline or split side by side.
 
 mod diff;
 mod inline;
@@ -30,8 +29,7 @@ pub use words::word_ranges;
 /// The editor's context: its keys are bound in it.
 pub const CONTEXT: &str = "Editor";
 
-/// The settings, theme settings and editor globals the editor reads, its text in `font` at `size` px, and its
-/// read-only keys. Call once, before the app applies its own theme: the theme settings' init installs Zed's.
+/// Call once, before the app applies its own theme: the theme settings' init installs Zed's.
 pub fn init(font: &str, size: f32, cx: &mut App) {
     settings::init(cx);
     let user = serde_json::json!({ "buffer_font_family": font, "buffer_font_size": size, "word_diff_enabled": false }).to_string();

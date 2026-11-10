@@ -7,8 +7,7 @@ use language::{Buffer, Language};
 use text::{LineEnding, Point, Rope};
 
 
-/// One change: the rows it covers in the old text and in the new one (either may be empty), and the
-/// changed words inside them as byte ranges of each text ([`crate::words::word_ranges`]).
+/// One change: its rows in each text (either may be empty) and its changed words as byte ranges ([`crate::words::word_ranges`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hunk {
     pub old_rows: Range<u32>,
@@ -54,8 +53,7 @@ fn rows(range: Range<Point>) -> Range<u32> {
 }
 
 impl Diff {
-    /// Builds the ropes on the background executor and the buffers from them, then diffs their lines and the
-    /// words inside each hunk on the background executor.
+    /// The ropes, the line diff and each hunk's word diff are built on the background executor.
     pub fn compute(old: String, new: String, language: Option<Arc<Language>>, cx: &mut App) -> Task<Diff> {
         let texts = cx.background_spawn(async move { (Side::of(old), Side::of(new)) });
         cx.spawn(async move |cx: &mut AsyncApp| {

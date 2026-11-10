@@ -21,8 +21,7 @@ struct Removed;
 /// Added rows' background on the new side.
 struct Added;
 
-/// The old text left and the new right, each with line numbers, rows aligned by striped fillers and
-/// scrolled together, and the change ruler at the right edge.
+/// Old text left, new right, rows aligned by striped fillers and scrolled together, the change ruler at the right.
 pub struct SplitDiff {
     pub old: Entity<Editor>,
     pub new: Entity<Editor>,

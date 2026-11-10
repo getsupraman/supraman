@@ -1,5 +1,4 @@
-//! Where an editor shows its rows: the row under a window position, a row's top, the rows selected, and the
-//! buffer row each of its rows shows.
+//! Where an editor shows its rows, in window coordinates and as buffer rows.
 
 use std::ops::Range;
 
@@ -50,18 +49,15 @@ pub fn row_top(editor: &Entity<Editor>, row: u32, window: &mut Window, cx: &mut 
     })
 }
 
-/// The window x where `editor`'s area starts; `None` before it was painted.
 pub fn left(editor: &Entity<Editor>, cx: &App) -> Option<Pixels> {
     editor.read(cx).last_bounds().map(|b| b.origin.x)
 }
 
-/// The window x where `editor`'s area ends; `None` before it was painted.
 pub fn right(editor: &Entity<Editor>, cx: &App) -> Option<Pixels> {
     editor.read(cx).last_bounds().map(|b| b.origin.x + b.size.width)
 }
 
-/// The rows of `editor`'s newest selection while it selects text; a selection ending at a row's start leaves
-/// that row out.
+/// The rows of `editor`'s newest non-empty selection; one ending at a row's start leaves that row out.
 pub fn selected_rows(editor: &Entity<Editor>, cx: &mut App) -> Option<Range<u32>> {
     editor.update(cx, |e, cx| {
         let snapshot = e.display_snapshot(cx);
@@ -74,8 +70,7 @@ pub fn selected_rows(editor: &Entity<Editor>, cx: &mut App) -> Option<Range<u32>
     })
 }
 
-/// Each row of `editor`'s text: the row of its buffer it shows and whether it is a removed one (an inline
-/// diff's old rows); `None` for a row of no buffer.
+/// Each row's buffer row and whether it is an inline diff's removed row; `None` for a row of no buffer.
 pub fn row_lines(editor: &Entity<Editor>, cx: &App) -> Vec<Option<(u32, bool)>> {
     let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
     snapshot
@@ -87,7 +82,6 @@ pub fn row_lines(editor: &Entity<Editor>, cx: &App) -> Vec<Option<(u32, bool)>> 
         .collect()
 }
 
-/// `f` each time `editor` scrolls.
 pub fn on_scroll(editor: &Entity<Editor>, f: impl Fn(&mut App) + 'static, cx: &mut App) -> gpui::Subscription {
     cx.subscribe(editor, move |_, e: &editor::EditorEvent, cx| {
         if let editor::EditorEvent::ScrollPositionChanged { .. } = e {
@@ -96,7 +90,6 @@ pub fn on_scroll(editor: &Entity<Editor>, f: impl Fn(&mut App) + 'static, cx: &m
     })
 }
 
-/// Selects `rows` of `editor`'s text whole.
 #[cfg(any(test, feature = "test-support"))]
 pub fn select_rows(editor: &Entity<Editor>, rows: Range<u32>, window: &mut Window, cx: &mut App) {
     editor.update(cx, |e, cx| {
