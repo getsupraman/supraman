@@ -79,6 +79,7 @@ impl Default for Keeping {
 }
 
 impl Keeping {
+    #[cfg(test)]
     pub fn with_margin(margin: Millis) -> Self {
         Self { margin, ..Self::default() }
     }
