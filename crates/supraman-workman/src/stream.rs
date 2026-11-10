@@ -133,41 +133,49 @@ impl Worker {
     }
 
     fn connect(&mut self, backoff: &mut Duration) -> End {
+        match self.open() {
+            Ok((mut socket, token)) => self.pump(&mut socket, &token, backoff),
+            Err(end) => end,
+        }
+    }
+
+    /// The socket with the request sent, and the bearer it carries.
+    fn open(&self) -> Result<(Conn, String), End> {
         let base = self.client.base().to_string();
         let origin = supraman_core::url::origin(&base);
         let prefix = base.strip_prefix(origin.as_str()).unwrap_or_default().trim_end_matches('/').to_string();
         let (tls, authority) = match (origin.strip_prefix("http://"), origin.strip_prefix("https://")) {
             (Some(authority), _) => (false, authority),
             (_, Some(authority)) => (true, authority),
-            _ => return End::Lost(format!("{base} is not http or https")),
+            _ => return Err(End::Lost(format!("{base} is not http or https"))),
         };
         let token = match self.client.bearer() {
             Ok(token) => token,
-            Err(e) => return End::Lost(e.to_string()),
+            Err(e) => return Err(End::Lost(e.to_string())),
         };
         let host = authority.rsplit_once(':').filter(|(_, p)| p.parse::<u16>().is_ok()).map_or(authority, |(h, _)| h);
         let dial = if authority.ends_with(']') || !authority.contains(':') { format!("{authority}:{}", if tls { 443 } else { 80 }) } else { authority.to_string() };
         let addrs: Vec<_> = match dial.to_socket_addrs() {
             Ok(addrs) => addrs.collect(),
-            Err(e) => return End::Lost(format!("{authority}: {e}")),
+            Err(e) => return Err(End::Lost(format!("{authority}: {e}"))),
         };
         if addrs.is_empty() {
-            return End::Lost(format!("{authority} has no address"));
+            return Err(End::Lost(format!("{authority} has no address")));
         }
         let mut refused = None;
         let tcp = addrs.iter().find_map(|addr| TcpStream::connect_timeout(addr, self.config.connect_timeout).map_err(|e| refused = Some(e)).ok());
         let Some(tcp) = tcp else {
-            return End::Lost(format!("{base} is unreachable ({})", refused.map(|e| e.to_string()).unwrap_or_default()));
+            return Err(End::Lost(format!("{base} is unreachable ({})", refused.map(|e| e.to_string()).unwrap_or_default())));
         };
         let _ = tcp.set_read_timeout(Some(self.config.connect_timeout));
         let mut socket = if tls {
             let connector = match native_tls::TlsConnector::new() {
                 Ok(c) => c,
-                Err(e) => return End::Lost(format!("no TLS ({e})")),
+                Err(e) => return Err(End::Lost(format!("no TLS ({e})"))),
             };
             match connector.connect(host, tcp) {
                 Ok(s) => Conn::Tls(Box::new(s)),
-                Err(e) => return End::Lost(format!("{base}: TLS failed ({e})")),
+                Err(e) => return Err(End::Lost(format!("{base}: TLS failed ({e})"))),
             }
         } else {
             Conn::Plain(tcp)
@@ -181,9 +189,12 @@ impl Worker {
         }
         request.push_str("\r\n");
         if let Err(e) = socket.write_all(request.as_bytes()) {
-            return End::Lost(format!("cannot send the request ({e})"));
+            return Err(End::Lost(format!("cannot send the request ({e})")));
         }
+        Ok((socket, token))
+    }
 
+    fn pump(&mut self, socket: &mut Conn, token: &str, backoff: &mut Duration) -> End {
         let mut http = HttpReader::default();
         let mut sse = SseParser::default();
         let mut buf = [0u8; 8192];
@@ -201,9 +212,9 @@ impl Worker {
                 Ok(x) => x,
                 Err(reason) => {
                     if http.status == Some(401) {
-                        self.client.rejected(&token);
+                        self.client.rejected(token);
                     }
-                    return End::Lost(crate::client::scrub(&token, &reason));
+                    return End::Lost(crate::client::scrub(token, &reason));
                 }
             };
             if head {
