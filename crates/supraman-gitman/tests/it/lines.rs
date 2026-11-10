@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use supraman_gitman::fixture::Fixture;
 use supraman_gitman::write::journal;
 use supraman_gitman::write::lines::{self, Change, Picked};
-use supraman_gitman::write::{LockSet, Session, WriteError, Writer};
+use supraman_gitman::write::{LockSet, Session, WriteError};
 
 const PATH: &str = "picked.txt";
 const BASE: &str = "one\ntwo\nthree\nfour\nfive\nsix\nseven\n";
@@ -69,7 +69,7 @@ fn show(f: &Fixture, rev: &str) -> Vec<u8> {
 }
 
 fn write<T>(f: &Fixture, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<T, WriteError>) -> Result<T, WriteError> {
-    Writer::open(&f.repo()).unwrap().run(locks, job)
+    Fixture::write_job(&f.repo(), locks, job)
 }
 
 /// The diff of `BASE` to `WORK` as the viewer shows it: its two changes.

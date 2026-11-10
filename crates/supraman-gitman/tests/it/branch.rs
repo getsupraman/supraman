@@ -3,27 +3,14 @@
 
 use std::path::Path;
 
-use supraman_gitman::fixture::{Fixture, git_in, run_git};
+use supraman_gitman::fixture::{Fixture, run_git};
 use supraman_gitman::write::branch::{self, CheckedOut, Merged, Plan, Target};
-use supraman_gitman::write::journal::{self, Done, Refused};
 use supraman_gitman::write::rebase::{self, Autostash, Rebased};
 use supraman_gitman::write::{LockSet, Session, WriteError, Writer};
 use supraman_gitman::*;
 
-fn git(f: &Fixture, dir: &Path, args: &[&str]) -> String {
-    git_in(&f.git, dir, args, &[], None)
-}
-
-fn side(f: &Fixture) -> Repo {
-    Repo::new(f.git.clone(), &f.worktree)
-}
-
 fn write<T>(repo: &Repo, job: impl FnOnce(&Session<'_>) -> Result<T, WriteError>) -> Result<T, WriteError> {
-    Writer::open(repo).unwrap().run(LockSet::checkout(), job)
-}
-
-fn undo(repo: &Repo) -> Result<Done, Refused> {
-    Writer::open(repo).unwrap().run(LockSet::undo(), |s| Ok(journal::undo(s, true))).unwrap()
+    Fixture::write_job(repo, LockSet::checkout(), job)
 }
 
 fn refused<T: std::fmt::Debug>(r: Result<T, WriteError>) -> &'static str {
@@ -42,11 +29,11 @@ fn plan(repo: &Repo, target: Target) -> Plan {
 fn head(f: &Fixture, dir: &Path) -> String {
     let out = run_git(&f.git, dir, &["symbolic-ref", "-q", "--short", "HEAD"], &[], None);
     let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if name.is_empty() { git(f, dir, &["rev-parse", "HEAD"]) } else { name }
+    if name.is_empty() { f.at(dir, &["rev-parse", "HEAD"]) } else { name }
 }
 
 fn sha(f: &Fixture, name: &str) -> String {
-    git(f, &f.dir, &["rev-parse", name])
+    f.at(&f.dir, &["rev-parse", name])
 }
 
 fn stash_count(f: &Fixture) -> usize {
@@ -55,19 +42,19 @@ fn stash_count(f: &Fixture) -> usize {
 
 /// `origin/<name>` at `at`, fetched.
 fn remote_branch(f: &Fixture, name: &str, at: &str) {
-    git(f, &f.dir, &["push", "-q", "origin", &format!("{at}:refs/heads/{name}")]);
-    git(f, &f.dir, &["fetch", "-q", "origin"]);
+    f.at(&f.dir, &["push", "-q", "origin", &format!("{at}:refs/heads/{name}")]);
+    f.at(&f.dir, &["fetch", "-q", "origin"]);
 }
 
 #[test]
 fn a_checkout_is_planned_from_the_ref_and_where_its_branch_lives() {
     let f = Fixture::copy();
-    let (main, wt) = (f.repo(), side(&f));
+    let (main, wt) = (f.repo(), f.side());
     remote_branch(&f, "topic", f.sha("rename"));
     remote_branch(&f, "next", f.sha("merge"));
-    git(&f, &f.dir, &["branch", "-q", "next", f.sha("main_work")]);
-    git(&f, &f.dir, &["branch", "-q", "-u", "origin/next", "next"]);
-    git(&f, &f.dir, &["branch", "-q", "apart", f.sha("root")]);
+    f.at(&f.dir, &["branch", "-q", "next", f.sha("main_work")]);
+    f.at(&f.dir, &["branch", "-q", "-u", "origin/next", "next"]);
+    f.at(&f.dir, &["branch", "-q", "apart", f.sha("root")]);
     remote_branch(&f, "apart", f.sha("rename"));
 
     assert_eq!(plan(&main, Target::Branch("main".into())), Plan::Head);
@@ -83,10 +70,10 @@ fn a_checkout_is_planned_from_the_ref_and_where_its_branch_lives() {
 #[test]
 fn a_checkout_is_undoable_and_a_refused_one_offers_the_stash_which_is_put_back_or_kept_and_named() {
     let f = Fixture::copy();
-    let wt = side(&f);
+    let wt = f.side();
     assert_eq!(write(&wt, |s| branch::checkout(s, &Plan::Branch("feature".into()), false)).unwrap(), CheckedOut::Done(Autostash::None));
     assert_eq!(head(&f, &f.worktree), "feature");
-    undo(&wt).unwrap();
+    Fixture::undo(&wt).unwrap();
     assert_eq!(head(&f, &f.worktree), "side", "Undo checks the branch before out again");
 
     std::fs::write(f.worktree.join("b.txt"), b"b\nmine\n").unwrap();
@@ -103,7 +90,7 @@ fn a_checkout_is_undoable_and_a_refused_one_offers_the_stash_which_is_put_back_o
 #[test]
 fn a_detached_checkout_and_a_forward_stash_the_work_and_pop_it_back() {
     let f = Fixture::copy();
-    let wt = side(&f);
+    let wt = f.side();
     std::fs::write(f.worktree.join("old.txt"), b"mine\n").unwrap();
     let stashes = stash_count(&f);
     let root = f.sha("root").to_string();
@@ -113,8 +100,8 @@ fn a_detached_checkout_and_a_forward_stash_the_work_and_pop_it_back() {
     assert_eq!(stash_count(&f), stashes, "never a stranded stash");
 
     remote_branch(&f, "next", f.sha("merge"));
-    git(&f, &f.dir, &["branch", "-q", "next", f.sha("second")]);
-    git(&f, &f.dir, &["branch", "-q", "-u", "origin/next", "next"]);
+    f.at(&f.dir, &["branch", "-q", "next", f.sha("second")]);
+    f.at(&f.dir, &["branch", "-q", "-u", "origin/next", "next"]);
     let forward = plan(&wt, Target::Remote("origin/next".into()));
     assert!(matches!(forward, Plan::Forward { .. }));
     assert_eq!(write(&wt, |s| branch::checkout(s, &forward, false)).unwrap(), CheckedOut::Done(Autostash::Popped));
@@ -135,9 +122,9 @@ fn branches_are_made_renamed_and_deleted_with_their_names_checked() {
     assert!(!branch::only_here(&main, "topic/renamed").unwrap(), "second is on other branches");
 
     write(&main, |s| branch::create_branch(s, "lonely", "HEAD")).unwrap();
-    git(&f, &f.dir, &["commit", "-q", "--no-verify", "--allow-empty", "-m", "Only on main"]);
-    git(&f, &f.dir, &["branch", "-q", "-f", "lonely", "HEAD"]);
-    git(&f, &f.dir, &["reset", "-q", "--soft", "HEAD~"]);
+    f.at(&f.dir, &["commit", "-q", "--no-verify", "--allow-empty", "-m", "Only on main"]);
+    f.at(&f.dir, &["branch", "-q", "-f", "lonely", "HEAD"]);
+    f.at(&f.dir, &["reset", "-q", "--soft", "HEAD~"]);
     assert!(branch::only_here(&main, "lonely").unwrap(), "its commit is on no other branch and it has no upstream");
     assert!(!branch::only_here(&main, "stale").unwrap(), "stale has an upstream");
 
@@ -145,7 +132,7 @@ fn branches_are_made_renamed_and_deleted_with_their_names_checked() {
     let lonely = sha(&f, "lonely");
     write(&main, |s| branch::delete_branch(s, "lonely")).unwrap();
     assert!(run_git(&f.git, &f.dir, &["rev-parse", "-q", "--verify", "refs/heads/lonely"], &[], None).code != Some(0));
-    undo(&main).unwrap();
+    Fixture::undo(&main).unwrap();
     assert_eq!(sha(&f, "lonely"), lonely, "a local delete is undoable");
 }
 
@@ -155,67 +142,67 @@ fn tags_are_made_light_or_annotated_and_deleted() {
     let main = f.repo();
     write(&main, |s| branch::create_tag(s, "t-light", f.sha("root"), None, false)).unwrap();
     write(&main, |s| branch::create_tag(s, "t-note", f.sha("root"), Some("A note\n"), false)).unwrap();
-    assert_eq!(git(&f, &f.dir, &["cat-file", "-t", "t-light"]), "commit");
-    assert_eq!(git(&f, &f.dir, &["cat-file", "-t", "t-note"]), "tag");
-    assert_eq!(git(&f, &f.dir, &["tag", "-l", "--format=%(contents:subject)", "t-note"]), "A note");
+    assert_eq!(f.at(&f.dir, &["cat-file", "-t", "t-light"]), "commit");
+    assert_eq!(f.at(&f.dir, &["cat-file", "-t", "t-note"]), "tag");
+    assert_eq!(f.at(&f.dir, &["tag", "-l", "--format=%(contents:subject)", "t-note"]), "A note");
     assert_eq!(refused(write(&main, |s| branch::create_tag(s, "v1", "HEAD", None, false))), branch::TAG_EXISTS);
     write(&main, |s| branch::create_tag(s, "t-light", f.sha("root"), Some("Annotated now"), true)).unwrap();
-    assert_eq!(git(&f, &f.dir, &["cat-file", "-t", "t-light"]), "tag", "annotate re-makes it annotated");
+    assert_eq!(f.at(&f.dir, &["cat-file", "-t", "t-light"]), "tag", "annotate re-makes it annotated");
     write(&main, |s| branch::delete_tag(s, "t-light")).unwrap();
-    assert!(git(&f, &f.dir, &["tag", "-l", "t-light"]).is_empty());
+    assert!(f.at(&f.dir, &["tag", "-l", "t-light"]).is_empty());
 }
 
 #[test]
 fn another_branch_fast_forwards_without_a_checkout() {
     let f = Fixture::copy();
     let main = f.repo();
-    let status = git(&f, &f.dir, &["status", "--porcelain"]);
+    let status = f.at(&f.dir, &["status", "--porcelain"]);
     let root = f.sha("root").to_string();
     write(&main, |s| branch::fast_forward(s, "stale", "origin/main")).unwrap();
     assert_eq!(sha(&f, "stale"), sha(&f, "origin/main"));
     assert_eq!(head(&f, &f.dir), "main", "nothing checked out");
-    assert_eq!(git(&f, &f.dir, &["status", "--porcelain"]), status, "the work in progress untouched");
+    assert_eq!(f.at(&f.dir, &["status", "--porcelain"]), status, "the work in progress untouched");
     assert_eq!(refused(write(&main, |s| branch::fast_forward(s, "feature", &root))), branch::NOT_FAST_FORWARD);
     assert_eq!(refused(write(&main, |s| branch::fast_forward(s, "side", "main"))), branch::IN_WORKTREE);
 
-    let wt = side(&f);
+    let wt = f.side();
     write(&wt, |s| branch::fast_forward(s, "side", "feature")).unwrap();
     assert_eq!(sha(&f, "side"), f.sha("rename"), "HEAD's branch by merge --ff-only");
 }
 
 fn commit_on(f: &Fixture, dir: &Path, path: &str, bytes: &[u8], message: &str) {
     std::fs::write(dir.join(path), bytes).unwrap();
-    git(f, dir, &["add", path]);
-    git(f, dir, &["commit", "-q", "--no-verify", "-m", message]);
+    f.at(dir, &["add", path]);
+    f.at(dir, &["commit", "-q", "--no-verify", "-m", message]);
 }
 
 #[test]
 fn a_merge_into_head_or_into_another_branch_goes_back_and_pops() {
     let f = Fixture::copy();
-    let wt = side(&f);
+    let wt = f.side();
     let root = f.sha("root").to_string();
     assert_eq!(write(&wt, |s| branch::merge(s, &root, "side")).unwrap(), Merged::UpToDate);
     assert_eq!(write(&wt, |s| branch::merge(s, "feature", "side")).unwrap(), Merged::Done(Autostash::None));
-    assert_eq!(git(&f, &f.worktree, &["rev-list", "--count", "--merges", "-1", "HEAD"]), "1", "a merge commit");
+    assert_eq!(f.at(&f.worktree, &["rev-list", "--count", "--merges", "-1", "HEAD"]), "1", "a merge commit");
 
     std::fs::write(f.worktree.join("c.txt"), b"mine\n").unwrap();
-    git(&f, &f.worktree, &["add", "c.txt"]);
+    f.at(&f.worktree, &["add", "c.txt"]);
     let before = sha(&f, "stale");
     assert_eq!(write(&wt, |s| branch::merge(s, "feature", "stale")).unwrap(), Merged::Done(Autostash::Popped));
     assert_eq!(head(&f, &f.worktree), "side", "the checkout before is back");
-    assert_eq!(git(&f, &f.dir, &["rev-parse", "stale^1"]), before, "stale got the merge");
+    assert_eq!(f.at(&f.dir, &["rev-parse", "stale^1"]), before, "stale got the merge");
     assert_eq!(std::fs::read_to_string(f.worktree.join("c.txt")).unwrap(), "mine\n");
 }
 
 #[test]
 fn a_conflicted_merge_into_another_branch_waits_or_is_abandoned_back() {
     let f = Fixture::copy();
-    let wt = side(&f);
-    git(&f, &f.worktree, &["checkout", "-q", "-b", "c1"]);
+    let wt = f.side();
+    f.at(&f.worktree, &["checkout", "-q", "-b", "c1"]);
     commit_on(&f, &f.worktree, "a.txt", b"one\nc1\n", "C1");
-    git(&f, &f.worktree, &["checkout", "-q", "-b", "c2", "side"]);
+    f.at(&f.worktree, &["checkout", "-q", "-b", "c2", "side"]);
     commit_on(&f, &f.worktree, "a.txt", b"one\nc2\n", "C2");
-    git(&f, &f.worktree, &["checkout", "-q", "side"]);
+    f.at(&f.worktree, &["checkout", "-q", "side"]);
     std::fs::write(f.worktree.join("old.txt"), b"mine\n").unwrap();
     let stashes = stash_count(&f);
     let Merged::Conflicted { away: Some(away) } = write(&wt, |s| branch::merge(s, "c1", "c2")).unwrap() else { panic!("conflicts") };
@@ -232,13 +219,13 @@ fn a_conflicted_merge_into_another_branch_waits_or_is_abandoned_back() {
 #[test]
 fn heads_branch_rebases_onto_a_ref_undoably() {
     let f = Fixture::copy();
-    let wt = side(&f);
+    let wt = f.side();
     commit_on(&f, &f.worktree, "c.txt", b"c\n", "Side's own");
     let before = sha(&f, "side");
     let Rebased::Done { head: new, .. } = write(&wt, |s| rebase::onto(s, "side", "feature")).unwrap() else { panic!("done") };
-    assert_eq!(git(&f, &f.worktree, &["rev-parse", "HEAD^"]), f.sha("rename"));
+    assert_eq!(f.at(&f.worktree, &["rev-parse", "HEAD^"]), f.sha("rename"));
     assert_eq!(sha(&f, "side"), new);
-    undo(&wt).unwrap();
+    Fixture::undo(&wt).unwrap();
     assert_eq!(sha(&f, "side"), before);
 }
 
@@ -247,7 +234,7 @@ fn a_worktree_is_locked_unlocked_removed_with_its_branch_and_pruned() {
     let f = Fixture::copy();
     let main = f.repo();
     let extra = f.dir.parent().unwrap().join("extra");
-    git(&f, &f.dir, &["worktree", "add", "-q", "-b", "extra", &extra.to_string_lossy(), f.sha("root")]);
+    f.at(&f.dir, &["worktree", "add", "-q", "-b", "extra", &extra.to_string_lossy(), f.sha("root")]);
     let locked = || refs(&main).unwrap().worktrees.iter().find(|w| w.branch.as_deref() == Some("extra")).map(|w| w.locked);
     write(&main, |s| branch::lock_worktree(s, &extra, true)).unwrap();
     assert_eq!(locked(), Some(true));

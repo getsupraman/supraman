@@ -45,7 +45,7 @@ fn a_fixture_under_a_hooks_git_env_leaves_that_repo_alone() {
 
     let dot_git = victim.join(".git");
     let mut child = process::command(std::env::current_exe().unwrap());
-    child.args(["--exact", "build_a_fixture", "--ignored", "--test-threads=1"]);
+    child.args(["--exact", "fixture_env::build_a_fixture", "--ignored", "--test-threads=1"]);
     child.env("GIT_DIR", &dot_git).env("GIT_WORK_TREE", &victim).env("GIT_INDEX_FILE", dot_git.join("index"));
     let out = process::run(&mut child, Duration::from_secs(300), Kill::Tree).unwrap();
     assert_eq!(state(&victim), before);

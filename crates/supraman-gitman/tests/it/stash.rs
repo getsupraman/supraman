@@ -2,7 +2,7 @@
 
 use supraman_gitman::fixture::{FEATURE_STASH, Fixture, MAIN_STASH, git_in, run_git};
 use supraman_gitman::write::stash::{self, Applied, CONFLICTED, GONE, NO_CHANGES, OVERWRITE, STAGED};
-use supraman_gitman::write::{LockSet, Session, WriteError, Writer};
+use supraman_gitman::write::{LockSet, Session, WriteError};
 use supraman_gitman::*;
 
 fn change(kind: ChangeKind, path: &str, old: Option<&str>) -> FileChange {
@@ -10,7 +10,7 @@ fn change(kind: ChangeKind, path: &str, old: Option<&str>) -> FileChange {
 }
 
 fn write<T>(f: &Fixture, job: impl FnOnce(&Session<'_>) -> Result<T, WriteError>) -> Result<T, WriteError> {
-    Writer::open(&f.repo()).unwrap().run(LockSet::stash(), job)
+    Fixture::write_job(&f.repo(), LockSet::stash(), job)
 }
 
 fn refused<T: std::fmt::Debug>(r: Result<T, WriteError>) -> &'static str {

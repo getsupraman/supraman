@@ -49,11 +49,7 @@ fn run(f: &Fixture, args: &[&str]) -> String {
 }
 
 fn write<T>(f: &Fixture, job: impl FnOnce(&Session<'_>) -> Result<T, WriteError>) -> T {
-    Writer::open(&f.repo()).unwrap().run(LockSet::undo(), job).unwrap()
-}
-
-fn undo(f: &Fixture) -> Result<Done, Refused> {
-    Writer::open(&f.repo()).unwrap().run(LockSet::undo(), |s| Ok(journal::undo(s, true))).unwrap()
+    Fixture::write_job(&f.repo(), LockSet::undo(), job).unwrap()
 }
 
 fn redo(f: &Fixture) -> Result<Done, Refused> {
@@ -74,12 +70,12 @@ fn round_trip(f: &Fixture, act: impl FnOnce(&Session<'_>) -> Result<(), WriteErr
         let toast = done.unwrap().toast;
         assert!(toast == format!("{verb} {undid}") || toast == format!("{verb} {undid}; your changes are in a stash"), "{toast}");
     };
-    said(undo(f), "Undid");
+    said(Fixture::undo(&f.repo()), "Undid");
     assert_eq!(state(f), before, "undo restores the state before");
     assert_eq!(preview(f).redo.map(|s| s.action), Some(undid.to_string()));
     said(redo(f), "Redid");
     assert_eq!(state(f), after, "redo restores the state after");
-    said(undo(f), "Undid");
+    said(Fixture::undo(&f.repo()), "Undid");
     assert_eq!(state(f), before, "undo after redo");
 }
 
@@ -105,7 +101,7 @@ fn a_terminal_commit_is_undone_too() {
     let f = Fixture::copy();
     let before = state(&f);
     git_in(&f.git, &f.dir, &["commit", "-q", "--no-verify", "-m", "From a shell"], &[], None);
-    assert_eq!(undo(&f).unwrap().toast, "Undid commit \"From a shell\"");
+    assert_eq!(Fixture::undo(&f.repo()).unwrap().toast, "Undid commit \"From a shell\"");
     assert_eq!(state(&f), before);
 }
 
@@ -128,7 +124,7 @@ fn undo_of_a_checkout_that_would_overwrite_local_changes_is_refused_with_their_c
         journal::record(s, Action::Checkout, None)
     });
     f.write("a.txt", b"changed on stale\n");
-    let refused = undo(&f).unwrap_err();
+    let refused = Fixture::undo(&f.repo()).unwrap_err();
     assert!(matches!(refused, Refused::Conflicts { ref target, files: 1 } if target == "main"), "{refused}");
     assert_eq!(run(&f, &["symbolic-ref", "HEAD"]), "refs/heads/stale", "nothing moved");
 }
@@ -182,7 +178,7 @@ fn undo_of_a_discard_stashes_what_changed_in_its_paths_since() {
     let before = state(&f);
     write(&f, |s| journal::discard(s, &["a.txt".to_string()]));
     f.write("a.txt", b"after the discard\n");
-    assert_eq!(undo(&f).unwrap().toast, "Undid discard \"a.txt\"; your changes are in a stash");
+    assert_eq!(Fixture::undo(&f.repo()).unwrap().toast, "Undid discard \"a.txt\"; your changes are in a stash");
     assert_eq!(state(&f), before);
     git_in(&f.git, &f.dir, &["checkout", "-q", "stash@{0}", "--", "a.txt"], &[], None);
     assert_eq!(std::fs::read(f.dir.join("a.txt")).unwrap(), b"after the discard\n");
@@ -209,7 +205,7 @@ fn undo_goes_back_several_steps_and_a_new_action_clears_redo() {
         journal::delete_branch(s, "stale")
     });
     for undid in ["delete branch \"stale\"", "discard \"u.txt\"", "commit \"One\""] {
-        assert_eq!(undo(&f).unwrap().toast, format!("Undid {undid}"));
+        assert_eq!(Fixture::undo(&f.repo()).unwrap().toast, format!("Undid {undid}"));
     }
     assert_eq!(state(&f), start);
     assert_eq!(preview(&f).redo.map(|s| s.action).as_deref(), Some("commit \"One\""));
@@ -229,7 +225,7 @@ fn an_entry_gitman_cannot_undo_stops_the_walk_and_says_what_can_be() {
     assert!(message.starts_with("merge topic"), "{message}");
     assert_eq!(p.undo_tooltip(), format!("Cannot undo {message}: only commits, checkouts, resets, discards, branch deletes and GitMan's rebases can be undone"));
     assert!(!p.can_undo());
-    assert!(matches!(undo(&f), Err(Refused::Cannot(_))));
+    assert!(matches!(Fixture::undo(&f.repo()), Err(Refused::Cannot(_))));
     write(&f, |s| journal::discard(s, &["a.txt".to_string()]));
     assert_eq!(preview(&f).undo, Some(Undo::Step(journal::Step { kind: Kind::Discard, action: "discard \"a.txt\"".into() })));
 }
@@ -267,7 +263,7 @@ fn gitmans_rebase_is_undone_as_a_hard_reset() {
         git(s, &["rebase", "-q", "--no-verify", "main"])?;
         journal::record(s, Action::Rebase { from: from.clone() }, None)
     });
-    assert_eq!(undo(&f).unwrap().toast, format!("Undid rebase from \"{}\"", short_sha(&from)));
+    assert_eq!(Fixture::undo(&f.repo()).unwrap().toast, format!("Undid rebase from \"{}\"", short_sha(&from)));
     assert_eq!(state(&f), before);
 }
 
@@ -293,7 +289,7 @@ fn undo_says_when_a_snapshot_is_gone() {
     let snapshot = run(&f, &["rev-parse", &format!("{marker}^")]);
     let object = f.dir.join(".git/objects").join(&snapshot[..2]).join(&snapshot[2..]);
     std::fs::remove_file(object).unwrap();
-    let refused = undo(&f).unwrap_err();
+    let refused = Fixture::undo(&f.repo()).unwrap_err();
     assert!(matches!(refused, Refused::Gone(_)), "{refused}");
     assert!(refused.to_string().contains("probably garbage-collected"), "{refused}");
 }

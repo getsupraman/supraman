@@ -12,33 +12,29 @@ use supraman_gitman::write::remote::{self, Force, Progress, PullMode, Pulled, Pu
 use supraman_gitman::write::{LockSet, Session, WriteError, Writer};
 use supraman_gitman::{Repo, remotes};
 
-fn git(f: &Fixture, dir: &Path, args: &[&str]) -> String {
-    git_in(&f.git, dir, args, &[], None)
-}
-
 fn origin(f: &Fixture) -> PathBuf {
     f.temp.path().join("origin.git")
 }
 
 /// A clone of the fixture's remote beside it, its tree clean.
 fn clone(f: &Fixture, name: &str) -> PathBuf {
-    git(f, f.temp.path(), &["clone", "-q", "-b", "main", &origin(f).to_string_lossy(), name]);
+    f.at(f.temp.path(), &["clone", "-q", "-b", "main", &origin(f).to_string_lossy(), name]);
     let dir = f.temp.path().join(name);
     for (key, value) in [("user.name", "Other"), ("user.email", "other@example.test"), ("commit.gpgsign", "false"), ("core.autocrlf", "false")] {
-        git(f, &dir, &["config", key, value]);
+        f.at(&dir, &["config", key, value]);
     }
     dir
 }
 
 fn commit(f: &Fixture, dir: &Path, file: &str, message: &str) -> String {
     std::fs::write(dir.join(file), format!("{message}\n")).unwrap();
-    git(f, dir, &["add", file]);
-    git(f, dir, &["commit", "-q", "-m", message]);
-    git(f, dir, &["rev-parse", "HEAD"])
+    f.at(dir, &["add", file]);
+    f.at(dir, &["commit", "-q", "-m", message]);
+    f.at(dir, &["rev-parse", "HEAD"])
 }
 
 fn write<T>(f: &Fixture, dir: &Path, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<T, WriteError>) -> Result<T, WriteError> {
-    Writer::open(&Repo::new(f.git.clone(), dir)).unwrap().run(locks, job)
+    Fixture::write_job(&Repo::new(f.git.clone(), dir), locks, job)
 }
 
 fn pull(f: &Fixture, dir: &Path, mode: PullMode) -> Result<Pulled, WriteError> {
@@ -50,7 +46,7 @@ fn push(f: &Fixture, dir: &Path, force: Force) -> Result<Pushed, WriteError> {
 }
 
 fn on_remote(f: &Fixture, name: &str) -> String {
-    git(f, &origin(f), &["rev-parse", name])
+    f.at(&origin(f), &["rev-parse", name])
 }
 
 #[test]
@@ -58,9 +54,9 @@ fn fetch_all_fetches_every_remote_prunes_the_gone_and_refuses_without_remotes() 
     let f = Fixture::copy();
     let other = clone(&f, "other");
     commit(&f, &other, "n.txt", "New on topic");
-    git(&f, &other, &["push", "-q", "origin", "HEAD:refs/heads/topic"]);
+    f.at(&other, &["push", "-q", "origin", "HEAD:refs/heads/topic"]);
     git_in(&f.git, f.temp.path(), &["init", "-q", "--bare", "mirror.git"], &[], None);
-    git(&f, &other, &["push", "-q", &f.temp.path().join("mirror.git").to_string_lossy(), "HEAD:refs/heads/mirrored"]);
+    f.at(&other, &["push", "-q", &f.temp.path().join("mirror.git").to_string_lossy(), "HEAD:refs/heads/mirrored"]);
     f.git(&["remote", "add", "mirror", &f.temp.path().join("mirror.git").to_string_lossy()]);
     let names: Vec<String> = remotes(&f.repo()).unwrap().into_iter().map(|r| r.name).collect();
     assert_eq!(names, ["mirror", "origin"]);
@@ -69,12 +65,12 @@ fn fetch_all_fetches_every_remote_prunes_the_gone_and_refuses_without_remotes() 
     assert_eq!(f.git(&["rev-parse", "origin/topic"]), on_remote(&f, "topic"));
     assert_eq!(f.git(&["rev-parse", "mirror/mirrored"]), on_remote(&f, "topic"));
 
-    git(&f, &other, &["push", "-q", "origin", "--delete", "topic"]);
+    f.at(&other, &["push", "-q", "origin", "--delete", "topic"]);
     write(&f, &f.dir, LockSet::fetch(), |s| remote::fetch_all(s, &names, true, &Transfer::default())).unwrap();
     assert!(!run_git(&f.git, &f.dir, &["rev-parse", "-q", "--verify", "refs/remotes/origin/topic"], &[], None).success(), "pruned");
 
     let lone = clone(&f, "lone");
-    git(&f, &lone, &["remote", "remove", "origin"]);
+    f.at(&lone, &["remote", "remove", "origin"]);
     let none = write(&f, &lone, LockSet::fetch(), |s| remote::fetch_all(s, &[], true, &Transfer::default()));
     assert!(matches!(none, Err(WriteError::Refused(remote::NO_REMOTES))), "{none:?}");
 }
@@ -84,37 +80,37 @@ fn pull_fast_forwards_merges_or_rebases_per_mode() {
     let f = Fixture::copy();
     let (mine, other) = (clone(&f, "mine"), clone(&f, "other"));
     let theirs = commit(&f, &other, "t.txt", "Theirs");
-    git(&f, &other, &["push", "-q"]);
+    f.at(&other, &["push", "-q"]);
     assert_eq!(pull(&f, &mine, PullMode::FastForwardOnly).unwrap(), Pulled::Merged);
-    assert_eq!(git(&f, &mine, &["rev-parse", "HEAD"]), theirs, "fast-forwarded");
+    assert_eq!(f.at(&mine, &["rev-parse", "HEAD"]), theirs, "fast-forwarded");
     assert_eq!(pull(&f, &mine, PullMode::FastForwardOnly).unwrap(), Pulled::UpToDate);
 
     let theirs = commit(&f, &other, "t2.txt", "Theirs again");
-    git(&f, &other, &["push", "-q"]);
+    f.at(&other, &["push", "-q"]);
     commit(&f, &mine, "m.txt", "Mine");
     std::fs::write(mine.join("m.txt"), "work in progress\n").unwrap();
     assert!(pull(&f, &mine, PullMode::FastForwardOnly).is_err(), "gone apart: no fast-forward");
     assert_eq!(pull(&f, &mine, PullMode::FastForwardIfPossible).unwrap(), Pulled::Merged);
-    assert_eq!(git(&f, &mine, &["rev-parse", "HEAD^2"]), theirs, "a merge commit");
+    assert_eq!(f.at(&mine, &["rev-parse", "HEAD^2"]), theirs, "a merge commit");
     assert_eq!(std::fs::read_to_string(mine.join("m.txt")).unwrap(), "work in progress\n", "the work in progress is put back");
 
     let rebasing = clone(&f, "rebasing");
     commit(&f, &rebasing, "r.txt", "Rebased mine");
     commit(&f, &other, "t3.txt", "Theirs third");
-    git(&f, &other, &["push", "-q"]);
+    f.at(&other, &["push", "-q"]);
     let pulled = pull(&f, &rebasing, PullMode::Rebase).unwrap();
     assert!(matches!(pulled, Pulled::Rebased(Rebased::Done { .. })), "{pulled:?}");
-    assert_eq!(git(&f, &rebasing, &["rev-parse", "HEAD^"]), on_remote(&f, "main"), "mine on top of theirs, no merge");
-    assert_eq!(git(&f, &rebasing, &["log", "-1", "--format=%s"]), "Rebased mine");
+    assert_eq!(f.at(&rebasing, &["rev-parse", "HEAD^"]), on_remote(&f, "main"), "mine on top of theirs, no merge");
+    assert_eq!(f.at(&rebasing, &["log", "-1", "--format=%s"]), "Rebased mine");
 }
 
 #[test]
 fn pull_without_upstream_or_on_a_detached_head_says_so() {
     let f = Fixture::copy();
     let mine = clone(&f, "mine");
-    git(&f, &mine, &["checkout", "-q", "-b", "topic"]);
+    f.at(&mine, &["checkout", "-q", "-b", "topic"]);
     assert_eq!(pull(&f, &mine, PullMode::FastForwardIfPossible).unwrap(), Pulled::NoUpstream { branch: "topic".into() });
-    git(&f, &mine, &["checkout", "-q", "--detach"]);
+    f.at(&mine, &["checkout", "-q", "--detach"]);
     assert!(matches!(pull(&f, &mine, PullMode::FastForwardIfPossible), Err(WriteError::Refused(remote::DETACHED))));
 }
 
@@ -126,9 +122,9 @@ fn push_says_behind_forces_with_lease_and_a_stale_lease_needs_a_fetch_or_force_a
     assert_eq!(push(&f, &mine, Force::No).unwrap(), Pushed::Done);
     assert_eq!(on_remote(&f, "main"), pushed);
 
-    git(&f, &other, &["pull", "-q"]);
+    f.at(&other, &["pull", "-q"]);
     commit(&f, &other, "o.txt", "Other's");
-    git(&f, &other, &["push", "-q"]);
+    f.at(&other, &["push", "-q"]);
     let rewritten = commit(&f, &mine, "m2.txt", "Mine again");
     assert_eq!(push(&f, &mine, Force::No).unwrap(), Pushed::Behind, "the remote has a commit this branch lacks");
     assert_eq!(push(&f, &mine, Force::Lease).unwrap(), Pushed::StaleLease, "never fetched: the lease is stale");
@@ -138,7 +134,7 @@ fn push_says_behind_forces_with_lease_and_a_stale_lease_needs_a_fetch_or_force_a
     assert_eq!(on_remote(&f, "main"), rewritten);
 
     commit(&f, &other, "o2.txt", "Other's again");
-    git(&f, &other, &["push", "-q", "--force"]);
+    f.at(&other, &["push", "-q", "--force"]);
     assert_eq!(push(&f, &mine, Force::Lease).unwrap(), Pushed::StaleLease);
     assert_eq!(push(&f, &mine, Force::Anyway).unwrap(), Pushed::Done);
     assert_eq!(on_remote(&f, "main"), rewritten);
@@ -148,18 +144,18 @@ fn push_says_behind_forces_with_lease_and_a_stale_lease_needs_a_fetch_or_force_a
 fn a_branch_without_upstream_is_published_and_tags_and_branches_are_pushed_and_deleted() {
     let f = Fixture::copy();
     let mine = clone(&f, "mine");
-    git(&f, &mine, &["checkout", "-q", "-b", "topic"]);
+    f.at(&mine, &["checkout", "-q", "-b", "topic"]);
     let sha = commit(&f, &mine, "t.txt", "Topic");
     let t = Transfer::default();
     assert_eq!(write(&f, &mine, LockSet::push(), |s| remote::publish(s, "topic", "origin", "feature/topic", &t)).unwrap(), Pushed::Done);
     assert_eq!(on_remote(&f, "feature/topic"), sha);
-    assert_eq!(git(&f, &mine, &["rev-parse", "--abbrev-ref", "topic@{upstream}"]), "origin/feature/topic");
+    assert_eq!(f.at(&mine, &["rev-parse", "--abbrev-ref", "topic@{upstream}"]), "origin/feature/topic");
 
-    git(&f, &mine, &["branch", "-q", "unfetched"]);
+    f.at(&mine, &["branch", "-q", "unfetched"]);
     write(&f, &mine, LockSet::branch(), |s| remote::set_upstream(s, "unfetched", "origin", "later")).unwrap();
-    assert_eq!(git(&f, &mine, &["config", "branch.unfetched.merge"]), "refs/heads/later");
+    assert_eq!(f.at(&mine, &["config", "branch.unfetched.merge"]), "refs/heads/later");
 
-    git(&f, &mine, &["tag", "v9"]);
+    f.at(&mine, &["tag", "v9"]);
     assert_eq!(write(&f, &mine, LockSet::push(), |s| remote::push_tag(s, "origin", "v9", &t)).unwrap(), Pushed::Done);
     assert_eq!(on_remote(&f, "refs/tags/v9"), sha);
     write(&f, &mine, LockSet::push(), |s| remote::delete_remote_ref(s, "origin", "refs/tags/v9", &t)).unwrap();
@@ -168,7 +164,7 @@ fn a_branch_without_upstream_is_published_and_tags_and_branches_are_pushed_and_d
     assert!(!run_git(&f.git, &origin(&f), &["rev-parse", "-q", "--verify", "refs/heads/feature/topic"], &[], None).success());
 
     write(&f, &mine, LockSet::remote_config(), |s| remote::set_url(s, "origin", "C:/elsewhere.git")).unwrap();
-    assert_eq!(git(&f, &mine, &["remote", "get-url", "origin"]), "C:/elsewhere.git");
+    assert_eq!(f.at(&mine, &["remote", "get-url", "origin"]), "C:/elsewhere.git");
     write(&f, &mine, LockSet::remote_config(), |s| remote::remove_remote(s, "origin")).unwrap();
     assert!(remotes(&Repo::new(f.git.clone(), &mine)).unwrap().is_empty());
 }
