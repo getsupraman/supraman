@@ -56,15 +56,46 @@ pub fn utf16(bytes: &[u8], le: bool) -> String {
     String::from_utf16_lossy(&units)
 }
 
+/// How far git looks for a NUL to call a file binary (`buffer_is_binary`).
+const BINARY_PROBE: usize = 8000;
+
+/// What a file's bytes hold, as [`classify`] reads them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// Text in the encoding [`decode`] reads it as.
+    Text(Encoding),
+    Binary,
+}
+
+fn bom(bytes: &[u8]) -> Option<(Encoding, &[u8])> {
+    match bytes {
+        [0xFF, 0xFE, rest @ ..] => Some((Encoding::Utf16Le, rest)),
+        [0xFE, 0xFF, rest @ ..] => Some((Encoding::Utf16Be, rest)),
+        [0xEF, 0xBB, 0xBF, rest @ ..] => Some((Encoding::Utf8Bom, rest)),
+        _ => None,
+    }
+}
+
+/// Text or binary, the one rule: a byte-order mark is text in its encoding; else a NUL in the first 8000 bytes is binary, as git decides; else UTF-8 text.
+pub fn classify(bytes: &[u8]) -> Kind {
+    if let Some((encoding, _)) = bom(bytes) {
+        return Kind::Text(encoding);
+    }
+    if bytes[..bytes.len().min(BINARY_PROBE)].contains(&0) {
+        return Kind::Binary;
+    }
+    Kind::Text(if std::str::from_utf8(bytes).is_ok() { Encoding::Utf8 } else { Encoding::Unknown })
+}
+
 /// UTF-16 with its BOM, UTF-8 with or without one, else UTF-8 with the invalid bytes replaced.
 pub fn decode(bytes: &[u8]) -> (String, Encoding) {
-    match bytes {
-        [0xFF, 0xFE, rest @ ..] => (utf16(rest, true), Encoding::Utf16Le),
-        [0xFE, 0xFF, rest @ ..] => (utf16(rest, false), Encoding::Utf16Be),
-        [0xEF, 0xBB, 0xBF, rest @ ..] => (String::from_utf8_lossy(rest).into_owned(), Encoding::Utf8Bom),
-        b => match std::str::from_utf8(b) {
+    match bom(bytes) {
+        Some((Encoding::Utf16Le, rest)) => (utf16(rest, true), Encoding::Utf16Le),
+        Some((Encoding::Utf16Be, rest)) => (utf16(rest, false), Encoding::Utf16Be),
+        Some((encoding, rest)) => (String::from_utf8_lossy(rest).into_owned(), encoding),
+        None => match std::str::from_utf8(bytes) {
             Ok(s) => (s.to_string(), Encoding::Utf8),
-            Err(_) => (String::from_utf8_lossy(b).into_owned(), Encoding::Unknown),
+            Err(_) => (String::from_utf8_lossy(bytes).into_owned(), Encoding::Unknown),
         },
     }
 }
@@ -97,6 +128,33 @@ mod tests {
         assert_eq!(decode(b"\xFF\xFEa\0b\0"), ("ab".into(), Encoding::Utf16Le));
         assert_eq!(decode(b"\xFE\xFF\0a\0b"), ("ab".into(), Encoding::Utf16Be));
         assert_eq!(decode(b"a\xFFb"), ("a\u{FFFD}b".into(), Encoding::Unknown));
+    }
+
+    #[test]
+    fn a_bom_is_text_before_a_nul_is_binary() {
+        assert_eq!(classify(b"\xFF\xFEa\0b\0"), Kind::Text(Encoding::Utf16Le));
+        assert_eq!(classify(b"\xFE\xFF\0a\0b"), Kind::Text(Encoding::Utf16Be));
+        assert_eq!(classify(b"\xEF\xBB\xBFa\0"), Kind::Text(Encoding::Utf8Bom));
+        assert_eq!(classify(b"a\0b"), Kind::Binary);
+        assert_eq!(classify(b"plain"), Kind::Text(Encoding::Utf8));
+        assert_eq!(classify(b"a\xFFb"), Kind::Text(Encoding::Unknown));
+        assert_eq!(classify(b""), Kind::Text(Encoding::Utf8));
+    }
+
+    #[test]
+    fn only_a_nul_in_the_first_8000_bytes_makes_binary() {
+        let mut bytes = vec![b'a'; BINARY_PROBE];
+        bytes.push(0);
+        assert_eq!(classify(&bytes), Kind::Text(Encoding::Utf8));
+        bytes[BINARY_PROBE - 1] = 0;
+        assert_eq!(classify(&bytes), Kind::Binary);
+    }
+
+    #[test]
+    fn classify_names_the_encoding_decode_reads() {
+        for bytes in [&b"plain"[..], b"\xEF\xBB\xBFbom", b"\xFF\xFEa\0", b"\xFE\xFF\0a", b"a\xFFb"] {
+            assert_eq!(classify(bytes), Kind::Text(decode(bytes).1));
+        }
     }
 
     #[test]

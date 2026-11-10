@@ -2,10 +2,12 @@
 
 use std::io::Cursor;
 
+use supraman_core::text::{Encoding, encode};
+
 use super::{BINARY, Fixture, git_in};
 
 /// The paths `media` changes from `media_base`.
-pub const MEDIA_FILES: [&str; 12] = [
+pub const MEDIA_FILES: [&str; 14] = [
     "changed.png",
     "added.png",
     "deleted.png",
@@ -18,6 +20,8 @@ pub const MEDIA_FILES: [&str; 12] = [
     "lf.txt",
     "text.txt",
     "invalid.txt",
+    "utf16.txt",
+    "wide.txt",
 ];
 
 const SVG_SMALL: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>"#;
@@ -45,6 +49,8 @@ fn sides(path: &str) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
         "lf.txt" => both(b"a\nb\n", b"a\r\nb\r\n"),
         "text.txt" => both(b"one\n", b"one\ntwo\n"),
         "invalid.txt" => both(b"a\xFF\n", b"a\xFE\n"),
+        "utf16.txt" => both(&encode("same\n", Encoding::Utf16Le), b"same\n"),
+        "wide.txt" => both(&encode("one\n", Encoding::Utf16Le), &encode("one\ntwo\n", Encoding::Utf16Le)),
         other => unreachable!("no media file {other}"),
     }
 }

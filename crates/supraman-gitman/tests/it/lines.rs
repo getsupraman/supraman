@@ -179,3 +179,22 @@ fn a_pick_of_a_file_changed_since_it_was_shown_is_refused() {
     assert!(matches!(refused, Err(WriteError::Refused(_))), "{refused:?}");
     assert_eq!(show(&f, ""), BASE.as_bytes(), "nothing staged");
 }
+
+#[test]
+fn picks_in_a_utf16_file_with_a_bom_keep_its_encoding() {
+    use supraman_core::text::{Encoding, encode};
+    let utf16 = |text: &str| encode(text, Encoding::Utf16Le);
+    let f = Fixture::copy();
+    f.write(PATH, &utf16(BASE));
+    f.git(&["add", PATH]);
+    f.git(&["commit", "-q", "--no-verify", "-m", "Add picked.txt"]);
+    f.write(PATH, &utf16(WORK));
+
+    write(&f, LockSet::commit(), |s| lines::stage(s, &unstaged(Some(0), &[], &[]))).unwrap();
+    assert_eq!(show(&f, ""), utf16("one\nTWO\nthree\nfour\nfive\nsix\nseven\n"), "the first hunk staged in UTF-16");
+
+    let shown = ("one\nTWO\nthree\nfour\nfive\nsix\nseven\n".to_string(), WORK.to_string());
+    let last = Picked::hunk(PATH.into(), shown, vec![Change { old: 6..7, new: 6..8 }], 0);
+    write(&f, LockSet::reset(), |s| lines::discard(s, &last)).unwrap();
+    assert_eq!(std::fs::read(f.dir.join(PATH)).unwrap(), utf16("one\nTWO\nthree\nfour\nfive\nsix\nseven\n"), "the last hunk discarded in UTF-16");
+}
