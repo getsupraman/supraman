@@ -80,16 +80,15 @@ pub fn ignorable(path: &str) -> bool {
 /// tracked files under it (`paths`) are taken out of the index, their working files kept.
 pub fn ignore(s: &Session, ignore: &Ignore, untrack: &[String]) -> Result<(), WriteError> {
     let file = s.writer().dirs().top.join(".gitignore");
-    let io = |source| WriteError::Io { what: format!("write {}", file.display()), source };
     let before = match std::fs::read(&file) {
         Ok(bytes) => text(&bytes),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(source) => return Err(io(source)),
+        Err(source) => return Err(WriteError::io("write", &file)(source)),
     };
     let pattern = ignore.pattern();
     if !before.lines().any(|l| l.trim_end() == pattern) {
         let gap = if before.is_empty() || before.ends_with('\n') { "" } else { "\n" };
-        std::fs::write(&file, format!("{before}{gap}{pattern}\n")).map_err(io)?;
+        supraman_core::fs::write_atomic(&file, format!("{before}{gap}{pattern}\n")).map_err(WriteError::io("write", &file))?;
     }
     if !untrack.is_empty() {
         s.output(&Call::new(&["rm", "-q", "-r", "--cached", "--force", "--ignore-unmatch"]).paths(untrack.iter().cloned()))?;

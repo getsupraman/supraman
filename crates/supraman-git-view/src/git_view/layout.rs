@@ -74,11 +74,7 @@ pub(crate) fn key(folder: &Path) -> String {
 
 /// An unreadable file is kept as it is: the store lives in memory until the next start.
 pub(crate) fn load(home: Option<&Path>) -> (JsonStore<File>, Option<String>) {
-    let (store, notice) = JsonStore::load(home.map(path), LOST);
-    match notice {
-        Some(_) => (JsonStore::in_memory(File::default()), notice),
-        None => (store, None),
-    }
+    JsonStore::load_kept(home.map(path), LOST)
 }
 
 pub(crate) type Ready = Shared<Task<()>>;

@@ -1,6 +1,7 @@
 //! The graph's WIP row, where the commit summary has its second field (the conflict node in its place while
 //! files are conflicted), and the tab's staging keys.
 
+use supraman_core::text::count;
 use std::collections::HashMap;
 
 use gpui::{AnyElement, App, Div, MouseButton, MouseDownEvent, SharedString, Window, div, prelude::*, px};
@@ -91,7 +92,7 @@ impl GitView {
 
 /// `n file conflicts in working directory` after the conflict mark, painted under `git-conflict-node`.
 fn conflict_node(n: usize, hits: &HitTargets, palette: &Palette, cx: &App) -> Div {
-    let words = if n == 1 { "1 file conflict in working directory".to_string() } else { format!("{n} file conflicts in working directory") };
+    let words = format!("{} in working directory", count(n, "file conflict", "file conflicts"));
     div()
         .relative()
         .flex()

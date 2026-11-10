@@ -1,5 +1,6 @@
 //! The Overview page, the web's: one sentence, Needs you, Working now, the honesty tiles, and a card per bound project.
 
+use supraman_core::text::count;
 use gpui::{ClickEvent, FontWeight, Hsla};
 use supraman_core::time::{self, rfc3339_ms};
 use supraman_ui::hit::hit_target;
@@ -19,10 +20,6 @@ pub(crate) const NEEDS_SHOWN: usize = 5;
 /// Wide enough for the longest word of a tile's label, so a label wraps between words only.
 const TILE_MIN: f32 = 120.;
 
-fn plural(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
-}
-
 pub(crate) fn open_of(r: &Rollup) -> u32 {
     r.open + r.in_progress + r.review + r.blocked
 }
@@ -30,7 +27,7 @@ pub(crate) fn open_of(r: &Rollup) -> u32 {
 pub(crate) fn sentence(projects: &[OverviewProject], needs: usize) -> String {
     let tasks: u32 = projects.iter().map(|p| open_of(&p.rollup)).sum();
     let needs = if needs == 1 { "1 thing needs you".to_string() } else { format!("{needs} things need you") };
-    format!("{} open across {}. {needs}.", plural(tasks as usize, "task", "tasks"), plural(projects.len(), "project", "projects"))
+    format!("{} open across {}. {needs}.", count(tasks as usize, "task", "tasks"), count(projects.len(), "project", "projects"))
 }
 
 pub(crate) fn as_of(at: &str, now: i64) -> String {

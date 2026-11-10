@@ -103,8 +103,7 @@ fn labels(refs: &Refs) -> Vec<(String, String, RefLabel)> {
         (b.sha.clone(), b.name.clone(), RefLabel { kind, name: b.name.clone(), head })
     });
     let remotes = refs.remotes.iter().map(|r| {
-        let short = r.name.split_once('/').map_or(r.name.as_str(), |(_, s)| s);
-        (r.sha.clone(), short.to_string(), RefLabel { kind: RefKind::Remote, name: r.name.clone(), head: false })
+        (r.sha.clone(), r.branch().to_string(), RefLabel { kind: RefKind::Remote, name: r.name.clone(), head: false })
     });
     let tags = refs.tags.iter().filter_map(|t| {
         let sha = t.commit.clone()?;

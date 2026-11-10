@@ -2,6 +2,7 @@
 //! write gate (asked first once a remote holds HEAD), an older commit's reworded by GitMan's rebase (asked first
 //! once pushed or with work in progress), or a stash's message, saved by the tab's stash writes.
 
+use supraman_core::text::count;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use gpui::{App, ClickEvent, Context, Div, Hsla, Stateful, Subscription, Window, div, prelude::*};
@@ -85,13 +86,9 @@ pub(crate) fn offer(shown: &Shown) -> Option<(&'static str, Option<Target>)> {
     }
 }
 
-fn commits(n: usize) -> String {
-    if n == 1 { "1 commit".into() } else { format!("{n} commits") }
-}
-
 /// What a reword of a commit with `above` commits over it does.
 pub(crate) fn rebases_words(above: usize) -> String {
-    format!("Rewords this commit and rebases the {} above it", commits(above))
+    format!("Rewords this commit and rebases the {} above it", count(above, "commit", "commits"))
 }
 
 /// The question before an older commit's reword: once pushed, or with work in progress to stash; none else.
@@ -99,7 +96,7 @@ pub(crate) fn reword_question(branch: &str, above: usize, pushed: bool, dirty: b
     let stashed = "Your changes are stashed and put back afterwards.";
     match (pushed, dirty) {
         (true, _) => {
-            let pushed = format!("{branch} was already pushed. Rewording rewrites {} and the next push must force.", commits(above + 1));
+            let pushed = format!("{branch} was already pushed. Rewording rewrites {} and the next push must force.", count(above + 1, "commit", "commits"));
             Some(if dirty { format!("{pushed} {stashed} Reword anyway?") } else { format!("{pushed} Reword anyway?") })
         }
         (false, true) => Some(format!("Reword it? {stashed}")),

@@ -66,14 +66,13 @@ impl Results {
     }
 
     pub fn summary(&self) -> String {
-        let plural = |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
         let (sessions, places) = (self.sessions(), self.places());
-        let mut out = plural(sessions, "session", "sessions");
+        let mut out = supraman_core::text::count(sessions, "session", "sessions");
         if sessions > 0 {
-            out.push_str(&format!(" in {}", plural(self.workspaces.iter().filter(|w| w.count() > 0).count(), "workspace", "workspaces")));
+            out.push_str(&format!(" in {}", supraman_core::text::count(self.workspaces.iter().filter(|w| w.count() > 0).count(), "workspace", "workspaces")));
         }
         if places > 0 {
-            out.push_str(&format!(", {} by name", plural(places, "workspace or repo", "workspaces or repos")));
+            out.push_str(&format!(", {} by name", supraman_core::text::count(places, "workspace or repo", "workspaces or repos")));
         }
         out
     }

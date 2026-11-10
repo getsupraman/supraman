@@ -30,10 +30,6 @@ fn config_true(s: &Session, key: &str) -> Result<bool, WriteError> {
     Ok(out.success() && text(&out.stdout).trim() == "true")
 }
 
-fn has_head(s: &Session) -> Result<bool, WriteError> {
-    Ok(s.run(&Call::new(&["rev-parse", "-q", "--verify", "HEAD"]))?.success())
-}
-
 /// Stages `files` (and a rename's old path) whatever their change, untracked and conflicted ones too; a conflicted
 /// file's `.orig` leftover goes.
 pub fn stage(s: &Session, files: &[FileChange]) -> Result<(), WriteError> {
@@ -103,7 +99,7 @@ pub fn unstage(s: &Session, files: &[FileChange]) -> Result<(), WriteError> {
         return Ok(());
     }
     let before = flags(s)?;
-    s.output(&Call::new(unstage_args(&paths, has_head(s)?)).paths(paths.clone()))?;
+    s.output(&Call::new(unstage_args(&paths, s.verify("HEAD")?.is_some())).paths(paths.clone()))?;
     let index = indexed(s)?;
     let kept: Vec<(&String, Flags)> = paths.iter().filter(|p| index.contains(*p)).filter_map(|p| before.get(p).map(|f| (p, *f))).collect();
     let kinds: [(&str, fn(Flags) -> bool); 2] = [("--skip-worktree", |f| f.skip_worktree), ("--assume-unchanged", |f| f.assume_unchanged)];
@@ -157,7 +153,7 @@ pub(crate) fn remove_file(top: &Path, path: &str) -> Result<(), WriteError> {
     match std::fs::remove_file(&file) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(source) => return Err(WriteError::Io { what: format!("remove {}", file.display()), source }),
+        Err(source) => return Err(WriteError::io("remove", &file)(source)),
     }
     let mut folder = file.parent();
     while let Some(dir) = folder.filter(|d| *d != top && d.starts_with(top)) {
@@ -186,7 +182,7 @@ pub fn commit(s: &Session, message: &str, amend: bool, no_verify: bool) -> Resul
 /// for Undo. HEAD's new sha.
 pub fn reword_head(s: &Session, message: &str, no_verify: bool) -> Result<String, WriteError> {
     run_commit(s, message, &["--amend", "--only"], no_verify)?;
-    Ok(text(&s.output(&Call::new(&["rev-parse", "HEAD"]))?).trim().to_string())
+    s.rev("HEAD")
 }
 
 fn run_commit(s: &Session, message: &str, extra: &[&str], no_verify: bool) -> Result<(), WriteError> {
@@ -237,7 +233,7 @@ pub fn step(s: &Session, step: Step) -> Result<Rebased, WriteError> {
         Step::AbortRebase => rebase::abort(s),
         Step::AbortMerge => {
             s.output(&Call::new(&["merge", "--abort"]))?;
-            let head = text(&s.output(&Call::new(&["rev-parse", "HEAD"]))?).trim().to_string();
+            let head = s.rev("HEAD")?;
             Ok(Rebased::Done { head, autostash: Autostash::None })
         }
         Step::Continue(sequence) => conflicts::sequence_step(s, sequence, "--continue"),

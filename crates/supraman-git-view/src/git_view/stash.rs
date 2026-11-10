@@ -2,6 +2,7 @@
 //! off the UI thread: stash all or some files, apply, pop, delete, a new message, and files applied from a stash;
 //! the questions before them, the stash row's menu and the message box. None is undoable.
 
+use supraman_core::text::count;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use gpui::{AppContext as _, ClickEvent, Context, Entity, EventEmitter, Pixels, Point, Render, Subscription, Window, div, prelude::*};
@@ -51,14 +52,10 @@ enum Ask {
     Delete(Vec<StashRef>),
 }
 
-fn files_words(n: usize) -> String {
-    if n == 1 { "1 file".into() } else { format!("{n} files") }
-}
-
 impl Ask {
     fn question(&self) -> (String, &'static str) {
         match self {
-            Ask::Files { files, .. } => (format!("Stash {}?", files_words(files.len())), "Stash"),
+            Ask::Files { files, .. } => (format!("Stash {}?", count(files.len(), "file", "files")), "Stash"),
             Ask::Apply { stash, pop: false } => (format!("Apply \u{201c}{}\u{201d} over your unstaged changes?", stash.label), "Apply"),
             Ask::Apply { stash, pop: true } => (format!("Pop \u{201c}{}\u{201d} over your unstaged changes?", stash.label), "Pop"),
             Ask::Delete(stashes) => match stashes.as_slice() {
@@ -284,8 +281,8 @@ impl StashActions {
                 cx.emit(StashEvent::Stashed);
                 Some("Stashed all changes".to_string())
             }
-            Doing::Files(n) => Some(format!("Stashed {}", files_words(n))),
-            Doing::ApplyFiles(n) => Some(format!("Applied {} from the stash", files_words(n))),
+            Doing::Files(n) => Some(format!("Stashed {}", count(n, "file", "files"))),
+            Doing::ApplyFiles(n) => Some(format!("Applied {} from the stash", count(n, "file", "files"))),
             Doing::Apply { stash, pop } => return self.applied(stash, pop, cx),
             Doing::Delete(stashes) => Some(match stashes.as_slice() {
                 [one] => format!("Deleted the stash \u{201c}{}\u{201d}", one.label),

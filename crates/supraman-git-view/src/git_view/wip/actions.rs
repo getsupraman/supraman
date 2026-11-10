@@ -1,6 +1,7 @@
 //! The WIP panel's writes, each through the tab's write gate off the UI thread: stage, unstage, discard (asked
 //! first), commit, and the next step of the operation under way; their outcome goes to the tab as a [`PanelEvent`].
 
+use supraman_core::text::count;
 use std::sync::PoisonError;
 
 use gpui::{App, Context};
@@ -53,14 +54,10 @@ pub(crate) fn noun(sequence: Sequence) -> &'static str {
 }
 pub(crate) const ABORTED_POPPED: &str = "Aborted the rebase; your changes are back";
 
-fn files_words(n: usize) -> String {
-    if n == 1 { "1 file".into() } else { format!("{n} files") }
-}
-
 impl Ask {
     pub(crate) fn question(&self) -> (String, &'static str) {
         match self {
-            Ask::Discard(files) => (format!("Discard the changes to {}? You can undo it.", files_words(files.len())), "Discard"),
+            Ask::Discard(files) => (format!("Discard the changes to {}? You can undo it.", count(files.len(), "file", "files")), "Discard"),
             Ask::DiscardAll => ("Discard all changes? Staged, unstaged and new untracked files go; ignored files stay. You can undo it.".into(), "Discard all"),
             Ask::Step(Step::SkipCommit) => ("Skip this commit of the rebase? Its changes are left out.".into(), "Skip commit"),
             Ask::Step(Step::AbortRebase) => ("Abort the rebase? The branch goes back to where it started and the resolutions so far are lost.".into(), "Abort rebase"),
@@ -78,7 +75,7 @@ impl Ask {
 fn markers_question(markers: &[String]) -> String {
     match markers {
         [one] => format!("{one} still has conflict markers. Mark it resolved anyway?"),
-        [first, rest @ ..] => format!("{first} and {} more still have conflict markers. Mark them resolved anyway?", files_words(rest.len())),
+        [first, rest @ ..] => format!("{first} and {} more still have conflict markers. Mark them resolved anyway?", count(rest.len(), "file", "files")),
         [] => "Mark resolved anyway?".into(),
     }
 }
@@ -266,7 +263,7 @@ impl WipPanel {
                 }
                 Some(format!("{} \"{summary}\"", if *amend { "Amended" } else { "Committed" }))
             }
-            (Doing::Discard(n), Ok(())) => Some(format!("Discarded the changes to {}", files_words(*n))),
+            (Doing::Discard(n), Ok(())) => Some(format!("Discarded the changes to {}", count(*n, "file", "files"))),
             (Doing::DiscardAll, Ok(())) => Some("Discarded all changes".into()),
             (Doing::Step(step), Ok(())) => match self.stepped(*step, cx) {
                 Some(toast) => toast,

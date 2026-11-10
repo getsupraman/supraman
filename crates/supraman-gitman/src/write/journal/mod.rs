@@ -215,7 +215,7 @@ fn log(path: &Path) -> Result<Vec<Line>, WriteError> {
     match std::fs::read(path) {
         Ok(bytes) => Ok(walk::parse_log(&text(&bytes))),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(source) => Err(WriteError::Io { what: format!("read {}", path.display()), source }),
+        Err(source) => Err(WriteError::io("read", &path)(source)),
     }
 }
 
@@ -300,11 +300,11 @@ fn quiet_call(s: &Session, args: &[&str]) -> Call {
 }
 
 fn write_entry(s: &Session, label: &str, payload: &Payload) -> Result<(), WriteError> {
-    let empty = text(&s.output(&Call::new(&["mktree"]).input(Vec::new()))?).trim().to_string();
+    let empty = s.line(&Call::new(&["mktree"]).input(Vec::new()))?;
     let json = serde_json::to_string(payload).map_err(|e| WriteError::Journal(e.to_string()))?;
     let message = format!("{label}\n\n{json}\n\nSupraman-Undo-Id: {}", uuid::Uuid::new_v4());
     let marker = s.commit_tree(&empty, &payload.snapshot.iter().map(String::as_str).collect::<Vec<_>>(), &message)?;
-    let head = text(&s.run(&Call::new(&["rev-parse", "-q", "--verify", "HEAD"]))?.stdout).trim().to_string();
+    let head = s.verify("HEAD")?.unwrap_or_default();
     let reflog = Entry::message(label, if head.is_empty() { "none" } else { &head }, head_log(s)?.last());
     s.output(&quiet_call(s, &["update-ref", "--create-reflog", "-m", &reflog, JOURNAL, &marker]))?;
     let rest = s.commit_tree(&empty, &[], "Supraman's undo journal")?;

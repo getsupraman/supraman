@@ -15,7 +15,6 @@ use crate::parse::text;
 use crate::{GitError, OperationState, operation_state};
 
 pub const DETACHED: &str = "HEAD is detached: check out a branch first";
-pub const UNDER_WAY: &str = "Finish or abort the operation under way first";
 pub const NO_REMOTES: &str = "This repository has no remote to fetch from";
 
 /// How often a transfer looks at its Cancel.
@@ -120,7 +119,7 @@ fn transfer(writer: &Writer, call: &Call, t: &Transfer) -> Result<Moved, WriteEr
 fn idle(s: &Session) -> Result<(), WriteError> {
     match operation_state(&s.writer().dirs().git_dir) {
         OperationState::None => Ok(()),
-        _ => Err(WriteError::Refused(UNDER_WAY)),
+        _ => Err(WriteError::Refused(super::UNDER_WAY)),
     }
 }
 
@@ -133,11 +132,6 @@ fn config(s: &Session, key: &str) -> Result<Option<String>, WriteError> {
     let out = s.run(&Call::new(&["config", "--get", key]))?;
     let value = text(&out.stdout).trim().to_string();
     Ok((out.success() && !value.is_empty()).then_some(value))
-}
-
-fn resolve(s: &Session, name: &str) -> Result<Option<String>, WriteError> {
-    let out = s.run(&Call::new(&["rev-parse", "-q", "--verify", &format!("{name}^{{commit}}")]))?;
-    Ok(out.success().then(|| text(&out.stdout).trim().to_string()))
 }
 
 /// The fetch of `remote`: its branches forced, its tags, its gone branches pruned when `prune`.
@@ -167,23 +161,26 @@ pub fn fetch_all(s: &Session, remotes: &[String], prune: bool, t: &Transfer) -> 
 "))) }
 }
 
-/// Every remote fetched at once, their progress said on the calling thread; each remote's own outcome.
+/// The fetches run at once: each waits on the network, so a usual repo's remotes all go together, while one with
+/// many remotes does not start a git and an ssh for each.
+const FETCHES_AT_ONCE: usize = 8;
+
+/// The remotes fetched [`FETCHES_AT_ONCE`] at a time, their progress said on the calling thread; each remote's own
+/// outcome.
 pub fn fetch_each(s: &Session, remotes: &[String], prune: bool, t: &Transfer) -> Vec<(String, Result<(), WriteError>)> {
     let writer = s.writer();
     let (said, heard) = std::sync::mpsc::channel::<Progress>();
+    let fetch = move |remote: &String| {
+        let call = fetch_call(remote, prune);
+        let said = std::sync::Mutex::new(said.clone());
+        let each = Transfer { progress: Arc::new(move |p| drop(said.lock().map(|s| s.send(p)))), ..t.clone() };
+        let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| transfer(writer, &call, &each).and_then(|m| if m.success() { Ok(()) } else { Err(m.failed(&call)) })));
+        (remote.clone(), run.unwrap_or(Err(WriteError::Refused("a fetch panicked"))))
+    };
     std::thread::scope(|scope| {
-        let runs: Vec<_> = remotes
-            .iter()
-            .map(|remote| {
-                let call = fetch_call(remote, prune);
-                let said = std::sync::Mutex::new(said.clone());
-                let each = Transfer { progress: Arc::new(move |p| drop(said.lock().map(|s| s.send(p)))), ..t.clone() };
-                (remote.clone(), scope.spawn(move || transfer(writer, &call, &each).and_then(|m| if m.success() { Ok(()) } else { Err(m.failed(&call)) })))
-            })
-            .collect();
-        drop(said);
+        let runs = scope.spawn(move || supraman_core::pool::map(remotes.iter().collect(), FETCHES_AT_ONCE, fetch));
         heard.iter().for_each(|p| (t.progress)(p));
-        runs.into_iter().map(|(remote, run)| (remote, run.join().unwrap_or(Err(WriteError::Refused("a fetch panicked"))))).collect()
+        runs.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     })
 }
 
@@ -299,7 +296,7 @@ pub fn pull(s: &Session, mode: PullMode, prune: bool, t: &Transfer) -> Result<Pu
         fetch(s, &upstream.remote, prune, t)?;
     }
     let tracking = upstream.tracking();
-    let Some(theirs) = resolve(s, &tracking)? else { return Ok(Pulled::Gone { upstream: format!("{}/{}", upstream.remote, upstream.branch) }) };
+    let Some(theirs) = s.verify(&format!("{tracking}^{{commit}}"))? else { return Ok(Pulled::Gone { upstream: format!("{}/{}", upstream.remote, upstream.branch) }) };
     if s.run(&Call::new(&["merge-base", "--is-ancestor", &theirs, "HEAD"]))?.success() {
         return Ok(Pulled::UpToDate);
     }
@@ -345,7 +342,7 @@ pub enum Pushed {
 pub fn push(s: &Session, local: &str, remote: &str, branch: &str, force: Force, t: &Transfer) -> Result<Pushed, WriteError> {
     let dest = format!("refs/heads/{branch}");
     let lease = match force {
-        Force::Lease => Some(format!("--force-with-lease={dest}:{}", resolve(s, &format!("refs/remotes/{remote}/{branch}"))?.unwrap_or_default())),
+        Force::Lease => Some(format!("--force-with-lease={dest}:{}", s.verify(&format!("refs/remotes/{remote}/{branch}^{{commit}}"))?.unwrap_or_default())),
         _ => None,
     };
     let spec = format!("refs/heads/{local}:{dest}");
@@ -384,7 +381,7 @@ fn rejection(porcelain: &str) -> Option<Pushed> {
 /// `local`'s upstream set to `branch` on `remote`; while this repo has not fetched that branch, written to the
 /// branch's config as `--set-upstream-to` writes it, since git refuses a tracking ref it does not have.
 pub fn set_upstream(s: &Session, local: &str, remote: &str, branch: &str) -> Result<(), WriteError> {
-    if resolve(s, &format!("refs/remotes/{remote}/{branch}"))?.is_some() {
+    if s.verify(&format!("refs/remotes/{remote}/{branch}^{{commit}}"))?.is_some() {
         s.output(&Call::new(&["branch", &format!("--set-upstream-to={remote}/{branch}"), "--", local]))?;
         return Ok(());
     }

@@ -147,7 +147,7 @@ fn head_bytes(s: &Session, path: &str) -> Result<Vec<u8>, WriteError> {
 /// The working file as git would store it: through its clean filter and line-ending conversion.
 fn clean_worktree(s: &Session, path: &str) -> Result<Vec<u8>, WriteError> {
     let file = s.writer().dirs().top.join(path);
-    let raw = std::fs::read(&file).map_err(|source| WriteError::Io { what: format!("read {}", file.display()), source })?;
+    let raw = std::fs::read(&file).map_err(WriteError::io("read", &file))?;
     let sha = write_blob(s, raw, Some(path))?;
     s.output(&Call::new(&["cat-file", "blob", &sha]))
 }
@@ -155,7 +155,7 @@ fn clean_worktree(s: &Session, path: &str) -> Result<Vec<u8>, WriteError> {
 /// `bytes` written as a blob, through `path`'s clean filter when given; its sha.
 fn write_blob(s: &Session, bytes: Vec<u8>, path: Option<&str>) -> Result<String, WriteError> {
     let filter = path.map_or_else(|| "--no-filters".to_string(), |p| format!("--path={p}"));
-    Ok(text(&s.output(&Call::new(&["hash-object", "-w", "--stdin", &filter]).input(bytes))?).trim().to_string())
+    s.line(&Call::new(&["hash-object", "-w", "--stdin", &filter]).input(bytes))
 }
 
 /// The index entry of `path`: its mode and whether it is skip-worktree or assume-unchanged.
@@ -242,7 +242,7 @@ pub fn discard(s: &Session, picked: &Picked) -> Result<(), WriteError> {
 fn write_smudged(s: &Session, path: &str, sha: &str) -> Result<(), WriteError> {
     let bytes = s.output(&Call::new(&["cat-file", "--filters", &format!("--path={path}"), sha]))?;
     let file = s.writer().dirs().top.join(path);
-    std::fs::write(&file, bytes).map_err(|source| WriteError::Io { what: format!("write {}", file.display()), source })
+    std::fs::write(&file, bytes).map_err(WriteError::io("write", &file))
 }
 
 /// Whether the working file of `path` still holds the blob `sha` a discard of its lines left.

@@ -2,6 +2,7 @@
 //! "Staging"): each hunk's buttons, a changed row's + or − on hover, and the right-click menu of the rows under the
 //! pointer or selected. Every write goes through the tab's [`WriteGate`]; the tab reads the file again after it.
 
+use supraman_core::text::count;
 use gpui::{AnyElement, App, AppContext as _, ClickEvent, Context, Entity, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, Subscription, Window, anchored, deferred, div, point, prelude::*, px};
 use supraman_editor::{ZedEditor, rows};
 use supraman_gitman::write::lines::{self, Change, Pick, Picked};
@@ -71,10 +72,6 @@ impl Picks {
     }
 }
 
-fn lines_word(n: usize) -> String {
-    if n == 1 { "1 line".into() } else { format!("{n} lines") }
-}
-
 impl Act {
     fn pick(&self) -> Pick {
         match self {
@@ -85,7 +82,7 @@ impl Act {
     fn toast(&self) -> Option<String> {
         match self {
             Act::Hunk(Pick::Discard, _) => Some("Discarded a hunk; you can undo it".into()),
-            Act::Lines(Pick::Discard, lines) => Some(format!("Discarded {}; you can undo it", lines_word(lines.len()))),
+            Act::Lines(Pick::Discard, lines) => Some(format!("Discarded {}; you can undo it", count(lines.len(), "line", "lines"))),
             _ => None,
         }
     }
@@ -278,7 +275,7 @@ impl DiffView {
             ],
         };
         let picks = self.picks.as_mut().expect("picks are on");
-        picks.menu = Some(ContextMenu { title: lines_word(lines.len()), position, items });
+        picks.menu = Some(ContextMenu { title: count(lines.len(), "line", "lines"), position, items });
         cx.notify();
     }
 

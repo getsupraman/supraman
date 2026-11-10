@@ -180,6 +180,8 @@ pub struct GitView {
     home: Option<PathBuf>,
     hits: HitTargets,
     load: Load,
+    /// Why some of `[gitman]` is not taken, until dismissed.
+    settings_notice: Option<String>,
     repo: Option<Repo>,
     tips: Arc<[String]>,
     heads: Heads,
@@ -289,6 +291,7 @@ impl GitView {
                 home,
                 hits,
                 load: Load::Loading,
+                settings_notice: None,
                 repo: None,
                 tips: Arc::from([]),
                 heads: Heads::default(),
@@ -689,6 +692,9 @@ impl GitView {
         let _stall = stall::section("git tab: first page");
         match first {
             Ok(first) => {
+                if let Some((settings, notice)) = first.settings {
+                    self.take_settings(settings, notice, cx);
+                }
                 self.commits = first.page.rows.iter().filter(|r| r.commit()).count();
                 self.rows = first.page.rows;
                 self.more = first.page.more;
@@ -721,6 +727,17 @@ impl GitView {
             Err(problem) => self.load = Load::Problem(problem),
         }
         cx.notify();
+    }
+
+    /// The tab's `[gitman]`, read by its first load, handed to its remote calls and the background schedule.
+    fn take_settings(&mut self, settings: supraman_gitman::TabSettings, notice: Option<String>, cx: &mut Context<Self>) {
+        if let Some(remote) = settings.remote {
+            self.remote.update(cx, |r, cx| r.set_settings(remote, cx));
+        }
+        if self.home.is_some() {
+            background::offer(self.home.clone(), settings.background, cx);
+        }
+        self.settings_notice = notice;
     }
 
     /// Widens the graph column to hold the first page's lanes, never past [`graph::MAX_FIT`] or its max, unless the
@@ -913,6 +930,11 @@ impl GitView {
         Some(self.notice_banner("git-layout-notice-dismiss", problem, |_, cx| layout::set_notice(None, cx), cx))
     }
 
+    fn settings_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let notice = self.settings_notice.clone()?;
+        Some(self.notice_banner("git-settings-notice-dismiss", notice, |this, _| this.settings_notice = None, cx))
+    }
+
     /// Why the tab shows no graph, with a Retry that loads it again.
     fn problem(&self, problem: &Problem, cx: &mut Context<Self>) -> AnyElement {
         let (title, why) = match problem {
@@ -991,6 +1013,7 @@ impl Render for GitView {
                     .flex_col()
                     .child(div().mx_2().child(self.stash.clone()).child(self.branch.clone()).child(self.commit.clone()).child(self.remote.clone()))
                     .children(self.layout_notice(cx))
+                    .children(self.settings_notice(cx))
                     .children(self.follow_notice(cx))
                     .child(div().flex_1().min_h_0().child(content))
                     .child(hit_target(&self.hits, "git-below-toolbar".into()))

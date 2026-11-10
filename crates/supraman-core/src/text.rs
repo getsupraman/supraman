@@ -30,6 +30,11 @@ impl Encoding {
     }
 }
 
+/// `n` and its noun, `one` when `n` is 1, else `many`: `1 file`, `3 files`.
+pub fn count(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
 /// A byte count in the user's words: `512 B`, `1.5 KB`, `12 MB` (1 KB = 1,024 bytes, as Explorer counts).
 pub fn byte_size(bytes: u64) -> String {
     const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
@@ -77,6 +82,13 @@ pub fn encode(text: &str, encoding: Encoding) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn counts_in_the_singular_only_for_one() {
+        assert_eq!(count(1, "file", "files"), "1 file");
+        assert_eq!(count(0, "file", "files"), "0 files");
+        assert_eq!(count(2, "commit", "commits"), "2 commits");
+    }
 
     #[test]
     fn decodes_by_byte_order_mark() {

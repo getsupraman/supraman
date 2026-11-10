@@ -355,6 +355,18 @@ fn git_tab_walks_as_a_ref_hidden_before_its_first_load_ended(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+fn git_tab_says_a_gitman_key_that_does_not_parse_and_loads(cx: &mut TestAppContext) {
+    let f = Fixture::shared();
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(home.path().join("settings.toml"), "[gitman]\nfetch_every_minutes = \"often\"\n").unwrap();
+    let (view, cx) = open_unchecked(&f.dir, Some(home.path()), cx);
+    let notice = view.read_with(cx, |v, _| (matches!(v.load, Load::Ready), v.settings_notice.clone()));
+    assert!(notice.0, "the graph loads");
+    assert!(notice.1.as_deref().is_some_and(|n| n.starts_with("[gitman] in settings.toml is ignored")), "{notice:?}");
+    assert!(super::wip::tests::repaint(&view, cx).borrow().contains_key("git-settings-notice-dismiss"), "the banner is painted");
+}
+
+#[gpui::test]
 fn git_tab_says_why_its_settings_give_no_git_and_retries(cx: &mut TestAppContext) {
     let f = Fixture::shared();
     let home = tempfile::tempdir().unwrap();

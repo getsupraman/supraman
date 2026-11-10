@@ -1,6 +1,7 @@
 //! The commit area's state: the summary, the description and the graph's WIP row input (one summary in two
 //! fields), Amend previous commit with the draft it keeps, the commit options, and what the commit button says.
 
+use supraman_core::text::count;
 use gpui::{AppContext as _, Context, Div, Entity, SharedString, Subscription, Window, div, prelude::*, px};
 use supraman_gitman::OperationState;
 use supraman_gitman::write::conflicts::Sequence;
@@ -42,7 +43,7 @@ pub(crate) fn button(state: OperationState, staged: usize, amend: bool, has_mess
         _ if amend => commit("Amend previous commit"),
         _ if staged == 0 => ("Stage changes to commit".into(), None),
         _ if !has_message => ("Type a commit message".into(), None),
-        _ => (format!("Commit changes to {staged} file{}", if staged == 1 { "" } else { "s" }), Some(Act::Commit)),
+        _ => (format!("Commit changes to {}", count(staged, "file", "files")), Some(Act::Commit)),
     }
 }
 

@@ -25,12 +25,12 @@ impl Session<'_> {
         let temp = self.temp_index("snapshot");
         let index = self.path_in_git_dir("index");
         if index.exists() {
-            std::fs::copy(&index, &temp.0).map_err(|source| WriteError::Io { what: format!("copy {}", index.display()), source })?;
+            std::fs::copy(&index, &temp.0).map_err(WriteError::io("copy", &index))?;
         }
         let in_temp = |call: Call| temp.on(call);
-        let head = text(&self.run(&Call::new(&["rev-parse", "--verify", "-q", "HEAD"]))?.stdout).trim().to_string();
+        let head = self.verify("HEAD")?.unwrap_or_default();
         let head: Vec<&str> = [head.as_str()].into_iter().filter(|h| !h.is_empty()).collect();
-        let index_tree = text(&self.output(&in_temp(Call::new(&["write-tree"])))?).trim().to_string();
+        let index_tree = self.line(&in_temp(Call::new(&["write-tree"])))?;
         let index = self.commit_tree(&index_tree, &head, &format!("Index {what}"))?;
         let indexed: HashSet<String> = nul_records(&self.output(&in_temp(Call::new(&["ls-files", "-z"])))?).map(text).collect();
         let top = &self.writer().dirs().top;
@@ -38,7 +38,7 @@ impl Session<'_> {
         if !present.is_empty() {
             self.output(&in_temp(Call::new(&["add", "-A"]).paths(present)))?;
         }
-        let tree = text(&self.output(&in_temp(Call::new(&["write-tree"])))?).trim().to_string();
+        let tree = self.line(&in_temp(Call::new(&["write-tree"])))?;
         let parents: Vec<&str> = head.iter().copied().chain([index.as_str()]).collect();
         self.commit_tree(&tree, &parents, what)
     }

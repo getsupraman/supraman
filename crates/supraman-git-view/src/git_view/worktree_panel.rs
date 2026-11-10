@@ -267,7 +267,7 @@ impl WorktreePanel {
     /// The folder, `on <branch>` or `Detached HEAD` with its upstream's ahead and behind and the counts, and Open Worktree.
     fn header(&self, shown: &Shown, cx: &mut Context<Self>) -> Div {
         let colors = cx.theme().colors().clone();
-        let folder = shown.path.to_string_lossy().replace('\\', "/");
+        let folder = supraman_core::paths::normalize(&shown.path);
         let path = div().relative().flex().min_w_0().child(path_label("worktree-path-dir", &folder, secondary(&colors), colors.text)).child(hit_target(&self.hits, "worktree-path".into()));
         let said = |key: &str, words: &str| div().relative().flex_none().child(SharedString::from(words.to_string())).child(hit_target(&self.hits, key.into()));
         let branch = said("worktree-branch", &shown.said.label).text_color(colors.text_muted).flex().items_center().gap_1().child(Icon::Worktree.svg(12., colors.text_muted));

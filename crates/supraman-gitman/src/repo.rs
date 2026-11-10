@@ -41,9 +41,12 @@ pub(crate) fn git_command(git: &Git, dir: &Path) -> Command {
 
 /// git's refusal of `args` run with `-C dir`; a `-C` that failed names whether `dir` exists.
 pub(crate) fn failed(args: String, dir: &Path, out: &RawOutput) -> GitError {
-    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-    let stderr = if stderr.contains("cannot change to") { format!("{stderr} (-C {}, exists: {})", dir.display(), dir.exists()) } else { stderr };
-    GitError::Failed { args, code: out.code, stderr }
+    match GitError::failed(args, out) {
+        GitError::Failed { args, code, stderr } if stderr.contains("cannot change to") => {
+            GitError::Failed { args, code, stderr: format!("{stderr} (-C {}, exists: {})", dir.display(), dir.exists()) }
+        }
+        e => e,
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -56,6 +59,20 @@ pub enum GitError {
     Parse { args: String, what: String },
     #[error("read {path}: {source}")]
     Read { path: String, source: std::io::Error },
+}
+
+impl GitError {
+    /// git's refusal of `args`: its exit code and stderr.
+    pub fn failed(args: impl Into<String>, out: &RawOutput) -> GitError {
+        GitError::Failed { args: args.into(), code: out.code, stderr: String::from_utf8_lossy(&out.stderr).trim().to_string() }
+    }
+
+    /// git's refusal of `args` with what it wrote to stderr, then stdout, then `note`, each when not empty.
+    pub fn said(args: impl Into<String>, out: &RawOutput, note: Option<String>) -> GitError {
+        let said = [&out.stderr, &out.stdout].map(|b| String::from_utf8_lossy(b).trim().to_string());
+        let stderr = said.into_iter().chain(note).filter(|t| !t.is_empty()).collect::<Vec<_>>().join("\n");
+        GitError::Failed { args: args.into(), code: out.code, stderr }
+    }
 }
 
 /// A repository (or a folder inside one) read with one git.

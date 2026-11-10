@@ -70,7 +70,7 @@ pub(super) fn redo(s: &Session, again: &Again, action: &str, stash: bool) -> Res
         }
         Kind::DeleteBranch => {
             let Some(Payload { action: Action::DeleteBranch { name, .. }, .. }) = payload(s, original)? else { return Err(gone(original)) };
-            if exists(s, &format!("refs/tags/{name}"))? || !exists(s, &format!("refs/heads/{name}"))? {
+            if s.verify(&format!("refs/tags/{name}"))?.is_some() || !s.verify(&format!("refs/heads/{name}"))?.is_some() {
                 return Err(Refused::Stale { what: format!("delete branch {name} again"), why: "it is no longer a branch, or a tag has its name".into() });
             }
             delete_branch(s, &name)?;
@@ -92,10 +92,6 @@ fn gone(item: &Item) -> Refused {
 fn moved(label: &str) -> (&str, &str) {
     let moved = label.strip_prefix("checkout: moving from ").unwrap_or(label);
     moved.split_once(" to ").unwrap_or((moved, ""))
-}
-
-fn exists(s: &Session, name: &str) -> Result<bool, WriteError> {
-    Ok(s.run(&Call::new(&["rev-parse", "-q", "--verify", name]))?.success())
 }
 
 fn object_exists(s: &Session, sha: &str) -> Result<bool, WriteError> {
@@ -190,7 +186,7 @@ fn refresh(s: &Session) -> Result<(), WriteError> {
 
 /// Checks out the branch `name` when there is one, else `sha` detached; `message` in HEAD's reflog.
 fn checkout(s: &Session, name: &str, sha: &str, message: &str) -> Result<(), Refused> {
-    let args: Vec<&str> = if !name.is_empty() && exists(s, &format!("refs/heads/{name}"))? { vec!["checkout", "-q", name, "--"] } else { vec!["checkout", "-q", "--detach", sha, "--"] };
+    let args: Vec<&str> = if !name.is_empty() && s.verify(&format!("refs/heads/{name}"))?.is_some() { vec!["checkout", "-q", name, "--"] } else { vec!["checkout", "-q", "--detach", sha, "--"] };
     let out = s.run(&Call::new(&args).env("GIT_REFLOG_ACTION", message))?;
     if out.success() {
         return Ok(());
@@ -200,7 +196,7 @@ fn checkout(s: &Session, name: &str, sha: &str, message: &str) -> Result<(), Ref
         let files = stderr.lines().filter(|l| l.starts_with('\t')).count();
         return Err(Refused::Conflicts { target: if name.is_empty() { sha.to_string() } else { name.to_string() }, files });
     }
-    Err(WriteError::from(crate::GitError::Failed { args: args.join(" "), code: out.code, stderr: stderr.trim().to_string() }).into())
+    Err(WriteError::from(crate::GitError::failed(args.join(" "), &out)).into())
 }
 
 /// Every path in `tree` (a tree-ish) or, with `index`, in the index.
@@ -239,7 +235,7 @@ pub fn discard_from_index(s: &Session, paths: &[String], from_index: &[String]) 
     for path in untracked {
         let file = s.writer().dirs().top.join(path);
         if let Err(source) = std::fs::remove_file(&file).or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(e) }) {
-            return Err(WriteError::Io { what: format!("remove {}", file.display()), source });
+            return Err(WriteError::io("remove", &file)(source));
         }
     }
     record(s, Action::Discard { paths: paths.to_vec(), from_index: from_index.to_vec(), left: Vec::new() }, Some(&snapshot))
@@ -300,7 +296,7 @@ fn index_info(s: &Session, index: &str, paths: &[String]) -> Result<Vec<u8>, Wri
 
 /// Deletes the branch `name` and records it with its tip and upstream.
 pub fn delete_branch(s: &Session, name: &str) -> Result<(), WriteError> {
-    let sha = text(&s.output(&Call::new(&["rev-parse", "--verify", &format!("refs/heads/{name}")]))?).trim().to_string();
+    let sha = s.rev(&format!("refs/heads/{name}"))?;
     let config = |key: &str| -> Result<Option<String>, WriteError> {
         let out = s.run(&Call::new(&["config", "--get", &format!("branch.{name}.{key}")]))?;
         Ok(out.success().then(|| text(&out.stdout).trim().to_string()))
@@ -314,7 +310,7 @@ pub fn delete_branch(s: &Session, name: &str) -> Result<(), WriteError> {
 fn branch_back(s: &Session, item: &Item) -> Result<(), Refused> {
     let payload = payload(s, item)?.ok_or_else(|| gone(item))?;
     let Action::DeleteBranch { name, sha, remote, merge } = &payload.action else { return Err(gone(item)) };
-    if exists(s, &format!("refs/heads/{name}"))? {
+    if s.verify(&format!("refs/heads/{name}"))?.is_some() {
         return Err(Refused::Stale { what: format!("restore branch {name}"), why: "a branch of that name exists".into() });
     }
     if is_zero(sha) || !object_exists(s, sha)? {

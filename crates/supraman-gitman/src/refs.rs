@@ -12,6 +12,16 @@ pub enum Head {
     Detached { sha: String },
 }
 
+impl Head {
+    /// HEAD's commit; `None` on a branch with no commit yet.
+    pub fn sha(&self) -> Option<&str> {
+        match self {
+            Head::Branch { sha, .. } => sha.as_deref(),
+            Head::Detached { sha } => Some(sha),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Upstream {
     /// `origin/main`.
@@ -34,6 +44,13 @@ pub struct RemoteBranch {
     /// `origin/main`.
     pub name: String,
     pub sha: String,
+}
+
+impl RemoteBranch {
+    /// The branch's name below its remote: `main` for `origin/main`.
+    pub fn branch(&self) -> &str {
+        self.name.split_once('/').map_or(self.name.as_str(), |(_, rest)| rest)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +93,11 @@ pub struct Refs {
 }
 
 impl Refs {
+    /// No refs: a detached HEAD with an empty sha, as before a repository is read.
+    pub fn empty() -> Refs {
+        Refs { head: Head::Detached { sha: String::new() }, branches: Vec::new(), remotes: Vec::new(), tags: Vec::new(), worktrees: Vec::new(), stashes: Vec::new() }
+    }
+
     /// Every commit a ref or a worktree points at, and each stash's index commit, once each: the history's starting points.
     pub fn tips(&self) -> Vec<String> {
         let head = match &self.head {
