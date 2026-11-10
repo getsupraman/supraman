@@ -12,8 +12,14 @@ pub(crate) fn open<'a>(folder: &std::path::Path, cx: &'a mut TestAppContext) -> 
     open_in(folder, None, cx)
 }
 
-/// A Git tab of `folder` whose layout file lives in `home`.
+/// A Git tab of `folder` whose layout file lives in `home`, loaded.
 fn open_in<'a>(folder: &std::path::Path, home: Option<&std::path::Path>, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
+    let (view, cx) = open_unchecked(folder, home, cx);
+    super::test_support::assert_loaded(&view, cx);
+    (view, cx)
+}
+
+fn open_unchecked<'a>(folder: &std::path::Path, home: Option<&std::path::Path>, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
     cx.update(|cx| {
         if !cx.has_global::<supraman_term::terminal_settings::TerminalConfig>() {
             supraman_ui::init_globals(cx, "test");
@@ -364,7 +370,7 @@ fn git_tab_says_why_its_settings_give_no_git_and_retries(cx: &mut TestAppContext
     std::fs::write(&settings, "[gitman]
 git = 5
 ").unwrap();
-    let (view, cx) = open_in(&f.dir, Some(home.path()), cx);
+    let (view, cx) = open_unchecked(&f.dir, Some(home.path()), cx);
     assert!(said(&view, cx).starts_with("[gitman] in settings.toml is ignored"), "{}", said(&view, cx));
     std::fs::write(&settings, "not toml [").unwrap();
     super::wip::tests::click(&view, "git-retry", cx);

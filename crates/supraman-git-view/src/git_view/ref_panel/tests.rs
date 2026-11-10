@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use gpui::{AppContext as _, Entity, TestAppContext, VisualTestContext, px};
-use supraman_gitman::fixture::{Fixture, Generated, Shared};
+use supraman_gitman::fixture::{Fixture, Generated};
 use supraman_gitman::{Branch, Head, Refs, RemoteBranch, Stash, Tag, Upstream, Worktree};
 use supraman_ui::hit::HitTargets;
 
@@ -171,14 +171,11 @@ fn solo(f: &Fixture) -> String {
     sha
 }
 
-/// The fixture with [`solo`], shared by the tests that only read it.
-fn soloed() -> std::sync::Arc<(Fixture, String)> {
-    static SOLOED: Shared<(Fixture, String)> = Shared::new();
-    SOLOED.get(|| {
-        let f = Fixture::copy();
-        let sha = solo(&f);
-        (f, sha)
-    })
+/// A test's own copy of the fixture with [`solo`].
+fn soloed() -> (Fixture, String) {
+    let f = Fixture::copy();
+    let sha = solo(&f);
+    (f, sha)
 }
 
 fn has(view: &Entity<GitView>, sha: &str, cx: &mut VisualTestContext) -> bool {

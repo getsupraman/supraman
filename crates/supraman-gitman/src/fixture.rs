@@ -30,7 +30,7 @@ pub fn system_git() -> Git {
 /// Runs `git -C dir args` with no user or system config (only the repo's own), `input` on stdin; panics unless it exits 0.
 pub fn git_in(git: &Git, dir: &Path, args: &[&str], env: &[(&str, String)], input: Option<Vec<u8>>) -> String {
     let out = run_git(git, dir, args, env, input);
-    assert!(out.success(), "git {args:?} in {}: {}", dir.display(), String::from_utf8_lossy(&out.stderr));
+    assert!(out.success(), "git {args:?} in {} (exists: {}): {}", dir.display(), dir.exists(), String::from_utf8_lossy(&out.stderr));
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
@@ -82,7 +82,11 @@ impl Fixture {
 
     /// A test's own copy of [`Fixture::shared`]: the same commits and shas, its worktree and `origin` its own.
     pub fn copy() -> Fixture {
-        let shared = Fixture::shared();
+        Fixture::copy_of(&Fixture::shared())
+    }
+
+    /// A copy of `shared` in a temp dir of its own, without the locks a reader of `shared` may hold.
+    pub fn copy_of(shared: &Fixture) -> Fixture {
         let temp = tempfile::tempdir().expect("temp dir");
         copy_dir(shared.temp.path(), temp.path());
         for file in ["wt/.git", "repo/.git/worktrees/wt/gitdir", "repo/.git/config"] {
@@ -319,16 +323,21 @@ impl Generated {
     }
 }
 
+/// Copies `from` without a reader's lock or scratch index, which a test opening the shared fixture may hold.
 fn copy_dir(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).expect("a copy's dir");
     for entry in std::fs::read_dir(from).expect("a fixture dir reads").flatten() {
         let target = to.join(entry.file_name());
         if entry.file_type().expect("a file type").is_dir() {
             copy_dir(&entry.path(), &target);
-        } else {
+        } else if !transient(&entry.file_name().to_string_lossy()) {
             std::fs::copy(entry.path(), &target).expect("a fixture file copies");
         }
     }
+}
+
+fn transient(name: &str) -> bool {
+    name.ends_with(".lock") || (name.starts_with("gitman-") && name.ends_with(".index"))
 }
 
 /// `file` with every spelling of the absolute path `from` (as is, with `/`, and escaped as in a git config) made `to`.

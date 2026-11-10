@@ -254,12 +254,25 @@ fn a_worktree_is_locked_unlocked_removed_with_its_branch_and_pruned() {
     write(&main, |s| branch::lock_worktree(s, &extra, false)).unwrap();
     assert_eq!(locked(), Some(false));
     std::fs::write(extra.join("dirty.txt"), b"x\n").unwrap();
-    write(&main, |s| branch::remove_worktree(s, &extra, Some("extra"))).unwrap();
+    settled("remove the worktree", || write(&main, |s| branch::remove_worktree(s, &extra, Some("extra"))).map_err(|e| e.to_string()));
     assert!(!extra.exists() && locked().is_none());
     assert!(run_git(&f.git, &f.dir, &["rev-parse", "-q", "--verify", "refs/heads/extra"], &[], None).code != Some(0));
 
-    std::fs::remove_dir_all(&f.worktree).unwrap();
+    settled("delete the worktree's folder", || std::fs::remove_dir_all(&f.worktree).map_err(|e| e.to_string()));
     assert!(refs(&main).unwrap().worktrees.iter().any(|w| w.prunable));
     write(&main, |s| branch::prune_worktrees(s)).unwrap();
     assert_eq!(refs(&main).unwrap().worktrees.len(), 1);
+}
+
+/// `f` again a few times while a scanner still holds a file written a moment ago.
+fn settled<T>(what: &str, mut f: impl FnMut() -> Result<T, String>) -> T {
+    let mut last = f();
+    for _ in 0..5 {
+        if last.is_ok() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        last = f();
+    }
+    last.unwrap_or_else(|why| panic!("{what}: {why}"))
 }

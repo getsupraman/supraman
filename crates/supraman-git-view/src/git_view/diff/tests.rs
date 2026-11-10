@@ -1,5 +1,5 @@
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
-use supraman_gitman::fixture::{Fixture, Shared, git_in};
+use supraman_gitman::fixture::{Fixture, git_in};
 use supraman_gitman::{ChangeKind, FileChange};
 
 use super::*;
@@ -38,12 +38,7 @@ fn big(lines: usize, changed: usize) -> String {
     (0..lines).map(|i| if i % 1000 == 500 && changed > 0 { format!("line {i} changed\n") } else { format!("line {i} of a long file\n") }).collect()
 }
 
-fn repo() -> std::sync::Arc<Repo> {
-    static REPO: Shared<Repo> = Shared::new();
-    REPO.get(made)
-}
-
-fn made() -> Repo {
+fn repo() -> Repo {
     let f = Fixture::copy();
     write(&f, "m.rs", M_OLD.as_bytes());
     write(&f, "gone.txt", b"bye\n");

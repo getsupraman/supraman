@@ -34,6 +34,6 @@ pub fn ignored(repo: &Repo, paths: &[String]) -> Result<HashSet<String>, GitErro
     let out = repo.run_paths(&args, Some(input))?;
     match out.code {
         Some(0) | Some(1) => Ok(nul_records(&out.stdout).map(text).collect()),
-        code => Err(GitError::Failed { args: args.join(" "), code, stderr: text(&out.stderr).trim().to_string() }),
+        _ => Err(crate::repo::failed(args.join(" "), repo.dir(), &out)),
     }
 }

@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn git_layout_keys_a_worktree_by_its_main_checkout() {
-        let f = supraman_gitman::fixture::Fixture::shared();
+        let f = supraman_gitman::fixture::Fixture::copy();
         let worktree = f.temp.path().join("wt");
         assert!(worktree.join(".git").is_file(), "the fixture's linked worktree");
         assert_eq!(key(&worktree), key(&f.dir));

@@ -48,6 +48,23 @@ fn a_fixtures_copy_writes_only_itself_and_is_a_sound_repo_with_its_own_worktree(
 }
 
 #[test]
+fn a_fixtures_copy_leaves_out_the_locks_and_scratch_indexes_a_reader_holds() {
+    let original = Fixture::new();
+    let git_dir = original.dir.join(".git");
+    let held = [git_dir.join("index.lock"), git_dir.join("HEAD.lock"), git_dir.join("worktrees").join("wt").join("index.lock"), git_dir.join("gitman-snapshot-abc123.index")];
+    for file in &held {
+        std::fs::write(file, b"held").unwrap();
+    }
+    let copy = Fixture::copy_of(&original);
+    for file in &held {
+        let copied = copy.temp.path().join(file.strip_prefix(original.temp.path()).unwrap());
+        assert!(!copied.exists(), "{} is copied", copied.display());
+    }
+    copy.conflict();
+    assert!(copy.git(&["--no-optional-locks", "status", "--porcelain"]).contains("renamed.txt"), "the copy's index is the original's");
+}
+
+#[test]
 fn a_generated_copy_writes_only_itself() {
     let shared = Generated::shared(30);
     let refs = git_in(&shared.git, &shared.dir, &["for-each-ref"], &[], None);

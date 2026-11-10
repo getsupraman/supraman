@@ -64,21 +64,21 @@ pub(crate) struct Background {
     heavy: HeavyLock,
     clock: fn() -> i64,
     ran: maintain::Ran,
+    #[cfg(test)]
+    on: bool,
 }
 
 impl Global for Background {}
 
-#[cfg(test)]
-thread_local! {
-    /// A test's tabs work in the background only when it says so.
-    pub(crate) static ON: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-fn enabled() -> bool {
+/// A test's tabs work in the background only when its `Background` says so.
+fn enabled(cx: &App) -> bool {
     #[cfg(test)]
-    return ON.get();
+    return cx.try_global::<Background>().is_some_and(|b| b.on);
     #[cfg(not(test))]
-    true
+    {
+        let _ = cx;
+        true
+    }
 }
 
 fn heavy_job_lock() -> Option<Box<dyn std::any::Any + Send>> {
@@ -94,7 +94,7 @@ fn heavy_job_lock() -> Option<Box<dyn std::any::Any + Send>> {
 impl Background {
     fn new(home: Option<PathBuf>) -> Background {
         let settings = home.is_none().then(BackgroundSettings::default);
-        Background { home, settings, repos: HashMap::new(), heavy: Arc::new(heavy_job_lock), clock: supraman_core::time::now_ms, ran: maintain::Ran::default() }
+        Background { home, settings, repos: HashMap::new(), heavy: Arc::new(heavy_job_lock), clock: supraman_core::time::now_ms, ran: maintain::Ran::default(), #[cfg(test)] on: false }
     }
 
     /// Created with `home`'s `[gitman]` read off the UI thread, once.
@@ -156,8 +156,8 @@ pub fn apply(settings: BackgroundSettings, cx: &mut App) {
 /// The background on for a test of the tab, with `settings`, no home and its heavy-job lock free.
 #[cfg(test)]
 pub(crate) fn start_for_test(settings: BackgroundSettings, cx: &mut App) {
-    ON.set(true);
     let mut bg = Background::new(None);
+    bg.on = true;
     bg.settings = Some(settings);
     bg.heavy = Arc::new(|| Some(Box::new(()) as Box<dyn std::any::Any + Send>));
     cx.set_global(bg);
@@ -170,7 +170,7 @@ pub(crate) fn worktree_wips(cx: &App) -> bool {
 
 /// The repository `writer` writes to, followed by the tab `view` until it closes; its first tab fetches now.
 pub(super) fn join(view: &GitView, writer: &Writer, cx: &mut Context<GitView>) {
-    if !enabled() {
+    if !enabled(cx) {
         return;
     }
     let id = cx.entity_id();

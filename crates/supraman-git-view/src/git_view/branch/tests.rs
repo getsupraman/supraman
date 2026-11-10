@@ -36,6 +36,7 @@ fn open<'a>(folder: &Path, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a 
     let (holder, cx) = cx.add_window_view(|_, cx| Holder(GitView::open_with(folder, None, HitTargets::default(), &GitSizes::default(), Arc::new(occupancy::Live::default()), cx)));
     let view = holder.read_with(cx, |h, _| h.0.clone());
     cx.run_until_parked();
+    crate::git_view::test_support::assert_loaded(&view, cx);
     redraw(&view, cx);
     (view, cx)
 }
@@ -319,6 +320,7 @@ fn removing_a_worktree_a_live_session_works_in_names_the_session_in_its_question
     let (holder, cx) = cx.add_window_view(|_, cx| Holder(GitView::open_with(folder, None, HitTargets::default(), &GitSizes::default(), Arc::new(live), cx)));
     let view = holder.read_with(cx, |h, _| h.0.clone());
     cx.run_until_parked();
+    crate::git_view::test_support::assert_loaded(&view, cx);
     redraw(&view, cx);
     press(&view, "refpanel-name-local/side", MouseButton::Right, 1, cx);
     click(&view, "menu-worktree-remove", cx);

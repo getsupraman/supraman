@@ -39,6 +39,13 @@ pub(crate) fn git_command(git: &Git, dir: &Path) -> Command {
     cmd
 }
 
+/// git's refusal of `args` run with `-C dir`; a `-C` that failed names whether `dir` exists.
+pub(crate) fn failed(args: String, dir: &Path, out: &RawOutput) -> GitError {
+    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    let stderr = if stderr.contains("cannot change to") { format!("{stderr} (-C {}, exists: {})", dir.display(), dir.exists()) } else { stderr };
+    GitError::Failed { args, code: out.code, stderr }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
     #[error("git {args}: {source}")]
@@ -115,7 +122,7 @@ impl Repo {
         if out.success() {
             Ok(out.stdout)
         } else {
-            Err(GitError::Failed { args: args.join(" "), code: out.code, stderr: String::from_utf8_lossy(&out.stderr).trim().to_string() })
+            Err(failed(args.join(" "), &self.dir, &out))
         }
     }
 
@@ -123,7 +130,7 @@ impl Repo {
     pub(crate) fn read_locking<T>(&self, args: &[&str], parse: impl FnOnce(&[u8]) -> Result<T, String>) -> Result<T, GitError> {
         let out = self.run_with(READ_ONLY.iter().filter(|a| **a != "--no-optional-locks"), args, None)?;
         if !out.success() {
-            return Err(GitError::Failed { args: args.join(" "), code: out.code, stderr: String::from_utf8_lossy(&out.stderr).trim().to_string() });
+            return Err(failed(args.join(" "), &self.dir, &out));
         }
         parse(&out.stdout).map_err(|what| GitError::Parse { args: args.join(" "), what })
     }

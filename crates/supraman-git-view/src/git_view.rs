@@ -705,7 +705,7 @@ impl GitView {
                 self.stash.update(cx, |s, cx| s.set_repo(first.repo.clone(), cx));
                 self.branch.update(cx, |b, cx| b.set_repo(first.repo.clone(), cx));
                 self.hand_refs(&first.repo, first.all.clone(), &first.status, cx);
-                if let Some(debounces) = refresh::follows() {
+                if let Some(debounces) = refresh::follows(cx) {
                     self.follow(first.repo.clone(), debounces, cx);
                 }
                 self.repo = Some(first.repo);
