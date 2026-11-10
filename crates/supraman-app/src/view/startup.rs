@@ -66,7 +66,7 @@ impl FleetView {
         self.save_off_thread(save, "Cannot save the dismissed approvals", cx);
         self.action_error = stars.1.or(messages.1).or(runs.1).or(waiting.1).or(self.action_error.take());
         if !self.stars.ids().is_empty() {
-            self.transcripts_nudge.wake();
+            self.polls.transcripts_nudge.wake();
         }
         self.invalidate_tree();
         cx.notify();
@@ -101,7 +101,7 @@ impl FleetView {
             let Some((mut poller, supported, refresh)) = first_poll(&this, poller, cx).await else { return };
             let mut first = Some(refresh);
             loop {
-                let Ok(asks) = this.read_with(cx, |this, _| this.refresh_asks) else {
+                let Ok(asks) = this.read_with(cx, |this, _| this.polls.refresh_asks) else {
                     return;
                 };
                 let refresh = match first.take() {
@@ -153,8 +153,8 @@ impl FleetView {
         if let Some(report) = report {
             self.apply_report(report, cx);
         }
-        self.refreshes += 1;
-        self.refreshes_answered = asks;
+        self.polls.refreshes += 1;
+        self.polls.refreshes_answered = asks;
         self.check_loaded(cx);
         let left = std::mem::take(&mut self.workman_state.left_pending);
         self.leave_servers(left, cx);

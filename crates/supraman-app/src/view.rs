@@ -67,6 +67,7 @@ mod manage;
 mod menu;
 pub(crate) use supraman_git_view::occupancy;
 pub(crate) mod notices;
+mod polls;
 mod reopen;
 mod results;
 mod right;
@@ -250,8 +251,6 @@ pub struct FleetView {
     /// [`fleet::main_repos`] of `sessions`, so rendering never walks the filesystem.
     main_repos: StdHashMap<PathBuf, Option<PathBuf>>,
     pub sessions_error: Option<String>,
-    pub last_refresh_took: Option<Duration>,
-    pub refreshes: u64,
     pub show_stopped: bool,
     /// Set only by a selftest: see [`fleet::Supervised::own_prefix`].
     pub own_prefix: Option<String>,
@@ -275,13 +274,6 @@ pub struct FleetView {
     pub action_error: Option<String>,
     pub last_attempt: StdHashMap<String, i64>,
     pub hooks: StdHashMap<String, HookSignal>,
-    pub polled_at: i64,
-    pub ticks: u64,
-    retries: Arc<Mutex<Vec<(String, String)>>>,
-    #[cfg(feature = "selftest")]
-    pub injected: Arc<Mutex<Vec<Session>>>,
-    /// Bumped by every registry write from this window; a poll that read the registry before one is not applied.
-    registry_writes: Arc<AtomicU64>,
     pub(crate) settings_window: Option<WindowHandle<SettingsView>>,
     last_alive: StdHashMap<String, i64>,
     pub relays: BTreeMap<String, RelayStatus>,
@@ -307,14 +299,7 @@ pub struct FleetView {
     /// A selftest's closed sessions, kept across transcript scans.
     pub injected_closed: Vec<Session>,
     closed_repos: StdHashMap<PathBuf, Option<PathBuf>>,
-    pub transcripts_nudge: Nudge,
-    pub poll_nudge: Nudge,
-    pub refresh_asks: u64,
-    refreshes_answered: u64,
-    /// The first poll's snapshot (or its failure) is applied.
-    pub sessions_read: bool,
     pub transcripts: TranscriptsLoad,
-    transcripts_answered: u64,
     /// Every source of the tree has completed once (`loading`); until then the action bar says what is loading.
     pub loaded: bool,
     pub stars: Stars,
@@ -332,6 +317,7 @@ pub struct FleetView {
     pub term_look: term_look::TermLook,
     pub workman_state: workman_state::WorkmanState,
     lifecycle: lifecycle::Lifecycle,
+    pub polls: polls::Polls,
     pub scheduling: schedule_state::ScheduleState,
     pub(crate) tab_keys: Entity<tab_keys::TabKeyState>,
 }
@@ -506,23 +492,7 @@ impl FleetView {
         });
         let home = Registry::from_env().ok().map(|r| r.home().to_path_buf());
         let defaults = Settings::default();
-        let retries: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
-        let injected: Arc<Mutex<Vec<Session>>> = Arc::default();
-        let registry_writes: Arc<AtomicU64> = Arc::default();
-        let (poll_nudge, woken) = nudge::nudge();
-        let poller = Poller {
-            home: home.clone(),
-            events: None,
-            supervision: None,
-            retries: retries.clone(),
-            injected: injected.clone(),
-            registry_writes: registry_writes.clone(),
-            snapshot: None,
-            first: true,
-            store: None,
-        };
-        timeline("window", Duration::ZERO);
-        Self::start_polling(poller, woken, cx);
+        let (polls, transcripts_nudged) = polls::Polls::start(home.clone(), cx);
         Self::load_settings(home.clone(), cx);
         Self::load_stores(home.clone(), cx);
         let term_look = term_look::TermLook::new(&defaults.terminal, cx);
@@ -536,7 +506,6 @@ impl FleetView {
         .detach();
         let hands = home.as_deref().map(|home| Self::open_hands(home, cx));
         let scheduling = schedule_state::ScheduleState::new(home.as_deref());
-        let (transcripts_nudge, transcripts_nudged) = nudge::nudge();
         let claude_dir = claude_dir_or(CLAUDE_DIR_OVERRIDE.get().map(PathBuf::as_path));
         Self::watch_transcripts(claude_dir.clone(), home.as_deref().map(|h| h.join(TRANSCRIPTS_CACHE)), transcripts_nudged, cx);
         let desired_writes = Self::desired_writer(cx);
@@ -554,8 +523,6 @@ impl FleetView {
             sessions: Vec::new(),
             main_repos: StdHashMap::new(),
             sessions_error: None,
-            last_refresh_took: None,
-            refreshes: 0,
             show_stopped: false,
             own_prefix: None,
             tabs: Vec::new(),
@@ -577,12 +544,6 @@ impl FleetView {
             daemon_hold: None,
             last_attempt: StdHashMap::new(),
             hooks: StdHashMap::new(),
-            polled_at: 0,
-            ticks: 0,
-            retries,
-            #[cfg(feature = "selftest")]
-            injected,
-            registry_writes,
             settings_window: None,
             last_alive: StdHashMap::new(),
             relays: BTreeMap::new(),
@@ -610,13 +571,7 @@ impl FleetView {
             closed: Vec::new(),
             injected_closed: Vec::new(),
             closed_repos: StdHashMap::new(),
-            transcripts_nudge,
-            poll_nudge,
-            refresh_asks: 0,
-            refreshes_answered: 0,
-            sessions_read: false,
             transcripts: TranscriptsLoad::new(claude_dir.is_some()),
-            transcripts_answered: 0,
             loaded: false,
             action_error: None,
             stars: Stars::default(),
@@ -634,6 +589,7 @@ impl FleetView {
             term_look,
             workman_state: workman_state::WorkmanState::new(workman_recheck),
             lifecycle: lifecycle::Lifecycle::new(hands),
+            polls,
             scheduling,
             tab_keys: cx.new(|_| tab_keys::TabKeyState::new(defaults.window.tab_keys())),
         }
@@ -652,7 +608,7 @@ impl FleetView {
 
     /// Until every source has loaded once, and from a Refresh until the poll and the transcript scan it woke are applied.
     pub fn refreshing(&self) -> bool {
-        !self.loaded || self.refreshes_answered < self.refresh_asks || (self.claude_dir.is_some() && self.transcripts_answered < self.refresh_asks)
+        !self.loaded || self.polls.refreshes_answered < self.polls.refresh_asks || (self.claude_dir.is_some() && self.polls.transcripts_answered < self.polls.refresh_asks)
     }
 
     /// The sources a fresh start still waits for, as the action bar names them; empty once all have loaded.
@@ -661,9 +617,9 @@ impl FleetView {
             return Vec::new();
         }
         let mut pending = Vec::new();
-        if !self.sessions_read {
+        if !self.polls.sessions_read {
             pending.push("session list".to_string());
-        } else if self.refreshes == 0 {
+        } else if self.polls.refreshes == 0 {
             pending.push("supervisor".to_string());
         }
         pending.extend(self.transcripts.pending());
@@ -687,16 +643,16 @@ impl FleetView {
         if self.refreshing() {
             return;
         }
-        self.refresh_asks += 1;
-        self.poll_nudge.wake();
-        self.transcripts_nudge.wake();
+        self.polls.refresh_asks += 1;
+        self.polls.poll_nudge.wake();
+        self.polls.transcripts_nudge.wake();
         cx.notify();
     }
 
     pub fn toggle_star(&mut self, session_id: &str, cx: &mut Context<Self>) {
         let (_, save) = self.stars.toggle(session_id);
         self.invalidate_tree();
-        self.transcripts_nudge.wake();
+        self.polls.transcripts_nudge.wake();
         self.save_off_thread(save, "Cannot save the star", cx);
         cx.notify();
     }
@@ -842,12 +798,12 @@ impl FleetView {
 
     fn apply(&mut self, refresh: Refresh, cx: &mut Context<Self>) {
         let _stall = supraman_ui::stall::section("poll: apply");
-        let before = (self.workspaces.clone(), self.sessions.clone(), self.main_repos.clone(), self.hooks.clone(), self.desired.clone(), self.polled_at);
-        match fresh_registry(refresh.workspaces, refresh.registry_writes, self.registry_writes.load(Ordering::SeqCst)) {
+        let before = (self.workspaces.clone(), self.sessions.clone(), self.main_repos.clone(), self.hooks.clone(), self.desired.clone(), self.polls.polled_at);
+        match fresh_registry(refresh.workspaces, refresh.registry_writes, self.polls.registry_writes.load(Ordering::SeqCst)) {
             None => {}
             Some(Ok((workspaces, skipped))) => {
                 if self.workspaces != workspaces {
-                    self.transcripts_nudge.wake();
+                    self.polls.transcripts_nudge.wake();
                 }
                 self.workspaces = workspaces;
                 self.registry_skipped = skipped;
@@ -863,7 +819,7 @@ impl FleetView {
                     old.kind == supraman_claude::Kind::Interactive && !sessions.iter().any(|s| s.session_id == old.session_id)
                 });
                 if ended {
-                    self.transcripts_nudge.wake();
+                    self.polls.transcripts_nudge.wake();
                 }
                 for s in &sessions {
                     if fleet::is_alive(&s.health(now)) {
@@ -876,15 +832,15 @@ impl FleetView {
                 self.main_repos = refresh.main_repos;
                 self.main_repos.extend(self.closed_repos.iter().map(|(k, v)| (k.clone(), v.clone())));
                 self.sessions_error = None;
-                self.polled_at = refresh.polled_at;
+                self.polls.polled_at = refresh.polled_at;
             }
             Some(Err(error)) => self.sessions_error = Some(error),
             None => {}
         }
-        if !self.sessions_read {
-            self.transcripts_nudge.wake();
+        if !self.polls.sessions_read {
+            self.polls.transcripts_nudge.wake();
         }
-        self.sessions_read = true;
+        self.polls.sessions_read = true;
         for event in refresh.events {
             HookSignal::record(&mut self.hooks, event);
         }
@@ -901,11 +857,11 @@ impl FleetView {
         }
         let (workspaces, sessions, main_repos, hooks, desired, polled_at) = &before;
         // a permission prompt newer than the last poll makes its row Blocked (fleet::with_hook)
-        let prompted = self.polled_at != *polled_at && self.hooks.values().any(|h| h.is_permission_prompt() && h.last.ts > (*polled_at).min(self.polled_at));
+        let prompted = self.polls.polled_at != *polled_at && self.hooks.values().any(|h| h.is_permission_prompt() && h.last.ts > (*polled_at).min(self.polls.polled_at));
         if prompted || self.workspaces != *workspaces || self.sessions != *sessions || self.main_repos != *main_repos || self.hooks != *hooks || self.desired != *desired {
             self.invalidate_tree();
         }
-        self.last_refresh_took = Some(refresh.took);
+        self.polls.last_refresh_took = Some(refresh.took);
     }
 
     fn apply_report(&mut self, report: Report, cx: &mut Context<Self>) {
@@ -933,7 +889,7 @@ impl FleetView {
                 answered.entry(file).or_insert(line);
             }
         }
-        self.ticks += 1;
+        self.polls.ticks += 1;
     }
 
     /// The tree built once per change of its inputs; a mutation of one calls [`Self::invalidate_tree`].
@@ -965,7 +921,7 @@ impl FleetView {
         let sup = Supervised {
             desired: Some(&self.desired),
             hooks: Some(&self.hooks),
-            polled_at: self.polled_at,
+            polled_at: self.polls.polled_at,
             main_repos: Some(&self.main_repos),
             closed: &self.closed,
             starred: Some(self.stars.ids()),
@@ -1199,7 +1155,7 @@ impl FleetView {
     }
 
     pub fn retry(&mut self, workspace: &str, name: &str, cx: &mut Context<Self>) {
-        self.retries
+        self.polls.retries
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .push((workspace.to_string(), name.to_string()));
@@ -1406,7 +1362,7 @@ impl FleetView {
                     }
                 }
                 if unlisted {
-                    this.poll_nudge.wake();
+                    this.polls.poll_nudge.wake();
                 }
                 if changed {
                     cx.notify();
@@ -1937,7 +1893,7 @@ impl Render for FleetView {
         let _stall = supraman_ui::stall::section("render");
         tree_check::RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.probe.on_render(window);
-        if !self.painted_sessions && self.sessions_read {
+        if !self.painted_sessions && self.polls.sessions_read {
             self.painted_sessions = true;
             timeline("first paint with sessions", Duration::ZERO);
         }

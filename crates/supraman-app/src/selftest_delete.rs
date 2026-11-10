@@ -64,7 +64,7 @@ async fn delete_from_menu(view: &Entity<FleetView>, session_id: &str, name: &str
 
 pub async fn run(view: &Entity<FleetView>, home: &Path, own: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let saved = view.update(cx, |v, _| {
-        v.transcripts_nudge.wake();
+        v.polls.transcripts_nudge.wake();
         std::mem::replace(&mut v.show_stopped, true)
     });
     let result = check(view, home, own, cx).await;

@@ -120,11 +120,11 @@ impl FleetView {
     }
 
     fn transcripts_ask(&self) -> Option<TranscriptsAsk> {
-        self.sessions_read.then(|| TranscriptsAsk {
+        self.polls.sessions_read.then(|| TranscriptsAsk {
             roots: self.workspaces.iter().flat_map(|w| w.folders.iter().filter(|r| r.enabled).map(|r| r.path.clone())).collect(),
             keep: self.stars.ids().iter().cloned().collect(),
             live: self.sessions.iter().map(|s| s.session_id.clone()).collect(),
-            asks: self.refresh_asks,
+            asks: self.polls.refresh_asks,
         })
     }
 
@@ -375,7 +375,7 @@ async fn scan_transcripts(
             timeline(&format!("transcripts done ({read} files read, {} listed)", closed.len()), scanning.elapsed());
         }
         this.set_closed(closed, continued, cx);
-        this.transcripts_answered = asks;
+        this.polls.transcripts_answered = asks;
         this.check_loaded(cx);
         cx.notify();
     })

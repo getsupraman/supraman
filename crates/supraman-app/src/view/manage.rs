@@ -96,13 +96,13 @@ impl FleetView {
 
     /// A poll read before this window's write, or a reload started before a later one, is not applied (`registry_writes`).
     pub(crate) fn reload_workspaces(&mut self, cx: &mut Context<Self>) {
-        let generation = self.registry_writes.fetch_add(1, Ordering::SeqCst) + 1;
+        let generation = self.polls.registry_writes.fetch_add(1, Ordering::SeqCst) + 1;
         let registry = registry(self.home.as_deref());
         let read = cx.background_executor().spawn(async move { super::load_registry(registry) });
         cx.spawn(async move |this, cx| {
             let read = read.await;
             this.update(cx, |this, cx| {
-                if this.registry_writes.load(Ordering::SeqCst) == generation {
+                if this.polls.registry_writes.load(Ordering::SeqCst) == generation {
                     this.apply_registry(read);
                     cx.notify();
                 }
@@ -116,7 +116,7 @@ impl FleetView {
         match read {
             Ok((workspaces, skipped)) => {
                 if self.workspaces != workspaces {
-                    self.transcripts_nudge.wake();
+                    self.polls.transcripts_nudge.wake();
                 }
                 self.workspaces = workspaces;
                 self.invalidate_tree();
@@ -393,7 +393,7 @@ impl FleetView {
             .iter()
             .filter(|(_, r)| {
                 let alive = self.sessions.iter().any(|s| r.wanted.contains(&s.name) && fleet::is_alive(&s.health(now)));
-                r.wanted.is_empty() || (self.polled_at > r.requested_at && !alive)
+                r.wanted.is_empty() || (self.polls.polled_at > r.requested_at && !alive)
             })
             .map(|(name, _)| name.clone())
             .collect();

@@ -41,7 +41,7 @@ pub(crate) async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     crate::view::tree_check::set(checking);
     view.update(cx, |v, cx| {
         v.shell_args = saved;
-        v.injected.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        v.polls.injected.lock().unwrap_or_else(|e| e.into_inner()).clear();
         v.injected_closed.clear();
         v.closed.retain(|s| !s.session_id.starts_with(FIXTURE));
         v.invalidate_tree();
@@ -211,11 +211,11 @@ fn keys(n: usize) -> Vec<char> {
 async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let (live, closed) = fixture(view, cx)?;
     view.update(cx, |v, cx| {
-        v.injected.lock().unwrap_or_else(|e| e.into_inner()).extend(live);
+        v.polls.injected.lock().unwrap_or_else(|e| e.into_inner()).extend(live);
         v.closed.extend(closed.iter().cloned());
         v.injected_closed = closed;
         v.invalidate_tree();
-        v.poll_nudge.wake();
+        v.polls.poll_nudge.wake();
         cx.notify();
     });
     until(view, cx, WITHIN, "the fixture sessions in the list", |v| (v.sessions.iter().filter(|s| s.session_id.starts_with(FIXTURE)).count() == LIVE).then_some(())).await?;

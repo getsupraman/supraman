@@ -288,8 +288,8 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         let state = view.read_with(cx, |v, _| {
             format!(
                 "refreshes {} ticks {} desired {:?} rows named {} in the view: {} errors {:?}",
-                v.refreshes,
-                v.ticks,
+                v.polls.refreshes,
+                v.polls.ticks,
                 v.desired,
                 ctrl,
                 v.sessions.iter().filter(|s| s.name == ctrl).count(),
@@ -513,7 +513,7 @@ async fn hide(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
         }
         sleep(cx, Duration::from_millis(50)).await;
     }
-    let ticks = view.read_with(cx, |v, _| v.ticks);
+    let ticks = view.read_with(cx, |v, _| v.polls.ticks);
     println!("step h: WM_CLOSE posted to {posted} window(s) → hidden after {} ms, tick {ticks}", at.elapsed().as_millis());
     Ok(Hidden { at, ticks })
 }
@@ -530,7 +530,7 @@ async fn reopen(
         bail!("the window was shown before Open");
     }
     let hidden_for = hidden.at.elapsed();
-    let ticks = view.read_with(cx, |v, _| v.ticks) - hidden.ticks;
+    let ticks = view.read_with(cx, |v, _| v.polls.ticks) - hidden.ticks;
     if ticks == 0 {
         bail!("no supervisor tick in the {} the window was hidden", secs(hidden_for));
     }
@@ -553,7 +553,7 @@ async fn reopen(
     loop {
         let (polled_at, pid, needs) = view.read_with(cx, |v, _| {
             (
-                v.polled_at,
+                v.polls.polled_at,
                 v.sessions.iter().find(|s| s.name == ctrl).and_then(|s| s.pid),
                 v.needs.iter().filter(|n| n.name == ctrl).map(|n| format!("{:?}", n.kind)).collect::<Vec<_>>(),
             )

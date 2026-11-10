@@ -321,8 +321,8 @@ impl FleetView {
             })
             .detach();
         }
-        self.poll_nudge.wake();
-        self.transcripts_nudge.wake();
+        self.polls.poll_nudge.wake();
+        self.polls.transcripts_nudge.wake();
     }
 
     pub(super) fn drop_deleted(&mut self) {

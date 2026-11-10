@@ -17,7 +17,7 @@ impl FleetView {
         let sup = Supervised {
             desired: Some(&self.desired),
             hooks: Some(&self.hooks),
-            polled_at: self.polled_at,
+            polled_at: self.polls.polled_at,
             main_repos: Some(&self.main_repos),
             closed: &self.closed,
             starred: Some(self.stars.ids()),

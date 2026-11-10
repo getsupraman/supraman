@@ -72,7 +72,7 @@ impl SettingsView {
                     Cli::Supported(v) => (v.raw.clone(), v.untested().map(|w| (w, status.warning))),
                     Cli::Failed(e) => ("unavailable".to_string(), Some((e.clone(), status.error))),
                 };
-                let refresh = match fleet.last_refresh_took {
+                let refresh = match fleet.polls.last_refresh_took {
                     Some(took) => format!("every {} s · the last took {} ms", REFRESH_EVERY.as_secs(), took.as_millis()),
                     None => format!("every {} s · loading…", REFRESH_EVERY.as_secs()),
                 };

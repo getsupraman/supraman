@@ -47,7 +47,7 @@ pub(crate) async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWin
     view.update(cx, |v, cx| {
         v.claude_command = saved;
         mine.into_iter().for_each(|id| v.close_tab(id, cx));
-        v.injected.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        v.polls.injected.lock().unwrap_or_else(|e| e.into_inner()).clear();
         cx.notify();
     });
     result
@@ -115,7 +115,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
         "pid": std::process::id(),
     }]);
     let rows = supraman_claude::parse(&row.to_string())?;
-    view.read_with(cx, |v, _| v.injected.lock().unwrap_or_else(|e| e.into_inner()).extend(rows));
+    view.read_with(cx, |v, _| v.polls.injected.lock().unwrap_or_else(|e| e.into_inner()).extend(rows));
     let label = until(view, cx, WITHIN, "the hand session's row with its hook signal", |v| {
         v.tree()
             .workspaces

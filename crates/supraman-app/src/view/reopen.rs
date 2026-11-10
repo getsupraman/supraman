@@ -101,7 +101,7 @@ impl FleetView {
 
     /// Once the first session list is in and the hand tokens of the last run are released.
     pub(super) fn reopen_tabs(&mut self, cx: &mut Context<Self>) {
-        if self.saving.tabs_restored || self.saving.tabs_reopening || !self.sessions_read || !self.lifecycle.hands_ready {
+        if self.saving.tabs_restored || self.saving.tabs_reopening || !self.polls.sessions_read || !self.lifecycle.hands_ready {
             return;
         }
         let Some(home) = self.home.clone() else {

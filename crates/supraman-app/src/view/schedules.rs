@@ -324,7 +324,7 @@ impl FleetView {
                         this.scheduling.sync_errors.insert(row, e);
                     }
                 }
-                this.poll_nudge.wake();
+                this.polls.poll_nudge.wake();
                 cx.notify();
             })
             .ok();
@@ -352,7 +352,7 @@ impl FleetView {
                     Ok(_) => this.show_toast(format!("Run now: {ws}/{id} started."), cx),
                     Err(e) => this.action_error = Some(format!("Cannot run {ws}/{id}: {e}")),
                 }
-                this.poll_nudge.wake();
+                this.polls.poll_nudge.wake();
                 cx.notify();
             })
             .ok();
@@ -502,7 +502,7 @@ impl FleetView {
                         if let Err(e) = synced {
                             this.scheduling.sync_errors.insert(key(&w.name, &id), e);
                         }
-                        this.poll_nudge.wake();
+                        this.polls.poll_nudge.wake();
                     }
                     Err(e) => {
                         if let Some(edit) = this.scheduling.schedule_edit.as_mut().filter(|_| editing) {
