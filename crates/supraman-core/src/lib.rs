@@ -10,6 +10,7 @@ pub mod install;
 pub mod home;
 mod model;
 pub mod paths;
+pub mod platform;
 mod plugin;
 pub mod prune;
 pub mod pool;

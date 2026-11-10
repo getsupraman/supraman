@@ -5,7 +5,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::path::Path;
 
-use supraman_core::process::Proc;
+use supraman_core::platform::process::Proc;
 
 use crate::peer::{Liveness, RegistryEntry, entry_of};
 
@@ -43,7 +43,7 @@ pub fn session_under(procs: &[Proc], root: u32, root_start: Option<u64>, dir: &P
 #[cfg(test)]
 mod tests {
     use super::*;
-    use supraman_core::process::snapshot;
+    use supraman_core::platform::process::snapshot;
 
     fn p(pid: u32, parent: u32, exe: &str) -> Proc {
         Proc { pid, parent, exe: exe.into() }

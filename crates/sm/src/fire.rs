@@ -429,7 +429,7 @@ fn fire_inner(req: &Request, host: &mut dyn Host) -> Report {
     let mut live_file = LiveFile {
         home,
         path: live.json.clone(),
-        body: Live { run: run.clone(), fm_pid: pid, fm_started: process::started(pid), started_at: started_ms, stage: String::new(), session: None },
+        body: Live { run: run.clone(), fm_pid: pid, fm_started: supraman_core::platform::process::started(pid), started_at: started_ms, stage: String::new(), session: None },
         unwritten: false,
     };
     live_file.stage(if s.action.kind == ActionKind::Session { "session" } else { "script" });
@@ -638,7 +638,7 @@ pub fn recover_if_dead_with(home: &Path, workspace: &str, id: &str, now: i64, ho
 
 /// The live file's sm runs: its pid is up with the start time it recorded.
 pub fn sm_alive(live: &Live) -> bool {
-    match (process::started(live.fm_pid), live.fm_started) {
+    match (supraman_core::platform::process::started(live.fm_pid), live.fm_started) {
         (Some(now), Some(then)) => now == then,
         (running, _) => running.is_some(),
     }

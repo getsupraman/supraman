@@ -78,7 +78,8 @@ fn shell_for(mode: &Mode) -> util::shell::Shell {
     }
 }
 
-use supraman_ui::{FrameProbe, init_globals, memory, mib, ms_since_start, percentile, term_element};
+use supraman_core::platform::process::memory;
+use supraman_ui::{FrameProbe, init_globals, mib, ms_since_start, percentile, term_element};
 
 struct SpikeView {
     terminal: Option<Entity<Terminal>>,

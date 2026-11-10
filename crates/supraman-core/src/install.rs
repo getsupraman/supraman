@@ -335,7 +335,7 @@ impl<'a> Run<'a> {
         let (from, to) = (&self.job.from, &self.job.to);
         if let Some(pid) = self.job.wait_pid
             && crate::process::alive(pid)
-            && !crate::process::wait_any_exit(&[pid], self.job.wait)
+            && !crate::platform::process::wait_any_exit(&[pid], self.job.wait)
             && crate::process::alive(pid)
         {
             return refused(format!("Supraman (pid {pid}) did not exit within {} s: nothing changed", self.job.wait.as_secs()));
