@@ -1885,7 +1885,11 @@ impl FleetView {
                 let exited = this
                     .read_with(cx, |this, _| this.tab(id).is_none_or(|t| t.exited))
                     .unwrap_or(true);
-                if exited || !pid.is_some_and(supraman_core::process::alive) {
+                let alive = match pid {
+                    Some(pid) if !exited => executor.spawn(async move { supraman_core::process::alive(pid) }).await,
+                    _ => false,
+                };
+                if !alive {
                     this.update(cx, |this, cx| this.remove_tab(id, cx)).ok();
                     return;
                 }

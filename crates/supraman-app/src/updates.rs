@@ -1,7 +1,7 @@
 //! The update check's loop and what the window shows of it: a banner when a newer release is
 //! available (view/left.rs) and a line on Settings → About.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -25,16 +25,31 @@ pub fn install_update(view: &mut FleetView, available: &Available, cx: &mut Cont
     if matches!(view.updates.stage, Stage::Downloading { .. } | Stage::Applying) {
         return;
     }
-    if available.zip_url.is_none() || !view.updates.target.install.join(install::VERSION).is_file() {
+    if available.zip_url.is_none() {
         view.open_web(&available.page_url.clone(), cx);
         return;
     }
-    if let Some(question) = view.updates.target.quit.then(|| question(available.version(), view.has_attach_tabs(), view.running_hand_tabs())).flatten() {
-        view.confirm = Some(Confirm::ask(question, "Update", Confirmed::Update));
-        cx.notify();
-        return;
-    }
-    view.download_update(available.clone(), cx);
+    let (version, available) = (view.updates.target.install.join(install::VERSION), available.clone());
+    cx.spawn(async move |this, cx| {
+        let installed = cx.background_spawn(async move { version.is_file() }).await;
+        this.update(cx, |view, cx| {
+            if matches!(view.updates.stage, Stage::Downloading { .. } | Stage::Applying) {
+                return;
+            }
+            if !installed {
+                view.open_web(&available.page_url.clone(), cx);
+                return;
+            }
+            if let Some(question) = view.updates.target.quit.then(|| question(available.version(), view.has_attach_tabs(), view.running_hand_tabs())).flatten() {
+                view.confirm = Some(Confirm::ask(question, "Update", Confirmed::Update));
+                cx.notify();
+                return;
+            }
+            view.download_update(available, cx);
+        })
+        .ok();
+    })
+    .detach();
 }
 
 /// What Update asks before Supraman quits, or `None` when no open tab holds a session.
@@ -293,45 +308,37 @@ impl FleetView {
     fn hand_over(&mut self, available: &Available, downloaded: &Downloaded, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else { return };
         let dir = updates::version_dir(&home, available.version());
-        let helper = dir.join("sm-update.exe");
         let target = self.updates.target.clone();
-        let started = std::fs::copy(downloaded.release.join("sm.exe"), &helper)
-            .map_err(|e| format!("cannot copy the new sm.exe to {}: {e}", helper.display()))
-            .and_then(|_| {
-                let mut cmd = supraman_core::process::command(&helper);
-                cmd.args(["update", "apply", "--from"])
-                    .arg(&downloaded.release)
-                    .arg("--to")
-                    .arg(&target.install)
-                    .arg("--log")
-                    .arg(dir.join(updates::APPLY_LOG))
-                    .arg("--restart")
-                    .arg(target.install.join("supraman.exe"));
-                if let Some(pid) = target.wait_pid {
-                    cmd.arg("--wait-pid").arg(pid.to_string());
+        let (release, available) = (downloaded.release.clone(), available.clone());
+        let started = cx.background_spawn({
+            let target = target.clone();
+            async move { start_apply(&dir, &release, &target) }
+        });
+        cx.spawn(async move |this, cx| {
+            let started = started.await;
+            this.update(cx, |this, cx| {
+                match started {
+                    Ok(pid) => {
+                        log::info!("update to {}: sm update apply runs as pid {pid}", available.version());
+                        this.updates.stage = Stage::Applying;
+                        if target.quit {
+                            let window = this.window;
+                            cx.spawn(async move |this, cx| {
+                                cx.update_window(window, |_, window, cx| this.update(cx, |this, cx| this.quit(window, cx)).ok()).ok();
+                            })
+                            .detach();
+                        }
+                    }
+                    Err(why) => {
+                        log::warn!("update to {}: {why}", available.version());
+                        this.updates.stage = Stage::Failed(format!("The update to {} failed: {why}", available.version()));
+                    }
                 }
-                for arg in &target.restart_args {
-                    cmd.arg("--restart-arg").arg(arg);
-                }
-                supraman_core::process::spawn_detached(&mut cmd).map_err(|e| format!("cannot start {}: {e}", helper.display()))
-            });
-        match started {
-            Ok(pid) => {
-                log::info!("update to {}: sm update apply runs as pid {pid}", available.version());
-                self.updates.stage = Stage::Applying;
-                if target.quit {
-                    let window = self.window;
-                    cx.spawn(async move |this, cx| {
-                        cx.update_window(window, |_, window, cx| this.update(cx, |this, cx| this.quit(window, cx)).ok()).ok();
-                    })
-                    .detach();
-                }
-            }
-            Err(why) => {
-                log::warn!("update to {}: {why}", available.version());
-                self.updates.stage = Stage::Failed(format!("The update to {} failed: {why}", available.version()));
-            }
-        }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub fn dismiss_update(&mut self, cx: &mut Context<Self>) {
@@ -344,6 +351,27 @@ impl FleetView {
         self.updates.dismissed = Version::parse(&version).ok();
         cx.notify();
     }
+}
+
+fn start_apply(dir: &Path, release: &Path, target: &Target) -> Result<u32, String> {
+    let helper = dir.join("sm-update.exe");
+    std::fs::copy(release.join("sm.exe"), &helper).map_err(|e| format!("cannot copy the new sm.exe to {}: {e}", helper.display()))?;
+    let mut cmd = supraman_core::process::command(&helper);
+    cmd.args(["update", "apply", "--from"])
+        .arg(release)
+        .arg("--to")
+        .arg(&target.install)
+        .arg("--log")
+        .arg(dir.join(updates::APPLY_LOG))
+        .arg("--restart")
+        .arg(target.install.join("supraman.exe"));
+    if let Some(pid) = target.wait_pid {
+        cmd.arg("--wait-pid").arg(pid.to_string());
+    }
+    for arg in &target.restart_args {
+        cmd.arg("--restart-arg").arg(arg);
+    }
+    supraman_core::process::spawn_detached(&mut cmd).map_err(|e| format!("cannot start {}: {e}", helper.display()))
 }
 
 #[cfg(test)]
