@@ -15,11 +15,11 @@ impl FleetView {
     pub fn search_tree(&self) -> Tree {
         let all: HashSet<String> = self.workspaces.iter().flat_map(|w| w.folders.iter().map(move |r| format!("{}/{}", w.name, r.name))).collect();
         let sup = Supervised {
-            desired: Some(&self.desired),
-            hooks: Some(&self.hooks),
-            polled_at: self.polled_at,
-            main_repos: Some(&self.main_repos),
-            closed: &self.closed,
+            desired: Some(&self.supervising.desired),
+            hooks: Some(&self.supervising.hooks),
+            polled_at: self.polls.polled_at,
+            main_repos: Some(&self.listing.main_repos),
+            closed: &self.listing.closed,
             starred: Some(self.stars.ids()),
             expanded: Some(&all),
             disabled_folders: true,
@@ -41,9 +41,9 @@ impl FleetView {
     }
 
     pub(super) fn reveal(&mut self, workspace: &str, repo: Option<&str>, cx: &mut Context<Self>) {
-        self.collapsed.remove(&format!("workspace:{workspace}"));
+        self.sidebar.collapsed.remove(&format!("workspace:{workspace}"));
         if let Some(repo) = repo {
-            self.collapsed.remove(&format!("repo:{workspace}/{repo}"));
+            self.sidebar.collapsed.remove(&format!("repo:{workspace}/{repo}"));
         }
         self.clear_search(cx);
     }
@@ -58,7 +58,7 @@ impl FleetView {
     pub(super) fn render_results(&mut self, mut body: Stateful<Div>, query: &str, cx: &mut Context<Self>) -> Stateful<Div> {
         let colors = cx.theme().colors().clone();
         let results = search::search(&self.search_tree(), query);
-        self.search_marks = results
+        self.sidebar.search_marks = results
             .workspaces
             .iter()
             .flat_map(|w| w.supervised.iter().chain(w.repos.iter().flat_map(|r| &r.sessions)))

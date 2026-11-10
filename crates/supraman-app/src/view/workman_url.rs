@@ -76,8 +76,8 @@ impl FleetView {
     }
 
     pub(super) fn sync_server(&mut self, origin: String, cx: &mut Context<Self>) {
-        self.synced_server = Some(origin.clone());
-        let Some(hands) = self.hands.clone() else {
+        self.workman_state.synced_server = Some(origin.clone());
+        let Some(hands) = self.lifecycle.hands.clone() else {
             return;
         };
         let at = origin.clone();
@@ -107,7 +107,7 @@ impl FleetView {
         };
         let auth = crate::signin::auth(&home);
         let current = self.workman.checked_url().map(str::to_string);
-        let origins: Vec<String> = origins.into_iter().filter(|o| current.as_ref() != Some(o) && self.left_servers.insert(o.clone())).collect();
+        let origins: Vec<String> = origins.into_iter().filter(|o| current.as_ref() != Some(o) && self.workman_state.left_servers.insert(o.clone())).collect();
         if origins.is_empty() {
             return;
         }

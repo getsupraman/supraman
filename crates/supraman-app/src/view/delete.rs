@@ -123,7 +123,7 @@ fn listed(items: &[(String, String)]) -> String {
 
 impl FleetView {
     fn wanted(&self, name: &str) -> bool {
-        !name.is_empty() && self.desired.values().any(|(_, wanted)| wanted.iter().any(|w| w == name))
+        !name.is_empty() && self.supervising.desired.values().any(|(_, wanted)| wanted.iter().any(|w| w == name))
     }
 
     fn in_tab(&self, s: &Session) -> bool {
@@ -131,7 +131,7 @@ impl FleetView {
     }
 
     pub fn deletable(&self, row: &SessionRow) -> bool {
-        offers_delete(row, self.wanted(&row.session.name), self.in_tab(&row.session)) && !self.deleting.contains(&row.session.session_id)
+        offers_delete(row, self.wanted(&row.session.name), self.in_tab(&row.session)) && !self.listing.deleting.contains(&row.session.session_id)
     }
 
     fn closed_background(&self, workspace: &str) -> Vec<SessionRow> {
@@ -152,8 +152,8 @@ impl FleetView {
             _ => "Its transcript and its tool files under the claude dir are deleted, so it can no longer be resumed",
         };
         let kind = if session.kind == Kind::Background { "background session" } else { "closed session" };
-        let foreign = if fleet::is_foreign(&session.name, &self.workspaces, Some(&self.desired), self.own_prefix.as_deref()) { " It is another Supraman's session." } else { "" };
-        self.confirm = Some(Confirm::ask(
+        let foreign = if fleet::is_foreign(&session.name, &self.workspaces, Some(&self.supervising.desired), self.own_prefix.as_deref()) { " It is another Supraman's session." } else { "" };
+        self.dialogs.confirm = Some(Confirm::ask(
             format!("Delete {kind} {}? {what}. This cannot be undone.{foreign}", label(&session)),
             "Delete",
             Confirmed::Delete { session, discard: None },
@@ -162,7 +162,7 @@ impl FleetView {
 
     pub(super) fn delete_now(&mut self, session: Session, discard: Option<String>, cx: &mut Context<Self>) {
         let sid = session.session_id.clone();
-        if !self.deleting.insert(sid.clone()) {
+        if !self.listing.deleting.insert(sid.clone()) {
             return;
         }
         let claude_dir = self.claude_dir.clone();
@@ -173,7 +173,7 @@ impl FleetView {
         cx.spawn(async move |this, cx| {
             let outcome = task.await;
             this.update(cx, |this, cx| {
-                this.deleting.remove(&sid);
+                this.listing.deleting.remove(&sid);
                 match outcome {
                     Outcome::Deleted(gone) => {
                         this.forget_rows(&[session.session_id.clone()], cx);
@@ -199,7 +199,7 @@ impl FleetView {
         let at = refusal.worktree.as_deref().map(|w| format!(" in {}", w.display())).unwrap_or_default();
         match refusal.discard {
             Some(value) => {
-                self.confirm = Some(Confirm::ask(
+                self.dialogs.confirm = Some(Confirm::ask(
                     format!(
                         "claude rm kept {}: its worktree{at} has {commits} that exist on no remote. Discard the worktree and its commits, then delete the session and its transcript?",
                         label(&session)
@@ -235,7 +235,7 @@ impl FleetView {
             let (sessions, skipped) = task.await;
             this.update(cx, |this, cx| {
                 let skip = if skipped.is_empty() { String::new() } else { format!(" Skipped {}: {}.", skipped.len(), listed(&skipped)) };
-                this.confirm = Some(if sessions.is_empty() {
+                this.dialogs.confirm = Some(if sessions.is_empty() {
                     Confirm::report(format!("No closed background session of {workspace} can be deleted.{skip}"))
                 } else {
                     let n = sessions.len();
@@ -256,7 +256,7 @@ impl FleetView {
     }
 
     pub(super) fn delete_closed_now(&mut self, workspace: String, sessions: Vec<Session>, mut skipped: Vec<(String, String)>, cx: &mut Context<Self>) {
-        let sessions: Vec<Session> = sessions.into_iter().filter(|s| self.deleting.insert(s.session_id.clone())).collect();
+        let sessions: Vec<Session> = sessions.into_iter().filter(|s| self.listing.deleting.insert(s.session_id.clone())).collect();
         let claude_dir = self.claude_dir.clone();
         let todo = sessions.clone();
         let task = cx.background_executor().spawn(async move {
@@ -268,7 +268,7 @@ impl FleetView {
             this.update(cx, |this, cx| {
                 let (mut deleted, mut failed) = (Vec::new(), Vec::new());
                 for (s, outcome) in results {
-                    this.deleting.remove(&s.session_id);
+                    this.listing.deleting.remove(&s.session_id);
                     match outcome {
                         Outcome::Deleted(_) => deleted.push(s.session_id.clone()),
                         Outcome::Kept(r) => {
@@ -286,7 +286,7 @@ impl FleetView {
                 if !failed.is_empty() {
                     text.push_str(&format!(" Failed: {}.", failed.join("; ")));
                 }
-                this.confirm = Some(Confirm::report(text));
+                this.dialogs.confirm = Some(Confirm::report(text));
                 cx.notify();
             })
             .ok();
@@ -300,10 +300,10 @@ impl FleetView {
         }
         let now = now_ms();
         for sid in session_ids {
-            self.deleted.insert(sid.clone(), now);
+            self.listing.deleted.insert(sid.clone(), now);
         }
         self.drop_deleted();
-        if let Some(hands) = self.hands.clone() {
+        if let Some(hands) = self.lifecycle.hands.clone() {
             let ids = session_ids.to_vec();
             let task = cx.background_executor().spawn(async move {
                 let mut hands = hands.lock().unwrap_or_else(|e| e.into_inner());
@@ -321,19 +321,19 @@ impl FleetView {
             })
             .detach();
         }
-        self.poll_nudge.wake();
-        self.transcripts_nudge.wake();
+        self.polls.poll_nudge.wake();
+        self.polls.transcripts_nudge.wake();
     }
 
     pub(super) fn drop_deleted(&mut self) {
         let now = now_ms();
-        self.deleted.retain(|_, at| now - *at < HIDE_DELETED_MS);
-        if self.deleted.is_empty() {
+        self.listing.deleted.retain(|_, at| now - *at < HIDE_DELETED_MS);
+        if self.listing.deleted.is_empty() {
             return;
         }
-        let deleted = &self.deleted;
+        let deleted = &self.listing.deleted;
         self.sessions.retain(|s| !deleted.contains_key(&s.session_id));
-        self.closed.retain(|s| !deleted.contains_key(&s.session_id));
+        self.listing.closed.retain(|s| !deleted.contains_key(&s.session_id));
         self.invalidate_tree();
     }
 }

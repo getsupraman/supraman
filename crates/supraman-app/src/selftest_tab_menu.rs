@@ -50,7 +50,7 @@ fn ids(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> Vec<u64> {
 async fn right_click(view: &Entity<FleetView>, tab: u64, cx: &mut AsyncWindowContext) -> anyhow::Result<Point<Pixels>> {
     press_painted(view, &format!("tab-{tab}"), MouseButton::Right, cx).await?;
     until(view, cx, WITHIN, &format!("tab {tab}'s menu with its repository read"), |v| {
-        let menu = v.menu.as_ref().filter(|m| m.items.iter().any(|i| i.action == MenuAction::CloseTab(tab)))?;
+        let menu = v.dialogs.menu.as_ref().filter(|m| m.items.iter().any(|i| i.action == MenuAction::CloseTab(tab)))?;
         menu.items.iter().any(|i| i.key == "tab-open-git" && i.dimmed.is_none()).then_some(menu.position)
     })
     .await
@@ -73,10 +73,10 @@ async fn steps(view: &Entity<FleetView>, top: &Path, sub: &Path, cx: &mut AsyncW
         bail!("the menu opened at {at:?}, the right click was at {center:?}");
     }
     key(cx, "escape", Modifiers::default())?;
-    until(view, cx, WITHIN, "Esc closed the menu", |v| v.menu.is_none().then_some(())).await?;
+    until(view, cx, WITHIN, "Esc closed the menu", |v| v.dialogs.menu.is_none().then_some(())).await?;
     right_click(view, shell, cx).await?;
     press_painted(view, &format!("terminal-{shell}"), MouseButton::Left, cx).await?;
-    until(view, cx, WITHIN, "a click outside closed the menu", |v| v.menu.is_none().then_some(())).await?;
+    until(view, cx, WITHIN, "a click outside closed the menu", |v| v.dialogs.menu.is_none().then_some(())).await?;
 
     pick(view, shell, "tab-open-git", cx).await?;
     let git = until_app(view, cx, WITHIN, "the repository's Git tab, active", |v, cx| match git_tabs(v, cx, top)[..] {

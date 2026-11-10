@@ -334,7 +334,7 @@ impl SettingsView {
                 let terminal = this.settings.terminal.clone();
                 this.fleet
                     .update(cx, |fleet, _| {
-                        fleet.shell_default.read(terminal);
+                        fleet.term_look.shell_default.read(terminal);
                         fleet.recheck_workman();
                     })
                     .ok();

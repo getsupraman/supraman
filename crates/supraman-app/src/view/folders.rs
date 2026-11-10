@@ -136,11 +136,11 @@ pub fn rescan_offer(home: &Path, name: &str) -> Result<Offer, String> {
 
 impl FleetView {
     pub fn edit_folders(&mut self, workspace: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.menu = None;
+        self.dialogs.menu = None;
         let Some(w) = self.workspaces.iter().find(|x| x.name == workspace).cloned() else {
             return;
         };
-        self.collapsed.remove(&format!("workspace:{workspace}"));
+        self.sidebar.collapsed.remove(&format!("workspace:{workspace}"));
         self.open_add(Mode::Edit(w), window, cx);
     }
 
@@ -178,7 +178,7 @@ impl FleetView {
 
     /// Asks first when an edit stops a supervised session ([`stops`]).
     pub fn request_edits(&mut self, w: &str, edits: Vec<Edit>, cx: &mut Context<Self>) {
-        let wanted = self.desired.get(w).map(|d| d.1.clone()).unwrap_or_default();
+        let wanted = self.supervising.desired.get(w).map(|d| d.1.clone()).unwrap_or_default();
         let workspace = self.workspaces.iter().find(|x| x.name == w);
         let mut stopping = Vec::new();
         let mut verbs = Vec::new();
@@ -193,7 +193,7 @@ impl FleetView {
             self.apply_edits(w, edits, cx);
             return;
         }
-        self.confirm = Some(Confirm::ask(
+        self.dialogs.confirm = Some(Confirm::ask(
             format!(
                 "{} in workspace {w}? Its supervised session {} is stopped (stop, never rm) and can be resumed; no files are deleted.",
                 verbs.join("; "),
@@ -246,11 +246,11 @@ impl FleetView {
         match result {
             Ok((done, stopped)) => {
                 if dialog.is_some() {
-                    self.adding = None;
+                    self.dialogs.adding = None;
                 }
                 let live_in = self.live_in(&done);
                 if let Some(added) = done.added.first() {
-                    self.collapsed.remove(&format!("workspace:{w}"));
+                    self.sidebar.collapsed.remove(&format!("workspace:{w}"));
                     self.reveal_new(super::left::PendingReveal::Row(format!("repo:{w}/{added}")));
                 }
                 self.put_workspace(done.workspace.clone());

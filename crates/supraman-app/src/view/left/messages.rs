@@ -8,10 +8,10 @@ pub(super) fn message_key(workspace: &str, m: &OutboxMessage) -> String {
 
 impl FleetView {
     fn listed_messages(&self) -> Vec<(&String, &OutboxMessage)> {
-        self.messages
+        self.mail.messages
             .iter()
             .flat_map(|(w, msgs)| msgs.iter().map(move |m| (w, m)))
-            .filter(|(w, m)| !self.dismissed_messages.hides(w, &m.file))
+            .filter(|(w, m)| !self.mail.dismissed_messages.hides(w, &m.file))
             .collect()
     }
 
@@ -34,9 +34,10 @@ impl FleetView {
         let now = now_ms();
         let no_answers = BTreeMap::new();
         let asks: BTreeMap<&String, BTreeMap<String, AskState>> = self
+            .mail
             .messages
             .iter()
-            .map(|(w, msgs)| (w, ask_states(msgs, &workspace_session_name(w), self.answered.get(w).unwrap_or(&no_answers))))
+            .map(|(w, msgs)| (w, ask_states(msgs, &workspace_session_name(w), self.mail.answered.get(w).unwrap_or(&no_answers))))
             .collect();
         let mut section = div()
             .id("messages")
@@ -66,7 +67,7 @@ impl FleetView {
         for (workspace, m) in all {
             let ask = asks.get(workspace).and_then(|a| a.get(&m.file));
             section = section.child(self.render_message(workspace, m, ask, now, cx));
-            let replying = self.compose.as_ref().is_some_and(|c| &c.workspace == workspace && c.reply_to == m.file);
+            let replying = self.mail.compose.as_ref().is_some_and(|c| &c.workspace == workspace && c.reply_to == m.file);
             if replying {
                 section = section.children(self.render_compose(cx));
             }
@@ -128,8 +129,8 @@ impl FleetView {
             .children(self.message_attach(workspace, m, &key, now, cx))
             .child(dismiss)
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                if !this.expanded.remove(&key) {
-                    this.expanded.insert(key.clone());
+                if !this.sidebar.expanded.remove(&key) {
+                    this.sidebar.expanded.insert(key.clone());
                 }
                 cx.notify();
             }))
@@ -138,7 +139,7 @@ impl FleetView {
 
     fn message_body(&self, key: &str, m: &OutboxMessage, cx: &mut Context<Self>) -> Div {
         let lines: Vec<&str> = m.body.lines().collect();
-        let shown = if self.expanded.contains(key) { lines.len() } else { lines.len().min(MESSAGE_LINES) };
+        let shown = if self.sidebar.expanded.contains(key) { lines.len() } else { lines.len().min(MESSAGE_LINES) };
         let mut body = div().flex().flex_col().min_w_0().text_xs().text_color(cx.theme().colors().text);
         for (n, segment) in segments(&lines[..shown]).into_iter().enumerate() {
             body = body.child(match segment {
@@ -203,7 +204,7 @@ impl FleetView {
                 div()
                     .relative()
                     .text_color(cx.theme().status().success)
-                    .child(SharedString::from(match self.answered_route.get(key) {
+                    .child(SharedString::from(match self.mail.answered_route.get(key) {
                         Some(route) => format!("answered: {line} · {route}"),
                         None => format!("answered: {line}"),
                     }))
@@ -214,7 +215,7 @@ impl FleetView {
     }
 
     fn render_compose(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let c = self.compose.as_ref()?;
+        let c = self.mail.compose.as_ref()?;
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let ctrl = workspace_session_name(&c.workspace);
@@ -259,7 +260,7 @@ impl FleetView {
                                 cx.stop_propagation();
                                 this.send_compose(cx);
                                 // the press gave the keys to the window: an open box takes them back
-                                if let Some(c) = &this.compose {
+                                if let Some(c) = &this.mail.compose {
                                     c.input.update(cx, |input, cx| input.focus(window, cx));
                                 }
                             },
@@ -267,14 +268,14 @@ impl FleetView {
                         .child(button::bordered(&self.hits, "compose-cancel", "Cancel", cx).on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| {
                                 cx.stop_propagation();
-                                this.compose = None;
+                                this.mail.compose = None;
                                 cx.notify();
                             },
                         ))),
                 )
                 .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                     cx.stop_propagation();
-                    if let Some(c) = &this.compose {
+                    if let Some(c) = &this.mail.compose {
                         c.input.update(cx, |input, cx| input.focus(window, cx));
                     }
                 }))

@@ -130,8 +130,8 @@ async fn others(view: &Entity<FleetView>, fake: &FakeRegistrar, dir: &Path, cx: 
         let state = view.read_with(cx, |v, _| {
             let mut keys: Vec<String> = v.hits.borrow().keys().filter(|k| k.contains("other") || k.starts_with("schedules-row")).cloned().collect();
             keys.sort();
-            let found = v.other_schedules.as_ref().map(|f| f.tasks.iter().map(|t| t.path()).collect::<Vec<_>>());
-            format!("painted {keys:?}; scanned {found:?}, error {:?}; under {WS} {:?}", v.other_scan_error, v.others().of_workspace(WS).len())
+            let found = v.scheduling.other_schedules.as_ref().map(|f| f.tasks.iter().map(|t| t.path()).collect::<Vec<_>>());
+            format!("painted {keys:?}; scanned {found:?}, error {:?}; under {WS} {:?}", v.scheduling.other_scan_error, v.others().of_workspace(WS).len())
         });
         e.context(state)
     })?;
@@ -153,7 +153,7 @@ async fn others(view: &Entity<FleetView>, fake: &FakeRegistrar, dir: &Path, cx: 
     if keys != ["open-task-scheduler", "copy-action"] {
         bail!("the other schedule's menu is {keys:?}");
     }
-    let copies = view.read_with(cx, |v, _| v.menu.as_ref().and_then(|m| m.items.iter().find(|i| i.key == "copy-action")).map(|i| i.action.clone()));
+    let copies = view.read_with(cx, |v, _| v.dialogs.menu.as_ref().and_then(|m| m.items.iter().find(|i| i.key == "copy-action")).map(|i| i.action.clone()));
     if copies != Some(MenuAction::Copy("claude.exe -p review".into())) {
         bail!("Copy action copies {copies:?}");
     }
@@ -179,9 +179,9 @@ async fn others(view: &Entity<FleetView>, fake: &FakeRegistrar, dir: &Path, cx: 
 }
 
 async fn confirm_text(view: &Entity<FleetView>, what: &str, needle: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    until(view, cx, WITHIN, what, |v| v.confirm.as_ref().filter(|c| c.text.contains(needle)).map(|c| c.text.clone()))
+    until(view, cx, WITHIN, what, |v| v.dialogs.confirm.as_ref().filter(|c| c.text.contains(needle)).map(|c| c.text.clone()))
         .await
-        .map_err(|e| e.context(format!("confirm {:?}, action error {:?}", view.read_with(cx, |v, _| v.confirm.as_ref().map(|c| c.text.clone())), view.read_with(cx, |v, _| v.action_error.clone()))))
+        .map_err(|e| e.context(format!("confirm {:?}, action error {:?}", view.read_with(cx, |v, _| v.dialogs.confirm.as_ref().map(|c| c.text.clone())), view.read_with(cx, |v, _| v.action_error.clone()))))
 }
 
 async fn from_menu(view: &Entity<FleetView>, item: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
@@ -196,7 +196,7 @@ async fn from_menu(view: &Entity<FleetView>, item: &str, cx: &mut AsyncWindowCon
 async fn status_is(view: &Entity<FleetView>, want: Status, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     until(view, cx, WITHIN, &format!("the row {want:?}"), |v| (row_state(v).map(|s| s.0) == Some(want)).then_some(()))
         .await
-        .map_err(|e| e.context(format!("row {:?}, errors {:?}", view.read_with(cx, |v, _| row_state(v)), view.read_with(cx, |v, _| (v.action_error.clone(), v.sync_errors.clone())))))
+        .map_err(|e| e.context(format!("row {:?}, errors {:?}", view.read_with(cx, |v, _| row_state(v)), view.read_with(cx, |v, _| (v.action_error.clone(), v.scheduling.sync_errors.clone())))))
 }
 
 /// 3c: an approved schedule whose slash command file is edited says so, offers Approve and asks in the Inbox; Approve

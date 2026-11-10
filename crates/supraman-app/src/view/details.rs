@@ -71,7 +71,7 @@ impl FleetView {
     }
 
     pub fn open_details(&mut self, target: MenuTarget, cx: &mut Context<Self>) -> Option<u64> {
-        self.menu = None;
+        self.dialogs.menu = None;
         if let Some((tab, _)) = self.details_page(&target) {
             self.activate_tab(tab, cx);
             return Some(tab);
@@ -167,7 +167,7 @@ impl FleetView {
         if let Some(id) = supraman_core::schedule::schedule_of_session(workspace, name) {
             return StartedBy::Schedule(id.to_string());
         }
-        if self.desired.get(workspace).is_some_and(|(_, wanted)| wanted.contains(name)) || super::menu::is_foremans(&row.session) {
+        if self.supervising.desired.get(workspace).is_some_and(|(_, wanted)| wanted.contains(name)) || super::menu::is_foremans(&row.session) {
             return StartedBy::Supervisor;
         }
         if self.hand_tab(row).is_some() {
@@ -223,7 +223,7 @@ impl FleetView {
             started: node.started,
             sessions: node.session_count(),
             own: node.own.clone(),
-            relay: self.relays.get(workspace).and_then(|r| r.label(now_ms())).map(|(text, _)| text),
+            relay: self.mail.relays.get(workspace).and_then(|r| r.label(now_ms())).map(|(text, _)| text),
             project: self.tabs.iter().find_map(|t| match &t.kind {
                 TabKind::Work(view) if view.read(cx).workspace == workspace => {
                     let refs: Vec<String> = view.read(cx).projects.iter().map(|p| p.item.qualified_ref.clone()).collect();

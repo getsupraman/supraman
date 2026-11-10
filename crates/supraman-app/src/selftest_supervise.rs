@@ -288,12 +288,12 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         let state = view.read_with(cx, |v, _| {
             format!(
                 "refreshes {} ticks {} desired {:?} rows named {} in the view: {} errors {:?}",
-                v.refreshes,
-                v.ticks,
-                v.desired,
+                v.polls.refreshes,
+                v.polls.ticks,
+                v.supervising.desired,
                 ctrl,
                 v.sessions.iter().filter(|s| s.name == ctrl).count(),
-                v.supervise_errors
+                v.supervising.supervise_errors
             )
         });
         println!("step b: panel state: {state}");
@@ -356,7 +356,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     const OLD_PID_GONE: Duration = Duration::from_secs(15);
     let polled = Instant::now();
     let old_gone_after = loop {
-        let attempt = view.read_with(cx, |v, _| v.last_attempt.get(&ctrl).copied());
+        let attempt = view.read_with(cx, |v, _| v.supervising.last_attempt.get(&ctrl).copied());
         let by_supervisor = attempt.is_some_and(|t| t >= killed_at);
         let old_alive = supraman_core::process::alive(pid);
         if by_supervisor && !old_alive {
@@ -413,14 +413,14 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let clicked = Instant::now();
     let run_key = format!("inbox-run-{u_ctrl}");
     let need = loop {
-        let need = view.read_with(cx, |v, _| v.needs.iter().find(|n| n.name == u_ctrl && n.kind == NeedsKind::TrustNeeded).cloned());
+        let need = view.read_with(cx, |v, _| v.supervising.needs.iter().find(|n| n.name == u_ctrl && n.kind == NeedsKind::TrustNeeded).cloned());
         if let Some(need) = need
             && view.read_with(cx, |v, _| v.hits.borrow().contains_key(&run_key))
         {
             break need;
         }
         if clicked.elapsed() > Duration::from_secs(30) {
-            bail!("step d: no TrustNeeded Inbox row for {u_ctrl} within 30 s (needs: {:?})", view.read_with(cx, |v, _| v.needs.clone()));
+            bail!("step d: no TrustNeeded Inbox row for {u_ctrl} within 30 s (needs: {:?})", view.read_with(cx, |v, _| v.supervising.needs.clone()));
         }
         sleep(cx, Duration::from_millis(100)).await;
     };
@@ -468,12 +468,12 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     }
     click(view, &retry_key, cx).await?;
     let retried = Instant::now();
-    if view.read_with(cx, |v, _| v.needs.iter().any(|n| n.name == u_ctrl && n.kind == NeedsKind::TrustNeeded)) {
+    if view.read_with(cx, |v, _| v.supervising.needs.iter().any(|n| n.name == u_ctrl && n.kind == NeedsKind::TrustNeeded)) {
         bail!("step d: Retry left the trust row");
     }
     // still untrusted: the supervisor's next launch is refused again and the row comes back
     loop {
-        if view.read_with(cx, |v, _| v.needs.iter().any(|n| n.name == u_ctrl && n.kind == NeedsKind::TrustNeeded)) {
+        if view.read_with(cx, |v, _| v.supervising.needs.iter().any(|n| n.name == u_ctrl && n.kind == NeedsKind::TrustNeeded)) {
             break;
         }
         if retried.elapsed() > Duration::from_secs(30) {
@@ -513,7 +513,7 @@ async fn hide(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
         }
         sleep(cx, Duration::from_millis(50)).await;
     }
-    let ticks = view.read_with(cx, |v, _| v.ticks);
+    let ticks = view.read_with(cx, |v, _| v.polls.ticks);
     println!("step h: WM_CLOSE posted to {posted} window(s) → hidden after {} ms, tick {ticks}", at.elapsed().as_millis());
     Ok(Hidden { at, ticks })
 }
@@ -530,7 +530,7 @@ async fn reopen(
         bail!("the window was shown before Open");
     }
     let hidden_for = hidden.at.elapsed();
-    let ticks = view.read_with(cx, |v, _| v.ticks) - hidden.ticks;
+    let ticks = view.read_with(cx, |v, _| v.polls.ticks) - hidden.ticks;
     if ticks == 0 {
         bail!("no supervisor tick in the {} the window was hidden", secs(hidden_for));
     }
@@ -553,9 +553,9 @@ async fn reopen(
     loop {
         let (polled_at, pid, needs) = view.read_with(cx, |v, _| {
             (
-                v.polled_at,
+                v.polls.polled_at,
                 v.sessions.iter().find(|s| s.name == ctrl).and_then(|s| s.pid),
-                v.needs.iter().filter(|n| n.name == ctrl).map(|n| format!("{:?}", n.kind)).collect::<Vec<_>>(),
+                v.supervising.needs.iter().filter(|n| n.name == ctrl).map(|n| format!("{:?}", n.kind)).collect::<Vec<_>>(),
             )
         });
         if polled_at > opened_ms && pid == settled.pid && needs.is_empty() {
@@ -640,7 +640,7 @@ async fn park_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowC
             {
                 bail!("{park}'s command was answered before this step saw it parked: {result:?} [{}]", raw(&r));
             }
-            let need = view.read_with(cx, |v, _| v.needs.iter().find(|n| n.name == park && n.kind == NeedsKind::Blocked).cloned());
+            let need = view.read_with(cx, |v, _| v.supervising.needs.iter().find(|n| n.name == park && n.kind == NeedsKind::Blocked).cloned());
             if let (Some(prompt), Some(need)) = (prompt, need)
                 && view.read_with(cx, |v, _| v.hits.borrow().contains_key(&attach_key))
             {
@@ -782,7 +782,7 @@ async fn want_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowC
     })
     .await?;
     let live_after = started.elapsed();
-    let attempt = view.read_with(cx, |v, _| v.last_attempt.get(&name).copied());
+    let attempt = view.read_with(cx, |v, _| v.supervising.last_attempt.get(&name).copied());
     if attempt.is_none() {
         bail!("{name} is live, but the supervisor never launched it");
     }
@@ -1014,7 +1014,7 @@ async fn relay_step(
     if !reason.starts_with("no session named") {
         bail!("the forced fallback's reason is {reason:?}");
     }
-    let label = |cx: &mut AsyncWindowContext| view.read_with(cx, |v, _| v.relays.get(w).and_then(|r| r.label(now_ms())).map(|(t, _)| t));
+    let label = |cx: &mut AsyncWindowContext| view.read_with(cx, |v, _| v.mail.relays.get(w).and_then(|r| r.label(now_ms())).map(|(t, _)| t));
     let mut starting_after = None;
     let mut ready_after = None;
     let mut labels = Vec::new();
@@ -1060,7 +1060,7 @@ async fn relay_step(
     };
     let round_trip = sent_at.elapsed();
     let shown = loop {
-        let shown = view.read_with(cx, |v, _| v.messages.get(w).is_some_and(|m| m.iter().any(|m| m.file == reply.file)));
+        let shown = view.read_with(cx, |v, _| v.mail.messages.get(w).is_some_and(|m| m.iter().any(|m| m.file == reply.file)));
         if shown || sent_at.elapsed() > round_trip + Duration::from_secs(10) {
             break shown;
         }
@@ -1099,7 +1099,7 @@ async fn no_relay(tb: &Testbed, relay_name: &str, view: &Entity<FleetView>, cx: 
     let w = tb.a.0.as_str();
     let started = Instant::now();
     let label = loop {
-        let label = view.read_with(cx, |v, _| v.relays.get(w).and_then(|r| r.label(now_ms())));
+        let label = view.read_with(cx, |v, _| v.mail.relays.get(w).and_then(|r| r.label(now_ms())));
         if label.as_ref().is_some_and(|(t, _)| t == "direct") || started.elapsed() > Duration::from_secs(10) {
             break label;
         }
@@ -1153,7 +1153,7 @@ async fn until_compose_focused(view: &Entity<FleetView>, cx: &mut AsyncWindowCon
     let started = Instant::now();
     loop {
         let ready = cx.update(|window, cx| {
-            view.read(cx).compose.as_ref().is_some_and(|c| {
+            view.read(cx).mail.compose.as_ref().is_some_and(|c| {
                 let input = c.input.read(cx);
                 input.is_focused(window) && input.caret_painted.get()
             })
@@ -1249,7 +1249,7 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     click(view, &reply_key, cx).await?;
     wait_painted(view, "compose-box", Duration::from_secs(5), cx).await?;
     let open = cx.update(|window, cx| {
-        view.read(cx).compose.as_ref().map(|c| (c.workspace.clone(), c.reply_to.clone(), c.input.read(cx).is_focused(window)))
+        view.read(cx).mail.compose.as_ref().map(|c| (c.workspace.clone(), c.reply_to.clone(), c.input.read(cx).is_focused(window)))
     })?;
     if open != Some((w.to_string(), decide.clone(), true)) {
         bail!("Reply… opened {open:?}, not a focused reply box for {w}/{decide}");
@@ -1261,7 +1261,7 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     type_text(cx, &task)?;
     keystroke(cx, "enter", None, Modifiers::control())?;
     wait_painted(view, &format!("msg-answered-{decide_key}"), Duration::from_secs(5), cx).await?;
-    let after = view.read_with(cx, |v, _| (v.compose.is_none(), v.answered_route.get(&decide_key).cloned()));
+    let after = view.read_with(cx, |v, _| (v.mail.compose.is_none(), v.mail.answered_route.get(&decide_key).cloned()));
     let (true, Some(route)) = after else {
         bail!("after Ctrl+Enter (box closed, route) is {after:?}, expected the box closed and the reply's route");
     };
@@ -1286,7 +1286,7 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     if view.read_with(cx, |v, _| v.hits.borrow().contains_key(&approve_key)) {
         bail!("the answered row still offers Approve");
     }
-    let approve_route = view.read_with(cx, |v, _| v.answered_route.get(&key).cloned()).unwrap_or_default();
+    let approve_route = view.read_with(cx, |v, _| v.mail.answered_route.get(&key).cloned()).unwrap_or_default();
     let approve_id = direct_id(&approve_route)?;
     let approve_in = wait_delivered(transcript, w, "approve", &approve_id, cx).await?;
     let relayed: Vec<String> = drops(&tb.home, w)?.into_iter().filter(|(_, d)| d.to == ctrl).map(|(f, _)| f).collect();
@@ -1316,7 +1316,7 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     let before = (drops(&tb.home, w)?.len(), ledger_count(&tb.home, w, &ctrl)?);
     keystroke(cx, "escape", None, Modifiers::default())?;
     sleep(cx, Duration::from_millis(500)).await;
-    let closed = view.read_with(cx, |v, _| v.compose.is_none());
+    let closed = view.read_with(cx, |v, _| v.mail.compose.is_none());
     let after = (drops(&tb.home, w)?.len(), ledger_count(&tb.home, w, &ctrl)?);
     if !closed || after != before || before.1 != 2 {
         bail!("Escape: box closed={closed}, (relay drops, direct sends) {before:?} → {after:?}, expected 2 direct sends");

@@ -28,12 +28,12 @@ impl FleetView {
                 let home = home.clone();
                 let saved = cx.background_executor().spawn(async move { saved_tabs::save(&home, &tabs) }).await;
                 let alive = this.update(cx, |this, cx| {
-                    let before = this.tab_notices.len();
-                    this.tab_notices.retain(|n| !n.starts_with(SAVE_FAILED));
+                    let before = this.saving.tab_notices.len();
+                    this.saving.tab_notices.retain(|n| !n.starts_with(SAVE_FAILED));
                     if let Err(e) = saved {
-                        this.tab_notices.push(e);
+                        this.saving.tab_notices.push(e);
                     }
-                    if this.tab_notices.len() != before || !this.tab_notices.is_empty() {
+                    if this.saving.tab_notices.len() != before || !this.saving.tab_notices.is_empty() {
                         cx.notify();
                     }
                 });
@@ -61,7 +61,7 @@ impl FleetView {
 
     pub(super) fn saved_tab(&self, tab: &Tab, cx: &App) -> Option<SavedTab> {
         let title = tab.title.clone();
-        let named = |sid: &str| self.sessions.iter().chain(&self.closed).find(|s| s.session_id == sid).map(|s| s.name.clone()).filter(|n| !n.is_empty());
+        let named = |sid: &str| self.sessions.iter().chain(&self.listing.closed).find(|s| s.session_id == sid).map(|s| s.name.clone()).filter(|n| !n.is_empty());
         Some(match &tab.kind {
             TabKind::Saved(saved) => saved.clone(),
             TabKind::Schedule(_) | TabKind::Details(_) | TabKind::Start(_) => return None,
@@ -89,26 +89,26 @@ impl FleetView {
     /// Called on every render, so every change to the tabs reaches the file; nothing is written while a quit closes them.
     pub(super) fn persist_tabs(&mut self, cx: &App) {
         let _stall = supraman_ui::stall::section("render: persist_tabs");
-        if !self.tabs_restored || self.tabs_frozen || self.quit_asked || self.home.is_none() {
+        if !self.saving.tabs_restored || self.saving.tabs_frozen || self.lifecycle.quit_asked || self.home.is_none() {
             return;
         }
         let now = self.saved_tabs(cx);
-        if self.tabs_saved.as_ref() != Some(&now) {
-            self.tabs_writes.unbounded_send(now.clone()).ok();
-            self.tabs_saved = Some(now);
+        if self.saving.tabs_saved.as_ref() != Some(&now) {
+            self.saving.tabs_writes.unbounded_send(now.clone()).ok();
+            self.saving.tabs_saved = Some(now);
         }
     }
 
     /// Once the first session list is in and the hand tokens of the last run are released.
     pub(super) fn reopen_tabs(&mut self, cx: &mut Context<Self>) {
-        if self.tabs_restored || self.tabs_reopening || !self.sessions_read || !self.hands_ready {
+        if self.saving.tabs_restored || self.saving.tabs_reopening || !self.polls.sessions_read || !self.lifecycle.hands_ready {
             return;
         }
         let Some(home) = self.home.clone() else {
-            self.tabs_restored = true;
+            self.saving.tabs_restored = true;
             return;
         };
-        self.tabs_reopening = true;
+        self.saving.tabs_reopening = true;
         let sessions = self.sessions.clone();
         let workspaces: Vec<String> = self.workspaces.iter().map(|w| w.name.clone()).collect();
         let claude_dir = self.claude_dir.clone();
@@ -129,8 +129,8 @@ impl FleetView {
     }
 
     fn apply_reopen(&mut self, planned: Option<Planned>, cx: &mut Context<Self>) {
-        self.tabs_reopening = false;
-        self.tabs_restored = true;
+        self.saving.tabs_reopening = false;
+        self.saving.tabs_restored = true;
         let Some((plans, active, notice)) = planned else {
             cx.notify();
             return;
@@ -154,10 +154,10 @@ impl FleetView {
         let order: Vec<u64> = opened.iter().chain(&before).copied().collect();
         self.tabs.sort_by_key(|t| order.iter().position(|id| *id == t.id));
         self.active = if before.is_empty() { active_id.or(opened.first().copied()) } else { active_before };
-        self.tab_notices.extend(notice);
+        self.saving.tab_notices.extend(notice);
         if !gone.is_empty() {
             let (n, tabs) = if gone.len() == 1 { (String::new(), "tab") } else { (format!("{} ", gone.len()), "tabs") };
-            self.tab_notices.push(format!("{n}{tabs} of the last run not reopened: {}", gone.join("; ")));
+            self.saving.tab_notices.push(format!("{n}{tabs} of the last run not reopened: {}", gone.join("; ")));
         }
         log::info!("reopened {} tabs, {} not", opened.len(), gone.len());
         cx.notify();
@@ -264,7 +264,7 @@ impl FleetView {
     /// For the selftest: every tab closes as a quit closes them, without touching the saved file.
     #[cfg(feature = "selftest")]
     pub fn close_tabs_unsaved(&mut self, cx: &mut Context<Self>) {
-        self.tabs_frozen = true;
+        self.saving.tabs_frozen = true;
         let ids: Vec<u64> = self.tabs.iter().map(|t| t.id).collect();
         ids.into_iter().for_each(|id| self.close_tab(id, cx));
     }
@@ -278,9 +278,9 @@ impl FleetView {
     /// For the selftest: the tabs as a start reopens them.
     #[cfg(feature = "selftest")]
     pub fn restart_tabs(&mut self, cx: &mut Context<Self>) {
-        self.tabs_frozen = false;
-        self.tabs_restored = false;
-        self.tabs_saved = None;
+        self.saving.tabs_frozen = false;
+        self.saving.tabs_restored = false;
+        self.saving.tabs_saved = None;
         self.reopen_tabs(cx);
     }
 }

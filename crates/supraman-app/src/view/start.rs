@@ -86,7 +86,7 @@ fn write_prompt(home: Option<&Path>, text: &str) -> std::io::Result<PathBuf> {
 impl FleetView {
     /// A new prompt tab, one per opening; `folder` preselects one of the workspace's.
     pub fn open_start(&mut self, workspace: &str, folder: Option<PathBuf>, scheduled: bool, window: &mut Window, cx: &mut Context<Self>) -> Option<u64> {
-        self.menu = None;
+        self.dialogs.menu = None;
         let ws = self.workspaces.iter().find(|w| w.name == workspace)?;
         let choices = folders(ws);
         let folder = folder
@@ -196,7 +196,7 @@ impl FleetView {
     pub(super) fn find_asked_schedules(&mut self) {
         for tab in &mut self.tabs {
             let Some(ask) = tab.asks_schedule.as_mut().filter(|a| a.found.is_none()) else { continue };
-            let rows = self.schedules.get(&ask.workspace).map(Vec::as_slice).unwrap_or_default();
+            let rows = self.scheduling.schedules.get(&ask.workspace).map(Vec::as_slice).unwrap_or_default();
             ask.found = rows
                 .iter()
                 .filter(|r| r.status == supraman_core::schedule::Status::Pending && r.schedule.created_at >= ask.since)
@@ -227,7 +227,7 @@ impl FleetView {
 
     fn start_sections(&self, workspace: &str) -> Vec<Section> {
         let mut out = Vec::new();
-        let rows = self.schedules.get(workspace).map(Vec::as_slice).unwrap_or_default();
+        let rows = self.scheduling.schedules.get(workspace).map(Vec::as_slice).unwrap_or_default();
         if !rows.is_empty() {
             let mut s = Section::new("schedules", "Schedules");
             for r in rows {

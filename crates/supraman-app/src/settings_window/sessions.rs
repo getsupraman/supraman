@@ -12,7 +12,7 @@ impl SettingsView {
         // The fleet window saves it (one path for the app and its selftest) and shows any error.
         if let Ok(shown) = self.fleet.update(cx, |fleet, cx| {
             fleet.set_max_working(n, cx);
-            fleet.max_working
+            fleet.supervising.max_working
         }) {
             self.settings.sessions.max_working = shown;
         }

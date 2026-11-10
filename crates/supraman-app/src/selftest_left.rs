@@ -60,12 +60,12 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     click(view, "toggle-stopped", cx).await?;
     until(view, cx, WITHIN, "the stopped toggle flips back", |v| (v.show_stopped == shown).then_some(())).await?;
 
-    let busy = view.read_with(cx, |v, _| v.max_working);
+    let busy = view.read_with(cx, |v, _| v.supervising.max_working);
     // the default is the upper bound (MAX_WORKING_LIMIT): lower first
     click(view, "busy-dec", cx).await?;
-    until(view, cx, WITHIN, "busy − lowers the limit", |v| (v.max_working + 1 == busy).then_some(())).await?;
+    until(view, cx, WITHIN, "busy − lowers the limit", |v| (v.supervising.max_working + 1 == busy).then_some(())).await?;
     click(view, "busy-inc", cx).await?;
-    until(view, cx, WITHIN, "busy + raises it back", |v| (v.max_working == busy).then_some(())).await?;
+    until(view, cx, WITHIN, "busy + raises it back", |v| (v.supervising.max_working == busy).then_some(())).await?;
 
     let position = view
         .read_with(cx, |v, _| bounds(v, "collapse-all"))

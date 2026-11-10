@@ -59,7 +59,7 @@ fn quit(fleet: &Entity<FleetView>, window: &mut Window, cx: &mut App) {
 }
 
 fn started(fleet: &Entity<FleetView>, cx: &App) -> Vec<String> {
-    fleet.read(cx).desired.iter().filter(|(_, (started, _))| *started).map(|(name, _)| name.clone()).collect()
+    fleet.read(cx).supervising.desired.iter().filter(|(_, (started, _))| *started).map(|(name, _)| name.clone()).collect()
 }
 
 /// gpui reports no change of the taskbar's mode alone, so the icon looks this often.

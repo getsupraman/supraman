@@ -135,7 +135,7 @@ async fn copy_send_name(view: &Entity<FleetView>, sid: &str, name: &str, cx: &mu
         press(view, &row, MouseButton::Right, cx).await?;
         let shown = until(view, cx, WITHIN, "Copy SendMessage name in the menu", |v| v.hits.borrow().contains_key("menu-copy-send-name").then_some(())).await;
         if let Err(e) = shown {
-            let menu = view.read_with(cx, |v, _| v.menu.as_ref().map(|m| m.items.iter().map(|i| i.key.clone()).collect::<Vec<_>>()));
+            let menu = view.read_with(cx, |v, _| v.dialogs.menu.as_ref().map(|m| m.items.iter().map(|i| i.key.clone()).collect::<Vec<_>>()));
             let dir = peer::sessions_dir().unwrap_or_default();
             let live: Vec<String> = peer::live_entries(&dir, &peer::System).iter().filter(|e| e.name == name).map(|e| format!("{:?}", e)).collect();
             bail!("{e}: menu {menu:?}; live entries named {name}: {live:?}");

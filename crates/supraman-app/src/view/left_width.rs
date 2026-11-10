@@ -23,15 +23,15 @@ impl LeftWidth {
 
 impl FleetView {
     pub(super) fn drag_left(&mut self, width: Pixels, cx: &mut Context<Self>) {
-        self.left_width = width;
-        self.left_saves.update(cx, |saves, _| saves.dragged = true);
+        self.sidebar.left_width = width;
+        self.sidebar.left_saves.update(cx, |saves, _| saves.dragged = true);
         cx.notify();
     }
 
     pub(super) fn save_left_width(&mut self, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else { return };
-        let width = f32::from(self.left_width).round() as u32;
-        let saves = self.left_saves.read(cx).saves.clone();
+        let width = f32::from(self.sidebar.left_width).round() as u32;
+        let saves = self.sidebar.left_saves.read(cx).saves.clone();
         saves.put(width);
         cx.spawn(async move |this, cx| {
             let saved = cx.background_executor().spawn(async move { saves.write(|width| Settings::update(&home, |s| s.window.left_width = Some(width)).map(drop)) }).await;

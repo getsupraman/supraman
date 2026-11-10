@@ -120,7 +120,7 @@ impl SettingsView {
             .upgrade()
             .map(|f| {
                 let f = f.read(cx);
-                (f.signing_in.clone(), f.sign_in_error.clone())
+                (f.workman_state.signing_in.clone(), f.workman_state.sign_in_error.clone())
             })
             .unwrap_or_default();
         let (text, color) = self.status_words(cx);

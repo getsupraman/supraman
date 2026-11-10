@@ -455,7 +455,7 @@ pub fn start(mode: Mode, view: Entity<FleetView>, window: &mut Window, cx: &mut 
             let own = lock().as_ref().and_then(|s| s.name_prefix.clone()).unwrap_or_else(|| format!("fm-selftest-{}", run_hex()));
             view.update(cx, |v, _| {
                 v.own_prefix = Some(own);
-                v.registrar = crate::selftest_schedules::registrar();
+                v.scheduling.registrar = crate::selftest_schedules::registrar();
             });
             let result = match mode {
                 Mode::Selftest => gate(&view, cx).await,
@@ -912,11 +912,11 @@ fn painted(v: &FleetView, key: &str) -> bool {
 }
 
 async fn loading_until_listed(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    if view.read_with(cx, |v, _| v.sessions_read) {
+    if view.read_with(cx, |v, _| v.polls.sessions_read) {
         bail!("the first session list was applied before the selftest could see the loading state");
     }
     until(view, cx, LISTED_WITHIN, "the loading row and the turning Refresh icon before the first list", |v| {
-        (!v.sessions_read && painted(v, "loading-sessions") && painted(v, "refresh-turning")).then_some(())
+        (!v.polls.sessions_read && painted(v, "loading-sessions") && painted(v, "refresh-turning")).then_some(())
     })
     .await?;
     let shown = view.read_with(cx, |v, _| (v.sessions.len(), v.tree().workspaces.len()));
@@ -927,7 +927,7 @@ async fn loading_until_listed(view: &Entity<FleetView>, cx: &mut AsyncWindowCont
     let listed = std::cell::Cell::new(None);
     let gone = until_with(cx, LISTED_WITHIN, "the loading line gone once every source has loaded", |cx| {
         view.read_with(cx, |v, cx| {
-            if v.sessions_read && listed.get().is_none() {
+            if v.polls.sessions_read && listed.get().is_none() {
                 listed.set(Some(started.elapsed()));
             }
             let shown = painted(v, "loading-sessions");
@@ -935,7 +935,7 @@ async fn loading_until_listed(view: &Entity<FleetView>, cx: &mut AsyncWindowCont
                 return Some(Err(format!("the loading line went while {:?} still loaded", v.loading(cx))));
             }
             (v.loaded && !shown).then(|| {
-                let done = v.sessions_read && v.refreshes > 0 && v.transcripts.read() && !matches!(v.workman, supraman_workman::status::WorkmanStatus::Checking);
+                let done = v.polls.sessions_read && v.polls.refreshes > 0 && v.transcripts.read() && !matches!(v.workman, supraman_workman::status::WorkmanStatus::Checking);
                 if done { Ok(()) } else { Err("loaded before the poll, the tick, the transcripts and Workman were all done".to_string()) }
             })
         })
@@ -1117,12 +1117,12 @@ async fn tree_cache_step() -> anyhow::Result<()> {
 async fn idle_step(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     set_step("8");
     let (idle_private, idle_ws) = memory();
-    let refreshes_before = view.read_with(cx, |v, _| v.refreshes);
+    let refreshes_before = view.read_with(cx, |v, _| v.polls.refreshes);
     let walks_before = main_repo_walks();
     let idle = frames::record(view, IDLE_WINDOW, cx).await;
     let walks = main_repo_walks() - walks_before;
     let stats = idle.stats;
-    let (refreshes, sessions) = view.read_with(cx, |v, _| (v.refreshes - refreshes_before, v.sessions.len() as u64));
+    let (refreshes, sessions) = view.read_with(cx, |v, _| (v.polls.refreshes - refreshes_before, v.sessions.len() as u64));
     println!("idle private bytes: {} (working set {})", mib(idle_private), mib(idle_ws));
     if refreshes == 0 {
         bail!("step 8: the panel did not refresh during the {} s idle window", IDLE_WINDOW.as_secs());
@@ -1308,7 +1308,7 @@ const IDLE_WINDOW: Duration = Duration::from_secs(4);
 /// First-list paint, Work tab and idle frame budgets, keystroke-to-paint, and memory and frames with 1 and 10 shells.
 async fn perf(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let started = Instant::now();
-    while view.read_with(cx, |v, _| v.refreshes) == 0 {
+    while view.read_with(cx, |v, _| v.polls.refreshes) == 0 {
         if started.elapsed() > Duration::from_secs(15) {
             bail!("the panel never refreshed");
         }

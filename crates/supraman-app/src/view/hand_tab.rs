@@ -55,7 +55,7 @@ impl FleetView {
             notices.extend(notice);
             this.update(cx, |this, cx| {
                 this.hand_notices.extend(notices);
-                this.hands_ready = true;
+                this.lifecycle.hands_ready = true;
                 this.reopen_tabs(cx);
                 cx.notify();
             })
@@ -120,11 +120,11 @@ impl FleetView {
     }
 
     fn transcripts_ask(&self) -> Option<TranscriptsAsk> {
-        self.sessions_read.then(|| TranscriptsAsk {
+        self.polls.sessions_read.then(|| TranscriptsAsk {
             roots: self.workspaces.iter().flat_map(|w| w.folders.iter().filter(|r| r.enabled).map(|r| r.path.clone())).collect(),
             keep: self.stars.ids().iter().cloned().collect(),
             live: self.sessions.iter().map(|s| s.session_id.clone()).collect(),
-            asks: self.refresh_asks,
+            asks: self.polls.refresh_asks,
         })
     }
 
@@ -166,7 +166,7 @@ impl FleetView {
             tab.launched_session = resumes.clone();
             tab.session_name = own.clone();
         }
-        let (from, hands, at) = (self.extras_from(), self.hands.clone(), cwd.clone());
+        let (from, hands, at) = (self.extras_from(), self.lifecycle.hands.clone(), cwd.clone());
         let mint = hands.clone();
         let ready = cx.background_executor().spawn(async move {
             let launch = mint.map_or(Launch::Plain, |m| crate::hand::launch_locked(&m, &at, own.as_deref(), resumes.as_deref()));
@@ -249,7 +249,7 @@ impl FleetView {
     }
 
     fn claude_shell(&self, launch: &Launch, claude: &str, extras: &Extras) -> util::shell::Shell {
-        let launch_args = match &self.daemon_hold {
+        let launch_args = match &self.supervising.daemon_hold {
             Some(why) => {
                 let script = format!("{}; {}", held_line(why), launch.script_with(claude, extras));
                 ["-NoExit".into(), "-EncodedCommand".into(), crate::hand::encoded_command(&script)]
@@ -310,8 +310,8 @@ async fn list_cached(this: &WeakEntity<FleetView>, s: Transcripts, ask: &Transcr
     let repos = known.clone();
     this.update(cx, |this, cx| {
         timeline(&format!("transcripts from the cache done ({} listed)", closed.len()), scanning.elapsed());
-        this.main_repos.extend(known.clone());
-        this.closed_repos = known;
+        this.listing.main_repos.extend(known.clone());
+        this.listing.closed_repos = known;
         this.set_closed(closed, continued, cx);
         this.transcripts.listed_cached();
         this.check_loaded(cx);
@@ -369,13 +369,13 @@ async fn scan_transcripts(
     showing.await;
     let repos = known.clone();
     this.update(cx, |this, cx| {
-        this.main_repos.extend(known.clone());
-        this.closed_repos = known;
+        this.listing.main_repos.extend(known.clone());
+        this.listing.closed_repos = known;
         if this.transcripts.scanned() {
             timeline(&format!("transcripts done ({read} files read, {} listed)", closed.len()), scanning.elapsed());
         }
         this.set_closed(closed, continued, cx);
-        this.transcripts_answered = asks;
+        this.polls.transcripts_answered = asks;
         this.check_loaded(cx);
         cx.notify();
     })

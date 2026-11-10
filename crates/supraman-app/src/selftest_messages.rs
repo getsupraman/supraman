@@ -30,7 +30,7 @@ fn dismiss_key(file: &str) -> String {
 
 /// Off the panel and past the hold, so a row that arrives is drawn at once.
 pub(crate) async fn pointer_off(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
-    let right = view.read_with(cx, |v, _| v.left_width) + gpui::px(200.);
+    let right = view.read_with(cx, |v, _| v.sidebar.left_width) + gpui::px(200.);
     crate::selftest_left::move_to(gpui::point(right, gpui::px(300.)), cx)?;
     until(view, cx, WITHIN, "the left panel's hold to end", |v| (!v.left_held()).then_some(())).await
 }
@@ -107,10 +107,10 @@ pub async fn held(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCon
     };
     let retaken = if void.is_empty() { String::new() } else { format!(" (retaken: {})", void.join("; ")) };
 
-    let right = view.read_with(cx, |v, _| v.left_width) + gpui::px(200.);
+    let right = view.read_with(cx, |v, _| v.sidebar.left_width) + gpui::px(200.);
     move_to(gpui::point(right, gpui::px(300.)), cx)?;
     let msg_key = until(view, cx, WITHIN, "the held note once the pointer left", |v| {
-        (!v.left_held()).then(|| v.messages.iter().find_map(|(w, msgs)| msgs.iter().any(|m| m.file == file).then(|| format!("{w}/{file}")))).flatten()
+        (!v.left_held()).then(|| v.mail.messages.iter().find_map(|(w, msgs)| msgs.iter().any(|m| m.file == file).then(|| format!("{w}/{file}")))).flatten()
     })
     .await?;
     let x = dismiss_key(&file);
@@ -137,7 +137,7 @@ async fn held_arrival(
     let aimed = scrolled_into_view(view, key, cx).await?;
     let target = aimed.center();
     move_to(target, cx)?;
-    let (armed, count) = view.read_with(cx, |v, _| (v.left_holds, v.messages_count()));
+    let (armed, count) = view.read_with(cx, |v, _| (v.sidebar.left_holds, v.messages_count()));
     let mut body = vec!["Plan for the selftest (a work_tree, not a question):".to_string()];
     body.extend(TABLE.iter().map(|l| l.to_string()));
     let file = tell(outbox, "table", &body.join("\n"))?;
@@ -147,7 +147,7 @@ async fn held_arrival(
     let mut nudge = 0.;
     while read_after.is_none_or(|at: Duration| started.elapsed() < at + Duration::from_millis(500)) {
         let (read, now, held, holds) =
-            view.read_with(cx, |v, _| (v.messages_count() > count && v.messages.values().flatten().any(|m| m.file == file), bounds(v, key), v.left_held(), v.left_holds));
+            view.read_with(cx, |v, _| (v.messages_count() > count && v.mail.messages.values().flatten().any(|m| m.file == file), bounds(v, key), v.left_held(), v.sidebar.left_holds));
         if holds != armed {
             return Ok(Err(format!("{file} read {:?} into the wait, the hold armed {} more time(s)", read_after, holds - armed)));
         }
@@ -183,7 +183,7 @@ async fn held_arrival(
 
 async fn table_lines(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     view.update(cx, |v, cx| {
-        v.expanded.insert(key.to_string());
+        v.sidebar.expanded.insert(key.to_string());
         cx.notify();
     });
     let prefix = format!("msg-table-{key}#");

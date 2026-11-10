@@ -88,7 +88,7 @@ impl SettingsView {
 
     pub(super) fn find_mono_fonts(&self, cx: &mut Context<Self>) {
         let text_system = cx.text_system().clone();
-        let installed = self.fleet.upgrade().map(|f| f.read(cx).installed_fonts.clone()).unwrap_or_default();
+        let installed = self.fleet.upgrade().map(|f| f.read(cx).term_look.installed_fonts.clone()).unwrap_or_default();
         cx.spawn(async move |this, cx| {
             let found = cx
                 .background_spawn(async move { installed.iter().filter(|f| term_element::is_monospace(&text_system, f)).cloned().collect::<Vec<_>>() })
@@ -111,7 +111,7 @@ impl SettingsView {
             .upgrade()
             .map(|f| {
                 let f = f.read(cx);
-                (f.term_font_family.clone(), f.term_ligatures, f.installed_fonts.clone())
+                (f.term_look.term_font_family.clone(), f.term_look.term_ligatures, f.term_look.installed_fonts.clone())
             })
             .unwrap_or_else(|| (SharedString::default(), self.settings.terminal.ligatures(), Arc::default()));
         vec![
@@ -189,7 +189,7 @@ impl SettingsView {
 
     fn render_font_size(&self, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
-        let size = self.fleet.upgrade().map(|f| f.read(cx).term_font_size);
+        let size = self.fleet.upgrade().map(|f| f.read(cx).term_look.term_font_size);
         self.shown_font_size.set(size);
         let font_size = match size {
             Some(size) => div()
@@ -333,7 +333,7 @@ impl SettingsView {
             .fleet
             .upgrade()
             .map(|f| {
-                let default = &f.read(cx).shell_default;
+                let default = &f.read(cx).term_look.shell_default;
                 (default.found().cloned(), default.resolved().and_then(|(_, notice)| notice.clone()))
             })
             .unwrap_or_default();

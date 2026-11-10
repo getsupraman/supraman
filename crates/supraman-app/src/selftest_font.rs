@@ -36,7 +36,7 @@ pub(crate) async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWin
 
 async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     close_all(view, cx);
-    let (start, installed) = view.read_with(cx, |v, _| (v.term_font(), v.installed_fonts.clone()));
+    let (start, installed) = view.read_with(cx, |v, _| (v.term_font(), v.term_look.installed_fonts.clone()));
     let default = default_terminal_font_family(&installed);
     if start.family != default || !start.ligatures {
         bail!("the terminal font starts as {start:?}, not {default} with ligatures");

@@ -3,7 +3,8 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use gpui::{AsyncApp, Context, SharedString, WeakEntity, px};
+use gpui::{App, AsyncApp, Context, Entity, SharedString, WeakEntity, Window, px};
+use supraman_ui::open::{self, Link};
 use supraman_claude::check_supported;
 use supraman_core::Settings;
 use supraman_core::store::Save;
@@ -14,6 +15,7 @@ use super::{Cli, FleetView, Poller, REFRESH_EVERY, Refresh, any_exit};
 use crate::dismissed_messages::DismissedMessages;
 use crate::stars::Stars;
 use crate::supervise::Report;
+use crate::work_view::WorkInbox;
 
 const RUNS_DISMISSED: &str = "schedules/dismissed.json";
 const WAITING_DISMISSED: &str = "schedules/waiting-dismissed.json";
@@ -42,6 +44,24 @@ fn absorbed(mine: &mut DismissedMessages, loaded: DismissedMessages) -> Option<S
 }
 
 impl FleetView {
+    pub(super) fn ask_before_close(window: &mut Window, cx: &mut Context<Self>) {
+        let this = cx.weak_entity();
+        window.on_window_should_close(cx, move |window, cx| {
+            if this.update(cx, |this, cx| this.should_close(window, cx)).unwrap_or(true) {
+                crate::tray::close(window, cx);
+            }
+            false
+        });
+    }
+
+    pub(super) fn observe_inbox(work_inbox: &Entity<WorkInbox>, cx: &mut Context<Self>) {
+        cx.observe(work_inbox, |this, _, cx| {
+            this.check_loaded(cx);
+            cx.notify();
+        })
+        .detach();
+    }
+
     // until they land nothing is starred or dismissed; a star or dismissal made meanwhile joins them
     pub(super) fn load_stores(home: Option<PathBuf>, cx: &mut Context<Self>) {
         let Some(home) = home else { return };
@@ -58,15 +78,15 @@ impl FleetView {
         let absorbed_stars = self.stars.absorb(&early);
         let save = self.stars.follow(&self.transcripts.continued).or(absorbed_stars);
         self.save_off_thread(save, "Cannot save the starred sessions", cx);
-        let save = absorbed(&mut self.dismissed_messages, messages.0);
+        let save = absorbed(&mut self.mail.dismissed_messages, messages.0);
         self.save_off_thread(save, "Cannot save the dismissed messages", cx);
-        let save = absorbed(&mut self.runs_dismissed, runs.0);
+        let save = absorbed(&mut self.scheduling.runs_dismissed, runs.0);
         self.save_off_thread(save, "Cannot save the dismissed runs", cx);
-        let save = absorbed(&mut self.waiting_dismissed, waiting.0);
+        let save = absorbed(&mut self.scheduling.waiting_dismissed, waiting.0);
         self.save_off_thread(save, "Cannot save the dismissed approvals", cx);
         self.action_error = stars.1.or(messages.1).or(runs.1).or(waiting.1).or(self.action_error.take());
         if !self.stars.ids().is_empty() {
-            self.transcripts_nudge.wake();
+            self.polls.transcripts_nudge.wake();
         }
         self.invalidate_tree();
         cx.notify();
@@ -83,13 +103,13 @@ impl FleetView {
     }
 
     fn settings_loaded(&mut self, loaded: Settings, cx: &mut Context<Self>) {
-        if let Some(width) = self.left_saves.read(cx).loaded(loaded.window.left_width) {
-            self.left_width = width;
+        if let Some(width) = self.sidebar.left_saves.read(cx).loaded(loaded.window.left_width) {
+            self.sidebar.left_width = width;
         }
-        self.term_font_size = px(loaded.terminal.font_size() as f32);
-        self.term_font_family = SharedString::from(loaded.terminal.font_family(&self.installed_fonts));
-        self.term_ligatures = loaded.terminal.ligatures();
-        self.shell_default.read(loaded.terminal.clone());
+        self.term_look.term_font_size = px(loaded.terminal.font_size() as f32);
+        self.term_look.term_font_family = SharedString::from(loaded.terminal.font_family(&self.term_look.installed_fonts));
+        self.term_look.term_ligatures = loaded.terminal.ligatures();
+        self.term_look.shell_default.read(loaded.terminal.clone());
         let mode = loaded.window.tab_keys();
         self.tab_keys.update(cx, |keys, _| keys.mode = mode);
         cx.notify();
@@ -101,7 +121,7 @@ impl FleetView {
             let Some((mut poller, supported, refresh)) = first_poll(&this, poller, cx).await else { return };
             let mut first = Some(refresh);
             loop {
-                let Ok(asks) = this.read_with(cx, |this, _| this.refresh_asks) else {
+                let Ok(asks) = this.read_with(cx, |this, _| this.polls.refresh_asks) else {
                     return;
                 };
                 let refresh = match first.take() {
@@ -142,7 +162,7 @@ impl FleetView {
         self.apply(refresh, cx);
         self.refresh_details(cx);
         self.read_tab_branches(cx);
-        if self.other_scans == 0 {
+        if self.scheduling.other_scans == 0 {
             self.scan_other_schedules(cx);
         }
         cx.notify();
@@ -153,10 +173,10 @@ impl FleetView {
         if let Some(report) = report {
             self.apply_report(report, cx);
         }
-        self.refreshes += 1;
-        self.refreshes_answered = asks;
+        self.polls.refreshes += 1;
+        self.polls.refreshes_answered = asks;
         self.check_loaded(cx);
-        let left = std::mem::take(&mut self.left_pending);
+        let left = std::mem::take(&mut self.workman_state.left_pending);
         self.leave_servers(left, cx);
         self.resolve_tabs(cx);
         self.reopen_tabs(cx);
@@ -203,4 +223,11 @@ async fn first_poll(this: &WeakEntity<FleetView>, mut poller: Poller, cx: &mut A
     })
     .ok()?;
     Some((poller, supported, refresh))
+}
+
+pub(super) fn open_link(link: &Link, cx: &mut App) {
+    match link {
+        Link::Url(url) => open::open_off_thread(url.clone(), cx).detach(),
+        Link::Path(path) => open::open_off_thread(path.clone(), cx).detach(),
+    }
 }

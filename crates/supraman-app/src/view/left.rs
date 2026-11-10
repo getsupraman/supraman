@@ -222,21 +222,21 @@ fn glyph_button(hits: &HitTargets, key: String, icon: Icon, tip: impl Into<Share
 
 impl FleetView {
     fn pointer_on_left(&mut self, cx: &mut Context<Self>) {
-        if let Some(hold) = &mut self.left_hold {
+        if let Some(hold) = &mut self.sidebar.left_hold {
             hold.moved = Instant::now();
             return;
         }
-        let mut keys: HashSet<String> = self.needs.iter().map(need_key).collect();
-        keys.extend(self.messages.iter().flat_map(|(w, msgs)| msgs.iter().map(move |m| messages::message_key(w, m))));
+        let mut keys: HashSet<String> = self.supervising.needs.iter().map(need_key).collect();
+        keys.extend(self.mail.messages.iter().flat_map(|(w, msgs)| msgs.iter().map(move |m| messages::message_key(w, m))));
         keys.extend(self.work_inbox.read(cx).rows().into_iter().map(|(w, r)| work_key(w, r)));
-        self.left_hold = Some(Hold { keys, moved: Instant::now() });
-        self.left_holds += 1;
-        self.left_hold_timer = Some(cx.spawn(async move |this, cx| {
+        self.sidebar.left_hold = Some(Hold { keys, moved: Instant::now() });
+        self.sidebar.left_holds += 1;
+        self.sidebar.left_hold_timer = Some(cx.spawn(async move |this, cx| {
             let mut wait = HOLD_STILL;
             loop {
                 cx.background_executor().timer(wait).await;
                 let still_for = this.update(cx, |this, cx| {
-                    let still = this.left_hold.as_ref().map(|h| h.moved.elapsed()).filter(|still| *still < HOLD_STILL);
+                    let still = this.sidebar.left_hold.as_ref().map(|h| h.moved.elapsed()).filter(|still| *still < HOLD_STILL);
                     if still.is_none() {
                         this.release_left(cx);
                     }
@@ -251,26 +251,26 @@ impl FleetView {
     }
 
     pub(super) fn release_left(&mut self, cx: &mut Context<Self>) {
-        if self.left_hold.take().is_some() {
+        if self.sidebar.left_hold.take().is_some() {
             cx.notify();
         }
-        self.left_hold_timer = None;
+        self.sidebar.left_hold_timer = None;
     }
 
     #[cfg(feature = "selftest")]
     pub fn left_held(&self) -> bool {
-        self.left_hold.is_some()
+        self.sidebar.left_hold.is_some()
     }
 
     fn shown_now(&self, key: &str) -> bool {
-        self.left_hold.as_ref().is_none_or(|h| h.keys.contains(key))
+        self.sidebar.left_hold.as_ref().is_none_or(|h| h.keys.contains(key))
     }
 
     pub fn collapse_all(&mut self, collapse: bool, cx: &mut Context<Self>) {
         if collapse {
-            self.collapsed.extend(self.workspaces.iter().map(|w| format!("workspace:{}", w.name)));
+            self.sidebar.collapsed.extend(self.workspaces.iter().map(|w| format!("workspace:{}", w.name)));
         } else {
-            self.collapsed.clear();
+            self.sidebar.collapsed.clear();
         }
         cx.notify();
     }
@@ -293,7 +293,7 @@ impl FleetView {
             .relative()
             .flex()
             .flex_col()
-            .w(self.left_width)
+            .w(self.sidebar.left_width)
             .flex_none()
             .h_full()
             .bg(colors.panel_background)
@@ -340,19 +340,19 @@ impl FleetView {
                 banner::tinted(status.error),
             ));
         }
-        if let Some(error) = &self.registry_error {
+        if let Some(error) = &self.listing.registry_error {
             notices.push(notice(
                 format!("Cannot read the workspace registry: {error}"),
                 banner::tinted(status.error),
             ));
         }
-        for skipped in &self.registry_skipped {
+        for skipped in &self.listing.registry_skipped {
             notices.push(notice(
                 format!("A workspace is left out, the others run: {skipped}"),
                 banner::tinted(status.error),
             ));
         }
-        if let Some(error) = &self.sessions_error {
+        if let Some(error) = &self.listing.sessions_error {
             notices.push(notice(
                 format!("Session list is stale, the last read failed (nothing is started or stopped meanwhile): {error}"),
                 banner::tinted(status.warning),
@@ -370,7 +370,7 @@ impl FleetView {
             notices.push(self.render_workman_notice(problem, cx));
         }
         notices.extend(self.render_update_notice(cx));
-        if let Some(warning) = &self.start_warning {
+        if let Some(warning) = &self.workman_state.start_warning {
             notices.push(notice(warning.clone(), banner::tinted(status.warning)));
         }
         for (name, r) in &self.removing {
@@ -380,13 +380,13 @@ impl FleetView {
                 banner::plain(cx),
             ));
         }
-        if let Some(e) = &self.other_scan_error {
+        if let Some(e) = &self.scheduling.other_scan_error {
             notices.push(notice(e.clone(), banner::tinted(status.warning)));
         }
         notices.extend(self.render_confirm(cx));
         notices.extend(self.add_dialog().map(|d| d.clone().into_any_element()));
         notices.extend(self.render_schedule_edit(cx));
-        if self.registry_error.is_none() && self.registry_skipped.is_empty() && self.refreshes > 0 && tree.workspaces.is_empty() && self.adding.is_none() {
+        if self.listing.registry_error.is_none() && self.listing.registry_skipped.is_empty() && self.polls.refreshes > 0 && tree.workspaces.is_empty() && self.dialogs.adding.is_none() {
             notices.push(notice(
                 "No workspaces registered. Add one with the folder button above, or:  sm workspace add <dir>".into(),
                 banner::plain(cx),
@@ -397,10 +397,10 @@ impl FleetView {
 
     fn left_body(&mut self, tree: &Rc<fleet::Tree>, cx: &mut Context<Self>) -> Stateful<Div> {
         let query = self.search_query(cx);
-        self.search_marks.clear();
+        self.sidebar.search_marks.clear();
         if query.is_empty() {
             self.set_left_rows(tree);
-            let list = gpui::list(self.left_list.state(), cx.processor(|this: &mut Self, ix: usize, _, cx| div().w_full().child(this.render_left_row(ix, cx)).into_any_element())).size_full().pb_4();
+            let list = gpui::list(self.sidebar.left_list.state(), cx.processor(|this: &mut Self, ix: usize, _, cx| div().w_full().child(this.render_left_row(ix, cx)).into_any_element())).size_full().pb_4();
             div().id("fleet").relative().child(hit_target(&self.hits, "tree-area".into())).flex().flex_col().flex_1().min_h(relative(TREE_MIN_SHARE)).child(list)
         } else {
             let body = div()
@@ -423,7 +423,7 @@ impl FleetView {
         for (w, workspace) in tree.workspaces.iter().enumerate() {
             let name = &workspace.name;
             rows.push((LeftRow::Workspace(w), format!("ws:{name}"), vec![name.clone()]));
-            if self.collapsed.contains(&format!("workspace:{name}")) {
+            if self.sidebar.collapsed.contains(&format!("workspace:{name}")) {
                 continue;
             }
             for (i, row) in workspace.supervised.iter().enumerate() {
@@ -433,7 +433,7 @@ impl FleetView {
             for (r, repo) in workspace.repos.iter().enumerate() {
                 let path = format!("{name}/{}", repo.name);
                 rows.push((LeftRow::Folder(w, r), format!("repo:{path}"), vec![path.clone()]));
-                if self.collapsed.contains(&format!("repo:{path}")) {
+                if self.sidebar.collapsed.contains(&format!("repo:{path}")) {
                     continue;
                 }
                 for (i, row) in repo.sessions.iter().enumerate() {
@@ -445,30 +445,30 @@ impl FleetView {
             }
         }
         rows.push((LeftRow::Others, "others".into(), ["others-row", "other-row-", "other-name-", "other-summary-"].iter().map(|p| p.to_string()).collect()));
-        self.left_list.set_rows(rows.iter().map(|(_, key, tokens)| (SharedString::from(key.clone()), tokens.clone())).collect());
-        self.left_rows = Rc::new((tree.clone(), rows.into_iter().map(|(row, ..)| row).collect()));
-        if let Some((pending, since)) = &self.reveal_pending {
+        self.sidebar.left_list.set_rows(rows.iter().map(|(_, key, tokens)| (SharedString::from(key.clone()), tokens.clone())).collect());
+        self.sidebar.left_rows = Rc::new((tree.clone(), rows.into_iter().map(|(row, ..)| row).collect()));
+        if let Some((pending, since)) = &self.sidebar.reveal_pending {
             let shown = match pending {
-                PendingReveal::Row(key) => self.left_list.reveal_where(|k| k == key),
+                PendingReveal::Row(key) => self.sidebar.left_list.reveal_where(|k| k == key),
                 PendingReveal::TabSession(tab) => match self.tab(*tab).and_then(|t| t.claude.clone()) {
-                    Some(sid) => self.left_list.reveal_where(|k| k.ends_with(&format!("/{sid}"))),
+                    Some(sid) => self.sidebar.left_list.reveal_where(|k| k.ends_with(&format!("/{sid}"))),
                     None => self.tab(*tab).is_none(),
                 },
             };
             if shown || since.elapsed() > REVEAL_WITHIN {
-                self.reveal_pending = None;
+                self.sidebar.reveal_pending = None;
             }
         }
     }
 
     /// The row of what the user just made, scrolled into view once the tree holds it.
     pub(super) fn reveal_new(&mut self, pending: PendingReveal) {
-        self.reveal_pending = Some((pending, Instant::now()));
+        self.sidebar.reveal_pending = Some((pending, Instant::now()));
     }
 
     #[cfg(feature = "selftest")]
     pub fn reveal_hit(&self, hit: &str) -> bool {
-        self.left_list.reveal(hit)
+        self.sidebar.left_list.reveal(hit)
     }
 
     /// A selftest's look at a sidebar key: painted, or false after the row that claims it was scrolled to.
@@ -486,23 +486,23 @@ impl FleetView {
     /// How many folder rows of `workspace` the sidebar holds, in view or not.
     #[cfg(feature = "selftest")]
     pub fn folder_rows(&self, workspace: &str) -> usize {
-        let (tree, rows) = &*self.left_rows;
+        let (tree, rows) = &*self.sidebar.left_rows;
         rows.iter().filter(|r| matches!(r, LeftRow::Folder(w, _) if tree.workspaces[*w].name == workspace)).count()
     }
 
     #[cfg(feature = "selftest")]
     pub fn left_list(&self) -> &supraman_ui::keyed_list::KeyedList {
-        &self.left_list
+        &self.sidebar.left_list
     }
 
     fn render_left_row(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
-        let rows = self.left_rows.clone();
+        let rows = self.sidebar.left_rows.clone();
         let (tree, rows) = (&rows.0, &rows.1);
         let Some(row) = rows.get(ix) else { return div().into_any_element() };
         match *row {
             LeftRow::Workspace(w) => {
                 let workspace = &tree.workspaces[w];
-                let open = !self.collapsed.contains(&format!("workspace:{}", workspace.name));
+                let open = !self.sidebar.collapsed.contains(&format!("workspace:{}", workspace.name));
                 self.render_workspace_row(workspace, open, cx)
             }
             LeftRow::Supervised(w, i) => {
@@ -512,7 +512,7 @@ impl FleetView {
             LeftRow::Schedules(w) => div().flex().flex_col().children(self.render_schedules(&tree.workspaces[w], cx)).into_any_element(),
             LeftRow::Folder(w, r) => {
                 let (workspace, repo) = (&tree.workspaces[w], &tree.workspaces[w].repos[r]);
-                let open = !self.collapsed.contains(&format!("repo:{}/{}", workspace.name, repo.name));
+                let open = !self.sidebar.collapsed.contains(&format!("repo:{}/{}", workspace.name, repo.name));
                 self.render_folder_row(workspace, repo, open, cx)
             }
             LeftRow::Session(w, r, i) => {
@@ -544,7 +544,7 @@ impl FleetView {
             .child(SharedString::from(format!("{} more closed…", repo.more)))
             .child(hit_target(&self.hits, hit))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.closed_expanded.insert(key.clone());
+                this.sidebar.closed_expanded.insert(key.clone());
                 this.invalidate_tree();
                 cx.notify();
             }))
@@ -575,9 +575,9 @@ impl FleetView {
     fn render_inbox(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let all_work: Vec<(String, supraman_workman::InboxRow)> =
             self.work_inbox.read(cx).rows().into_iter().map(|(w, r)| (w.to_string(), r.clone())).collect();
-        let total = self.needs.len() + all_work.len();
+        let total = self.supervising.needs.len() + all_work.len();
         let work_rows: Vec<_> = all_work.into_iter().filter(|(w, r)| self.shown_now(&work_key(w, r))).collect();
-        let mut needs: Vec<&NeedsYou> = self.needs.iter().filter(|n| self.shown_now(&need_key(n))).collect();
+        let mut needs: Vec<&NeedsYou> = self.supervising.needs.iter().filter(|n| self.shown_now(&need_key(n))).collect();
         let scheduled = self.render_schedule_inbox(cx);
         if needs.is_empty() && work_rows.is_empty() && scheduled.is_empty() {
             return None;
@@ -691,7 +691,7 @@ impl FleetView {
         let color = if self.workman.unreachable() { status.error } else { status.warning };
         let mut actions = div().flex().flex_wrap().gap_2().pt_1();
         if self.workman.signed_out() {
-            actions = match self.signing_in {
+            actions = match self.workman_state.signing_in {
                 Some(_) => actions.child(button::bordered(&self.hits, "ws-setup-cancel", "Cancel sign-in", cx).on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
                         cx.stop_propagation();
@@ -735,10 +735,10 @@ impl FleetView {
                 dismiss,
             ))
             .children(self.workman.fix().map(|fix| div().text_xs().text_color(colors.text).child(SharedString::from(fix))))
-            .children(self.signing_in.as_ref().map(|url| {
+            .children(self.workman_state.signing_in.as_ref().map(|url| {
                 div().text_xs().text_color(colors.text).child(SharedString::from(format!("Waiting for the sign-in to {url} in your browser…")))
             }))
-            .children(self.sign_in_error.clone().map(|e| div().text_xs().text_color(status.error).child(SharedString::from(e))))
+            .children(self.workman_state.sign_in_error.clone().map(|e| div().text_xs().text_color(status.error).child(SharedString::from(e))))
             .child(actions)
             .child(hit_target(&self.hits, "ws-setup-notice".into()))
             .into_any_element()
@@ -909,7 +909,7 @@ impl FleetView {
 
     fn relay_glyph(&self, w: &str, cx: &gpui::App) -> Option<Stateful<Div>> {
         let status = cx.theme().status();
-        let relay = self.relays.get(w).and_then(|r| r.label(now_ms()));
+        let relay = self.mail.relays.get(w).and_then(|r| r.label(now_ms()));
         relay.and_then(|(text, _)| {
             let (icon, color) = match relay_word(&text) {
                 "direct" => return None,
@@ -1163,7 +1163,7 @@ impl FleetView {
         let at = row.scope(workspace);
         let dot = if row.foreign { colors.text_muted } else { health_color(&row.health, cx) };
         let state = if row.foreign || matches!(row.health, Health::Stopped | Health::Orphaned { .. }) { secondary(cx) } else { dot };
-        let marks = self.search_marks.get(&s.session_id);
+        let marks = self.sidebar.search_marks.get(&s.session_id);
         let tree_key = format!("session-{}{at}", s.session_id);
         let star = self.session_star(row, &at, cx);
         let action = self.session_open(workspace, repo, row, cx);
@@ -1313,7 +1313,7 @@ impl FleetView {
             );
         }
         let adopting = repo_session_name(workspace, &repo.name)
-            .and_then(|name| self.needs.iter().find(|n| n.workspace == workspace && n.name == name && matches!(n.action, Some(Remedy::Adopt { .. }))));
+            .and_then(|name| self.supervising.needs.iter().find(|n| n.workspace == workspace && n.name == name && matches!(n.action, Some(Remedy::Adopt { .. }))));
         if let Some(need) = adopting {
             let key = format!("adopt-failed-{workspace}/{}", repo.name);
             let why = format!("{}: {}. Retry or Start fresh in the Inbox.", need.name, need.detail);
@@ -1348,7 +1348,7 @@ impl FleetView {
     }
 
     fn render_confirm(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let confirm = self.confirm.as_ref()?;
+        let confirm = self.dialogs.confirm.as_ref()?;
         Some(confirm.render(&self.hits, "confirm", |this: &mut Self, yes, _, cx| this.answer_confirm(yes, cx), cx).mx_3().my_2().into_any_element())
     }
 }

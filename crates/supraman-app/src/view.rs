@@ -1,6 +1,5 @@
 use std::{
-    cell::RefCell,
-    collections::{BTreeMap, HashMap as StdHashMap, HashSet},
+    collections::{BTreeMap, HashMap as StdHashMap},
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
@@ -13,9 +12,9 @@ use std::{
 use futures::FutureExt as _;
 use supraman_claude::{ClaudeVersion, Sent, Session, list_sessions, now_ms, send_from_human};
 use supraman_core::{
-    DEFAULT_MAX_WORKING, Event, EventReader, FM_PREFIX, OutboxMessage, Workspace, Registry, Settings, mark_answered,
+    Event, EventReader, FM_PREFIX, Workspace, Registry, Settings, mark_answered,
 };
-use supraman_supervisor::{DesiredState, NeedsYou, workspace_session_name};
+use supraman_supervisor::{DesiredState, workspace_session_name};
 use supraman_term::{
     MouseInputMode, Terminal, TerminalBuilder, TerminalMode,
     terminal_settings::{AlternateScroll, CursorShape},
@@ -42,11 +41,10 @@ use util::paths::PathStyle;
 
 use crate::compose::{self, Compose};
 use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
-use crate::hand::{Extras, Hands};
+use crate::hand::Extras;
 use crate::settings_window::{self, SettingsView};
-use crate::dismissed_messages::DismissedMessages;
 use crate::stars::Stars;
-use crate::supervise::{self, RelayStatus, Report, Supervision};
+use crate::supervise::{self, Report, Supervision};
 use crate::tab_card;
 use crate::transcripts_load::TranscriptsLoad;
 use crate::work_view::{WorkHub, WorkInbox, WorkView};
@@ -55,6 +53,7 @@ use supraman_workman::status::WorkmanStatus;
 
 mod delete;
 pub(crate) mod details;
+mod dialogs;
 mod drop;
 mod folder_list;
 mod folders;
@@ -62,22 +61,33 @@ pub(crate) mod git_tab;
 mod hand_tab;
 mod left;
 mod left_width;
+mod lifecycle;
 mod links;
+mod listing;
+mod mail;
 mod manage;
 mod menu;
 pub(crate) use supraman_git_view::occupancy;
 pub(crate) mod notices;
+mod polls;
 mod reopen;
 mod results;
 mod right;
 pub(crate) mod shells;
+mod sidebar;
+use sidebar::CachedTree;
 pub(crate) mod schedules;
+mod schedule_state;
 mod startup;
 pub(crate) mod start;
 pub(crate) mod tab_keys;
+mod tab_saving;
+mod supervising;
 mod term;
+mod term_look;
 mod work_tab;
 mod workman_url;
+mod workman_state;
 pub(crate) mod workspace_dialog;
 pub(crate) mod writes;
 
@@ -89,7 +99,7 @@ pub(crate) use left::grid;
 pub use manage::Removing;
 #[cfg(feature = "selftest")]
 pub use menu::MenuAction;
-pub use menu::{Confirm, Confirmed, ContextMenu, MenuTarget};
+pub use menu::{Confirm, Confirmed, MenuTarget};
 
 gpui::actions!(supraman, [FocusSearch]);
 
@@ -238,147 +248,53 @@ impl Tab {
 pub struct FleetView {
     pub cli: Cli,
     pub workspaces: Vec<Workspace>,
-    pub registry_error: Option<String>,
-    pub registry_skipped: Vec<String>,
     pub sessions: Vec<Session>,
-    /// [`fleet::main_repos`] of `sessions`, so rendering never walks the filesystem.
-    main_repos: StdHashMap<PathBuf, Option<PathBuf>>,
-    pub sessions_error: Option<String>,
-    pub last_refresh_took: Option<Duration>,
-    pub refreshes: u64,
     pub show_stopped: bool,
     /// Set only by a selftest: see [`fleet::Supervised::own_prefix`].
     pub own_prefix: Option<String>,
-    collapsed: HashSet<String>,
     pub tabs: Vec<Tab>,
     pub active: Option<u64>,
     next_tab_id: u64,
     pub shell_args: Vec<String>,
-    pub(crate) shell_default: shells::ShellDefault,
     focus: FocusHandle,
     pub probe: FrameProbe,
     pub hits: HitTargets,
     pub(crate) window: AnyWindowHandle,
-    quitting: bool,
-    quit_asked: bool,
     pub home: Option<PathBuf>,
     pub plugin_dir: Option<PathBuf>,
     pub setup_notices: Vec<String>,
-    pub needs: Vec<NeedsYou>,
-    pub desired: BTreeMap<String, (bool, Vec<String>)>,
-    pub max_working: usize,
-    pub supervise_errors: Vec<String>,
-    supervise_dismissed: Vec<String>,
-    pub daemon_hold: Option<String>,
     pub action_error: Option<String>,
-    pub last_attempt: StdHashMap<String, i64>,
-    pub hooks: StdHashMap<String, HookSignal>,
-    pub polled_at: i64,
-    pub ticks: u64,
-    retries: Arc<Mutex<Vec<(String, String)>>>,
-    #[cfg(feature = "selftest")]
-    pub injected: Arc<Mutex<Vec<Session>>>,
-    /// Bumped by every registry write from this window; a poll that read the registry before one is not applied.
-    registry_writes: Arc<AtomicU64>,
-    pub left_width: Pixels,
-    left_saves: Entity<left_width::LeftWidth>,
-    pub term_font_size: Pixels,
-    pub term_font_family: SharedString,
-    pub term_ligatures: bool,
-    pub installed_fonts: Arc<Vec<String>>,
-    font_save: Option<gpui::Task<()>>,
-    zoom_carried: f32,
     pub(crate) settings_window: Option<WindowHandle<SettingsView>>,
-    last_alive: StdHashMap<String, i64>,
-    pub relays: BTreeMap<String, RelayStatus>,
-    pub messages: BTreeMap<String, Vec<OutboxMessage>>,
-    pub expanded: HashSet<String>,
-    pub dismissed_messages: DismissedMessages,
-    left_hold: Option<left::Hold>,
-    left_hold_timer: Option<gpui::Task<()>>,
-    pub left_holds: u64,
-    pub answered:BTreeMap<String, BTreeMap<String, String>>,
-    pub answered_route: BTreeMap<String, String>,
-    pub compose: Option<Compose>,
     writes: writes::Writes,
     occupancy: occupancy::Live,
     pub work_inbox: Entity<WorkInbox>,
-    pub menu: Option<ContextMenu>,
-    pub confirm: Option<Confirm>,
-    pub adding: Option<(Entity<workspace_dialog::WorkspaceDialog>, gpui::Subscription)>,
     pub removing: BTreeMap<String, Removing>,
-    pub pick_folder: Option<PathBuf>,
     pub open_with: fn(&Path) -> Result<(), String>,
     pub open_link_with: fn(&Link, &mut App),
     pub workman: WorkmanStatus,
-    workman_dismissed: Option<String>,
-    workman_recheck: Nudge,
-    pub start_warning: Option<String>,
-    pub signing_in: Option<String>,
-    pub sign_in_error: Option<String>,
-    hands: Option<Arc<Mutex<Hands>>>,
-    /// The last run's hand tokens are released, so a reopened tab's mint is not revoked with them.
-    hands_ready: bool,
     pub hand_notices: Vec<String>,
-    hands_released: bool,
-    quit_release: Option<gpui::Task<()>>,
-    desired_writes: futures::channel::mpsc::UnboundedSender<DesiredWrite>,
-    synced_server: Option<String>,
-    left_servers: std::collections::HashSet<String>,
-    left_pending: Vec<String>,
-    pub closed: Vec<Session>,
-    /// A selftest's closed sessions, kept across transcript scans.
-    pub injected_closed: Vec<Session>,
-    tree_cache: RefCell<Option<CachedTree>>,
-    left_list: supraman_ui::keyed_list::KeyedList,
-    reveal_pending: Option<(left::PendingReveal, Instant)>,
-    left_rows: Rc<(Rc<Tree>, Vec<left::LeftRow>)>,
-    closed_repos: StdHashMap<PathBuf, Option<PathBuf>>,
-    pub transcripts_nudge: Nudge,
-    pub poll_nudge: Nudge,
-    pub refresh_asks: u64,
-    refreshes_answered: u64,
-    /// The first poll's snapshot (or its failure) is applied.
-    pub sessions_read: bool,
     pub transcripts: TranscriptsLoad,
-    transcripts_answered: u64,
     /// Every source of the tree has completed once (`loading`); until then the action bar says what is loading.
     pub loaded: bool,
     pub stars: Stars,
-    pub closed_expanded: HashSet<String>,
     pub claude_command: String,
     pub search: Entity<TextInput>,
-    search_marks: StdHashMap<String, crate::search::Marks>,
-    tabs_resolving: bool,
-    tabs_again: bool,
-    blink: term::CursorBlink,
     pub toast: ToastSlot,
     pub pane_toast: ToastSlot,
     pub updates: crate::updates::Updates,
     pub claude_dir: Option<PathBuf>,
-    pub deleted: StdHashMap<String, i64>,
-    pub deleting: HashSet<String>,
     painted_sessions: bool,
-    pub tabs_restored: bool,
-    tabs_reopening: bool,
-    tabs_frozen: bool,
-    tabs_saved: Option<crate::saved_tabs::SavedTabs>,
-    tabs_writes: futures::channel::mpsc::UnboundedSender<crate::saved_tabs::SavedTabs>,
-    pub tab_notices: Vec<String>,
-    pub schedules: BTreeMap<String, Vec<crate::schedules::ScheduleRow>>,
-    pub schedule_errors: Vec<String>,
-    schedule_errors_dismissed: Vec<String>,
-    /// A failed `sync` by `<ws>/<id>` of the schedule acted on: on its row and in the Inbox until a sync succeeds.
-    pub sync_errors: BTreeMap<String, String>,
-    pub registrar: schedules::SharedRegistrar,
-    /// Task Scheduler's tasks that run claude outside Supraman, as the last scan found them; read only.
-    pub other_schedules: Option<supraman_core::schedule::Foreign>,
-    pub other_scan_error: Option<String>,
-    pub(crate) other_scans: u64,
-    pub schedule_store: Arc<dyn supraman_core::secret::SecretStore>,
-    pub schedule_edit: Option<schedules::ScheduleEdit>,
-    pub runs_dismissed: DismissedMessages,
-    pub waiting_dismissed: DismissedMessages,
+    pub saving: tab_saving::TabSaving,
+    pub sidebar: sidebar::Sidebar,
+    pub term_look: term_look::TermLook,
+    pub workman_state: workman_state::WorkmanState,
+    lifecycle: lifecycle::Lifecycle,
+    pub polls: polls::Polls,
+    pub supervising: supervising::Supervising,
+    pub mail: mail::Mail,
+    pub listing: listing::Listing,
+    pub dialogs: dialogs::Dialogs,
+    pub scheduling: schedule_state::ScheduleState,
     pub(crate) tab_keys: Entity<tab_keys::TabKeyState>,
 }
 
@@ -543,53 +459,19 @@ impl FleetView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
         focus.focus(window, cx);
-        let this = cx.weak_entity();
-        window.on_window_should_close(cx, move |window, cx| {
-            if this.update(cx, |this, cx| this.should_close(window, cx)).unwrap_or(true) {
-                crate::tray::close(window, cx);
-            }
-            false
-        });
+        Self::ask_before_close(window, cx);
         let home = Registry::from_env().ok().map(|r| r.home().to_path_buf());
         let defaults = Settings::default();
-        let term_font_size = px(defaults.terminal.font_size() as f32);
-        let installed_fonts: Arc<Vec<String>> = Arc::new(cx.text_system().all_font_names());
-        let term_font_family = SharedString::from(defaults.terminal.font_family(&installed_fonts));
-        let term_ligatures = defaults.terminal.ligatures();
-        let retries: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
-        let injected: Arc<Mutex<Vec<Session>>> = Arc::default();
-        let registry_writes: Arc<AtomicU64> = Arc::default();
-        let (poll_nudge, woken) = nudge::nudge();
-        let poller = Poller {
-            home: home.clone(),
-            events: None,
-            supervision: None,
-            retries: retries.clone(),
-            injected: injected.clone(),
-            registry_writes: registry_writes.clone(),
-            snapshot: None,
-            first: true,
-            store: None,
-        };
-        timeline("window", Duration::ZERO);
-        Self::start_polling(poller, woken, cx);
+        let (polls, transcripts_nudged) = polls::Polls::start(home.clone(), cx);
         Self::load_settings(home.clone(), cx);
         Self::load_stores(home.clone(), cx);
-        let blink = term::CursorBlink::start(cx);
+        let term_look = term_look::TermLook::new(&defaults.terminal, cx);
         let (workman_recheck, recheck) = nudge::nudge();
         Self::watch_workman(home.clone(), recheck, cx);
         let work_inbox = WorkInbox::shared(home.clone(), cx);
-        cx.observe(&work_inbox, |this, _, cx| {
-            this.check_loaded(cx);
-            cx.notify();
-        })
-        .detach();
+        Self::observe_inbox(&work_inbox, cx);
         let hands = home.as_deref().map(|home| Self::open_hands(home, cx));
-        let schedule_store: Arc<dyn supraman_core::secret::SecretStore> = match home.as_deref() {
-            Some(h) => supraman_core::secret::default_store(h),
-            None => Arc::new(supraman_core::secret::MemoryStore::default()),
-        };
-        let (transcripts_nudge, transcripts_nudged) = nudge::nudge();
+        let scheduling = schedule_state::ScheduleState::new(home.as_deref());
         let claude_dir = claude_dir_or(CLAUDE_DIR_OVERRIDE.get().map(PathBuf::as_path));
         Self::watch_transcripts(claude_dir.clone(), home.as_deref().map(|h| h.join(TRANSCRIPTS_CACHE)), transcripts_nudged, cx);
         let desired_writes = Self::desired_writer(cx);
@@ -602,141 +484,51 @@ impl FleetView {
         Self {
             cli: Cli::Checking,
             workspaces: Vec::new(),
-            registry_error: None,
-            registry_skipped: Vec::new(),
             sessions: Vec::new(),
-            main_repos: StdHashMap::new(),
-            sessions_error: None,
-            last_refresh_took: None,
-            refreshes: 0,
             show_stopped: false,
             own_prefix: None,
-            collapsed: HashSet::new(),
             tabs: Vec::new(),
             active: None,
             next_tab_id: 1,
             shell_args: vec!["-NoLogo".into()],
-            shell_default: shells::ShellDefault::new(defaults.terminal.clone()),
             focus,
             probe: FrameProbe::default(),
             hits: HitTargets::default(),
             window: window.window_handle(),
-            quitting: false,
-            quit_asked: false,
             home,
             plugin_dir: None,
             setup_notices: Vec::new(),
-            needs: Vec::new(),
-            desired: BTreeMap::new(),
-            max_working: DEFAULT_MAX_WORKING,
-            supervise_errors: Vec::new(),
-            supervise_dismissed: Vec::new(),
-            daemon_hold: None,
-            last_attempt: StdHashMap::new(),
-            hooks: StdHashMap::new(),
-            polled_at: 0,
-            ticks: 0,
-            retries,
-            #[cfg(feature = "selftest")]
-            injected,
-            registry_writes,
-            left_width: DEFAULT_LEFT_WIDTH,
-            left_saves: cx.new(|_| left_width::LeftWidth::default()),
-            term_font_size,
-            term_font_family,
-            term_ligatures,
-            installed_fonts,
-            font_save: None,
-            zoom_carried: 0.,
             settings_window: None,
-            last_alive: StdHashMap::new(),
-            relays: BTreeMap::new(),
-            messages: BTreeMap::new(),
-            expanded: HashSet::new(),
-            dismissed_messages: DismissedMessages::default(),
-            left_hold: None,
-            left_hold_timer: None,
-            left_holds: 0,
-            answered: BTreeMap::new(),
-            answered_route: BTreeMap::new(),
-            compose: None,
             writes: writes::Writes::default(),
             occupancy: occupancy::Live::default(),
             work_inbox,
-            menu: None,
-            confirm: None,
-            adding: None,
             removing: BTreeMap::new(),
-            pick_folder: None,
             open_with: |path| open::open(path.as_os_str()),
-            open_link_with: |link, cx| match link {
-                Link::Url(url) => open::open_off_thread(url.clone(), cx).detach(),
-                Link::Path(path) => open::open_off_thread(path.clone(), cx).detach(),
-            },
+            open_link_with: startup::open_link,
             workman: WorkmanStatus::Checking,
-            workman_dismissed: None,
-            workman_recheck,
-            start_warning: None,
-            signing_in: None,
-            sign_in_error: None,
-            hands_ready: hands.is_none(),
-            hands,
             hand_notices: Vec::new(),
-            hands_released: false,
-            quit_release: None,
-            desired_writes,
-            synced_server: None,
-            left_servers: Default::default(),
-            left_pending: Vec::new(),
-            closed: Vec::new(),
-            injected_closed: Vec::new(),
-            tree_cache: RefCell::new(None),
-            left_list: Default::default(),
-            reveal_pending: None,
-            left_rows: Rc::new((Rc::new(Tree { workspaces: Vec::new(), hidden_stopped: 0 }), Vec::new())),
-            closed_repos: StdHashMap::new(),
-            transcripts_nudge,
-            poll_nudge,
-            refresh_asks: 0,
-            refreshes_answered: 0,
-            sessions_read: false,
             transcripts: TranscriptsLoad::new(claude_dir.is_some()),
-            transcripts_answered: 0,
             loaded: false,
             action_error: None,
             stars: Stars::default(),
-            closed_expanded: HashSet::new(),
             claude_command: "claude".into(),
             search,
-            search_marks: StdHashMap::new(),
-            tabs_resolving: false,
-            tabs_again: false,
-            blink,
             toast: ToastSlot::default(),
             pane_toast: ToastSlot::default(),
             updates,
             claude_dir,
-            deleted: StdHashMap::new(),
-            deleting: HashSet::new(),
             painted_sessions: false,
-            tabs_restored: false,
-            tabs_reopening: false,
-            tabs_frozen: false,
-            tabs_saved: None,
-            tabs_writes,
-            tab_notices: Vec::new(),
-            schedules: BTreeMap::new(),
-            schedule_errors: Vec::new(),
-            schedule_errors_dismissed: Vec::new(),
-            sync_errors: BTreeMap::new(),
-            registrar: Arc::new(supraman_core::schedule::WindowsRegistrar),
-            other_schedules: None,
-            other_scan_error: None,
-            other_scans: 0,
-            schedule_store,
-            schedule_edit: None,
-            runs_dismissed: DismissedMessages::default(),
-            waiting_dismissed: DismissedMessages::default(),
+            saving: tab_saving::TabSaving::new(tabs_writes),
+            sidebar: sidebar::Sidebar::new(cx),
+            term_look,
+            workman_state: workman_state::WorkmanState::new(workman_recheck),
+            lifecycle: lifecycle::Lifecycle::new(hands),
+            polls,
+            supervising: supervising::Supervising::new(desired_writes),
+            mail: mail::Mail::default(),
+            listing: listing::Listing::default(),
+            dialogs: dialogs::Dialogs::default(),
+            scheduling,
             tab_keys: cx.new(|_| tab_keys::TabKeyState::new(defaults.window.tab_keys())),
         }
     }
@@ -745,16 +537,16 @@ impl FleetView {
     fn set_closed(&mut self, closed: Vec<Session>, continued: StdHashMap<String, String>, cx: &mut Context<Self>) {
         let save = self.stars.follow(&continued);
         self.save_off_thread(save, "Cannot save the starred sessions", cx);
-        self.closed = fleet::without_continued(closed, &continued, &self.sessions);
+        self.listing.closed = fleet::without_continued(closed, &continued, &self.sessions);
         self.transcripts.continued = continued;
-        self.closed.extend(self.injected_closed.iter().cloned());
+        self.listing.closed.extend(self.listing.injected_closed.iter().cloned());
         self.drop_deleted();
         self.invalidate_tree();
     }
 
     /// Until every source has loaded once, and from a Refresh until the poll and the transcript scan it woke are applied.
     pub fn refreshing(&self) -> bool {
-        !self.loaded || self.refreshes_answered < self.refresh_asks || (self.claude_dir.is_some() && self.transcripts_answered < self.refresh_asks)
+        !self.loaded || self.polls.refreshes_answered < self.polls.refresh_asks || (self.claude_dir.is_some() && self.polls.transcripts_answered < self.polls.refresh_asks)
     }
 
     /// The sources a fresh start still waits for, as the action bar names them; empty once all have loaded.
@@ -763,9 +555,9 @@ impl FleetView {
             return Vec::new();
         }
         let mut pending = Vec::new();
-        if !self.sessions_read {
+        if !self.polls.sessions_read {
             pending.push("session list".to_string());
-        } else if self.refreshes == 0 {
+        } else if self.polls.refreshes == 0 {
             pending.push("supervisor".to_string());
         }
         pending.extend(self.transcripts.pending());
@@ -789,24 +581,24 @@ impl FleetView {
         if self.refreshing() {
             return;
         }
-        self.refresh_asks += 1;
-        self.poll_nudge.wake();
-        self.transcripts_nudge.wake();
+        self.polls.refresh_asks += 1;
+        self.polls.poll_nudge.wake();
+        self.polls.transcripts_nudge.wake();
         cx.notify();
     }
 
     pub fn toggle_star(&mut self, session_id: &str, cx: &mut Context<Self>) {
         let (_, save) = self.stars.toggle(session_id);
         self.invalidate_tree();
-        self.transcripts_nudge.wake();
+        self.polls.transcripts_nudge.wake();
         self.save_off_thread(save, "Cannot save the star", cx);
         cx.notify();
     }
 
     pub fn dismiss_message(&mut self, workspace: &str, file: &str, cx: &mut Context<Self>) {
-        let save = self.dismissed_messages.dismiss(workspace, file);
+        let save = self.mail.dismissed_messages.dismiss(workspace, file);
         self.save_off_thread(save, "Cannot save the dismissed message", cx);
-        self.expanded.remove(&format!("{workspace}/{file}"));
+        self.sidebar.expanded.remove(&format!("{workspace}/{file}"));
         cx.notify();
     }
 
@@ -837,13 +629,13 @@ impl FleetView {
                 let alive = this.update(cx, |this, cx| {
                     if this.workman != status {
                         if matches!(status, WorkmanStatus::Ready { .. }) {
-                            this.start_warning = None;
+                            this.workman_state.start_warning = None;
                         }
                         this.workman = status;
                         cx.notify();
                     }
                     if let WorkmanStatus::Ready { url, .. } = &this.workman
-                        && this.synced_server.as_ref() != Some(url)
+                        && this.workman_state.synced_server.as_ref() != Some(url)
                     {
                         let url = url.clone();
                         this.sync_server(url, cx);
@@ -860,7 +652,7 @@ impl FleetView {
     }
 
     pub fn recheck_workman(&self) {
-        self.workman_recheck.wake();
+        self.workman_state.workman_recheck.wake();
     }
 
     pub fn sign_in(&mut self, cx: &mut Context<Self>) {
@@ -874,11 +666,11 @@ impl FleetView {
         let Some(home) = self.home.clone() else {
             return;
         };
-        if self.signing_in.is_some() {
+        if self.workman_state.signing_in.is_some() {
             return;
         }
-        self.signing_in = Some(origin.clone());
-        self.sign_in_error = None;
+        self.workman_state.signing_in = Some(origin.clone());
+        self.workman_state.sign_in_error = None;
         let task = {
             let (home, origin) = (home.clone(), origin.clone());
             cx.background_executor().spawn(async move { crate::signin::sign_in(&home, &origin) })
@@ -886,16 +678,16 @@ impl FleetView {
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
-                this.signing_in = None;
+                this.workman_state.signing_in = None;
                 match result {
                     Ok(_) => {
-                        this.left_servers.remove(&origin);
+                        this.workman_state.left_servers.remove(&origin);
                         if let Some(from) = from {
                             this.save_workman_url(home.clone(), origin.clone(), Some(from), cx);
                         }
-                        this.synced_server = None;
+                        this.workman_state.synced_server = None;
                     }
-                    Err(e) => this.sign_in_error = Some(format!("Signing in to {origin} did not work: {e}")),
+                    Err(e) => this.workman_state.sign_in_error = Some(format!("Signing in to {origin} did not work: {e}")),
                 }
                 this.workman = WorkmanStatus::Checking;
                 this.recheck_workman();
@@ -917,7 +709,7 @@ impl FleetView {
         let Some(home) = self.home.clone() else {
             return;
         };
-        let (auth, hands) = (crate::signin::auth(&home), self.hands.clone());
+        let (auth, hands) = (crate::signin::auth(&home), self.lifecycle.hands.clone());
         let task = cx.background_executor().spawn(async move { supervise::sign_out(&auth, hands) });
         cx.spawn(async move |this, cx| {
             let notices = task.await;
@@ -934,28 +726,28 @@ impl FleetView {
     }
 
     pub fn dismiss_workman_notice(&mut self, cx: &mut Context<Self>) {
-        self.workman_dismissed = self.workman.problem();
+        self.workman_state.workman_dismissed = self.workman.problem();
         cx.notify();
     }
 
     pub fn workman_notice(&self) -> Option<String> {
-        self.workman.problem().filter(|p| self.workman_dismissed.as_ref() != Some(p))
+        self.workman.problem().filter(|p| self.workman_state.workman_dismissed.as_ref() != Some(p))
     }
 
     fn apply(&mut self, refresh: Refresh, cx: &mut Context<Self>) {
         let _stall = supraman_ui::stall::section("poll: apply");
-        let before = (self.workspaces.clone(), self.sessions.clone(), self.main_repos.clone(), self.hooks.clone(), self.desired.clone(), self.polled_at);
-        match fresh_registry(refresh.workspaces, refresh.registry_writes, self.registry_writes.load(Ordering::SeqCst)) {
+        let before = (self.workspaces.clone(), self.sessions.clone(), self.listing.main_repos.clone(), self.supervising.hooks.clone(), self.supervising.desired.clone(), self.polls.polled_at);
+        match fresh_registry(refresh.workspaces, refresh.registry_writes, self.polls.registry_writes.load(Ordering::SeqCst)) {
             None => {}
             Some(Ok((workspaces, skipped))) => {
                 if self.workspaces != workspaces {
-                    self.transcripts_nudge.wake();
+                    self.polls.transcripts_nudge.wake();
                 }
                 self.workspaces = workspaces;
-                self.registry_skipped = skipped;
-                self.registry_error = None;
+                self.listing.registry_skipped = skipped;
+                self.listing.registry_error = None;
             }
-            Some(Err(error)) => self.registry_error = Some(error),
+            Some(Err(error)) => self.listing.registry_error = Some(error),
         }
         match refresh.sessions {
             Some(Ok(sessions)) => {
@@ -965,83 +757,83 @@ impl FleetView {
                     old.kind == supraman_claude::Kind::Interactive && !sessions.iter().any(|s| s.session_id == old.session_id)
                 });
                 if ended {
-                    self.transcripts_nudge.wake();
+                    self.polls.transcripts_nudge.wake();
                 }
                 for s in &sessions {
                     if fleet::is_alive(&s.health(now)) {
-                        self.last_alive.insert(s.session_id.clone(), now);
+                        self.supervising.last_alive.insert(s.session_id.clone(), now);
                     }
                 }
                 self.occupancy.set_sessions(fleet::live_sessions(&sessions, now));
                 self.sessions = sessions;
                 self.drop_deleted();
-                self.main_repos = refresh.main_repos;
-                self.main_repos.extend(self.closed_repos.iter().map(|(k, v)| (k.clone(), v.clone())));
-                self.sessions_error = None;
-                self.polled_at = refresh.polled_at;
+                self.listing.main_repos = refresh.main_repos;
+                self.listing.main_repos.extend(self.listing.closed_repos.iter().map(|(k, v)| (k.clone(), v.clone())));
+                self.listing.sessions_error = None;
+                self.polls.polled_at = refresh.polled_at;
             }
-            Some(Err(error)) => self.sessions_error = Some(error),
+            Some(Err(error)) => self.listing.sessions_error = Some(error),
             None => {}
         }
-        if !self.sessions_read {
-            self.transcripts_nudge.wake();
+        if !self.polls.sessions_read {
+            self.polls.transcripts_nudge.wake();
         }
-        self.sessions_read = true;
+        self.polls.sessions_read = true;
         for event in refresh.events {
-            HookSignal::record(&mut self.hooks, event);
+            HookSignal::record(&mut self.supervising.hooks, event);
         }
         if let Some(desired) = refresh.desired {
-            self.desired = desired;
+            self.supervising.desired = desired;
         }
         if let Some((schedules, errors)) = refresh.schedules {
-            self.schedules = schedules;
-            self.schedule_errors = errors;
-            supraman_ui::notices::keep_dismissed(&mut self.schedule_errors_dismissed, &self.schedule_errors);
-            let (_, save) = self.waiting_dismissed.prune_keys(&crate::schedules::waiting_keys(&self.schedules));
+            self.scheduling.schedules = schedules;
+            self.scheduling.schedule_errors = errors;
+            supraman_ui::notices::keep_dismissed(&mut self.scheduling.schedule_errors_dismissed, &self.scheduling.schedule_errors);
+            let (_, save) = self.scheduling.waiting_dismissed.prune_keys(&crate::schedules::waiting_keys(&self.scheduling.schedules));
             self.save_off_thread(save, "Cannot save the dismissed approvals", cx);
             self.find_asked_schedules();
         }
         let (workspaces, sessions, main_repos, hooks, desired, polled_at) = &before;
         // a permission prompt newer than the last poll makes its row Blocked (fleet::with_hook)
-        let prompted = self.polled_at != *polled_at && self.hooks.values().any(|h| h.is_permission_prompt() && h.last.ts > (*polled_at).min(self.polled_at));
-        if prompted || self.workspaces != *workspaces || self.sessions != *sessions || self.main_repos != *main_repos || self.hooks != *hooks || self.desired != *desired {
+        let prompted = self.polls.polled_at != *polled_at && self.supervising.hooks.values().any(|h| h.is_permission_prompt() && h.last.ts > (*polled_at).min(self.polls.polled_at));
+        if prompted || self.workspaces != *workspaces || self.sessions != *sessions || self.listing.main_repos != *main_repos || self.supervising.hooks != *hooks || self.supervising.desired != *desired {
             self.invalidate_tree();
         }
-        self.last_refresh_took = Some(refresh.took);
+        self.polls.last_refresh_took = Some(refresh.took);
     }
 
     fn apply_report(&mut self, report: Report, cx: &mut Context<Self>) {
-        self.desired = report.desired;
+        self.supervising.desired = report.desired;
         self.invalidate_tree();
-        self.needs = report.needs;
-        let (workspaces, desired, own) = (&self.workspaces, &self.desired, self.own_prefix.as_deref());
-        self.needs.retain(|n| !fleet::is_foreign(&n.name, workspaces, Some(desired), own));
+        self.supervising.needs = report.needs;
+        let (workspaces, desired, own) = (&self.workspaces, &self.supervising.desired, self.own_prefix.as_deref());
+        self.supervising.needs.retain(|n| !fleet::is_foreign(&n.name, workspaces, Some(desired), own));
         if self.writes.max.report_counts() {
-            self.max_working = report.max_working;
+            self.supervising.max_working = report.max_working;
         }
-        self.shell_default.ticked(report.terminal);
-        self.supervise_errors = report.errors;
-        supraman_ui::notices::keep_dismissed(&mut self.supervise_dismissed, &self.supervise_errors);
-        self.daemon_hold = report.daemon_hold;
-        self.left_pending.extend(report.left_servers);
-        self.last_attempt = report.last_attempt.into_iter().collect();
-        self.relays = report.relays;
-        self.messages = report.messages;
-        let (_, save) = self.dismissed_messages.prune(&self.messages);
+        self.term_look.shell_default.ticked(report.terminal);
+        self.supervising.supervise_errors = report.errors;
+        supraman_ui::notices::keep_dismissed(&mut self.supervising.supervise_dismissed, &self.supervising.supervise_errors);
+        self.supervising.daemon_hold = report.daemon_hold;
+        self.workman_state.left_pending.extend(report.left_servers);
+        self.supervising.last_attempt = report.last_attempt.into_iter().collect();
+        self.mail.relays = report.relays;
+        self.mail.messages = report.messages;
+        let (_, save) = self.mail.dismissed_messages.prune(&self.mail.messages);
         self.save_off_thread(save, "Cannot save the dismissed messages", cx);
         for (workspace, on_disk) in report.answered {
-            let answered = self.answered.entry(workspace).or_default();
+            let answered = self.mail.answered.entry(workspace).or_default();
             for (file, line) in on_disk {
                 answered.entry(file).or_insert(line);
             }
         }
-        self.ticks += 1;
+        self.polls.ticks += 1;
     }
 
     /// The tree built once per change of its inputs; a mutation of one calls [`Self::invalidate_tree`].
     pub fn tree(&self) -> Rc<Tree> {
         let now = now_ms();
-        if let Some(cached) = self.tree_cache.borrow().as_ref()
+        if let Some(cached) = self.sidebar.tree_cache.borrow().as_ref()
             && cached.show_stopped == self.show_stopped
             && cached.own_prefix == self.own_prefix
             && cached.until.is_none_or(|until| now < until)
@@ -1053,25 +845,25 @@ impl FleetView {
         }
         tree_check::BUILDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let tree = Rc::new(self.build_tree(now));
-        let until = fleet::next_change(&self.sessions, &self.closed, now);
-        *self.tree_cache.borrow_mut() = Some(CachedTree { at: now, until, show_stopped: self.show_stopped, own_prefix: self.own_prefix.clone(), tree: tree.clone() });
+        let until = fleet::next_change(&self.sessions, &self.listing.closed, now);
+        *self.sidebar.tree_cache.borrow_mut() = Some(CachedTree { at: now, until, show_stopped: self.show_stopped, own_prefix: self.own_prefix.clone(), tree: tree.clone() });
         tree
     }
 
     pub fn invalidate_tree(&self) {
-        self.tree_cache.borrow_mut().take();
+        self.sidebar.tree_cache.borrow_mut().take();
     }
 
     fn build_tree(&self, now: i64) -> Tree {
         let _stall = supraman_ui::stall::section("tree");
         let sup = Supervised {
-            desired: Some(&self.desired),
-            hooks: Some(&self.hooks),
-            polled_at: self.polled_at,
-            main_repos: Some(&self.main_repos),
-            closed: &self.closed,
+            desired: Some(&self.supervising.desired),
+            hooks: Some(&self.supervising.hooks),
+            polled_at: self.polls.polled_at,
+            main_repos: Some(&self.listing.main_repos),
+            closed: &self.listing.closed,
             starred: Some(self.stars.ids()),
-            expanded: Some(&self.closed_expanded),
+            expanded: Some(&self.sidebar.closed_expanded),
             disabled_folders: false,
             own_prefix: self.own_prefix.as_deref(),
         };
@@ -1086,14 +878,14 @@ impl FleetView {
             (None, _) => return self.desired_failed(format!("Cannot start {name}: no Supraman home"), cx),
             (_, None) => return self.desired_failed(format!("Cannot start {name}: not registered"), cx),
         };
-        self.desired_writes.unbounded_send(write).ok();
+        self.supervising.desired_writes.unbounded_send(write).ok();
     }
 
     pub fn stop_workspace(&mut self, name: &str, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
             return self.desired_failed(format!("Cannot stop {name}: no Supraman home"), cx);
         };
-        self.desired_writes.unbounded_send(DesiredWrite::Stop { home, name: name.to_string() }).ok();
+        self.supervising.desired_writes.unbounded_send(DesiredWrite::Stop { home, name: name.to_string() }).ok();
     }
 
     fn desired_failed(&mut self, error: String, cx: &mut Context<Self>) {
@@ -1123,18 +915,18 @@ impl FleetView {
                     match result {
                         Ok(Some(desired)) => {
                             let names = desired.sessions.iter().map(|w| w.name.clone()).collect();
-                            this.desired.insert(name.clone(), (true, names));
+                            this.supervising.desired.insert(name.clone(), (true, names));
                             this.invalidate_tree();
                             this.action_error = None;
-                            this.start_warning = this.workman.start_warning(&name);
+                            this.workman_state.start_warning = this.workman.start_warning(&name);
                         }
                         Ok(None) => {
-                            if let Some(entry) = this.desired.get_mut(&name) {
+                            if let Some(entry) = this.supervising.desired.get_mut(&name) {
                                 entry.0 = false;
                             }
                             this.invalidate_tree();
                             this.action_error = None;
-                            this.start_warning = None;
+                            this.workman_state.start_warning = None;
                         }
                         Err(e) => this.action_error = Some(format!("Cannot {verb} {name}: {e:#}")),
                     }
@@ -1153,19 +945,19 @@ impl FleetView {
         if self.home.is_none() {
             return Some("no Supraman home".into());
         }
-        match self.relays.get(workspace) {
+        match self.mail.relays.get(workspace) {
             Some(r) if r.started => None,
             _ => Some(format!("{workspace} is stopped")),
         }
     }
 
     pub fn open_compose(&mut self, workspace: &str, reply_to: String, window: &mut Window, cx: &mut Context<Self>) {
-        let input = match &self.compose {
+        let input = match &self.mail.compose {
             Some(c) if c.workspace == workspace && c.reply_to == reply_to => c.input.clone(),
             _ => {
                 let input = cx.new(|cx| TextInput::new("Type here; Enter adds a line.", None, window, cx).multi_line());
                 let events = cx.subscribe_in(&input, window, |this: &mut Self, _, event: &InputEvent, window, cx| this.on_compose_event(event, window, cx));
-                self.compose = Some(Compose::new(workspace, reply_to, input.clone(), events));
+                self.mail.compose = Some(Compose::new(workspace, reply_to, input.clone(), events));
                 input
             }
         };
@@ -1177,11 +969,11 @@ impl FleetView {
         match event {
             InputEvent::Confirm => self.send_compose(cx),
             InputEvent::Cancel => {
-                self.compose = None;
+                self.mail.compose = None;
                 self.focus.focus(window, cx);
             }
             InputEvent::Edited => {
-                if let Some(c) = &mut self.compose {
+                if let Some(c) = &mut self.mail.compose {
                     c.error = None;
                 }
             }
@@ -1192,27 +984,27 @@ impl FleetView {
 
     pub fn send_compose(&mut self, cx: &mut Context<Self>) {
         let _stall = supraman_ui::stall::section(SEND_SECTION);
-        let Some(c) = &self.compose else { return };
+        let Some(c) = &self.mail.compose else { return };
         let (workspace, reply_to, text) = (c.workspace.clone(), c.reply_to.clone(), c.text(cx).trim().to_string());
         if c.sending {
             return;
         }
         if text.is_empty() {
-            if let Some(c) = &mut self.compose {
+            if let Some(c) = &mut self.mail.compose {
                 c.error = Some("Nothing to send.".into());
             }
             cx.notify();
             return;
         }
-        if let Some(c) = &mut self.compose {
+        if let Some(c) = &mut self.mail.compose {
             c.sending = true;
         }
         let sending = (workspace.clone(), reply_to.clone());
         self.answer(&workspace, &reply_to, &text, cx, move |this, result| {
-            let still = this.compose.as_ref().is_some_and(|c| (c.workspace.clone(), c.reply_to.clone()) == sending);
+            let still = this.mail.compose.as_ref().is_some_and(|c| (c.workspace.clone(), c.reply_to.clone()) == sending);
             match result {
-                Ok(_) if still => this.compose = None,
-                Err(e) if still => this.compose.as_mut().into_iter().for_each(|c| {
+                Ok(_) if still => this.mail.compose = None,
+                Err(e) if still => this.mail.compose.as_mut().into_iter().for_each(|c| {
                     c.sending = false;
                     c.error = Some(e.clone());
                 }),
@@ -1250,8 +1042,8 @@ impl FleetView {
                 .await;
             this.update(cx, |this, cx| {
                 if let Ok(sent) = &sent {
-                    this.answered_route.insert(format!("{workspace}/{file}"), sent.label());
-                    this.answered.entry(workspace.clone()).or_default().insert(file.clone(), line);
+                    this.mail.answered_route.insert(format!("{workspace}/{file}"), sent.label());
+                    this.mail.answered.entry(workspace.clone()).or_default().insert(file.clone(), line);
                 }
                 if let Some(Err(e)) = saved {
                     this.action_error = Some(format!("Answered {file}, but cannot save that: {e}"));
@@ -1281,7 +1073,7 @@ impl FleetView {
             cx.notify();
             return;
         };
-        self.max_working = max_working;
+        self.supervising.max_working = max_working;
         let generation = self.writes.max.set();
         let previous = self.writes.max.serial.previous();
         let task = cx.spawn(async move |this, cx| {
@@ -1301,11 +1093,11 @@ impl FleetView {
     }
 
     pub fn retry(&mut self, workspace: &str, name: &str, cx: &mut Context<Self>) {
-        self.retries
+        self.polls.retries
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .push((workspace.to_string(), name.to_string()));
-        self.needs.retain(|n| !(n.workspace == workspace && n.name == name));
+        self.supervising.needs.retain(|n| !(n.workspace == workspace && n.name == name));
         cx.notify();
     }
 
@@ -1420,7 +1212,7 @@ impl FleetView {
     }
 
     pub fn resumable(&self, row: &SessionRow) -> bool {
-        offers_resume(&row.session, &row.health, self.last_alive.get(&row.session.session_id).copied(), now_ms())
+        offers_resume(&row.session, &row.health, self.supervising.last_alive.get(&row.session.session_id).copied(), now_ms())
     }
 
     /// `claude --bg --resume` with no other flag keeps the session id.
@@ -1431,7 +1223,7 @@ impl FleetView {
     fn resume_titled(&mut self, title: String, session: &Session, cx: &mut Context<Self>) -> u64 {
         let sid = &session.session_id;
         if session.kind == supraman_claude::Kind::Background {
-            let script = match &self.daemon_hold {
+            let script = match &self.supervising.daemon_hold {
                 Some(why) => held_line(why),
                 None => format!(
                     "Write-Host 'resuming {} in the background, then attaching…'; claude --bg --resume {sid}; if ($LASTEXITCODE -eq 0) {{ claude attach {} }}",
@@ -1478,8 +1270,8 @@ impl FleetView {
     }
 
     pub fn resolve_tabs(&mut self, cx: &mut Context<Self>) {
-        if self.tabs_resolving {
-            self.tabs_again = true;
+        if self.saving.tabs_resolving {
+            self.saving.tabs_again = true;
             return;
         }
         let shells: Vec<(u64, u32)> = self
@@ -1491,12 +1283,12 @@ impl FleetView {
         if shells.is_empty() && self.tabs.iter().all(|t| t.claude.is_none()) {
             return;
         }
-        self.tabs_resolving = true;
+        self.saving.tabs_resolving = true;
         let found = cx.background_executor().spawn(async move { tab_sessions(&shells) });
         cx.spawn(async move |this, cx| {
             let found = found.await;
             this.update(cx, |this, cx| {
-                this.tabs_resolving = false;
+                this.saving.tabs_resolving = false;
                 let mut changed = false;
                 let mut unlisted = false;
                 for tab in &mut this.tabs {
@@ -1508,12 +1300,12 @@ impl FleetView {
                     }
                 }
                 if unlisted {
-                    this.poll_nudge.wake();
+                    this.polls.poll_nudge.wake();
                 }
                 if changed {
                     cx.notify();
                 }
-                if std::mem::take(&mut this.tabs_again) {
+                if std::mem::take(&mut this.saving.tabs_again) {
                     this.resolve_tabs(cx);
                 }
             })
@@ -1773,8 +1565,8 @@ impl FleetView {
                         if let Some(tab) = this.tab_mut(id) {
                             tab.detach = Detach::Failed;
                         }
-                        this.quitting = false;
-                        this.quit_asked = false;
+                        this.lifecycle.quitting = false;
+                        this.lifecycle.quit_asked = false;
                         cx.notify();
                     })
                     .ok();
@@ -1808,21 +1600,21 @@ impl FleetView {
     }
 
     fn quit_step(&mut self, cx: &mut Context<Self>) -> bool {
-        if !self.quitting || self.has_attach_tabs() {
+        if !self.lifecycle.quitting || self.has_attach_tabs() {
             return false;
         }
-        let Some(hands) = self.hands.clone().filter(|_| !self.hands_released) else {
+        let Some(hands) = self.lifecycle.hands.clone().filter(|_| !self.lifecycle.hands_released) else {
             return true;
         };
-        if self.quit_release.is_none() {
+        if self.lifecycle.quit_release.is_none() {
             let release = cx.background_executor().spawn(async move { crate::hand::release_all_within(hands, QUIT_RELEASE_WITHIN) });
-            self.quit_release = Some(cx.spawn(async move |this, cx| {
+            self.lifecycle.quit_release = Some(cx.spawn(async move |this, cx| {
                 for notice in release.await.unwrap_or_default() {
                     log::warn!("{notice}");
                 }
                 this.update(cx, |this, cx| {
-                    this.hands_released = true;
-                    this.quit_release = None;
+                    this.lifecycle.hands_released = true;
+                    this.lifecycle.quit_release = None;
                     if this.quit_step(cx) {
                         this.close_for_quit(cx);
                     }
@@ -1834,7 +1626,7 @@ impl FleetView {
     }
 
     fn close_for_quit(&mut self, cx: &mut Context<Self>) {
-        self.quitting = false;
+        self.lifecycle.quitting = false;
         self.close_settings(cx);
         self.window.update(cx, |_, window, cx| crate::tray::close(window, cx)).ok();
     }
@@ -1867,19 +1659,19 @@ impl FleetView {
     }
 
     pub fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.quit_asked = true;
+        self.lifecycle.quit_asked = true;
         if self.should_close(window, cx) {
             crate::tray::close(window, cx);
         }
     }
 
     fn should_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if !self.quit_asked {
+        if !self.lifecycle.quit_asked {
             self.close_settings(cx);
             crate::tray::hide(window, cx);
             return false;
         }
-        self.quitting = true;
+        self.lifecycle.quitting = true;
         let ids: Vec<u64> = self
             .tabs
             .iter()
@@ -1889,17 +1681,17 @@ impl FleetView {
         for id in ids {
             self.close_tab(id, cx);
         }
-        let close = self.quitting && self.quit_step(cx);
+        let close = self.lifecycle.quitting && self.quit_step(cx);
         if close {
-            self.quitting = false;
+            self.lifecycle.quitting = false;
             self.close_settings(cx);
         }
         close
     }
 
     fn toggle(&mut self, key: String, cx: &mut Context<Self>) {
-        if !self.collapsed.remove(&key) {
-            self.collapsed.insert(key);
+        if !self.sidebar.collapsed.remove(&key) {
+            self.sidebar.collapsed.insert(key);
         }
         cx.notify();
     }
@@ -1907,7 +1699,7 @@ impl FleetView {
     pub fn input_focused(&self, window: &Window, cx: &gpui::App) -> bool {
         self.search.read(cx).is_focused(window)
             || self.add_dialog().is_some_and(|d| d.read(cx).focused(window, cx))
-            || self.compose.as_ref().is_some_and(|c| c.input.read(cx).is_focused(window))
+            || self.mail.compose.as_ref().is_some_and(|c| c.input.read(cx).is_focused(window))
             || self.tabs.iter().filter_map(|t| t.find.as_ref()).any(|f| f.input.read(cx).is_focused(window))
     }
 
@@ -1930,7 +1722,7 @@ impl FleetView {
     }
 
     fn dismiss_popup(&mut self) -> bool {
-        self.menu.take().is_some() || self.confirm.take().is_some()
+        self.dialogs.menu.take().is_some() || self.dialogs.confirm.take().is_some()
     }
 
     pub fn clear_search(&mut self, cx: &mut Context<Self>) {
@@ -2039,7 +1831,7 @@ impl Render for FleetView {
         let _stall = supraman_ui::stall::section("render");
         tree_check::RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.probe.on_render(window);
-        if !self.painted_sessions && self.sessions_read {
+        if !self.painted_sessions && self.polls.sessions_read {
             self.painted_sessions = true;
             timeline("first paint with sessions", Duration::ZERO);
         }
@@ -2117,14 +1909,6 @@ fn tab_sessions(shells: &[(u64, u32)]) -> StdHashMap<u64, String> {
             Some((tab, entry.session_id?))
         })
         .collect()
-}
-
-struct CachedTree {
-    at: i64,
-    until: Option<i64>,
-    show_stopped: bool,
-    own_prefix: Option<String>,
-    tree: Rc<Tree>,
 }
 
 /// A selftest's check that every cached tree equals a fresh build at its instant: a missed invalidation is a mismatch.
