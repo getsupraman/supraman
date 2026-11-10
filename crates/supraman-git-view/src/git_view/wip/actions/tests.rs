@@ -1,29 +1,18 @@
 //! The WIP panel's writes through the real tab: its buttons, keys, Confirm and the write gate, on fixture copies (C196).
 
-use std::sync::Arc;
 
-use gpui::{Context, Entity, Modifiers, Render, TestAppContext, VisualTestContext, Window, div, prelude::*, px};
-use supraman_gitman::fixture::{Fixture, git_in};
+use gpui::{Context, Entity, TestAppContext, VisualTestContext};
+use supraman_gitman::fixture::Fixture;
 use supraman_gitman::write::journal;
 use supraman_gitman::{ChangeKind, FileChange};
-use supraman_ui::hit::HitTargets;
 
 use crate::git_view::wip::compose::counter_colour;
-use crate::git_view::wip::tests::select_wip;
+use crate::git_view::test_support::{self, Opts, click, keys, painted, redraw, select_wip, toast};
 use crate::git_view::wip::*;
-use crate::git_view::tests::redraw;
 use crate::git_view::undo::UNDO_KEY;
 use crate::git_view::write_gate::WORKING;
-use crate::git_view::{GitSizes, GitView, bind_keys};
+use crate::git_view::GitView;
 use crate::occupancy;
-
-struct Holder(Entity<GitView>);
-
-impl Render for Holder {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().w(px(1200.)).h(px(900.)).child(self.0.clone())
-    }
-}
 
 /// A Git tab of `folder`, its WIP row selected, whose write gate reads `live`.
 fn open<'a>(folder: &std::path::Path, live: occupancy::Live, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
@@ -34,39 +23,7 @@ fn open<'a>(folder: &std::path::Path, live: occupancy::Live, cx: &'a mut TestApp
 
 /// A Git tab of `folder` as it opens, whose write gate reads `live`.
 pub(crate) fn open_as<'a>(folder: &std::path::Path, live: occupancy::Live, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
-    cx.update(|cx| {
-        supraman_ui::init_globals(cx, "test");
-        supraman_ui::text_input::bind_keys(cx);
-        bind_keys(cx);
-        supraman_editor::init(supraman_ui::fonts::MONO, 13., cx);
-    });
-    let folder = folder.to_path_buf();
-    let (holder, cx) = cx.add_window_view(|_, cx| Holder(GitView::open_with(folder, None, HitTargets::default(), &GitSizes::default(), Arc::new(live), cx)));
-    let view = holder.read_with(cx, |h, _| h.0.clone());
-    cx.run_until_parked();
-    crate::git_view::test_support::assert_loaded(&view, cx);
-    (view, cx)
-}
-
-pub(crate) fn click(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
-    redraw(view, cx);
-    let at = view.read_with(cx, |v, _| v.hits.borrow().get(key).map(|h| h.bounds.center())).unwrap_or_else(|| panic!("{key} is painted"));
-    cx.simulate_click(at, Modifiers::none());
-    cx.run_until_parked();
-    redraw(view, cx);
-}
-
-pub(crate) fn painted(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) -> bool {
-    let hits = view.read_with(cx, |v, _| v.hits.clone());
-    hits.borrow_mut().clear();
-    redraw(view, cx);
-    hits.borrow().contains_key(key)
-}
-
-fn keys(view: &Entity<GitView>, keys: &str, cx: &mut VisualTestContext) {
-    cx.simulate_keystrokes(keys);
-    cx.run_until_parked();
-    redraw(view, cx);
+    test_support::open(folder, Opts::default().live(live).editor().size(1200., 900.), cx)
 }
 
 pub(crate) fn panel<R>(view: &Entity<GitView>, cx: &mut VisualTestContext, read: impl FnOnce(&WipPanel, &gpui::App) -> R) -> R {
@@ -77,10 +34,6 @@ fn lists(view: &Entity<GitView>, cx: &mut VisualTestContext) -> (Vec<String>, Ve
     let shown = panel(view, cx, |p, _| p.shown().expect("the working directory is shown"));
     let paths = |files: &[FileChange]| files.iter().map(|f| f.path.clone()).collect();
     (paths(&shown.unstaged), paths(&shown.staged))
-}
-
-pub(crate) fn toast(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<String> {
-    view.read_with(cx, |v, _| v.toast.text().map(str::to_string))
 }
 
 pub(crate) fn texts(view: &Entity<GitView>, cx: &mut VisualTestContext) -> (String, String, String) {
@@ -186,7 +139,7 @@ fn wip_write_a_second_write_is_not_queued_while_one_runs(cx: &mut TestAppContext
     assert_eq!(busy, Some(WORKING));
     cx.run_until_parked();
     redraw(&view, cx);
-    let staged = git_in(&f.git, &f.dir, &["diff", "--cached", "--name-only"], &[], None);
+    let staged = f.at(&f.dir, &["diff", "--cached", "--name-only"]);
     assert!(staged.lines().any(|l| l == "u.txt") && !staged.lines().any(|l| l == "v.txt"), "the click while one ran queued nothing: {staged}");
 }
 
@@ -345,9 +298,9 @@ fn wip_keys_one_summary_in_two_fields_commit_stage_and_unstage(cx: &mut TestAppC
 pub(crate) fn stopped_rebase(f: &Fixture) -> String {
     let commits = ["one", "two", "three"].map(|n| {
         std::fs::write(f.worktree.join("c.txt"), format!("{n}\n")).unwrap();
-        git_in(&f.git, &f.worktree, &["add", "c.txt"], &[], None);
-        git_in(&f.git, &f.worktree, &["commit", "-q", "--no-verify", "-m", &format!("W {n}")], &[], None);
-        git_in(&f.git, &f.worktree, &["rev-parse", "HEAD"], &[], None)
+        f.at(&f.worktree, &["add", "c.txt"]);
+        f.at(&f.worktree, &["commit", "-q", "--no-verify", "-m", &format!("W {n}")]);
+        f.at(&f.worktree, &["rev-parse", "HEAD"])
     });
     let todo = format!("reword {}\npick {}\n", commits[0], commits[2]);
     let stopped = f.gitmans_rebase(&supraman_gitman::Repo::new(f.git.clone(), &f.worktree), &commits[0], &todo);
@@ -364,18 +317,18 @@ fn a_stopped_reword_shows_skip_then_continue_once_staged_which_finishes_it_and_u
     assert_eq!(words(cx), "Skip commit", "nothing staged");
     assert!(painted(&view, "wip-abort", cx));
     std::fs::write(f.worktree.join("c.txt"), b"three\n").unwrap();
-    git_in(&f.git, &f.worktree, &["add", "c.txt"], &[], None);
+    f.at(&f.worktree, &["add", "c.txt"]);
     view.update(cx, |v, cx| v.refresh_after_write(cx));
     cx.run_until_parked();
     select_wip(&view, cx);
     assert_eq!(words(cx), "Continue rebase");
     click(&view, "wip-commit", cx);
 
-    let head = git_in(&f.git, &f.worktree, &["rev-parse", "HEAD"], &[], None);
-    assert_eq!(git_in(&f.git, &f.worktree, &["log", "--format=%s", "-2", "HEAD"], &[], None), "W three\nReworded");
+    let head = f.at(&f.worktree, &["rev-parse", "HEAD"]);
+    assert_eq!(f.at(&f.worktree, &["log", "--format=%s", "-2", "HEAD"]), "W three\nReworded");
     assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(crate::git_view::Selected::Commit(head.into())), "the new HEAD is selected");
     click(&view, UNDO_KEY, cx);
-    assert_eq!(git_in(&f.git, &f.worktree, &["rev-parse", "HEAD"], &[], None), old, "Undo puts the old tip back");
+    assert_eq!(f.at(&f.worktree, &["rev-parse", "HEAD"]), old, "Undo puts the old tip back");
 }
 
 #[gpui::test]
@@ -388,7 +341,7 @@ fn abort_rebase_restores_the_old_tip_and_pops_gitmans_autostash(cx: &mut TestApp
     click(&view, "wip-abort", cx);
     assert_eq!(panel(&view, cx, |p, _| p.asking().map(str::to_string)).as_deref(), Some("Abort the rebase? The branch goes back to where it started and the resolutions so far are lost."));
     click(&view, "wip-confirm-yes", cx);
-    assert_eq!(git_in(&f.git, &f.worktree, &["rev-parse", "HEAD"], &[], None), old);
+    assert_eq!(f.at(&f.worktree, &["rev-parse", "HEAD"]), old);
     assert_eq!(std::fs::read(f.worktree.join("u.txt")).unwrap(), b"untracked\n");
     assert_eq!(toast(&view, cx).as_deref(), Some(crate::git_view::wip::actions::ABORTED_POPPED));
 }

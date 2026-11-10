@@ -82,8 +82,8 @@ mod tests {
     use supraman_gitman::fixture::Fixture;
 
     use crate::git_view::GitView;
-    use crate::git_view::tests::{open, redraw};
-    use crate::git_view::wip::tests::{click, repaint};
+    use crate::git_view::test_support::{Opts, open, redraw};
+    use crate::git_view::test_support::{click, repaint};
 
     fn right_click(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
         let position = repaint(view, cx).borrow().get(key).unwrap_or_else(|| panic!("{key} is painted")).bounds.center();
@@ -111,7 +111,7 @@ mod tests {
     #[gpui::test]
     fn the_header_menu_ticks_columns_keeps_the_last_and_resets_the_layouts(cx: &mut gpui::TestAppContext) {
         let f = Fixture::copy();
-        let (view, cx) = open(&f.worktree, cx);
+        let (view, cx) = open(&f.worktree, Opts::default(), cx);
         right_click(&view, "git-col-date", cx);
         assert_eq!(ticks(&view, cx), ["+Branch / Tag", "+Graph", "+Commit Message", "+Commit Date / Time", "+Sha", "Reset columns to default", "Compact layout"]);
         click(&view, "menu-column-date", cx);

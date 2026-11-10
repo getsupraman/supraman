@@ -2,32 +2,21 @@
 //! temp dir (C196): its header and lists, a file's diff read from that worktree, and nothing that writes.
 
 use std::path::Path;
-use std::sync::Arc;
 
-use gpui::{Context, Entity, IntoElement, Modifiers, MouseButton, Render, TestAppContext, VisualTestContext, Window, div, prelude::*, px};
+use gpui::{Entity, Modifiers, MouseButton, TestAppContext, VisualTestContext};
 use supraman_core::paths::path_key;
-use supraman_gitman::fixture::{Fixture, git_in};
-use supraman_gitman::{BackgroundSettings, ChangeKind, FileChange};
-use supraman_ui::hit::HitTargets;
+use supraman_gitman::fixture::Fixture;
+use supraman_gitman::{ChangeKind, FileChange};
 
-use crate::git_view::background::{self, refresh_wips};
+use crate::git_view::background::refresh_wips;
 use crate::git_view::branch::OpenGit;
 use crate::git_view::diff::{Content, Of};
-use crate::git_view::tests::redraw;
+use crate::git_view::test_support::{self, Opts, redraw, settle};
 use crate::git_view::wip::Section;
 use crate::git_view::worktree_panel::list_id;
-use crate::git_view::{GitSizes, GitView, Selected, bind_keys};
+use crate::git_view::{GitView, Selected};
 use crate::occupancy;
 
-struct Holder(Entity<GitView>);
-
-impl Render for Holder {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().w(px(1400.)).h(px(900.)).child(self.0.clone())
-    }
-}
-
-const QUIET: BackgroundSettings = BackgroundSettings { fetch_every_minutes: Some(0), maintenance: Some(false), worktree_wip: None };
 const SIDE_A: &str = "side's own a\n";
 
 /// The fixture's worktree `wt` (on `side`) with `a.txt` changed, `s.txt` staged and `u.txt` untracked.
@@ -37,24 +26,12 @@ fn fixture() -> Fixture {
     std::fs::write(f.worktree.join("s.txt"), b"staged on side\n").unwrap();
     std::fs::create_dir_all(f.worktree.join("dir")).unwrap();
     std::fs::write(f.worktree.join("dir").join("u.txt"), b"untracked\n").unwrap();
-    git_in(&f.git, &f.worktree, &["add", "s.txt"], &[], None);
+    f.at(&f.worktree, &["add", "s.txt"]);
     f
 }
 
 fn open<'a>(f: &Fixture, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
-    cx.update(|cx| {
-        supraman_ui::init_globals(cx, "test");
-        supraman_ui::text_input::bind_keys(cx);
-        supraman_editor::init(supraman_ui::fonts::MONO, 13., cx);
-        bind_keys(cx);
-        background::start_for_test(QUIET, cx);
-    });
-    let folder = f.dir.clone();
-    let live: Arc<dyn supraman_gitman::write::Occupancy> = Arc::new(occupancy::Live::default());
-    let (holder, cx) = cx.add_window_view(|_, cx| Holder(GitView::open_with(folder, None, HitTargets::default(), &GitSizes::default(), live, cx)));
-    let view = holder.read_with(cx, |h, _| h.0.clone());
-    cx.run_until_parked();
-    crate::git_view::test_support::assert_loaded(&view, cx);
+    let (view, cx) = test_support::open(&f.dir, Opts::default().live(occupancy::Live::default()).background().editor().size(1400., 900.), cx);
     reread(&view, cx);
     (view, cx)
 }
@@ -63,13 +40,6 @@ fn reread(view: &Entity<GitView>, cx: &mut VisualTestContext) {
     let id = view.entity_id();
     cx.update(|_, cx| refresh_wips(id, cx));
     settle(view, cx);
-}
-
-fn settle(view: &Entity<GitView>, cx: &mut VisualTestContext) {
-    for _ in 0..3 {
-        cx.run_until_parked();
-        redraw(view, cx);
-    }
 }
 
 fn select_worktree(view: &Entity<GitView>, dir: &Path, cx: &mut VisualTestContext) {
@@ -90,11 +60,7 @@ fn painted(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<String> {
 }
 
 fn click(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
-    let hits = view.read_with(cx, |v, _| v.hits.clone());
-    hits.borrow_mut().clear();
-    redraw(view, cx);
-    let at = hits.borrow().get(key).unwrap_or_else(|| panic!("{key} is painted")).bounds.center();
-    cx.simulate_click(at, Modifiers::none());
+    test_support::click(view, key, cx);
     settle(view, cx);
 }
 
@@ -103,7 +69,7 @@ fn listed(files: &[FileChange]) -> Vec<(&str, ChangeKind)> {
 }
 
 fn index_of(f: &Fixture, dir: &Path) -> String {
-    git_in(&f.git, dir, &["diff", "--cached", "--name-status"], &[], None)
+    f.at(dir, &["diff", "--cached", "--name-status"])
 }
 
 #[gpui::test]
@@ -154,8 +120,8 @@ fn worktree_panel_follows_a_new_read_and_clears_when_the_row_goes(cx: &mut TestA
     let shown = view.read_with(cx, |v, cx| v.worktree_panel.read(cx).shown()).expect("shown");
     assert!(shown.unstaged.iter().any(|c| c.path == "n.txt"), "a new read updates the panel while the row stays selected");
 
-    git_in(&f.git, &f.worktree, &["reset", "-q", "--hard"], &[], None);
-    git_in(&f.git, &f.worktree, &["clean", "-q", "-fd"], &[], None);
+    f.at(&f.worktree, &["reset", "-q", "--hard"]);
+    f.at(&f.worktree, &["clean", "-q", "-fd"]);
     reread(&view, cx);
     assert_eq!(view.read_with(cx, |v, _| v.selected()), None, "a clean worktree's row goes, and its selection with it");
 }
@@ -176,7 +142,7 @@ fn worktree_file_opens_its_diff_from_that_worktree_and_nothing_writes(cx: &mut T
     assert_eq!(of, Of::Unstaged);
     assert_eq!(worktree.map(|w| path_key(&w)), Some(path_key(&f.worktree)));
     assert_eq!(new, SIDE_A, "the other worktree's file");
-    let side_index = git_in(&f.git, &f.worktree, &["cat-file", "blob", ":a.txt"], &[], None);
+    let side_index = f.at(&f.worktree, &["cat-file", "blob", ":a.txt"]);
     assert_eq!(old.trim_end(), side_index.trim_end(), "against that worktree's index");
     assert_ne!(new, std::fs::read_to_string(f.dir.join("a.txt")).unwrap(), "not the tab's own a.txt");
 

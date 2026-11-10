@@ -1,62 +1,20 @@
 //! The message box's amend and reword through the real tab, on fixture copies and their bare temp remote (C196).
 
-use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
-use supraman_gitman::fixture::{Fixture, MAIN_STASH, git_in};
-use supraman_ui::hit::HitTargets;
+use gpui::{Entity, TestAppContext, VisualTestContext};
+use supraman_gitman::fixture::{Fixture, MAIN_STASH};
 
 use crate::git_view::details::reword::{ASK_KEY, CANCEL_KEY, CHECK_OUT_A_BRANCH, CHECK_OUT_TO_REWORD, CLICK_TO_AMEND, CLICK_TO_EDIT_STASH, CLICK_TO_REWORD, EDIT_KEY, REBASES_KEY, TYPE_A_SUMMARY, Target, UPDATE_KEY, offer, pushed_question, rebases_words, reword_question};
-use crate::git_view::tests::redraw;
+use crate::git_view::test_support::{self, Opts, click, keys, painted, redraw, toast};
 use crate::git_view::undo::UNDO_KEY;
-use crate::git_view::{GitSizes, GitView, Selected, bind_keys};
+use crate::git_view::{GitView, Selected};
 use crate::occupancy;
-use gpui::{Context, IntoElement, ParentElement as _, Render, Styled as _, Window, div, px};
-
-struct Holder(Entity<GitView>);
-
-impl Render for Holder {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().w(px(1400.)).h(px(900.)).child(self.0.clone())
-    }
-}
 
 fn open<'a>(folder: &std::path::Path, live: occupancy::Live, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
-    cx.update(|cx| {
-        supraman_ui::init_globals(cx, "test");
-        supraman_ui::text_input::bind_keys(cx);
-        bind_keys(cx);
-    });
-    let folder = folder.to_path_buf();
-    let (holder, cx) = cx.add_window_view(|_, cx| Holder(GitView::open_with(folder, None, HitTargets::default(), &GitSizes::default(), std::sync::Arc::new(live), cx)));
-    let view = holder.read_with(cx, |h, _| h.0.clone());
-    cx.run_until_parked();
-    crate::git_view::test_support::assert_loaded(&view, cx);
-    (view, cx)
+    test_support::open(folder, Opts::default().live(live).size(1400., 900.), cx)
 }
 
 fn select(view: &Entity<GitView>, sha: &str, cx: &mut VisualTestContext) {
     view.update(cx, |v, cx| v.select_sha(sha, cx));
-    cx.run_until_parked();
-    redraw(view, cx);
-}
-
-/// Whether `key` paints in a fresh frame.
-fn painted(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) -> bool {
-    let hits = view.read_with(cx, |v, _| v.hits.clone());
-    hits.borrow_mut().clear();
-    redraw(view, cx);
-    hits.borrow().get(key).is_some()
-}
-
-fn click(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
-    assert!(painted(view, key, cx), "{key} is painted");
-    let at = view.read_with(cx, |v, _| v.hits.borrow().get(key).map(|h| h.bounds.center())).unwrap();
-    cx.simulate_click(at, Modifiers::none());
-    cx.run_until_parked();
-    redraw(view, cx);
-}
-
-fn keys(view: &Entity<GitView>, keys: &str, cx: &mut VisualTestContext) {
-    cx.simulate_keystrokes(keys);
     cx.run_until_parked();
     redraw(view, cx);
 }
@@ -99,10 +57,6 @@ fn focus_summary(view: &Entity<GitView>, cx: &mut VisualTestContext) {
 
 fn head(f: &Fixture) -> String {
     f.git(&["rev-parse", "HEAD"])
-}
-
-fn toast(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<String> {
-    view.read_with(cx, |v, _| v.toast.text().map(str::to_string))
 }
 
 #[gpui::test]
@@ -160,8 +114,8 @@ fn heads_message_box_opens_to_a_summary_and_description_and_amends_only_the_mess
 #[gpui::test]
 fn a_detached_heads_box_says_to_check_out_a_branch_and_opens_nothing(cx: &mut TestAppContext) {
     let f = Fixture::copy();
-    git_in(&f.git, &f.worktree, &["checkout", "-q", "--detach"], &[], None);
-    let detached = git_in(&f.git, &f.worktree, &["rev-parse", "HEAD"], &[], None);
+    f.at(&f.worktree, &["checkout", "-q", "--detach"]);
+    let detached = f.at(&f.worktree, &["rev-parse", "HEAD"]);
     let (view, cx) = open(&f.worktree, occupancy::Live::default(), cx);
     select(&view, &detached, cx);
     let shown = panel(&view, cx).read_with(cx, |p, _| p.shown().expect("HEAD shown"));
@@ -216,25 +170,25 @@ fn a_stashs_box_edits_its_message_through_the_stash_writes_and_a_session_working
     type_in(&view, "Ahead, not waiting", "", cx);
     click(&view, UPDATE_KEY, cx);
     assert_ne!(head(&f), top, "the amend ran without a question");
-    assert_eq!(git_in(&f.git, &f.dir, &["log", "-1", "--format=%s"], &[], None), "Ahead, not waiting");
+    assert_eq!(f.at(&f.dir, &["log", "-1", "--format=%s"]), "Ahead, not waiting");
 }
 
 /// `side` (at `second`, above `root`) with three commits on it, W1 to W3, each changing c.txt.
 fn three_above(f: &Fixture) -> [String; 3] {
     ["one", "two", "three"].map(|n| {
         std::fs::write(f.worktree.join("c.txt"), format!("{n}\n")).unwrap();
-        git_in(&f.git, &f.worktree, &["add", "c.txt"], &[], None);
-        git_in(&f.git, &f.worktree, &["commit", "-q", "--no-verify", "-m", &format!("W {n}")], &[], None);
-        git_in(&f.git, &f.worktree, &["rev-parse", "HEAD"], &[], None)
+        f.at(&f.worktree, &["add", "c.txt"]);
+        f.at(&f.worktree, &["commit", "-q", "--no-verify", "-m", &format!("W {n}")]);
+        f.at(&f.worktree, &["rev-parse", "HEAD"])
     })
 }
 
 fn side_head(f: &Fixture) -> String {
-    git_in(&f.git, &f.worktree, &["rev-parse", "HEAD"], &[], None)
+    f.at(&f.worktree, &["rev-parse", "HEAD"])
 }
 
 fn subjects(f: &Fixture) -> Vec<String> {
-    git_in(&f.git, &f.worktree, &["log", "--format=%s", "HEAD"], &[], None).lines().map(str::to_string).collect()
+    f.at(&f.worktree, &["log", "--format=%s", "HEAD"]).lines().map(str::to_string).collect()
 }
 
 #[gpui::test]
@@ -270,7 +224,7 @@ fn an_older_commits_box_offers_reword_naming_the_commits_it_rebases_and_rewords_
 fn a_pushed_or_dirty_reword_asks_first_cancel_writes_nothing_and_undo_puts_the_old_tip_back(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let [_, w2, w3] = three_above(&f);
-    git_in(&f.git, &f.worktree, &["push", "-q", "origin", "side"], &[], None);
+    f.at(&f.worktree, &["push", "-q", "origin", "side"]);
     std::fs::write(f.worktree.join("u.txt"), b"untracked\n").unwrap();
     let (view, cx) = open(&f.worktree, occupancy::Live::default(), cx);
     select(&view, &w2, cx);
@@ -296,7 +250,7 @@ fn a_pushed_or_dirty_reword_asks_first_cancel_writes_nothing_and_undo_puts_the_o
 fn a_detached_heads_older_commit_says_to_check_out_a_branch(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let [w1, ..] = three_above(&f);
-    git_in(&f.git, &f.worktree, &["checkout", "-q", "--detach"], &[], None);
+    f.at(&f.worktree, &["checkout", "-q", "--detach"]);
     let (view, cx) = open(&f.worktree, occupancy::Live::default(), cx);
     select(&view, &w1, cx);
     let shown = panel(&view, cx).read_with(cx, |p, _| p.shown().expect("W1 shown"));

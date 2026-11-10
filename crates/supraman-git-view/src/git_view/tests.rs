@@ -9,52 +9,9 @@ use supraman_ui::themes::{NAME_FLOOR, SECONDARY_FLOOR};
 
 use super::*;
 use super::load::initials;
-use super::test_support::sizes;
+use super::test_support::{Opts, open, open_unchecked, redraw, sizes};
 
-pub(crate) fn open<'a>(folder: &std::path::Path, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
-    open_in(folder, None, cx)
-}
-
-/// A Git tab of `folder` whose layout file lives in `home`, loaded.
-fn open_in<'a>(folder: &std::path::Path, home: Option<&std::path::Path>, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
-    let (view, cx) = open_unchecked(folder, home, cx);
-    super::test_support::assert_loaded(&view, cx);
-    (view, cx)
-}
-
-fn open_unchecked<'a>(folder: &std::path::Path, home: Option<&std::path::Path>, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
-    cx.update(|cx| {
-        if !cx.has_global::<supraman_term::terminal_settings::TerminalConfig>() {
-            supraman_ui::init_globals(cx, "test");
-            bind_keys(cx);
-        }
-    });
-    let (folder, home) = (folder.to_path_buf(), home.map(|h| h.to_path_buf()));
-    let (view, cx) = cx.add_window_view(|_, cx| {
-        let view = GitView::open(folder, home, HitTargets::default(), &GitSizes::default(), cx);
-        Holder(view)
-    });
-    let view = view.read_with(cx, |h, _| h.0.clone());
-    cx.run_until_parked();
-    redraw(&view, cx);
-    (view, cx)
-}
-
-struct Holder(Entity<GitView>);
-
-impl Render for Holder {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().w(px(1200.)).h(px(800.)).child(self.0.clone())
-    }
-}
-
-pub(crate) fn redraw(view: &Entity<GitView>, cx: &mut VisualTestContext) {
-    view.update(cx, |_, cx| cx.notify());
-    cx.run_until_parked();
-    cx.update(|_, _| ());
-}
-
-fn row_of<'a>(view: &'a GitView, sha: &str) -> (usize, &'a GraphRow) {
+fn graph_row<'a>(view: &'a GitView, sha: &str) -> (usize, &'a GraphRow) {
     view.rows.iter().enumerate().find(|(_, r)| r.sha.as_ref() == sha).unwrap_or_else(|| panic!("no row of {sha}"))
 }
 
@@ -76,7 +33,7 @@ fn git_tab_holds_saved_widths_at_the_columns_mins(cx: &mut TestAppContext) {
 fn git_tab_reopens_at_its_repos_layout_and_a_new_repo_at_the_last_one(cx: &mut TestAppContext) {
     let f = Fixture::shared();
     let home = tempfile::tempdir().unwrap();
-    let (view, vcx) = open_in(&f.dir, Some(home.path()), cx);
+    let (view, vcx) = open(&f.dir, Opts::default().home(home.path()), cx);
     let fitted = view.read_with(vcx, |v, _| v.widths[1]);
     assert!(fitted > px(graph::MIN_WIDTH), "the first open fits the graph to its lanes: {fitted:?}");
     let tags = view.read_with(vcx, |v, _| v.hits.borrow()["refpanel-row-tags"].bounds.center());
@@ -94,7 +51,7 @@ fn git_tab_reopens_at_its_repos_layout_and_a_new_repo_at_the_last_one(cx: &mut T
     assert!(kept.collapsed == ["tags"] && kept.hidden == ["refs/heads/feature"], "{kept:?}");
     drop(view);
 
-    let (again, vcx) = open_in(&f.dir, Some(home.path()), cx);
+    let (again, vcx) = open(&f.dir, Opts::default().home(home.path()), cx);
     let back = vcx.update(|_, cx| again.read(cx).sizes(cx));
     assert_eq!(back, kept, "the columns, the panels, the hidden refs and the collapsed folders come back");
     assert_eq!(back.widths[1], graph::MIN_WIDTH as u32, "a narrowed graph column stays narrow");
@@ -105,7 +62,7 @@ fn git_tab_reopens_at_its_repos_layout_and_a_new_repo_at_the_last_one(cx: &mut T
     assert!(notice.is_none() && file.get().repos.get(&layout::key(&f.dir)) == Some(&kept), "{:?}", file.get());
 
     let other = Generated::shared(30);
-    let (fresh, vcx) = open_in(&other.dir, Some(home.path()), cx);
+    let (fresh, vcx) = open(&other.dir, Opts::default().home(home.path()), cx);
     let new = vcx.update(|_, cx| fresh.read(cx).sizes(cx));
     assert_eq!((new.panel, new.message, new.widths[2]), (kept.panel, kept.message, kept.widths[2]), "a new repo takes the last widths");
     assert!(new.hidden.is_empty() && new.collapsed.is_empty(), "not the last repo's refs: {new:?}");
@@ -114,14 +71,14 @@ fn git_tab_reopens_at_its_repos_layout_and_a_new_repo_at_the_last_one(cx: &mut T
 #[gpui::test]
 fn git_tab_shows_refs_messages_dates_and_shas_of_the_fixture(cx: &mut TestAppContext) {
     let f = Fixture::shared();
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     view.read_with(cx, |v, _| {
         assert!(matches!(v.load, Load::Ready), "the fixture loads");
         let shas: Vec<&str> = v.rows.iter().skip(1).map(|r| r.sha.as_ref()).collect();
         for label in ["ahead", "merge", "main_work", "rename", "second", "root"] {
             assert!(shas.contains(&f.sha(label)), "{label} is a row");
         }
-        let (_, ahead) = row_of(v, f.sha("ahead"));
+        let (_, ahead) = graph_row(v, f.sha("ahead"));
         let cell = ref_cell(&ahead.row, false);
         let first = cell.first.expect("main on its commit");
         assert!(first.name == "main" && first.head() && !cell.ghost, "{first:?}");
@@ -130,17 +87,17 @@ fn git_tab_shows_refs_messages_dates_and_shas_of_the_fixture(cx: &mut TestAppCon
         assert_eq!(ahead.time_ms, 1_700_000_000_000 + 6 * 60_000, "the sixth commit's time");
         assert_eq!(cells::date_text(ahead), supraman_core::time::stamp(ahead.time_ms));
 
-        let (_, rename) = row_of(v, f.sha("rename"));
+        let (_, rename) = graph_row(v, f.sha("rename"));
         assert_eq!(rename.summary.as_ref(), "Move old.txt to new.txt");
         assert!(rename.body.starts_with("The old name no longer fits. Co-authored-by: Bea Two"), "{}", rename.body);
         assert_eq!(names(&rename.row.refs), ["feature"]);
-        let (_, merge) = row_of(v, f.sha("merge"));
+        let (_, merge) = graph_row(v, f.sha("merge"));
         assert!(merge.merge && merge.row.refs.iter().any(|g| g.refs.iter().any(|r| r.name == "origin/main")));
-        let (_, root) = row_of(v, f.sha("root"));
+        let (_, root) = graph_row(v, f.sha("root"));
         let ghost = ref_cell(&root.row, false);
         assert!(ghost.ghost && ghost.first.is_some() && root.row.refs.is_empty(), "a ref-less row offers its descendant's branch: {ghost:?}");
     });
-    let ix = view.read_with(cx, |v, _| row_of(v, f.sha("root")).0);
+    let ix = view.read_with(cx, |v, _| graph_row(v, f.sha("root")).0);
     let hits = view.read_with(cx, |v, _| v.hits.clone());
     let (pill, cell) = (hits.borrow()[&format!("git-ghost-{ix}")].bounds, hits.borrow()[&format!("git-refs-{ix}")].bounds);
     assert!(pill.left() >= cell.left() && pill.right() <= cell.right() + px(0.5), "the ghost pill paints in its row's ref cell: {pill:?} {cell:?}");
@@ -149,10 +106,10 @@ fn git_tab_shows_refs_messages_dates_and_shas_of_the_fixture(cx: &mut TestAppCon
 #[gpui::test]
 fn git_tab_shows_each_stash_as_a_row_of_its_label_at_its_time(cx: &mut TestAppContext) {
     let f = Fixture::shared();
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     view.read_with(cx, |v, _| {
         let label = |index: &str| {
-            let (_, row) = row_of(v, f.sha(index));
+            let (_, row) = graph_row(v, f.sha(index));
             let stash = row.stash().unwrap_or_else(|| panic!("{index} is a stash's row"));
             assert_eq!((row.time_ms, row.body.as_ref()), (stash.time * 1000, ""));
             row.summary.to_string()
@@ -168,9 +125,9 @@ fn git_tab_shows_each_stash_as_a_row_of_its_label_at_its_time(cx: &mut TestAppCo
 #[gpui::test]
 fn git_tab_stacks_a_rows_refs_and_lists_them_on_hover(cx: &mut TestAppContext) {
     let f = Fixture::shared();
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     let (ix, cell) = view.read_with(cx, |v, _| {
-        let (ix, second) = row_of(v, f.sha("second"));
+        let (ix, second) = graph_row(v, f.sha("second"));
         (ix, ref_cell(&second.row, false))
     });
     assert_eq!((cell.first.as_ref().map(|g| g.name.as_str()), cell.more), (Some("side"), 1), "the worktree's branch, then +1 for v1");
@@ -192,14 +149,14 @@ fn git_tab_stacks_a_rows_refs_and_lists_them_on_hover(cx: &mut TestAppContext) {
     assert!((hovered.left() - pill.left()).abs() < px(0.5) && (hovered.top() - pill.top()).abs() < px(0.5), "the layer lies on the row's pill: {pill:?} {hovered:?}");
     assert!((below.top() - hovered.bottom()).abs() < px(0.5) && (below.left() - hovered.left()).abs() < px(0.5), "v1 hangs from the hovered pill: {hovered:?} {below:?}");
     assert!((below.size.width - hovered.size.width).abs() < px(0.5) && hovered.size.width >= pill.size.width - px(0.5), "one width, the pill's or more: {pill:?} {hovered:?} {below:?}");
-    let (_, ahead) = view.read_with(cx, |v, _| { let (i, r) = row_of(v, f.sha("ahead")); (i, r.row.clone()) });
+    let (_, ahead) = view.read_with(cx, |v, _| { let (i, r) = graph_row(v, f.sha("ahead")); (i, r.row.clone()) });
     assert!(ref_cell(&ahead, true).list.is_empty(), "a single group opens no list");
 }
 
 #[gpui::test]
 fn git_tab_puts_the_wip_row_on_top_of_a_dirty_tree_and_none_on_a_clean_one(cx: &mut TestAppContext) {
     let f = Fixture::copy();
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     view.read_with(cx, |v, _| {
         let top = &v.rows[0];
         assert!(top.wip() && v.rows[1].sha.as_ref() == f.sha("ahead"), "WIP, then HEAD's commit");
@@ -225,7 +182,7 @@ fn git_tab_paints_a_long_history_without_a_stall_and_pages_at_the_end(cx: &mut T
         matches!(view.read(cx).load, Load::Loading) && view.read(cx).rows.is_empty()
     });
     assert!(loading, "the first page is read off the UI thread");
-    let (view, cx) = open(&g.dir, cx);
+    let (view, cx) = open(&g.dir, Opts::default(), cx);
     let commits = |v: &GitView| v.rows.iter().filter(|r| !r.wip()).count();
     let first = view.read_with(cx, |v, _| (commits(v), v.paging));
     assert_eq!(first, (FIRST_PAGE, false));
@@ -262,11 +219,11 @@ fn git_tab_gives_two_authors_their_initials_and_distinct_lane_rings(cx: &mut Tes
     let tree = format!("{second}^{{tree}}");
     let bea = git_in(&f.git, &f.dir, &["commit-tree", &tree, "-p", &second, "-m", "By Bea"], &env, None);
     f.git(&["branch", "bea", &bea]);
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     let palette = cx.update(|_, cx| Palette::of(cx.theme()));
     view.read_with(cx, |v, _| {
-        let (_, b) = row_of(v, &bea);
-        let (_, a) = row_of(v, f.sha("ahead"));
+        let (_, b) = graph_row(v, &bea);
+        let (_, a) = graph_row(v, f.sha("ahead"));
         assert_eq!((b.initials.as_ref(), a.initials.as_ref()), ("BT", "AF"));
         assert_ne!(a.row.lane, b.row.lane);
         assert_ne!(palette.lane(a.row.colour), palette.lane(b.row.colour), "their rings differ");
@@ -329,7 +286,7 @@ fn git_tab_colours_come_from_the_theme_and_keep_text_readable() {
 #[gpui::test]
 fn git_tab_reports_a_click_and_up_down_as_the_selection(cx: &mut TestAppContext) {
     let f = Fixture::shared();
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let _sub = cx.update({
         let (view, seen) = (view.clone(), seen.clone());
@@ -346,7 +303,7 @@ fn git_tab_reports_a_click_and_up_down_as_the_selection(cx: &mut TestAppContext)
 #[gpui::test]
 fn git_tab_walks_as_a_ref_hidden_before_its_first_load_ended(cx: &mut TestAppContext) {
     let f = Fixture::shared();
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     let first = load::first(None, &f.dir, &ref_panel::Walk::default());
     view.update(cx, |v, cx| {
         (v.repo, v.load) = (None, Load::Loading);
@@ -362,11 +319,11 @@ fn git_tab_says_a_gitman_key_that_does_not_parse_and_loads(cx: &mut TestAppConte
     let f = Fixture::shared();
     let home = tempfile::tempdir().unwrap();
     std::fs::write(home.path().join("settings.toml"), "[gitman]\nfetch_every_minutes = \"often\"\n").unwrap();
-    let (view, cx) = open_unchecked(&f.dir, Some(home.path()), cx);
+    let (view, cx) = open_unchecked(&f.dir, Opts::default().home(home.path()), cx);
     let notice = view.read_with(cx, |v, _| (matches!(v.load, Load::Ready), v.settings_notice.clone()));
     assert!(notice.0, "the graph loads");
     assert!(notice.1.as_deref().is_some_and(|n| n.starts_with("[gitman] in settings.toml is ignored")), "{notice:?}");
-    assert!(super::wip::tests::repaint(&view, cx).borrow().contains_key("git-settings-notice-dismiss"), "the banner is painted");
+    assert!(super::test_support::repaint(&view, cx).borrow().contains_key("git-settings-notice-dismiss"), "the banner is painted");
 }
 
 #[gpui::test]
@@ -385,14 +342,14 @@ fn git_tab_says_why_its_settings_give_no_git_and_retries(cx: &mut TestAppContext
     std::fs::write(&settings, "[gitman]
 git = 5
 ").unwrap();
-    let (view, cx) = open_unchecked(&f.dir, Some(home.path()), cx);
+    let (view, cx) = open_unchecked(&f.dir, Opts::default().home(home.path()), cx);
     assert!(said(&view, cx).starts_with("[gitman] in settings.toml is ignored"), "{}", said(&view, cx));
     std::fs::write(&settings, "not toml [").unwrap();
-    super::wip::tests::click(&view, "git-retry", cx);
+    super::test_support::click(&view, "git-retry", cx);
     cx.run_until_parked();
     assert!(said(&view, cx).starts_with("[gitman] git is not read"), "{}", said(&view, cx));
     std::fs::remove_file(&settings).unwrap();
-    super::wip::tests::click(&view, "git-retry", cx);
+    super::test_support::click(&view, "git-retry", cx);
     cx.run_until_parked();
     assert_eq!(said(&view, cx), "ready", "Retry loads the graph");
 }

@@ -2,13 +2,14 @@
 //! revert and an external rebase, and the graph's conflict node, on fixture copies (C196).
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
-use supraman_gitman::fixture::{Fixture, git_in, run_git};
+use supraman_gitman::fixture::{Fixture, run_git};
 use supraman_gitman::OperationState;
 
 use crate::git_view::wip::conflicts::headline;
-use crate::git_view::wip::actions::tests::{click, open_as, painted, panel, stopped_rebase, texts};
+use crate::git_view::test_support::{click, painted};
+use crate::git_view::wip::actions::tests::{open_as, panel, stopped_rebase, texts};
 use crate::git_view::wip::{Section, Shown};
-use crate::git_view::tests::redraw;
+use crate::git_view::test_support::redraw;
 use crate::git_view::{GitView, Selected};
 use crate::occupancy;
 
@@ -39,7 +40,7 @@ fn state(f: &Fixture) -> OperationState {
 }
 
 fn wt(f: &Fixture, args: &[&str]) -> String {
-    git_in(&f.git, &f.worktree, args, &[], None)
+    f.at(&f.worktree, args)
 }
 
 #[gpui::test]

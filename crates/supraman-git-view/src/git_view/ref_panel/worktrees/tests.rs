@@ -5,31 +5,18 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
 
-use gpui::{Context, Entity, IntoElement, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Render, TestAppContext, VisualTestContext, Window, div, prelude::*, px};
+use gpui::{Entity, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, TestAppContext, VisualTestContext};
 use supraman_core::paths::path_key;
-use supraman_gitman::BackgroundSettings;
 use supraman_gitman::fixture::{Fixture, git_in};
 use supraman_gitman::write::LockSet;
-use supraman_ui::hit::HitTargets;
 use supraman_ui::icon::Icon;
 
 use crate::git_view::background::{self, refresh_wips};
 use crate::git_view::ref_panel::{Entry, RefPanel, RefWips};
-use crate::git_view::tests::redraw;
-use crate::git_view::{GitSizes, GitView, Selected, bind_keys};
+use crate::git_view::test_support::{self, Opts, painted, redraw, settle};
+use crate::git_view::{GitView, Selected};
 use crate::occupancy;
-
-struct Holder(Entity<GitView>);
-
-impl Render for Holder {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().w(px(1400.)).h(px(900.)).child(self.0.clone())
-    }
-}
-
-const QUIET: BackgroundSettings = BackgroundSettings { fetch_every_minutes: Some(0), maintenance: Some(false), worktree_wip: None };
 
 struct Trees {
     f: Fixture,
@@ -48,32 +35,15 @@ fn trees() -> Trees {
     f.git(&["worktree", "add", "-q", "--detach", &gone.to_string_lossy(), f.sha("root")]);
     std::fs::remove_dir_all(&gone).unwrap();
     f.git(&["worktree", "lock", "--reason", "on a stick", &f.worktree.to_string_lossy()]);
-    git_in(&f.git, &f.worktree, &["branch", "-q", "--set-upstream-to=main", "side"], &[], None);
+    f.at(&f.worktree, &["branch", "-q", "--set-upstream-to=main", "side"]);
     Trees { f, extra, gone }
 }
 
 fn open<'a>(f: &Fixture, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
-    cx.update(|cx| {
-        supraman_ui::init_globals(cx, "test");
-        supraman_ui::text_input::bind_keys(cx);
-        supraman_editor::init(supraman_ui::fonts::MONO, 13., cx);
-        bind_keys(cx);
-        background::start_for_test(QUIET, cx);
-    });
-    let folder = f.dir.clone();
-    let live: Arc<dyn supraman_gitman::write::Occupancy> = Arc::new(occupancy::Live::default());
-    let (holder, cx) = cx.add_window_view(|_, cx| Holder(GitView::open_with(folder, None, HitTargets::default(), &GitSizes::default(), live, cx)));
-    let view = holder.read_with(cx, |h, _| h.0.clone());
+    let (view, cx) = test_support::open_unchecked(&f.dir, Opts::default().live(occupancy::Live::default()).background().editor().size(1400., 900.), cx);
     settle(&view, cx);
-    crate::git_view::test_support::assert_loaded(&view, cx);
+    test_support::assert_loaded(&view, cx);
     (view, cx)
-}
-
-fn settle(view: &Entity<GitView>, cx: &mut VisualTestContext) {
-    for _ in 0..3 {
-        cx.run_until_parked();
-        redraw(view, cx);
-    }
 }
 
 fn reread(view: &Entity<GitView>, cx: &mut VisualTestContext) {
@@ -109,13 +79,6 @@ fn summary(view: &Entity<GitView>, path: &str, cx: &mut VisualTestContext) -> Op
         crate::git_view::ref_panel::Summary::Reading => "reading".to_string(),
         crate::git_view::ref_panel::Summary::Said { upstream, counts } => [upstream, counts].into_iter().filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" "),
     })
-}
-
-fn painted(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) -> bool {
-    let hits = view.read_with(cx, |v, _| v.hits.clone());
-    hits.borrow_mut().clear();
-    redraw(view, cx);
-    hits.borrow().contains_key(key)
 }
 
 fn click(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {

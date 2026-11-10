@@ -7,7 +7,7 @@ use supraman_gitman::{ChangeKind, FileChange};
 
 use crate::git_view::diff::*;
 use crate::git_view::GitView;
-use crate::git_view::tests::{open as open_tab, redraw};
+use crate::git_view::test_support::{Opts, open as open_tab, redraw, settle};
 
 const PATH: &str = "picked.txt";
 const BASE: &str = "one\ntwo\nthree\nfour\nfive\nsix\nseven\n";
@@ -31,8 +31,7 @@ fn worktree(f: &Fixture) -> String {
 }
 
 fn open<'a>(f: &Fixture, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
-    cx.update(|cx| supraman_editor::init(supraman_ui::fonts::MONO, 13., cx));
-    open_tab(&f.dir, cx)
+    open_tab(&f.dir, Opts::default().editor(), cx)
 }
 
 /// The viewer of `PATH`'s `of` diff in `layout`, its editors painted and the picks placed on them.
@@ -43,13 +42,6 @@ fn show(view: &Entity<GitView>, of: Of, layout: Layout, cx: &mut VisualTestConte
     d.update(cx, |d, cx| d.set_layout(layout, cx));
     settle(view, cx);
     d
-}
-
-fn settle(view: &Entity<GitView>, cx: &mut VisualTestContext) {
-    for _ in 0..3 {
-        cx.run_until_parked();
-        redraw(view, cx);
-    }
 }
 
 fn hit(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) -> Option<Point<Pixels>> {

@@ -1,65 +1,24 @@
 //! The stash's writes through the real tab: the toolbar's Stash and Pop, the stash row's menus and the WIP's and
 //! a stash's file buttons, on fixture copies (C196).
 
-use gpui::{Entity, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, TestAppContext, VisualTestContext};
+use gpui::{Entity, MouseButton, TestAppContext, VisualTestContext};
 use supraman_gitman::fixture::{Fixture, MAIN_STASH};
 use supraman_gitman::stashes;
-use supraman_ui::hit::HitTargets;
 
 use crate::git_view::stash_bar::{NOTHING_TO_POP, NOTHING_TO_STASH, POP_KEY, STASH_KEY};
-use crate::git_view::tests::redraw;
-use crate::git_view::wip::tests::select_wip;
+use crate::git_view::test_support::redraw;
+use crate::git_view::test_support::{Opts, click, open as open_tab, press, select_wip, toast};
 use crate::git_view::*;
 use crate::occupancy;
 
-struct Holder(Entity<GitView>);
-
-impl Render for Holder {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().w(px(1400.)).h(px(900.)).child(self.0.clone())
-    }
-}
-
 fn open<'a>(folder: &std::path::Path, live: occupancy::Live, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
-    cx.update(|cx| {
-        supraman_ui::init_globals(cx, "test");
-        supraman_ui::text_input::bind_keys(cx);
-        bind_keys(cx);
-    });
-    let folder = folder.to_path_buf();
-    let (holder, cx) = cx.add_window_view(|_, cx| Holder(GitView::open_with(folder, None, HitTargets::default(), &GitSizes::default(), Arc::new(live), cx)));
-    let view = holder.read_with(cx, |h, _| h.0.clone());
-    cx.run_until_parked();
-    crate::git_view::test_support::assert_loaded(&view, cx);
+    let (view, cx) = open_tab(folder, Opts::default().live(live).size(1400., 900.), cx);
     select_wip(&view, cx);
     (view, cx)
 }
 
-fn press(view: &Entity<GitView>, key: &str, button: MouseButton, cx: &mut VisualTestContext) {
-    let hits = view.read_with(cx, |v, _| v.hits.clone());
-    hits.borrow_mut().clear();
-    redraw(view, cx);
-    let position = hits.borrow().get(key).unwrap_or_else(|| panic!("{key} is painted")).bounds.center();
-    if button == MouseButton::Left {
-        cx.simulate_click(position, Modifiers::none());
-    } else {
-        cx.simulate_event(MouseDownEvent { position, button, modifiers: Modifiers::none(), click_count: 1, first_mouse: false });
-        cx.simulate_event(MouseUpEvent { position, button, modifiers: Modifiers::none(), click_count: 1 });
-    }
-    cx.run_until_parked();
-    redraw(view, cx);
-}
-
-fn click(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
-    press(view, key, MouseButton::Left, cx);
-}
-
 fn labels(f: &Fixture) -> Vec<String> {
     stashes(&f.repo()).unwrap().iter().map(|s| s.label()).collect()
-}
-
-fn toast(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<String> {
-    view.read_with(cx, |v, _| v.toast.text().map(str::to_string))
 }
 
 fn asking(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<String> {
@@ -149,21 +108,21 @@ fn toolbar_stash_runs_while_a_session_works_here(cx: &mut TestAppContext) {
 fn the_stash_rows_menus_delete_after_asking_edit_the_message_and_apply_refuses_over_staged_changes(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let (view, cx) = open(&f.dir, occupancy::Live::default(), cx);
-    press(&view, "refpanel-name-stashes/1", MouseButton::Right, cx);
+    press(&view, "refpanel-name-stashes/1", MouseButton::Right, 1, cx);
     click(&view, "menu-stash-delete", cx);
     assert_eq!(asking(&view, cx), Some(format!("Delete the stash \u{201c}{MAIN_STASH}\u{201d}? It cannot be undone.")));
     assert_eq!(labels(&f).len(), 3, "nothing goes before the answer");
     click(&view, "git-stash-ask-yes", cx);
     assert!(!labels(&f).contains(&MAIN_STASH.to_string()) && labels(&f).len() == 2);
 
-    press(&view, "refpanel-name-stashes/1", MouseButton::Right, cx);
+    press(&view, "refpanel-name-stashes/1", MouseButton::Right, 1, cx);
     click(&view, "menu-stash-edit", cx);
     view.update(cx, |v, cx| v.stash_actions().update(cx, |s, cx| s.type_message("Better words", cx)));
     click(&view, "git-stash-message-save", cx);
     assert_eq!(labels(&f)[0], "Better words", "the stash keeps its commit and goes on top");
 
     let row = view.read_with(cx, |v, _| v.rows.iter().position(|r| r.stash().is_some()).expect("a stash row"));
-    press(&view, &format!("git-row-{row}"), MouseButton::Right, cx);
+    press(&view, &format!("git-row-{row}"), MouseButton::Right, 1, cx);
     click(&view, "menu-stash-apply", cx);
     assert!(asking(&view, cx).is_some_and(|q| q.starts_with("Apply ")), "the work in progress is asked about");
     click(&view, "git-stash-ask-yes", cx);

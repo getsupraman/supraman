@@ -4,8 +4,8 @@ use supraman_gitman::{FIRST_PAGE, NEXT_PAGE, Row};
 
 use crate::git_view::live::{FOCUS_DELAY, Refresh};
 use crate::git_view::live::tests::{close, follow, following};
-use crate::git_view::tests::{open, redraw};
-use crate::git_view::wip::tests::repaint;
+use crate::git_view::test_support::{Opts, open, redraw};
+use crate::git_view::test_support::repaint;
 use crate::git_view::*;
 
 /// A commit with `message` on `parent`, as `branch`.
@@ -25,7 +25,7 @@ fn refreshed(view: &Entity<GitView>, cx: &mut VisualTestContext) {
 #[gpui::test]
 fn refresh_widens_the_graph_column_for_new_lanes(cx: &mut TestAppContext) {
     let g = Generated::copy(60);
-    let (view, cx) = open(&g.dir, cx);
+    let (view, cx) = open(&g.dir, Opts::default(), cx);
     let before = view.read_with(cx, |v, _| v.graph_max).expect("measured on open");
     for n in 0..4 {
         commit_on(&g, "main~5", &format!("side/{n}"), &format!("Side {n}"));
@@ -38,7 +38,7 @@ fn refresh_widens_the_graph_column_for_new_lanes(cx: &mut TestAppContext) {
 #[gpui::test]
 fn refresh_that_fails_says_so_over_the_graph_until_one_succeeds(cx: &mut TestAppContext) {
     let g = Generated::copy(30);
-    let (view, cx) = open(&g.dir, cx);
+    let (view, cx) = open(&g.dir, Opts::default(), cx);
     let notice = |cx: &mut VisualTestContext| repaint(&view, cx).borrow().contains_key("git-follow-notice-dismiss");
     assert!(!notice(cx), "no notice after a good read");
     let rows = view.read_with(cx, |v, _| v.rows.len());
@@ -67,7 +67,7 @@ fn activated(view: &Entity<GitView>, cx: &mut VisualTestContext) {
 #[gpui::test]
 fn refresh_of_a_hidden_tab_waits_until_it_is_shown(cx: &mut TestAppContext) {
     let g = Generated::copy(30);
-    let (view, cx) = open(&g.dir, cx);
+    let (view, cx) = open(&g.dir, Opts::default(), cx);
     view.update(cx, |v, cx| v.set_shown(false, cx));
     let before = refreshes(&view, cx);
     activated(&view, cx);
@@ -90,7 +90,7 @@ fn refresh_of_a_hidden_tab_waits_until_it_is_shown(cx: &mut TestAppContext) {
 fn refresh_on_activation_only_for_a_tab_without_watchers(cx: &mut TestAppContext) {
     let g = Generated::copy(30);
     follow(cx);
-    let (view, cx) = open(&g.dir, cx);
+    let (view, cx) = open(&g.dir, Opts::default(), cx);
     following(&view, cx);
     let before = refreshes(&view, cx);
     activated(&view, cx);
@@ -121,7 +121,7 @@ pub(crate) fn rows(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<Ro
 fn refresh_after_a_commit_on_top_keeps_the_rows_paged_below_and_the_place(cx: &mut TestAppContext) {
     let total = FIRST_PAGE + 3 * NEXT_PAGE;
     let g = Generated::copy(total);
-    let (view, cx) = open(&g.dir, cx);
+    let (view, cx) = open(&g.dir, Opts::default(), cx);
     paged(&view, 2, cx);
     let loaded = FIRST_PAGE + 2 * NEXT_PAGE;
     assert_eq!(view.read_with(cx, |v, _| v.commits), loaded);
@@ -152,7 +152,7 @@ fn refresh_after_a_commit_on_top_keeps_the_rows_paged_below_and_the_place(cx: &m
 #[gpui::test]
 fn refresh_after_a_rewrite_or_a_hidden_ref_reads_the_first_page_afresh(cx: &mut TestAppContext) {
     let g = Generated::copy(FIRST_PAGE + 3 * NEXT_PAGE);
-    let (view, cx) = open(&g.dir, cx);
+    let (view, cx) = open(&g.dir, Opts::default(), cx);
     paged(&view, 2, cx);
     let rewritten = commit_on(&g, "main~1", "main", "Rewritten");
     refreshed(&view, cx);
@@ -191,7 +191,7 @@ fn select_at(view: &Entity<GitView>, ix: usize, top: Pixels, cx: &mut VisualTest
 #[gpui::test]
 fn refresh_with_new_commits_on_top_follows_them_while_the_selection_stays_in_view(cx: &mut TestAppContext) {
     let g = Generated::copy(200);
-    let (view, cx) = open(&g.dir, cx);
+    let (view, cx) = open(&g.dir, Opts::default(), cx);
     let row = px(graph::ROW);
     let first = view.read_with(cx, |v, _| usize::from(v.rows[0].wip()));
 

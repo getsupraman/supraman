@@ -7,7 +7,7 @@ use supraman_gitman::{FIRST_PAGE, NEXT_PAGE};
 
 use crate::git_view::refresh::tests::{fresh, paged, rows};
 use crate::git_view::seek::tests::tag;
-use crate::git_view::tests::{open, redraw};
+use crate::git_view::test_support::{Opts, open, redraw};
 use crate::git_view::GitView;
 
 /// Waits up to 10 s for `pid` to end.
@@ -22,7 +22,7 @@ fn git_pid(view: &Entity<GitView>, cx: &mut VisualTestContext) -> u32 {
 #[gpui::test]
 fn paging_ten_pages_reads_on_from_the_first_pages_git(cx: &mut TestAppContext) {
     let g = Generated::shared(FIRST_PAGE + 12 * NEXT_PAGE);
-    let (view, cx) = open(&g.dir, cx);
+    let (view, cx) = open(&g.dir, Opts::default(), cx);
     let before = process::spawned_here();
     paged(&view, 10, cx);
     assert_eq!(process::spawned_here() - before, 0, "no git started for ten pages");
@@ -34,7 +34,7 @@ fn paging_ten_pages_reads_on_from_the_first_pages_git(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_walk_change_and_closing_the_tab_kill_the_walks_git(cx: &mut TestAppContext) {
     let g = Generated::shared(FIRST_PAGE + 20 * NEXT_PAGE);
-    let (view, cx) = open(&g.dir, cx);
+    let (view, cx) = open(&g.dir, Opts::default(), cx);
     let first = git_pid(&view, cx);
     let key = "refs/heads/topic/240".to_string();
     view.update(cx, |v, cx| v.ref_panel().update(cx, |p, cx| p.toggle_hidden(&[key], cx)));
@@ -52,7 +52,7 @@ fn a_walk_change_and_closing_the_tab_kill_the_walks_git(cx: &mut TestAppContext)
 fn paging_after_the_tail_dropped_reads_what_a_fresh_read_does(cx: &mut TestAppContext) {
     let total = 12_000;
     let g = Generated::shared(total);
-    let (view, cx) = open(&g.dir, cx);
+    let (view, cx) = open(&g.dir, Opts::default(), cx);
     view.update(cx, |v, cx| v.seek_sha(tag(&g, "t1").into(), cx));
     cx.run_until_parked();
     view.update(cx, |v, cx| {

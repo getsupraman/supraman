@@ -4,42 +4,18 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gpui::{Context, Entity, IntoElement, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Render, TestAppContext, VisualTestContext, Window, div, prelude::*, px};
-use supraman_gitman::fixture::{Fixture, git_in};
+use gpui::{Entity, MouseButton, TestAppContext, VisualTestContext};
+use supraman_gitman::fixture::Fixture;
 use supraman_gitman::write::{Call, LockSet, Resource, Writer};
-use supraman_gitman::BackgroundSettings;
-use supraman_ui::hit::HitTargets;
 use supraman_ui::marks::Activity;
 
-use super::super::background;
-use super::super::tests::redraw;
-use super::super::{GitSizes, GitView, Selected, bind_keys};
+use crate::git_view::test_support::{self, Opts, painted, press, redraw};
+use super::super::{GitView, Selected};
 use super::AttachAgent;
 use crate::occupancy::{Live, LiveSession};
 
-struct Holder(Entity<GitView>);
-
-impl Render for Holder {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().w(px(1400.)).h(px(900.)).child(self.0.clone())
-    }
-}
-
-const QUIET: BackgroundSettings = BackgroundSettings { fetch_every_minutes: Some(0), maintenance: Some(false), worktree_wip: None };
-
 fn open<'a>(folder: PathBuf, live: Live, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
-    cx.update(|cx| {
-        supraman_ui::init_globals(cx, "test");
-        supraman_ui::text_input::bind_keys(cx);
-        bind_keys(cx);
-        background::start_for_test(QUIET, cx);
-    });
-    let (holder, cx) = cx.add_window_view(|_, cx| Holder(GitView::open_following(folder, None, HitTargets::default(), &GitSizes::default(), live, cx)));
-    let view = holder.read_with(cx, |h, _| h.0.clone());
-    cx.run_until_parked();
-    crate::git_view::test_support::assert_loaded(&view, cx);
-    redraw(&view, cx);
-    (view, cx)
+    test_support::open(&folder, Opts::default().following(live).background().size(1400., 900.), cx)
 }
 
 fn session(name: &str, cwd: PathBuf, activity: Activity, attach: Option<&str>) -> LiveSession {
@@ -54,25 +30,6 @@ fn set(live: &Live, sessions: Vec<LiveSession>, view: &Entity<GitView>, cx: &mut
 
 fn agents(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<(usize, String)> {
     view.read_with(cx, |v, _| v.agent_rows())
-}
-
-fn painted(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) -> bool {
-    let hits = view.read_with(cx, |v, _| v.hits.clone());
-    hits.borrow_mut().clear();
-    redraw(view, cx);
-    hits.borrow().contains_key(key)
-}
-
-fn press(view: &Entity<GitView>, key: &str, click_count: usize, cx: &mut VisualTestContext) {
-    let hits = view.read_with(cx, |v, _| v.hits.clone());
-    hits.borrow_mut().clear();
-    redraw(view, cx);
-    let position = hits.borrow().get(key).unwrap_or_else(|| panic!("{key} is painted")).bounds.center();
-    let (button, modifiers) = (MouseButton::Left, Modifiers::none());
-    cx.simulate_event(MouseDownEvent { position, button, modifiers, click_count, first_mouse: false });
-    cx.simulate_event(MouseUpEvent { position, button, modifiers, click_count });
-    cx.run_until_parked();
-    redraw(view, cx);
 }
 
 /// Each row's kind, top down, for the first `n` rows.
@@ -127,7 +84,7 @@ fn on_a_clean_tree_the_agent_row_stands_over_heads_row(cx: &mut TestAppContext) 
     let live = Live::default();
     live.set_sessions(vec![session("fm-alpha", f.worktree.clone(), Activity::Working, None)]);
     let (view, cx) = open(f.worktree.clone(), live.clone(), cx);
-    let head = git_in(&f.git, &f.worktree, &["rev-parse", "HEAD"], &[], None);
+    let head = f.at(&f.worktree, &["rev-parse", "HEAD"]);
     let at = view.read_with(cx, |v, _| v.rows.iter().position(|r| r.sha.as_ref() == head)).expect("HEAD's row");
     assert_eq!(view.read_with(cx, |v, _| v.wip_row()), None);
     assert_eq!(agents(&view, cx), [(at - 1, "fm-alpha".to_string())], "already working when the tab opened");
@@ -145,18 +102,18 @@ fn selecting_an_agent_row_shows_the_session_and_attach_asks_for_it(cx: &mut Test
     let seen = heard.clone();
     cx.update(|_, cx| cx.subscribe(&view, move |_, e: &AttachAgent, _| seen.borrow_mut().push(e.0.clone())).detach());
 
-    press(&view, "git-agent-0", 1, cx);
+    press(&view, "git-agent-0", MouseButton::Left, 1, cx);
     assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Agent("fm-alpha".into())));
     assert!(painted(&view, "git-agent-section-session", cx), "the session's page");
-    press(&view, "git-agent-attach", 1, cx);
+    press(&view, "git-agent-attach", MouseButton::Left, 1, cx);
     assert_eq!(*heard.borrow(), [alpha.clone()], "Attach asks for the session");
 
-    press(&view, "git-agent-1", 1, cx);
+    press(&view, "git-agent-1", MouseButton::Left, 1, cx);
     assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Agent("fm-beta".into())));
-    press(&view, "git-agent-attach", 1, cx);
+    press(&view, "git-agent-attach", MouseButton::Left, 1, cx);
     assert_eq!(heard.borrow().len(), 1, "a session that cannot be attached: Attach is dimmed");
 
-    press(&view, "git-agent-0", 2, cx);
+    press(&view, "git-agent-0", MouseButton::Left, 2, cx);
     assert_eq!(heard.borrow().len(), 2, "a double-click attaches too");
 
     set(&live, vec![session("fm-gamma", f.dir.clone(), Activity::Working, None), alpha.clone()], &view, cx);
@@ -177,7 +134,7 @@ fn a_write_while_a_session_works_here_runs_without_a_question(cx: &mut TestAppCo
     let asked = gate.update(cx, |g, cx| g.request(writer, LockSet::new().write(Resource::Index), |s| s.output(&Call::new(&["add"]).paths(["new.txt"])).map(drop), cx));
     assert!(asked.is_some());
     cx.run_until_parked();
-    let staged = git_in(&f.git, &f.dir, &["diff", "--cached", "--name-only"], &[], None);
+    let staged = f.at(&f.dir, &["diff", "--cached", "--name-only"]);
     assert!(staged.lines().any(|l| l == "new.txt"), "staged with fm-alpha working there: {staged}");
     assert!(!painted(&view, "write-guard-band", cx), "no question");
 }

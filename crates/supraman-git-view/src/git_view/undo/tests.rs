@@ -1,36 +1,16 @@
-use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
-use supraman_gitman::fixture::{Fixture, git_in};
+use gpui::{Entity, TestAppContext, VisualTestContext};
+use supraman_gitman::fixture::Fixture;
 use supraman_gitman::write::journal::{self, Action};
 use supraman_gitman::write::{Call, LockSet, Writer};
-use supraman_ui::hit::HitTargets;
 
-use crate::git_view::tests::redraw;
+use crate::git_view::test_support::{self, Opts, click, keys, toast};
 use crate::git_view::undo::{REDO_KEY, UNDO_KEY};
 use crate::git_view::*;
 use crate::occupancy;
 
 /// A Git tab of `folder` whose write gate reads `live`, as the fleet's poll keeps it.
 fn open<'a>(folder: &std::path::Path, live: occupancy::Live, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
-    cx.update(|cx| {
-        supraman_ui::init_globals(cx, "test");
-        supraman_ui::text_input::bind_keys(cx);
-        bind_keys(cx);
-    });
-    let folder = folder.to_path_buf();
-    let (holder, cx) = cx.add_window_view(|_, cx| Holder(GitView::open_with(folder, None, HitTargets::default(), &GitSizes::default(), Arc::new(live), cx)));
-    let view = holder.read_with(cx, |h, _| h.0.clone());
-    cx.run_until_parked();
-    crate::git_view::test_support::assert_loaded(&view, cx);
-    redraw(&view, cx);
-    (view, cx)
-}
-
-struct Holder(Entity<GitView>);
-
-impl Render for Holder {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().w(px(1200.)).h(px(800.)).child(self.0.clone())
-    }
+    test_support::open(folder, Opts::default().live(live), cx)
 }
 
 fn commit_recorded(dir: &std::path::Path, f: &Fixture, message: &str) {
@@ -44,25 +24,7 @@ fn commit_recorded(dir: &std::path::Path, f: &Fixture, message: &str) {
 }
 
 fn head(f: &Fixture, dir: &std::path::Path) -> String {
-    git_in(&f.git, dir, &["rev-parse", "HEAD"], &[], None)
-}
-
-fn click(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
-    redraw(view, cx);
-    let at = view.read_with(cx, |v, _| v.hits.borrow().get(key).map(|h| h.bounds.center())).unwrap_or_else(|| panic!("{key} is painted"));
-    cx.simulate_click(at, Modifiers::none());
-    cx.run_until_parked();
-    redraw(view, cx);
-}
-
-fn keys(view: &Entity<GitView>, keys: &str, cx: &mut VisualTestContext) {
-    cx.simulate_keystrokes(keys);
-    cx.run_until_parked();
-    redraw(view, cx);
-}
-
-fn toast(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<String> {
-    view.read_with(cx, |v, _| v.toast.text().map(str::to_string))
+    f.at(dir, &["rev-parse", "HEAD"])
 }
 
 fn tooltips(view: &Entity<GitView>, cx: &mut VisualTestContext) -> (bool, String, bool, String) {

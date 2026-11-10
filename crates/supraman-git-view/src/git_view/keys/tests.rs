@@ -3,25 +3,18 @@ use supraman_gitman::fixture::{Fixture, Generated};
 
 use crate::git_view::diff::{FileStep, Of, Target};
 use crate::git_view::keys::SETTLE;
-use crate::git_view::tests::redraw;
+use crate::git_view::test_support::{keys, redraw};
 use crate::git_view::*;
 use crate::git_view::wip::Section;
 
 fn open<'a>(folder: &std::path::Path, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
-    cx.update(|cx| supraman_editor::init(supraman_ui::fonts::MONO, 13., cx));
-    crate::git_view::tests::open(folder, cx)
+    crate::git_view::test_support::open(folder, crate::git_view::test_support::Opts::default().editor(), cx)
 }
 
 /// Clicks row `ix`, which gives the graph the keyboard and reads the row at once.
 fn click_row(view: &Entity<GitView>, ix: usize, cx: &mut VisualTestContext) {
     let at = view.read_with(cx, |v, _| v.hits.borrow()[&format!("git-row-{ix}")].bounds.center());
     cx.simulate_click(at, Modifiers::none());
-    cx.run_until_parked();
-    redraw(view, cx);
-}
-
-fn keys(view: &Entity<GitView>, keys: &str, cx: &mut VisualTestContext) {
-    cx.simulate_keystrokes(keys);
     cx.run_until_parked();
     redraw(view, cx);
 }

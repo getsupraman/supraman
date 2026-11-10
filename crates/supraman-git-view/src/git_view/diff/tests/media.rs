@@ -4,13 +4,12 @@ use supraman_gitman::fixture::Fixture;
 
 use crate::git_view::diff::*;
 use crate::git_view::GitView;
-use crate::git_view::tests::{open as open_tab, redraw};
+use crate::git_view::test_support::{Opts, open as open_tab, redraw};
 
 const KEYS: [&str; 4] = ["diff-image-old", "diff-image-new", "diff-binary", "diff-invisible"];
 
 fn open<'a>(f: &Fixture, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
-    cx.update(|cx| supraman_editor::init(supraman_ui::fonts::MONO, 13., cx));
-    open_tab(&f.dir, cx)
+    open_tab(&f.dir, Opts::default().editor(), cx)
 }
 
 fn show(view: &Entity<GitView>, f: &Fixture, path: &str, cx: &mut VisualTestContext) -> Entity<DiffView> {

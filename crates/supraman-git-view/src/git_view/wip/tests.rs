@@ -1,27 +1,13 @@
-use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
+use gpui::{Entity, TestAppContext, VisualTestContext};
 use supraman_gitman::fixture::Fixture;
 use supraman_gitman::{ChangeKind, FileChange};
-use supraman_ui::hit::HitTargets;
 use supraman_ui::icon::Icon;
 
 use super::*;
 use crate::git_view::details::mark_icon;
 use crate::git_view::diff::{Content, DiffView, Mode, Of};
-use crate::git_view::tests::{open, redraw};
+use crate::git_view::test_support::{Opts, click, open, repaint, select_wip};
 use crate::git_view::{GitView, Selected};
-
-pub(crate) fn open_with_editor<'a>(folder: &std::path::Path, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
-    cx.update(|cx| {
-        supraman_editor::init(supraman_ui::fonts::MONO, 13., cx);
-    });
-    open(folder, cx)
-}
-
-pub(crate) fn select_wip(view: &Entity<GitView>, cx: &mut VisualTestContext) {
-    view.update(cx, |v, cx| v.select_wip(cx));
-    cx.run_until_parked();
-    redraw(view, cx);
-}
 
 fn shown(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Rc<Shown> {
     view.read_with(cx, |v, cx| v.wip_panel().read(cx).shown().expect("the working directory is shown"))
@@ -29,21 +15,6 @@ fn shown(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Rc<Shown> {
 
 fn listed(files: &[FileChange]) -> Vec<(&str, ChangeKind)> {
     files.iter().map(|f| (f.path.as_str(), f.kind)).collect()
-}
-
-/// Hit keys of the next frame only.
-pub(crate) fn repaint(view: &Entity<GitView>, cx: &mut VisualTestContext) -> HitTargets {
-    let hits = view.read_with(cx, |v, _| v.hits.clone());
-    hits.borrow_mut().clear();
-    redraw(view, cx);
-    hits
-}
-
-pub(crate) fn click(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
-    let at = repaint(view, cx).borrow().get(key).unwrap_or_else(|| panic!("{key} is painted")).bounds.center();
-    cx.simulate_click(at, Modifiers::none());
-    cx.run_until_parked();
-    redraw(view, cx);
 }
 
 /// Clicks `path`'s row in `section` and reads the diff it opens: its target and its two sides.
@@ -60,7 +31,7 @@ pub(crate) fn open_file(view: &Entity<GitView>, section: Section, path: &str, cx
 #[gpui::test]
 fn wip_view_lists_each_file_in_its_section_with_its_mark(cx: &mut TestAppContext) {
     let f = Fixture::shared();
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     select_wip(&view, cx);
     assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Wip));
 
@@ -101,7 +72,7 @@ fn wip_view_lists_each_file_in_its_section_with_its_mark(cx: &mut TestAppContext
 #[gpui::test]
 fn wip_view_diffs_show_the_right_sides(cx: &mut TestAppContext) {
     let f = Fixture::shared();
-    let (view, cx) = open_with_editor(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default().editor(), cx);
     select_wip(&view, cx);
 
     let (d, old, new) = open_file(&view, Section::Unstaged, "a.txt", cx);
@@ -127,7 +98,7 @@ fn wip_view_diffs_show_the_right_sides(cx: &mut TestAppContext) {
 fn wip_view_shows_a_conflicted_file_in_file_view(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     f.conflict();
-    let (view, cx) = open_with_editor(&f.worktree, cx);
+    let (view, cx) = open(&f.worktree, Opts::default().editor(), cx);
     select_wip(&view, cx);
     let s = shown(&view, cx);
     assert_eq!(listed(&s.conflicted), [("a.txt", ChangeKind::Unmerged)]);
@@ -142,14 +113,14 @@ fn wip_view_shows_a_conflicted_file_in_file_view(cx: &mut TestAppContext) {
 #[gpui::test]
 fn wip_view_banner_view_change_selects_the_wip_row(cx: &mut TestAppContext) {
     let f = Fixture::copy();
-    let (view, vcx) = open(&f.worktree, cx);
+    let (view, vcx) = open(&f.worktree, Opts::default(), cx);
     view.update(vcx, |v, cx| v.select_sha(f.sha("second"), cx));
     vcx.run_until_parked();
     let painted = repaint(&view, vcx);
     assert!(painted.borrow().contains_key("commit-sort"), "a commit is shown");
     assert!(!painted.borrow().contains_key("wip-banner-view-change"), "no banner on a clean tree");
 
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     view.update(cx, |v, cx| v.select_sha(f.sha("ahead"), cx));
     cx.run_until_parked();
     assert!(repaint(&view, cx).borrow().contains_key("wip-banner-view-change"), "the banner over a commit of a dirty tree");
@@ -163,7 +134,7 @@ fn wip_view_banner_view_change_selects_the_wip_row(cx: &mut TestAppContext) {
 #[gpui::test]
 fn wip_view_a_second_click_on_the_open_file_closes_its_diff(cx: &mut TestAppContext) {
     let f = Fixture::shared();
-    let (view, cx) = open_with_editor(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default().editor(), cx);
     select_wip(&view, cx);
     open_file(&view, Section::Unstaged, "a.txt", cx);
     open_file(&view, Section::Staged, "a.txt", cx);
@@ -181,7 +152,7 @@ fn wip_view_a_second_click_on_the_open_file_closes_its_diff(cx: &mut TestAppCont
 #[gpui::test]
 fn wip_view_shows_the_status_a_refresh_read_without_reading_it_again(cx: &mut TestAppContext) {
     let f = Fixture::copy();
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     select_wip(&view, cx);
     let reads = |cx: &mut VisualTestContext| view.read_with(cx, |v, cx| v.wip_panel().read(cx).status_reads);
     let before = reads(cx);

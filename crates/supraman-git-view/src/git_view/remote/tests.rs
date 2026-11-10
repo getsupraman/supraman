@@ -3,48 +3,17 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui::{Entity, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, TestAppContext, VisualTestContext};
-use supraman_gitman::fixture::{Fixture, git_in};
+use gpui::{Entity, TestAppContext, VisualTestContext};
+use supraman_gitman::fixture::Fixture;
 use supraman_gitman::write::remote::PullChoice;
-use supraman_ui::hit::HitTargets;
 
 use super::bar::{PULL_KEY, PULL_MENU_KEY, PUSH_KEY};
 use super::{DETACHED, NO_REMOTE};
-use crate::git_view::tests::redraw;
+use crate::git_view::test_support::{self, Opts, click, redraw, toast};
 use crate::git_view::*;
 
-struct Holder(Entity<GitView>);
-
-impl Render for Holder {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().w(px(1400.)).h(px(900.)).child(self.0.clone())
-    }
-}
-
 fn open<'a>(folder: &Path, home: &Path, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
-    cx.update(|cx| {
-        supraman_ui::init_globals(cx, "test");
-        supraman_ui::text_input::bind_keys(cx);
-        bind_keys(cx);
-    });
-    let (folder, home) = (folder.to_path_buf(), home.to_path_buf());
-    let (holder, cx) = cx.add_window_view(|_, cx| Holder(GitView::open(folder, Some(home), HitTargets::default(), &GitSizes::default(), cx)));
-    let view = holder.read_with(cx, |h, _| h.0.clone());
-    cx.run_until_parked();
-    crate::git_view::test_support::assert_loaded(&view, cx);
-    redraw(&view, cx);
-    (view, cx)
-}
-
-fn press(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
-    let hits = view.read_with(cx, |v, _| v.hits.clone());
-    hits.borrow_mut().clear();
-    redraw(view, cx);
-    let position = hits.borrow().get(key).unwrap_or_else(|| panic!("{key} is painted")).bounds.center();
-    cx.simulate_event(MouseDownEvent { position, button: MouseButton::Left, modifiers: Modifiers::none(), click_count: 1, first_mouse: false });
-    cx.simulate_event(MouseUpEvent { position, button: MouseButton::Left, modifiers: Modifiers::none(), click_count: 1 });
-    cx.run_until_parked();
-    redraw(view, cx);
+    test_support::open(folder, Opts::default().home(home).size(1400., 900.), cx)
 }
 
 /// The band `key` across the tab under the toolbar, `inline` on one line with its text.
@@ -61,29 +30,21 @@ fn inline(view: &Entity<GitView>, key: &str, inline: &[&str], cx: &mut VisualTes
     }
 }
 
-fn git(f: &Fixture, dir: &Path, args: &[&str]) -> String {
-    git_in(&f.git, dir, args, &[], None)
-}
-
 fn clone(f: &Fixture, name: &str) -> PathBuf {
     let origin = f.temp.path().join("origin.git");
-    git(f, f.temp.path(), &["clone", "-q", "-b", "main", &origin.to_string_lossy(), name]);
+    f.at(f.temp.path(), &["clone", "-q", "-b", "main", &origin.to_string_lossy(), name]);
     let dir = f.temp.path().join(name);
     for (key, value) in [("user.name", "Other"), ("user.email", "other@example.test"), ("commit.gpgsign", "false"), ("core.autocrlf", "false")] {
-        git(f, &dir, &["config", key, value]);
+        f.at(&dir, &["config", key, value]);
     }
     dir
 }
 
 fn commit(f: &Fixture, dir: &Path, file: &str, message: &str) -> String {
     std::fs::write(dir.join(file), format!("{message}\n")).unwrap();
-    git(f, dir, &["add", file]);
-    git(f, dir, &["commit", "-q", "-m", message]);
-    git(f, dir, &["rev-parse", "HEAD"])
-}
-
-fn toast(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<String> {
-    view.read_with(cx, |v, _| v.toast.text().map(str::to_string))
+    f.at(dir, &["add", file]);
+    f.at(dir, &["commit", "-q", "-m", message]);
+    f.at(dir, &["rev-parse", "HEAD"])
 }
 
 fn asking(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<String> {
@@ -100,34 +61,34 @@ fn the_toolbars_pull_and_push_act_and_the_default_is_saved(cx: &mut TestAppConte
     let home = tempfile::tempdir().unwrap();
     let (mine, other) = (clone(&f, "mine"), clone(&f, "other"));
     let theirs = commit(&f, &other, "t.txt", "Theirs");
-    git(&f, &other, &["push", "-q"]);
+    f.at(&other, &["push", "-q"]);
     let (view, cx) = open(&mine, home.path(), cx);
     assert_eq!(why_not(&view, cx), [None, None]);
 
-    press(&view, PULL_KEY, cx);
-    assert_eq!(git(&f, &mine, &["rev-parse", "HEAD"]), theirs, "the default pull fast-forwards");
+    click(&view, PULL_KEY, cx);
+    assert_eq!(f.at(&mine, &["rev-parse", "HEAD"]), theirs, "the default pull fast-forwards");
     assert_eq!(toast(&view, cx).as_deref(), Some("Pulled"));
 
     let pushed = commit(&f, &mine, "m.txt", "Mine");
-    press(&view, PUSH_KEY, cx);
-    assert_eq!(git(&f, &f.temp.path().join("origin.git"), &["rev-parse", "main"]), pushed);
+    click(&view, PUSH_KEY, cx);
+    assert_eq!(f.at(&f.temp.path().join("origin.git"), &["rev-parse", "main"]), pushed);
     assert_eq!(toast(&view, cx).as_deref(), Some("Pushed main to origin/main"));
 
-    press(&view, PULL_MENU_KEY, cx);
+    click(&view, PULL_MENU_KEY, cx);
     let labels = view.read_with(cx, |v, cx| v.remote.read(cx).menu_labels());
     assert_eq!(labels[..4].iter().map(|(l, _)| l.as_str()).collect::<Vec<_>>(), ["Fetch all", "Pull (fast-forward if possible)", "Pull (fast-forward only)", "Pull (rebase)"]);
     assert_eq!(labels[4..].iter().map(|(_, t)| *t).collect::<Vec<_>>(), [Some(false), Some(true), Some(false), Some(false)], "the default ticked");
-    press(&view, "menu-pull-default-fetch", cx);
+    click(&view, "menu-pull-default-fetch", cx);
     assert_eq!(view.read_with(cx, |v, cx| v.remote.read(cx).pull_choice()), PullChoice::Fetch);
     let saved = std::fs::read_to_string(home.path().join("settings.toml")).unwrap();
     assert!(saved.contains("[gitman]") && saved.contains("pull = \"fetch\""), "{saved}");
 
-    git(&f, &other, &["pull", "-q"]);
+    f.at(&other, &["pull", "-q"]);
     let fetched = commit(&f, &other, "t2.txt", "Theirs again");
-    git(&f, &other, &["push", "-q"]);
-    press(&view, PULL_KEY, cx);
-    assert_eq!(git(&f, &mine, &["rev-parse", "origin/main"]), fetched, "the button fetches now");
-    assert_eq!(git(&f, &mine, &["rev-parse", "HEAD"]), pushed, "and pulls nothing");
+    f.at(&other, &["push", "-q"]);
+    click(&view, PULL_KEY, cx);
+    assert_eq!(f.at(&mine, &["rev-parse", "origin/main"]), fetched, "the button fetches now");
+    assert_eq!(f.at(&mine, &["rev-parse", "HEAD"]), pushed, "and pulls nothing");
 }
 
 #[gpui::test]
@@ -135,19 +96,19 @@ fn a_detached_head_dims_push_and_pull_but_not_a_fetch_and_no_remote_dims_both(cx
     let f = Fixture::copy();
     let home = tempfile::tempdir().unwrap();
     let mine = clone(&f, "mine");
-    git(&f, &mine, &["checkout", "-q", "--detach"]);
+    f.at(&mine, &["checkout", "-q", "--detach"]);
     let (view, cx) = open(&mine, home.path(), cx);
     assert_eq!(why_not(&view, cx), [Some(DETACHED.into()), Some(DETACHED.into())]);
-    let before = git(&f, &f.temp.path().join("origin.git"), &["rev-parse", "main"]);
+    let before = f.at(&f.temp.path().join("origin.git"), &["rev-parse", "main"]);
     commit(&f, &mine, "d.txt", "Detached");
-    press(&view, PUSH_KEY, cx);
-    assert_eq!(git(&f, &f.temp.path().join("origin.git"), &["rev-parse", "main"]), before, "a dimmed Push does nothing");
+    click(&view, PUSH_KEY, cx);
+    assert_eq!(f.at(&f.temp.path().join("origin.git"), &["rev-parse", "main"]), before, "a dimmed Push does nothing");
     view.update(cx, |v, cx| v.remote.update(cx, |r, cx| r.act(super::RemoteAct::SetDefault(PullChoice::Fetch), cx)));
     cx.run_until_parked();
     assert_eq!(why_not(&view, cx)[0], None, "a fetch needs no branch");
 
     let lone = clone(&f, "lone");
-    git(&f, &lone, &["remote", "remove", "origin"]);
+    f.at(&lone, &["remote", "remove", "origin"]);
     let (view, cx) = open(&lone, home.path(), cx);
     assert_eq!(why_not(&view, cx), [Some(NO_REMOTE.into()), Some(NO_REMOTE.into())]);
 }
@@ -171,7 +132,7 @@ fn pick(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
     view.update_in(cx, |v, window, cx| v.open_find(None, window, cx));
     cx.simulate_input("remote");
     cx.run_until_parked();
-    press(view, &format!("{}-row-{key}", crate::git_view::find::ID), cx);
+    click(view, &format!("{}-row-{key}", crate::git_view::find::ID), cx);
 }
 
 const REMOTE_KEYS: [&str; 6] = ["cmd:push", "cmd:pull", "cmd:pull-ff", "cmd:pull-ff-only", "cmd:pull-rebase", "cmd:fetch-all"];
@@ -183,7 +144,7 @@ fn the_palettes_push_pull_and_fetch_act_as_the_toolbar_does_and_are_dimmed_with_
     let origin = f.temp.path().join("origin.git");
     let (mine, other) = (clone(&f, "mine"), clone(&f, "other"));
     let theirs = commit(&f, &other, "t.txt", "Theirs");
-    git(&f, &other, &["push", "-q"]);
+    f.at(&other, &["push", "-q"]);
     let (view, cx) = open(&mine, home.path(), cx);
 
     let rows = palette_remote(&view, cx);
@@ -193,28 +154,28 @@ fn the_palettes_push_pull_and_fetch_act_as_the_toolbar_does_and_are_dimmed_with_
     assert!(rows.iter().all(|r| r.2.is_none()), "{rows:?}");
 
     pick(&view, "cmd:pull", cx);
-    assert_eq!(git(&f, &mine, &["rev-parse", "HEAD"]), theirs, "the default pull fast-forwards");
+    assert_eq!(f.at(&mine, &["rev-parse", "HEAD"]), theirs, "the default pull fast-forwards");
     assert_eq!(toast(&view, cx).as_deref(), Some("Pulled"));
 
     let pushed = commit(&f, &mine, "m.txt", "Mine");
     pick(&view, "cmd:push", cx);
-    assert_eq!(git(&f, &origin, &["rev-parse", "main"]), pushed);
+    assert_eq!(f.at(&origin, &["rev-parse", "main"]), pushed);
     assert_eq!(toast(&view, cx).as_deref(), Some("Pushed main to origin/main"));
 
-    git(&f, &other, &["pull", "-q"]);
+    f.at(&other, &["pull", "-q"]);
     let again = commit(&f, &other, "t2.txt", "Theirs again");
-    git(&f, &other, &["push", "-q"]);
+    f.at(&other, &["push", "-q"]);
     commit(&f, &mine, "m2.txt", "Mine again");
     pick(&view, "cmd:pull-rebase", cx);
     assert_eq!(toast(&view, cx).as_deref(), Some("Pulled and rebased"));
-    assert_eq!(git(&f, &mine, &["rev-parse", "HEAD^"]), again, "rebased onto theirs, no merge");
+    assert_eq!(f.at(&mine, &["rev-parse", "HEAD^"]), again, "rebased onto theirs, no merge");
 
     let fetched = commit(&f, &other, "t3.txt", "Fetched");
-    git(&f, &other, &["push", "-q"]);
-    let head = git(&f, &mine, &["rev-parse", "HEAD"]);
+    f.at(&other, &["push", "-q"]);
+    let head = f.at(&mine, &["rev-parse", "HEAD"]);
     pick(&view, "cmd:fetch-all", cx);
     assert_eq!(toast(&view, cx).as_deref(), Some("Fetched every remote"));
-    assert_eq!((git(&f, &mine, &["rev-parse", "origin/main"]), git(&f, &mine, &["rev-parse", "HEAD"])), (fetched, head));
+    assert_eq!((f.at(&mine, &["rev-parse", "origin/main"]), f.at(&mine, &["rev-parse", "HEAD"])), (fetched, head));
 
     view.update(cx, |v, cx| v.remote.update(cx, |r, cx| r.act(super::RemoteAct::SetDefault(PullChoice::Fetch), cx)));
     cx.run_until_parked();
@@ -234,19 +195,19 @@ fn the_palettes_remote_commands_are_dimmed_on_a_detached_head_and_without_a_remo
     let home = tempfile::tempdir().unwrap();
     let origin = f.temp.path().join("origin.git");
     let mine = clone(&f, "mine");
-    git(&f, &mine, &["checkout", "-q", "--detach"]);
+    f.at(&mine, &["checkout", "-q", "--detach"]);
     let (view, cx) = open(&mine, home.path(), cx);
     let rows = palette_remote(&view, cx);
     let [pull, push] = why_not(&view, cx);
     let detached = Some(DETACHED.to_string());
     assert_eq!(rows.iter().map(|r| r.2.clone()).collect::<Vec<_>>(), [push, pull, detached.clone(), detached.clone(), detached.clone(), None], "the toolbar's reasons; a fetch needs no branch");
-    let before = git(&f, &origin, &["rev-parse", "main"]);
+    let before = f.at(&origin, &["rev-parse", "main"]);
     commit(&f, &mine, "d.txt", "Detached");
     pick(&view, "cmd:push", cx);
-    assert_eq!(git(&f, &origin, &["rev-parse", "main"]), before, "a dimmed Push does nothing");
+    assert_eq!(f.at(&origin, &["rev-parse", "main"]), before, "a dimmed Push does nothing");
 
     let lone = clone(&f, "lone");
-    git(&f, &lone, &["remote", "remove", "origin"]);
+    f.at(&lone, &["remote", "remove", "origin"]);
     let (view, cx) = open(&lone, home.path(), cx);
     let rows = palette_remote(&view, cx);
     assert!(rows.iter().all(|r| r.2.as_deref() == Some(NO_REMOTE)), "{rows:?}");
@@ -258,18 +219,18 @@ fn a_push_behind_asks_pull_or_force_and_a_stale_lease_asks_fetch_or_force_anyway
     let home = tempfile::tempdir().unwrap();
     let (mine, other) = (clone(&f, "mine"), clone(&f, "other"));
     commit(&f, &other, "o.txt", "Other's");
-    git(&f, &other, &["push", "-q"]);
+    f.at(&other, &["push", "-q"]);
     let (view, cx) = open(&mine, home.path(), cx);
     let rewritten = commit(&f, &mine, "m.txt", "Mine");
-    press(&view, PUSH_KEY, cx);
+    click(&view, PUSH_KEY, cx);
     assert_eq!(asking(&view, cx).as_deref(), Some("origin/main has commits main lacks. Pull them first, or force the push with lease, dropping them from origin?"));
-    press(&view, "git-remote-ask-alt", cx);
+    click(&view, "git-remote-ask-alt", cx);
     assert_eq!(asking(&view, cx).as_deref(), Some("Force push main to origin/main? The commits only origin holds are lost there."), "a second question before forcing");
-    press(&view, "git-remote-ask-yes", cx);
+    click(&view, "git-remote-ask-yes", cx);
     assert_eq!(asking(&view, cx).as_deref(), Some("origin/main moved since this repository last fetched it. Fetch first, or force the push anyway?"), "never fetched: the lease is stale");
-    press(&view, "git-remote-ask-alt", cx);
-    press(&view, "git-remote-ask-yes", cx);
-    assert_eq!(git(&f, &f.temp.path().join("origin.git"), &["rev-parse", "main"]), rewritten);
+    click(&view, "git-remote-ask-alt", cx);
+    click(&view, "git-remote-ask-yes", cx);
+    assert_eq!(f.at(&f.temp.path().join("origin.git"), &["rev-parse", "main"]), rewritten);
     assert_eq!(toast(&view, cx).as_deref(), Some("Pushed main to origin/main"));
 }
 
@@ -278,18 +239,18 @@ fn a_branch_without_upstream_is_pushed_after_the_dialog_chooses_one(cx: &mut Tes
     let f = Fixture::copy();
     let home = tempfile::tempdir().unwrap();
     let mine = clone(&f, "mine");
-    git(&f, &mine, &["checkout", "-q", "-b", "topic"]);
+    f.at(&mine, &["checkout", "-q", "-b", "topic"]);
     let sha = commit(&f, &mine, "t.txt", "Topic");
     let (view, cx) = open(&mine, home.path(), cx);
-    press(&view, PUSH_KEY, cx);
+    click(&view, PUSH_KEY, cx);
     let dialog = view.read_with(cx, |v, cx| v.remote.read(cx).upstream_dialog().map(|d| (d.local.clone(), d.remote.clone())));
     assert_eq!(dialog, Some(("topic".into(), "origin".into())));
     view.update(cx, |v, cx| v.remote.update(cx, |r, cx| r.upstream_dialog().unwrap().type_in("shared/topic", cx)));
     redraw(&view, cx);
     inline(&view, "git-upstream", &["git-upstream-origin", "git-upstream-field", "git-upstream-ok", "git-upstream-cancel"], cx);
-    press(&view, "git-upstream-ok", cx);
-    assert_eq!(git(&f, &f.temp.path().join("origin.git"), &["rev-parse", "shared/topic"]), sha);
-    assert_eq!(git(&f, &mine, &["rev-parse", "--abbrev-ref", "topic@{upstream}"]), "origin/shared/topic");
+    click(&view, "git-upstream-ok", cx);
+    assert_eq!(f.at(&f.temp.path().join("origin.git"), &["rev-parse", "shared/topic"]), sha);
+    assert_eq!(f.at(&mine, &["rev-parse", "--abbrev-ref", "topic@{upstream}"]), "origin/shared/topic");
 }
 
 #[gpui::test]
@@ -316,9 +277,9 @@ fn sshs_passphrase_prompt_answers_through_the_dialog_and_is_kept_only_when_remem
         view.update(cx, |v, cx| v.remote.update(cx, |r, cx| r.prompting().unwrap().type_in(typed, cx)));
         inline(&view, "git-askpass", &["git-askpass-field", "git-askpass-ok", "git-askpass-cancel"], cx);
         if remember {
-            press(&view, "git-askpass-remember", cx);
+            click(&view, "git-askpass-remember", cx);
         }
-        press(&view, "git-askpass-ok", cx);
+        click(&view, "git-askpass-ok", cx);
         assert_eq!(asking.join().unwrap().as_deref(), Some(typed));
         let kept = store.get(&secret_key("C:/keys/id_ed25519")).unwrap();
         assert_eq!(kept.as_deref(), remember.then_some(typed), "kept only when Remember is ticked");

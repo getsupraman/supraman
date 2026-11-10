@@ -9,9 +9,10 @@ use supraman_gitman::fixture::{Fixture, Generated, git_in};
 use crate::git_view::cells::ref_cell;
 use crate::git_view::diff::Content;
 use crate::git_view::live::{Debounces, FOCUS_DELAY, Refresh, git_class, git_refresh, sent, work_files};
-use crate::git_view::tests::{open, redraw};
+use crate::git_view::test_support::{Opts, open, redraw};
 use crate::git_view::wip::Section;
-use crate::git_view::wip::tests::{open_file, open_with_editor, select_wip};
+use crate::git_view::test_support::select_wip;
+use crate::git_view::wip::tests::open_file;
 use crate::git_view::*;
 
 const DEADLINE: Duration = Duration::from_secs(10);
@@ -54,7 +55,7 @@ pub(crate) fn close(view: Entity<GitView>, cx: &mut VisualTestContext) -> Vec<su
 fn live_refresh_shows_a_new_commit_and_its_refs_within_a_second_and_an_edit_within_three(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     follow(cx);
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     following(&view, cx);
     f.git(&["commit", "-q", "--no-verify", "-m", "Made while watched"]);
     let head = f.git(&["rev-parse", "HEAD"]);
@@ -78,7 +79,7 @@ fn live_refresh_shows_a_new_commit_and_its_refs_within_a_second_and_an_edit_with
 #[gpui::test]
 fn live_refresh_keeps_the_selection_and_the_scroll_on_the_same_commit(cx: &mut TestAppContext) {
     let g = Generated::copy(400);
-    let (view, cx) = open(&g.dir, cx);
+    let (view, cx) = open(&g.dir, Opts::default(), cx);
     let row = px(graph::ROW);
     let (sha, ix, top) = view.update(cx, |v, cx| {
         let sha = v.rows[100].sha.clone();
@@ -110,7 +111,7 @@ fn live_refresh_keeps_the_selection_and_the_scroll_on_the_same_commit(cx: &mut T
 fn live_refresh_keeps_the_open_diff_and_reloads_it_when_its_file_changes(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     follow(cx);
-    let (view, cx) = open_with_editor(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default().editor(), cx);
     following(&view, cx);
     select_wip(&view, cx);
     let (diff, _, new) = open_file(&view, Section::Unstaged, "u.txt", cx);
@@ -130,7 +131,7 @@ fn live_refresh_keeps_the_open_diff_and_reloads_it_when_its_file_changes(cx: &mu
 #[gpui::test]
 fn live_refresh_runs_once_after_the_window_comes_back(cx: &mut TestAppContext) {
     let f = Fixture::copy();
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     let before = view.read_with(cx, |v, _| v.follow.refreshes);
     view.update(cx, |v, cx| v.focus_regained(cx));
     view.update(cx, |v, cx| v.focus_regained(cx));
@@ -146,7 +147,7 @@ fn live_refresh_runs_once_after_the_window_comes_back(cx: &mut TestAppContext) {
 fn live_refresh_stops_the_watchers_when_the_tab_closes(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     follow(cx);
-    let (view, cx) = open(&f.dir, cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
     following(&view, cx);
     let live = view.read_with(cx, |v, _| v.follow.live().unwrap().stopped());
     assert_eq!(live.len(), 2, "the git dir's watcher and the work dir's");

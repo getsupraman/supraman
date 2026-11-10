@@ -1,32 +1,17 @@
 //! The other worktrees' WIP rows through the real tab on a fixture copy with linked worktrees in its temp dir (C196):
 //! where they show, what they say, and Open Worktree.
 
-use std::cell::RefCell;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
-use std::sync::Arc;
 
-use gpui::{Context, Entity, IntoElement, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Render, TestAppContext, VisualTestContext, Window, div, prelude::*, px};
+use gpui::{Entity, MouseButton, TestAppContext, VisualTestContext};
 use supraman_core::paths::path_key;
 use supraman_gitman::BackgroundSettings;
-use supraman_gitman::fixture::{Fixture, git_in};
-use supraman_ui::hit::HitTargets;
+use supraman_gitman::fixture::Fixture;
 
 use crate::git_view::background::{self, refresh_wips};
-use crate::git_view::branch::OpenGit;
-use crate::git_view::tests::redraw;
-use crate::git_view::{GitSizes, GitView, Selected, bind_keys};
+use crate::git_view::test_support::{self, Opts, QUIET, opened, painted, press, redraw};
+use crate::git_view::{GitView, Selected};
 use crate::occupancy;
-
-struct Holder(Entity<GitView>);
-
-impl Render for Holder {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().w(px(1400.)).h(px(900.)).child(self.0.clone())
-    }
-}
-
-const QUIET: BackgroundSettings = BackgroundSettings { fetch_every_minutes: Some(0), maintenance: Some(false), worktree_wip: None };
 
 /// The fixture with a second linked worktree, `extra`, detached at `root`.
 fn fixture() -> (Fixture, PathBuf) {
@@ -37,19 +22,7 @@ fn fixture() -> (Fixture, PathBuf) {
 }
 
 fn open<'a>(f: &Fixture, live: occupancy::Live, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
-    cx.update(|cx| {
-        supraman_ui::init_globals(cx, "test");
-        supraman_ui::text_input::bind_keys(cx);
-        bind_keys(cx);
-        background::start_for_test(QUIET, cx);
-    });
-    let folder = f.dir.clone();
-    let (holder, cx) = cx.add_window_view(|_, cx| Holder(GitView::open_with(folder, None, HitTargets::default(), &GitSizes::default(), Arc::new(live), cx)));
-    let view = holder.read_with(cx, |h, _| h.0.clone());
-    cx.run_until_parked();
-    crate::git_view::test_support::assert_loaded(&view, cx);
-    redraw(&view, cx);
-    (view, cx)
+    test_support::open(&f.dir, Opts::default().live(live).background().size(1400., 900.), cx)
 }
 
 fn reread(view: &Entity<GitView>, cx: &mut VisualTestContext) {
@@ -60,7 +33,7 @@ fn reread(view: &Entity<GitView>, cx: &mut VisualTestContext) {
 }
 
 fn head(dir: &Path, f: &Fixture) -> String {
-    git_in(&f.git, dir, &["rev-parse", "HEAD"], &[], None)
+    f.at(dir, &["rev-parse", "HEAD"])
 }
 
 /// Each worktree row's folder and the sha of the row below it.
@@ -72,32 +45,6 @@ fn worktree_rows(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<(Str
 
 fn row_of(view: &Entity<GitView>, dir: &Path, cx: &mut VisualTestContext) -> usize {
     view.read_with(cx, |v, _| v.rows.iter().position(|r| r.worktree().is_some_and(|p| path_key(p) == path_key(dir)))).expect("a row of the worktree")
-}
-
-fn painted(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) -> bool {
-    let hits = view.read_with(cx, |v, _| v.hits.clone());
-    hits.borrow_mut().clear();
-    redraw(view, cx);
-    hits.borrow().contains_key(key)
-}
-
-fn press(view: &Entity<GitView>, key: &str, click_count: usize, cx: &mut VisualTestContext) {
-    let hits = view.read_with(cx, |v, _| v.hits.clone());
-    hits.borrow_mut().clear();
-    redraw(view, cx);
-    let position = hits.borrow().get(key).unwrap_or_else(|| panic!("{key} is painted")).bounds.center();
-    let (button, modifiers) = (MouseButton::Left, Modifiers::none());
-    cx.simulate_event(MouseDownEvent { position, button, modifiers, click_count, first_mouse: false });
-    cx.simulate_event(MouseUpEvent { position, button, modifiers, click_count });
-    cx.run_until_parked();
-    redraw(view, cx);
-}
-
-fn opened(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Rc<RefCell<Vec<String>>> {
-    let seen = Rc::new(RefCell::new(Vec::new()));
-    let heard = seen.clone();
-    cx.update(|_, cx| cx.subscribe(view, move |_, e: &OpenGit, _| heard.borrow_mut().push(path_key(&e.0))).detach());
-    seen
 }
 
 #[gpui::test]
@@ -174,13 +121,13 @@ fn double_click_and_open_worktree_ask_for_the_worktrees_tab_and_a_detached_ones_
     let seen = opened(&view, cx);
 
     let side = row_of(&view, &f.worktree, cx);
-    press(&view, &format!("git-worktree-ref-{side}"), 2, cx);
+    press(&view, &format!("git-worktree-ref-{side}"), MouseButton::Left, 2, cx);
     assert_eq!(*seen.borrow(), [path_key(&f.worktree)], "double-click opens it");
 
     let detached = row_of(&view, &extra, cx);
-    press(&view, &format!("git-worktree-ref-{detached}"), 2, cx);
+    press(&view, &format!("git-worktree-ref-{detached}"), MouseButton::Left, 2, cx);
     assert_eq!(seen.borrow().len(), 1, "a detached worktree's double-click does nothing");
     assert_eq!(view.read_with(cx, |v, _| v.table.selected()), Some(detached), "the click selects it");
-    press(&view, &format!("git-worktree-open-{detached}"), 1, cx);
+    press(&view, &format!("git-worktree-open-{detached}"), MouseButton::Left, 1, cx);
     assert_eq!(seen.borrow().last(), Some(&path_key(&extra)), "Open Worktree opens even a detached one");
 }

@@ -1,18 +1,14 @@
 use gpui::{Entity, TestAppContext, VisualTestContext};
-use supraman_gitman::fixture::{Fixture, git_in};
+use supraman_gitman::fixture::Fixture;
 
 use crate::git_view::diff::*;
 use crate::git_view::GitView;
-use crate::git_view::tests::{open as open_tab, redraw};
-
-fn git(f: &Fixture, args: &[&str]) -> String {
-    git_in(&f.git, &f.worktree, args, &[], None)
-}
+use crate::git_view::test_support::{Opts, open as open_tab, redraw};
 
 fn commit(f: &Fixture, message: &str) -> String {
-    git(f, &["add", "-A"]);
-    git(f, &["commit", "-q", "--no-verify", "-m", message]);
-    git(f, &["rev-parse", "HEAD"])
+    f.at(&f.worktree, &["add", "-A"]);
+    f.at(&f.worktree, &["commit", "-q", "--no-verify", "-m", message]);
+    f.at(&f.worktree, &["rev-parse", "HEAD"])
 }
 
 fn crc32(bytes: &[u8]) -> u32 {
@@ -69,7 +65,7 @@ fn a_file_over_the_cap_shows_its_sizes_and_an_image_over_the_pixel_cap_its_dimen
     std::fs::write(f.worktree.join("vast.png"), png_header(20_000, 20_000)).unwrap();
     let change = commit(&f, "Change");
     cx.update(|cx| supraman_editor::init(supraman_ui::fonts::MONO, 13., cx));
-    let (view, cx) = open_tab(&f.dir, cx);
+    let (view, cx) = open_tab(&f.dir, Opts::default(), cx);
     let changed = |path: &str| supraman_gitman::changed_files(&f.repo(), &change).unwrap().into_iter().find(|c| c.path == path);
 
     let d = show(&view, Target::commit(change.clone(), Some(base.clone()), "huge.txt".into(), changed("huge.txt")), cx);

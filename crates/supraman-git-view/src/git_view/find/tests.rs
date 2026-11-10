@@ -5,21 +5,13 @@ use supraman_ui::palette::Entry as _;
 use super::entries::{Command, GitEntry};
 use super::*;
 use crate::git_view::diff::Of;
-use crate::git_view::tests::redraw;
+use crate::git_view::test_support::{keys, redraw};
 use crate::git_view::{GitView, Selected};
 
 fn open<'a>(folder: &std::path::Path, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
-    cx.update(|cx| supraman_editor::init(supraman_ui::fonts::MONO, 13., cx));
-    let (view, cx) = crate::git_view::tests::open(folder, cx);
-    cx.update(|_, cx| supraman_ui::text_input::bind_keys(cx));
+    let (view, cx) = crate::git_view::test_support::open(folder, crate::git_view::test_support::Opts::default().editor(), cx);
     view.update_in(cx, |v, window, cx| window.focus(&v.focus, cx));
     (view, cx)
-}
-
-fn keys(view: &Entity<GitView>, keys: &str, cx: &mut VisualTestContext) {
-    cx.simulate_keystrokes(keys);
-    cx.run_until_parked();
-    redraw(view, cx);
 }
 
 fn typed(view: &Entity<GitView>, text: &str, cx: &mut VisualTestContext) {
