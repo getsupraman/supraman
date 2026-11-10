@@ -11,7 +11,7 @@ use std::{
 };
 
 use futures::FutureExt as _;
-use supraman_claude::{ClaudeVersion, Sent, Session, check_supported, list_sessions, now_ms, send_from_human};
+use supraman_claude::{ClaudeVersion, Sent, Session, list_sessions, now_ms, send_from_human};
 use supraman_core::{
     DEFAULT_MAX_WORKING, Event, EventReader, FM_PREFIX, OutboxMessage, Workspace, Registry, Settings, mark_answered,
 };
@@ -71,6 +71,7 @@ mod results;
 mod right;
 pub(crate) mod shells;
 pub(crate) mod schedules;
+mod startup;
 pub(crate) mod start;
 pub(crate) mod tab_keys;
 mod term;
@@ -551,21 +552,16 @@ impl FleetView {
             false
         });
         let home = Registry::from_env().ok().map(|r| r.home().to_path_buf());
-        let loaded = home.as_deref().and_then(|h| Settings::load(h).ok());
-        let left_width = loaded
-            .as_ref()
-            .and_then(|s| s.window.left_width)
-            .map_or(DEFAULT_LEFT_WIDTH, |w| px(w as f32).max(MIN_LEFT_WIDTH));
-        let loaded = loaded.unwrap_or_default();
-        let term_font_size = px(loaded.terminal.font_size() as f32);
+        let defaults = Settings::default();
+        let term_font_size = px(defaults.terminal.font_size() as f32);
         let installed_fonts: Arc<Vec<String>> = Arc::new(cx.text_system().all_font_names());
-        let term_font_family = SharedString::from(loaded.terminal.font_family(&installed_fonts));
-        let term_ligatures = loaded.terminal.ligatures();
+        let term_font_family = SharedString::from(defaults.terminal.font_family(&installed_fonts));
+        let term_ligatures = defaults.terminal.ligatures();
         let retries: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
         let injected: Arc<Mutex<Vec<Session>>> = Arc::default();
         let registry_writes: Arc<AtomicU64> = Arc::default();
-        let (poll_nudge, mut woken) = nudge::nudge();
-        let mut poller = Poller {
+        let (poll_nudge, woken) = nudge::nudge();
+        let poller = Poller {
             home: home.clone(),
             events: None,
             supervision: None,
@@ -577,115 +573,8 @@ impl FleetView {
             store: None,
         };
         timeline("window", Duration::ZERO);
-        cx.spawn(async move |this, cx| {
-            let executor = cx.background_executor().clone();
-            let checking = Instant::now();
-            let checked = executor.spawn(async move {
-                let checked = check_supported();
-                timeline("version check done", checking.elapsed());
-                checked
-            });
-            let first = executor.spawn(async move {
-                let setting_up = Instant::now();
-                let setup = poller.setup();
-                timeline("setup done", setting_up.elapsed());
-                let refresh = poller.read(true);
-                (poller, setup, refresh)
-            });
-            let (checked, (ready, setup, mut refresh)) = futures::join!(checked, first);
-            poller = ready;
-            let supported = checked.is_ok();
-            if !supported {
-                refresh.sessions = None;
-                poller.snapshot = None;
-            }
-            let mut first = Some(refresh);
-            if this
-                .update(cx, |this, cx| {
-                    this.cli = match checked {
-                        Ok(version) => Cli::Supported(version),
-                        Err(error) => Cli::Failed(error.to_string()),
-                    };
-                    this.plugin_dir = setup.plugin_dir;
-                    this.setup_notices = setup.notices;
-                    cx.notify();
-                })
-                .is_err()
-            {
-                return;
-            }
-            loop {
-                let Ok(asks) = this.read_with(cx, |this, _| this.refresh_asks) else {
-                    return;
-                };
-                let refresh = match first.take() {
-                    Some(refresh) => refresh,
-                    None => {
-                        let (done, refresh) = executor
-                            .spawn(async move {
-                                let refresh = poller.read(supported);
-                                (poller, refresh)
-                            })
-                            .await;
-                        poller = done;
-                        refresh
-                    }
-                };
-                if this
-                    .update(cx, |this, cx| {
-                        this.writes.max.tick_starts();
-                        this.apply(refresh, cx);
-                        this.refresh_details(cx);
-                        this.read_tab_branches(cx);
-                        if this.other_scans == 0 {
-                            this.scan_other_schedules(cx);
-                        }
-                        cx.notify();
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-                let (done, report) = executor
-                    .spawn(async move {
-                        let report = poller.tick();
-                        (poller, report)
-                    })
-                    .await;
-                poller = done;
-                let alive = this.update(cx, |this, cx| {
-                    if let Some(report) = report {
-                        this.apply_report(report, cx);
-                    }
-                    this.refreshes += 1;
-                    this.refreshes_answered = asks;
-                    this.check_loaded(cx);
-                    let left = std::mem::take(&mut this.left_pending);
-                    this.leave_servers(left, cx);
-                    this.resolve_tabs(cx);
-                    this.reopen_tabs(cx);
-                    let pids: Vec<u32> = this
-                        .sessions
-                        .iter()
-                        .filter(|s| s.kind == supraman_claude::Kind::Interactive)
-                        .filter_map(|s| s.pid)
-                        .collect();
-                    if !this.removing.is_empty() {
-                        this.finish_removals(cx);
-                    }
-                    let named = this.workspaces.iter().map(|w| (w.name.clone(), w.folders.iter().map(|f| f.path.clone()).collect())).collect();
-                    this.work_inbox.update(cx, |inbox, cx| inbox.set_workspaces(named, cx));
-                    cx.notify();
-                    pids
-                });
-                let Ok(pids) = alive else {
-                    return;
-                };
-                let exited = std::pin::pin!(any_exit(&executor, pids, REFRESH_EVERY));
-                futures::future::select(std::pin::pin!(woken.wait(&executor, REFRESH_EVERY)), exited).await;
-            }
-        })
-        .detach();
+        Self::start_polling(poller, woken, cx);
+        Self::load_settings(home.clone(), cx);
         let blink = term::CursorBlink::start(cx);
         let (workman_recheck, recheck) = nudge::nudge();
         Self::watch_workman(home.clone(), recheck, cx);
@@ -731,7 +620,7 @@ impl FleetView {
             active: None,
             next_tab_id: 1,
             shell_args: vec!["-NoLogo".into()],
-            shell_default: shells::ShellDefault::new(loaded.terminal.clone()),
+            shell_default: shells::ShellDefault::new(defaults.terminal.clone()),
             focus,
             probe: FrameProbe::default(),
             hits: HitTargets::default(),
@@ -754,7 +643,7 @@ impl FleetView {
             retries,
             injected,
             registry_writes,
-            left_width,
+            left_width: DEFAULT_LEFT_WIDTH,
             term_font_size,
             term_font_family,
             term_ligatures,
@@ -850,7 +739,7 @@ impl FleetView {
             schedule_edit: None,
             runs_dismissed,
             waiting_dismissed,
-            tab_keys: cx.new(|_| tab_keys::TabKeyState::new(loaded.window.tab_keys())),
+            tab_keys: cx.new(|_| tab_keys::TabKeyState::new(defaults.window.tab_keys())),
         }
     }
 

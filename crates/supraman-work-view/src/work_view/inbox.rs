@@ -46,6 +46,17 @@ impl Dismissed {
         changed
     }
 
+    fn absorb(&mut self, other: Dismissed) -> bool {
+        let mut changed = false;
+        for (workspace, keys) in other.0 {
+            let mine = self.0.entry(workspace).or_default();
+            for (key, since) in keys {
+                changed |= mine.insert(key, since.clone()).as_ref() != Some(&since);
+            }
+        }
+        changed
+    }
+
     pub(crate) fn retain_workspaces(&mut self, workspaces: &[String]) -> bool {
         let before = self.0.len();
         self.0.retain(|w, _| workspaces.contains(w));
@@ -166,6 +177,7 @@ pub struct WorkInbox {
     run_project: HashMap<String, String>,
     overview: Option<Arc<Overview>>,
     pub(crate) dismissed: JsonStore<Dismissed>,
+    workspaces_set: bool,
     pending: Option<Plan>,
     pub(crate) failures: HashMap<String, String>,
     pub notice: Option<String>,
@@ -208,7 +220,13 @@ impl WorkInbox {
 
     fn new(hub: Entity<WorkHub>, home: Option<&Path>, cx: &mut Context<Self>) -> Self {
         cx.subscribe(&hub, Self::on_hub).detach();
-        let (dismissed, notice) = Dismissed::load(home);
+        if let Some(home) = home.map(Path::to_path_buf) {
+            cx.spawn(async move |this, cx| {
+                let loaded = cx.background_spawn(async move { Dismissed::load(Some(&home)) }).await;
+                this.update(cx, |this, cx| this.dismissed_loaded(loaded, cx)).ok();
+            })
+            .detach();
+        }
         WorkInbox {
             hub,
             workspaces: Vec::new(),
@@ -220,10 +238,11 @@ impl WorkInbox {
             inboxes: HashMap::new(),
             run_project: HashMap::new(),
             overview: None,
-            dismissed,
+            dismissed: JsonStore::default(),
+            workspaces_set: false,
             pending: None,
             failures: HashMap::new(),
-            notice,
+            notice: None,
             reads: 0,
             applied: 0,
             housekeeping_open: false,
@@ -260,10 +279,20 @@ impl WorkInbox {
         self.inboxes.retain(|w, _| names.contains(w));
         self.failures.retain(|w, _| names.contains(w));
         self.workspaces = names;
+        self.workspaces_set = true;
         let save = self.dismissed.edit(|d| d.retain_workspaces(&self.workspaces));
         Self::save(save, cx);
         let asks = changed.into_iter().map(|w| self.ask(w)).collect();
         self.read(asks, true, cx);
+        cx.notify();
+    }
+
+    fn dismissed_loaded(&mut self, (store, notice): (JsonStore<Dismissed>, Option<String>), cx: &mut Context<Self>) {
+        let early = std::mem::replace(&mut self.dismissed, store).get().clone();
+        let workspaces = self.workspaces_set.then_some(&self.workspaces);
+        let save = self.dismissed.edit(|d| d.absorb(early) | workspaces.is_some_and(|w| d.retain_workspaces(w)));
+        Self::save(save, cx);
+        self.notice = notice.or(self.notice.take());
         cx.notify();
     }
 
