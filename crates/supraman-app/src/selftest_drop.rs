@@ -1,3 +1,5 @@
+//! `--selftest` step 7l's drops: a tab and a session row dragged by the mouse onto real pwsh and claude terminals, read back from what they printed.
+
 use std::path::Path;
 use std::time::{Duration, Instant};
 

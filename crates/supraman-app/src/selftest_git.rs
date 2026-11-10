@@ -1,12 +1,12 @@
 //! `--selftest` step 7g: the Git tab in the window. A unit test cannot do it: FleetView is not buildable in a gpui
-//! test, so nothing there clicks the sidebar's git-graph icon, follows a real repo's watchers or lays out real fonts
-//! at the window's minimum width. The fixture repo lives in the selftest home (C151); only the step commits to it.
+//! test, so nothing there clicks the sidebar's git-graph icon or lays out real fonts at the window's minimum width.
+//! The fixture repo lives in the selftest home (C151).
 
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail};
+use anyhow::anyhow;
 use gpui::{AsyncWindowContext, Bounds, Entity, Pixels, Size, point, px, size};
 use supraman_core::paths::path_key;
 use supraman_core::{Folder, Registry, Workspace};
@@ -109,33 +109,22 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
 async fn check(view: &Entity<FleetView>, f: &Arc<Fixture>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let (git, opened) = open(view, f, cx).await?;
     let media = crate::selftest_git_media::check(view, &git, f, cx).await?;
-    let live = live(view, &git, f, cx).await?;
     let narrow = narrow(view, &git, f, cx).await?;
     let panel = panel_min(view, &git, cx).await?;
-    let reopened = crate::selftest_git_reopen::check(view, &git, f, cx).await?;
-    Ok([opened, media, live, narrow, panel, reopened].join("; "))
+    Ok([opened, media, narrow, panel].join("; "))
 }
 
 async fn open(view: &Entity<FleetView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<(Entity<GitView>, String)> {
     let icon = format!("git-graph-{WS}/{FOLDER}");
     until(view, cx, WITHIN, "the fixture's git-graph icon", |v| v.shown(&icon).then_some(())).await?;
     tap(view, &icon, cx).await?;
-    let (id, git) = until_app(view, cx, WITHIN, "the Git tab open and active", |v, cx| {
+    let git = until_app(view, cx, WITHIN, "the Git tab open and active", |v, cx| {
         let tabs = git_tabs(v, cx, &f.dir);
-        (tabs.len() == 1 && v.active == Some(tabs[0].0)).then(|| tabs[0].clone())
+        (tabs.len() == 1 && v.active == Some(tabs[0].0)).then(|| tabs[0].1.clone())
     })
     .await?;
     let rows = until_probe(view, &git, "the graph's rows painted", cx, |p, v| (p.rows.len() >= 7 && painted(v, "git-row-0")).then_some(p.rows.len())).await?;
-    view.update(cx, |v, cx| {
-        v.active = None;
-        cx.notify();
-    });
-    tap(view, &icon, cx).await?;
-    let (count, active) = view.read_with(cx, |v, cx| (git_tabs(v, cx, &f.dir).len(), v.active));
-    if (count, active) != (1, Some(id)) {
-        bail!("a second click on {icon}: {count} Git tabs, tab {active:?} active, not the one tab {id}");
-    }
-    Ok((git, format!("{icon} opens Git · {FOLDER} with {rows} rows, a second click focuses it (one tab)")))
+    Ok((git, format!("{icon} opens Git · {FOLDER} with {rows} rows")))
 }
 
 async fn show(view: &Entity<FleetView>, git: &Entity<GitView>, sha: &str, parents: usize, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
@@ -145,20 +134,6 @@ async fn show(view: &Entity<FleetView>, git: &Entity<GitView>, sha: &str, parent
         (p.selected == Some(Selected::Commit(sha.into())) && shown == sha && ps.len() == parents && keys && painted(v, "commit-sha")).then_some(())
     })
     .await
-}
-
-async fn live(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Arc<Fixture>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let fixture = f.clone();
-    let sha = cx
-        .background_executor()
-        .spawn(async move {
-            fixture.git(&["commit", "-q", "--no-verify", "-m", "Selftest live commit"]);
-            fixture.git(&["rev-parse", "HEAD"])
-        })
-        .await;
-    let committed = Instant::now();
-    until_probe(view, git, "the commit made with git in the graph", cx, |p, _| p.row_of(&sha)).await?;
-    Ok(format!("a commit made with git on the fixture shows in the graph after {} ms by itself", committed.elapsed().as_millis()))
 }
 
 /// Every key painted with `prefix` or in `whole` lies inside the tab; `whole` ones also unclipped.

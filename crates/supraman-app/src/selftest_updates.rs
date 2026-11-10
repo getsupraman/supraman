@@ -1,3 +1,5 @@
+//! `--selftest` step 7+u: the update banner and Settings → About against a fake releases endpoint, and `sm update apply` swapping a temp install and starting its stub: real processes and windows.
+
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;

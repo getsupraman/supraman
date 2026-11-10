@@ -1,3 +1,5 @@
+//! `--selftest` step 7j: an ended session shown as a closed row by the real poll, the Refresh button and F5 asking a refresh, and F5 in a shell reaching its program.
+
 use std::path::Path;
 use std::time::{Duration, Instant};
 

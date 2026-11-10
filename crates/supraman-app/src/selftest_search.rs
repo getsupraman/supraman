@@ -1,3 +1,5 @@
+//! `--selftest` step 7k: the sidebar search driven by Ctrl+Shift+E, keys posted through the window procedure and Esc, its rows painted; which sessions match is `search`'s tests.
+
 use std::time::{Duration, Instant};
 
 use anyhow::bail;

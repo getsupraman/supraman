@@ -38,8 +38,13 @@ pub(crate) fn fixtures_only() -> bool {
     FIXTURES_ONLY.load(Ordering::SeqCst)
 }
 
+/// `SUPRAMAN_SHOTS`: where a run that takes screenshots writes them.
+pub(crate) fn dir() -> Option<PathBuf> {
+    std::env::var_os("SUPRAMAN_SHOTS").map(PathBuf::from)
+}
+
 fn out_dir() -> anyhow::Result<PathBuf> {
-    std::env::var_os("SUPRAMAN_SHOTS").map(PathBuf::from).ok_or_else(|| anyhow!("--selftest-shots writes to SUPRAMAN_SHOTS, which is unset"))
+    dir().ok_or_else(|| anyhow!("--selftest-shots writes to SUPRAMAN_SHOTS, which is unset"))
 }
 
 pub fn prepare() -> anyhow::Result<()> {

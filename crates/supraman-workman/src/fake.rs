@@ -126,11 +126,7 @@ type Routes = Arc<Mutex<Vec<(String, Answer)>>>;
 type Queued = Arc<Mutex<HashMap<String, VecDeque<Answer>>>>;
 type Log = Arc<(Mutex<Vec<Seen>>, Condvar)>;
 
-/// `http://127.0.0.1:<port>` of a port just freed: nothing listens there.
-pub fn closed_base() -> String {
-    let port = TcpListener::bind("127.0.0.1:0").and_then(|l| l.local_addr()).expect("bind a loopback port").port();
-    format!("http://127.0.0.1:{port}")
-}
+pub use crate::closed_base;
 
 /// Every kind of row Workman's inbox serves.
 pub const INBOX_KINDS: [&str; 7] = ["question", "blocked", "blocker_finding", "done_unverified", "stale_in_progress", "expired_claim", "assumption_due"];

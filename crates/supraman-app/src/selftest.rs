@@ -24,8 +24,11 @@ use crate::{
 };
 
 pub(crate) mod frames;
+mod wait;
+pub(crate) mod win;
 
 pub(crate) use frames::injected_frame_sleep;
+pub(crate) use wait::{ask_frame, drawn, drawn_in, frame_if_asked, until, until_app, until_with};
 
 pub const WORKSPACE: &str = "larchsys";
 const PROMPT: &str = "Reply with the word ready and then wait for input";
@@ -135,8 +138,7 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     // Closed sessions are read from a fake claude dir in the scratch home, never the user's.
     crate::view::use_claude_dir(crate::selftest_closed::claude_dir(&home()));
     // A closed loopback port as the releases API, never GitHub (C109); step 7+u serves its own fake.
-    let closed = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
-    unsafe { std::env::set_var(supraman_workman::updates::API_VAR, format!("http://127.0.0.1:{closed}")) };
+    unsafe { std::env::set_var(supraman_workman::updates::API_VAR, supraman_workman::closed_base()) };
     if mode == Mode::SelftestSupervise {
         return crate::selftest_supervise::prepare();
     }
@@ -194,8 +196,7 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     );
 
     // A closed loopback port as the Workman server, never the real one; the gate's step 1w names its fake instead.
-    let closed = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
-    set_workman(&format!("http://127.0.0.1:{closed}"))?;
+    set_workman(&supraman_workman::closed_base())?;
 
     if mode == Mode::Selftest {
         crate::selftest_work::prepare(&home, &work)?;
@@ -229,13 +230,26 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `SUPRAMAN_SELFTEST_HOLD_SECS`: how long a step holds its screen for a screenshot taken by hand.
+pub(crate) fn hold_secs() -> Option<u64> {
+    std::env::var("SUPRAMAN_SELFTEST_HOLD_SECS").ok().and_then(|s| s.parse().ok())
+}
+
+/// A message in `outbox` from `from_name`, as the relay's watcher writes one; its file name.
+pub(crate) fn drop_outbox(outbox: &Path, from_name: &str, tag: &str, body: &str) -> anyhow::Result<String> {
+    let file = format!("{:013}-selftest-{tag}.json", now_ms());
+    let text = serde_json::json!({"from": "uds:selftest", "from_name": from_name, "body": body}).to_string();
+    supraman_core::fs::write_atomic(&outbox.join(&file), text)?;
+    Ok(file)
+}
+
 pub(crate) fn lock() -> MutexGuard<'static, Option<Scratch>> {
     SCRATCH.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 pub(crate) fn install_guards(mode: Mode) {
     let budget = match mode {
-        Mode::Selftest if std::env::var_os("SUPRAMAN_SHOTS").is_some() => Duration::from_secs(360),
+        Mode::Selftest if crate::selftest_shots::dir().is_some() => Duration::from_secs(360),
         Mode::Selftest => Duration::from_secs(300), // slow frames while the display is off: docs/LEARNINGS.md 2026-11-10
         Mode::SelftestDetach(cycles) => Duration::from_secs(90 + 15 * u64::from(cycles)),
         Mode::SelftestSupervise => Duration::from_secs(420),
@@ -323,7 +337,7 @@ fn run_cleanup(guard: &mut Option<Scratch>) {
     };
     let mut ok = true;
     for &(pid, start) in &scratch.kill {
-        crate::selftest_mark::kill_own(pid, start);
+        process::terminate_started(pid, start);
     }
     let mut transcripts = scratch.transcripts.clone();
     if let Some(prefix) = &scratch.name_prefix {
@@ -484,69 +498,6 @@ async fn step<T>(name: &'static str, run: impl Future<Output = anyhow::Result<T>
         set_step(outer);
     }
     result
-}
-
-static FRAME_ASKED: AtomicBool = AtomicBool::new(false);
-
-/// [`FleetView::shown`] scrolled the sidebar; the next wait redraws the window so the row is painted.
-pub(crate) fn ask_frame() {
-    FRAME_ASKED.store(true, Ordering::SeqCst);
-}
-
-pub(crate) fn frame_if_asked(cx: &mut AsyncWindowContext) {
-    if FRAME_ASKED.swap(false, Ordering::SeqCst) {
-        cx.update(|window, _| window.refresh()).ok();
-    }
-}
-
-pub(crate) async fn until_with<T>(
-    cx: &mut AsyncWindowContext,
-    within: Duration,
-    what: &str,
-    mut check: impl FnMut(&mut AsyncWindowContext) -> Option<T>,
-) -> anyhow::Result<T> {
-    let started = Instant::now();
-    loop {
-        if let Some(t) = check(cx) {
-            return Ok(t);
-        }
-        if started.elapsed() > within {
-            bail!("{what}: not within {within:?}");
-        }
-        frame_if_asked(cx);
-        sleep(cx, Duration::from_millis(25)).await;
-    }
-}
-
-/// The main window drawn once more from now: a hit key forgotten before it is back only if that frame painted it.
-pub(crate) async fn drawn(cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
-    let flag = std::rc::Rc::new(std::cell::Cell::new(false));
-    let set = flag.clone();
-    cx.update(|window, _| {
-        window.on_next_frame(move |_, _| set.set(true));
-        window.refresh();
-    })?;
-    until_with(cx, Duration::from_secs(5), "a frame drawn", |_| flag.get().then_some(())).await
-}
-
-pub(crate) async fn until<T>(
-    view: &Entity<FleetView>,
-    cx: &mut AsyncWindowContext,
-    within: Duration,
-    what: &str,
-    f: impl Fn(&FleetView) -> Option<T>,
-) -> anyhow::Result<T> {
-    until_with(cx, within, what, |cx| view.read_with(cx, |v, _| f(v))).await
-}
-
-pub(crate) async fn until_app<T>(
-    view: &Entity<FleetView>,
-    cx: &mut AsyncWindowContext,
-    within: Duration,
-    what: &str,
-    f: impl Fn(&FleetView, &App) -> Option<T>,
-) -> anyhow::Result<T> {
-    until_with(cx, within, what, |cx| view.read_with(cx, |v, cx| f(v, cx))).await
 }
 
 /// Through the window's own input dispatch, so it lands only if that element is really there and hit-testable.
@@ -1001,7 +952,7 @@ fn startup_timeline() -> anyhow::Result<(String, f64)> {
 
 async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let name = session_name()?;
-    println!("UI thread priority raised to highest: {}", frames::raise_ui_thread());
+    println!("UI thread priority raised to highest: {}", win::raise_ui_thread());
     crate::view::tree_check::set(true);
     let loading = step("3a", loading_until_listed(view, cx)).await?;
     let (phases, _) = step("3a", async { startup_timeline() }).await?;
@@ -1389,7 +1340,7 @@ async fn detach_on_shutdown(view: &Entity<FleetView>, cx: &mut AsyncWindowContex
         asked: Instant::now(),
         quit: false,
     });
-    let posted = post_close_to_own_windows();
+    let posted = win::post_close_to_own_windows();
     let closed = Instant::now();
     while cx.update(|window, _| crate::tray::is_shown(window))? {
         if closed.elapsed() > Duration::from_secs(5) {
@@ -1422,31 +1373,6 @@ async fn detach_on_shutdown(view: &Entity<FleetView>, cx: &mut AsyncWindowContex
     }
     let state = view.read_with(cx, |v, _| v.tabs.iter().map(|t| format!("{} {:?}", t.title, t.detach)).collect::<Vec<_>>());
     bail!("the window is still open {} ms after Quit; tabs: {state:?}", asked.elapsed().as_millis())
-}
-
-#[cfg(windows)]
-pub(crate) fn post_close_to_own_windows() -> usize {
-    use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-    use windows::Win32::System::Threading::GetCurrentThreadId;
-    use windows::Win32::UI::WindowsAndMessaging::{EnumThreadWindows, IsWindowVisible, PostMessageW, WM_CLOSE};
-    unsafe extern "system" fn post(hwnd: HWND, count: LPARAM) -> windows::core::BOOL {
-        unsafe {
-            if IsWindowVisible(hwnd).as_bool() && PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)).is_ok() {
-                *(count.0 as *mut usize) += 1;
-            }
-        }
-        true.into()
-    }
-    let mut count = 0usize;
-    unsafe {
-        let _ = EnumThreadWindows(GetCurrentThreadId(), Some(post), LPARAM(&mut count as *mut usize as isize));
-    }
-    count
-}
-
-#[cfg(not(windows))]
-pub(crate) fn post_close_to_own_windows() -> usize {
-    0
 }
 
 static VERDICT: AtomicBool = AtomicBool::new(false);
@@ -1558,7 +1484,7 @@ async fn perf(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
         }
     });
     sleep(cx, Duration::from_millis(500)).await;
-    println!("UI thread priority raised to highest: {}", frames::raise_ui_thread());
+    println!("UI thread priority raised to highest: {}", win::raise_ui_thread());
     let (phases, painted) = step("startup", async { startup_timeline() }).await?;
     if painted > PAINTED_AFTER_LIST {
         bail!("the first list painted {painted:.0} ms after claude agents returned, over {PAINTED_AFTER_LIST} ms: {phases}");

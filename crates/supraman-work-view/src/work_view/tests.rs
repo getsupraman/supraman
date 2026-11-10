@@ -288,6 +288,24 @@ fn c2_a_selected_row_shows_in_the_detail_beside_the_list(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+fn a_row_click_emits_its_item_selected(cx: &mut TestAppContext) {
+    let Opened { view, cx, .. } = open(cx);
+    bounds(&view, "work-pill-pa/ra=doing", cx);
+    let selected: Rc<RefCell<Vec<String>>> = Rc::default();
+    let sink = selected.clone();
+    cx.update(|_, cx| {
+        cx.subscribe(&view, move |_, event: &WorkEvent, _| {
+            if let WorkEvent::ItemSelected(id) = event {
+                sink.borrow_mut().push(id.clone());
+            }
+        })
+        .detach()
+    });
+    click(&view, "work-row-pa/ra/3", cx);
+    assert_eq!(*selected.borrow(), [id(3)]);
+}
+
+#[gpui::test]
 fn c3_filters_count_and_rows_show_only_dot_ref_title_and_criteria(cx: &mut TestAppContext) {
     let Opened { view, cx, .. } = open(cx);
     let (labels, texts) = view.read_with(cx, |v, _| {

@@ -88,8 +88,8 @@ fn watch_focus(done: &AtomicBool) -> Focus {
     let Ok(exe) = std::env::current_exe() else { return focus };
     let exe = supraman_core::paths::path_key(&exe);
     while !done.load(Ordering::SeqCst) {
-        if let Some(pid) = foreground_pid().filter(|&pid| pid != std::process::id())
-            && image_of(pid).is_some_and(|image| supraman_core::paths::path_key(&image) == exe)
+        if let Some(pid) = crate::selftest::win::foreground_pid().filter(|&pid| pid != std::process::id())
+            && crate::selftest::win::image_of(pid).is_some_and(|image| supraman_core::paths::path_key(&image) == exe)
         {
             focus.stolen.get_or_insert(pid);
         }
@@ -97,45 +97,6 @@ fn watch_focus(done: &AtomicBool) -> Focus {
         std::thread::sleep(Duration::from_millis(100));
     }
     focus
-}
-
-#[cfg(windows)]
-fn foreground_pid() -> Option<u32> {
-    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
-    let hwnd = unsafe { GetForegroundWindow() };
-    if hwnd.is_invalid() {
-        return None;
-    }
-    let mut pid = 0;
-    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
-    (pid != 0).then_some(pid)
-}
-
-#[cfg(windows)]
-fn image_of(pid: u32) -> Option<std::path::PathBuf> {
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Threading::{OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW};
-    use windows::core::PWSTR;
-    // SAFETY: the handle is closed below; the buffer outlives the call.
-    unsafe {
-        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-        let mut buf = [0u16; 1024];
-        let mut len = buf.len() as u32;
-        let named = QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len);
-        let _ = CloseHandle(process);
-        named.ok()?;
-        Some(String::from_utf16_lossy(&buf[..len as usize]).into())
-    }
-}
-
-#[cfg(not(windows))]
-fn foreground_pid() -> Option<u32> {
-    None
-}
-
-#[cfg(not(windows))]
-fn image_of(_pid: u32) -> Option<std::path::PathBuf> {
-    None
 }
 
 fn copy(mut from: impl Read, mut to: impl Write) {

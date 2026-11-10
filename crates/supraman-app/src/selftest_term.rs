@@ -1,3 +1,5 @@
+//! `--selftest` step 6b: a real pwsh in a terminal tab: wheel scroll, and Ctrl+C and right-click copy and paste through the system clipboard.
+
 use std::time::{Duration, Instant};
 
 use anyhow::bail;
@@ -103,7 +105,7 @@ async fn steps(terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> anyh
     if copied.as_deref() != Some(text.as_str()) {
         bail!("right-click with {text:?} selected left the clipboard at {copied:?} ({CLIPBOARD_TRIES} tries)");
     }
-    sleep(cx, Duration::from_millis(200)).await;
+    crate::selftest::drawn(cx).await?;
     if terminal.read_with(cx, |t, _| t.last_content().selection.is_some()) {
         bail!("right-click copied {text:?} but kept the selection");
     }

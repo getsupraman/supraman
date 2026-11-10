@@ -22,18 +22,6 @@ pub(crate) const BUSY_CPU: f64 = 0.35;
 const BASELINE: Duration = Duration::from_secs(1);
 const CALM_WITHIN: Duration = Duration::from_secs(60);
 
-/// A build's rustc threads at normal priority otherwise preempt it mid-frame; the process class stays normal, so the sessions and shells it starts are not raised.
-#[cfg(windows)]
-pub(crate) fn raise_ui_thread() -> bool {
-    use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_HIGHEST};
-    unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST).is_ok() }
-}
-
-#[cfg(not(windows))]
-pub(crate) fn raise_ui_thread() -> bool {
-    false
-}
-
 /// `SUPRAMAN_SELFTEST_FRAME_SLEEP_MS=<n>`: every root render sleeps n ms, the red check for these checks.
 pub(crate) fn injected_frame_sleep() {
     static SLEEP: OnceLock<Option<Duration>> = OnceLock::new();
@@ -152,24 +140,8 @@ struct Cpu {
 }
 
 impl Cpu {
-    #[cfg(windows)]
     fn now() -> Option<Self> {
-        use windows::Win32::Foundation::FILETIME;
-        use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes, GetSystemTimes};
-        let ticks = |t: FILETIME| (t.dwHighDateTime as u64) << 32 | t.dwLowDateTime as u64;
-        let (mut idle, mut kernel, mut user) = (FILETIME::default(), FILETIME::default(), FILETIME::default());
-        let (mut created, mut exited, mut own_kernel, mut own_user) =
-            (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
-        unsafe {
-            GetSystemTimes(Some(&mut idle), Some(&mut kernel), Some(&mut user)).ok()?;
-            GetProcessTimes(GetCurrentProcess(), &mut created, &mut exited, &mut own_kernel, &mut own_user).ok()?;
-        }
-        Some(Self { idle: ticks(idle), total: ticks(kernel) + ticks(user), own: ticks(own_kernel) + ticks(own_user) })
-    }
-
-    #[cfg(not(windows))]
-    fn now() -> Option<Self> {
-        None
+        crate::selftest::win::cpu_times().map(|(idle, total, own)| Self { idle, total, own })
     }
 
     fn others_share(&self, later: &Cpu) -> f64 {

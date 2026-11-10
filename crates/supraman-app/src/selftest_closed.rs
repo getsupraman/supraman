@@ -1,3 +1,5 @@
+//! `--selftest` step 7h: closed sessions read from transcripts on disk by the real poll, painted in the sidebar, starred, and resumed by a double-click that runs a fake claude; FleetView is not buildable in a gpui test.
+
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 

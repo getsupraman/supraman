@@ -1,3 +1,5 @@
+//! `--selftest` step 7l: `claude` typed into a shell tab registers in ~/.claude/sessions and marks its sidebar row; a unit test runs no real claude.
+
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
@@ -16,21 +18,6 @@ fn marked(v: &FleetView) -> Vec<String> {
     v.hits.borrow().keys().filter_map(|k| k.strip_prefix("marked-")).map(String::from).collect()
 }
 
-pub(crate) fn kill_own(pid: u32, start: u64) {
-    if peer::started(pid) != Some(start) {
-        return;
-    }
-    #[cfg(windows)]
-    // SAFETY: a handle this function opens and closes, to a process this run started.
-    unsafe {
-        use windows::Win32::Foundation::CloseHandle;
-        use windows::Win32::System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess};
-        if let Ok(handle) = OpenProcess(PROCESS_TERMINATE, false, pid) {
-            let _ = TerminateProcess(handle, 1);
-            let _ = CloseHandle(handle);
-        }
-    }
-}
 
 pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let earlier: Vec<u64> = view.read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).collect());
@@ -44,7 +31,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     saved.restore().ok();
     let killed = lock().as_mut().map(|s| std::mem::take(&mut s.kill)).unwrap_or_default();
     for (pid, start) in killed {
-        kill_own(pid, start);
+        supraman_core::process::terminate_started(pid, start);
     }
     let mine: Vec<u64> = view.read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).collect());
     view.update(cx, |v, cx| mine.into_iter().for_each(|id| v.close_tab(id, cx)));
