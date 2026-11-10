@@ -131,6 +131,32 @@ pub(crate) fn remove_dir_retrying(dir: &Path) -> std::io::Result<()> {
 }
 
 pub fn prepare(mode: Mode) -> anyhow::Result<()> {
+    isolate()?;
+    if mode == Mode::SelftestSupervise {
+        return crate::selftest_supervise::prepare();
+    }
+    if mode == Mode::SelftestShots {
+        return crate::selftest_shots::prepare();
+    }
+    let (home, cwd, work, fixture) = clear_scratch(mode)?;
+    let main = register_workspace(&home, &cwd, &fixture)?;
+    // A closed loopback port as the Workman server, never the real one; the gate's step 1w names its fake instead.
+    set_workman(&supraman_workman::closed_base())?;
+
+    if mode == Mode::Selftest {
+        crate::selftest_work::prepare(&home, &work)?;
+        crate::selftest_closed::prepare(&home, &main)?;
+    }
+    if mode == Mode::SelftestPerf {
+        crate::selftest_work::prepare(&home, &work)?;
+    }
+    if mode.launches_session() {
+        launch_gate_session(&home, &cwd)?;
+    }
+    Ok(())
+}
+
+fn isolate() -> anyhow::Result<()> {
     // The sign-in never opens a browser; its refresh tokens stay in the scratch home.
     crate::signin::use_http_browser();
     // The Workman URL is read from the scratch home's server.json, never the user's ~/.workman (C185).
@@ -141,12 +167,10 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     crate::view::use_claude_dir(crate::selftest_closed::claude_dir(&home()));
     // A closed loopback port as the releases API, never GitHub (C109); step 7+u serves its own fake.
     unsafe { std::env::set_var(supraman_workman::updates::API_VAR, supraman_workman::closed_base()) };
-    if mode == Mode::SelftestSupervise {
-        return crate::selftest_supervise::prepare();
-    }
-    if mode == Mode::SelftestShots {
-        return crate::selftest_shots::prepare();
-    }
+    Ok(())
+}
+
+fn clear_scratch(mode: Mode) -> anyhow::Result<(PathBuf, PathBuf, PathBuf, PathBuf)> {
     let target = cargo_root().join("target");
     let home = home();
     let cwd = target.join("selftest-cwd");
@@ -166,10 +190,13 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
         transcripts: Vec::new(),
     });
     install_guards(mode);
+    Ok((home, cwd, work, fixture))
+}
 
+fn register_workspace(home: &Path, cwd: &Path, fixture: &Path) -> anyhow::Result<PathBuf> {
     // Still single-threaded apart from the watchdog, which never reads the environment.
-    unsafe { std::env::set_var(supraman_core::HOME_VAR, &home) };
-    std::fs::create_dir_all(&cwd)?;
+    unsafe { std::env::set_var(supraman_core::HOME_VAR, home) };
+    std::fs::create_dir_all(cwd)?;
     let main = find_main_repo(cargo_root())?;
     let repo_name = main
         .file_name()
@@ -179,9 +206,9 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     let registry = Registry::from_env()?;
     // two fake repos beside this checkout's own repo, which the gate's session runs in: never the user's other folders
     for name in ["alpha", "beta"] {
-        crate::selftest_manage::fake_repo(&fixture, name)?;
+        crate::selftest_manage::fake_repo(fixture, name)?;
     }
-    let mut workspace = Workspace::new(WORKSPACE, &fixture, scan(&fixture, DEFAULT_DEPTH)?);
+    let mut workspace = Workspace::new(WORKSPACE, fixture, scan(fixture, DEFAULT_DEPTH)?);
     let own = workspace.add_folder(&main).name.clone();
     if own != repo_name {
         bail!("{} registered as {own}, not {repo_name}", main.display());
@@ -196,39 +223,29 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
         main.display(),
         saved.display()
     );
+    Ok(main)
+}
 
-    // A closed loopback port as the Workman server, never the real one; the gate's step 1w names its fake instead.
-    set_workman(&supraman_workman::closed_base())?;
-
-    if mode == Mode::Selftest {
-        crate::selftest_work::prepare(&home, &work)?;
-        crate::selftest_closed::prepare(&home, &main)?;
+fn launch_gate_session(home: &Path, cwd: &Path) -> anyhow::Result<()> {
+    let version = check_supported()?;
+    println!("claude CLI: {}", version.raw);
+    if let Some(warning) = version.untested() {
+        println!("WARNING {warning}");
     }
-    if mode == Mode::SelftestPerf {
-        crate::selftest_work::prepare(&home, &work)?;
+    let name = format!("fm-selftest-{}", run_hex());
+    // Recorded before launching, so cleanup looks for it even if the launch half-succeeds.
+    if let Some(scratch) = lock().as_mut() {
+        scratch.session_name = Some(name.clone());
     }
-
-    if mode.launches_session() {
-        let version = check_supported()?;
-        println!("claude CLI: {}", version.raw);
-        if let Some(warning) = version.untested() {
-            println!("WARNING {warning}");
-        }
-        let name = format!("fm-selftest-{}", run_hex());
-        // Recorded before launching, so cleanup looks for it even if the launch half-succeeds.
-        if let Some(scratch) = lock().as_mut() {
-            scratch.session_name = Some(name.clone());
-        }
-        *SESSION_NAME.lock().unwrap_or_else(|e| e.into_inner()) = Some(name.clone());
-        let launched = Instant::now();
-        let out = Claude::default().run_in(&crate::selftest_launch::args(&name, &crate::selftest_launch::no_servers(&home)?, PROMPT), Some(&cwd), WRITE_TIMEOUT)?;
-        let out = out.trim();
-        println!(
-            "step 2: launched {name} from {} in {} ms: {out}",
-            cwd.display(),
-            launched.elapsed().as_millis()
-        );
-    }
+    *SESSION_NAME.lock().unwrap_or_else(|e| e.into_inner()) = Some(name.clone());
+    let launched = Instant::now();
+    let out = Claude::default().run_in(&crate::selftest_launch::args(&name, &crate::selftest_launch::no_servers(home)?, PROMPT), Some(cwd), WRITE_TIMEOUT)?;
+    let out = out.trim();
+    println!(
+        "step 2: launched {name} from {} in {} ms: {out}",
+        cwd.display(),
+        launched.elapsed().as_millis()
+    );
     Ok(())
 }
 
@@ -348,62 +365,7 @@ fn run_cleanup(guard: &mut Option<Scratch>) {
         transcripts.extend(own);
     }
     if let Some(name) = &scratch.session_name {
-        // The row can trail `--bg` by a moment, so a missing row is retried before giving up.
-        let deadline = Instant::now() + Duration::from_secs(10);
-        let ids: Vec<String> = loop {
-            match list_sessions() {
-                Ok(rows) => {
-                    let ids: Vec<String> =
-                        rows.iter().filter(|s| &s.name == name).map(|s| s.id.clone()).collect();
-                    transcripts.extend(rows.iter().filter(|s| &s.name == name).map(|s| (s.session_id.clone(), s.cwd.clone())));
-                    if !ids.is_empty() || Instant::now() > deadline {
-                        break ids;
-                    }
-                }
-                Err(e) if Instant::now() > deadline => {
-                    println!("cleanup: cannot list sessions: {e}");
-                    ok = false;
-                    break Vec::new();
-                }
-                Err(_) => {}
-            }
-            std::thread::sleep(Duration::from_millis(500));
-        };
-        if ids.is_empty() {
-            println!("cleanup: no row named {name} in claude agents --json --all");
-        }
-        let claude = Claude::default();
-        for id in &ids {
-            match claude.stop(id) {
-                Ok(out) => println!("cleanup: claude stop {id}: {}", out.trim()),
-                Err(e) => {
-                    println!("cleanup: claude stop {id}: {e}");
-                    ok = false;
-                }
-            }
-            match claude.remove(id, None) {
-                Ok(Removal::Removed(out)) => println!("cleanup: claude rm {id}: {out}"),
-                Ok(Removal::Kept(refusal)) => {
-                    println!("cleanup: claude rm {id} kept it: {}", refusal.text);
-                    ok = false;
-                }
-                Err(e) => {
-                    println!("cleanup: claude rm {id}: {e}");
-                    ok = false;
-                }
-            }
-        }
-        match list_sessions() {
-            Ok(rows) if rows.iter().any(|s| &s.name == name) => {
-                println!("cleanup: {name} is still listed after rm");
-                ok = false;
-            }
-            Ok(_) => println!("cleanup: {name} no longer listed"),
-            Err(e) => {
-                println!("cleanup: cannot verify removal: {e}");
-                ok = false;
-            }
-        }
+        ok &= remove_named(name, &mut transcripts);
     }
     transcripts.sort();
     transcripts.dedup();
@@ -424,6 +386,67 @@ fn run_cleanup(guard: &mut Option<Scratch>) {
     if !ok {
         EXIT_CODE.store(1, Ordering::SeqCst);
     }
+}
+
+fn remove_named(name: &str, transcripts: &mut Vec<(String, PathBuf)>) -> bool {
+    let mut ok = true;
+    // The row can trail `--bg` by a moment, so a missing row is retried before giving up.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let ids: Vec<String> = loop {
+        match list_sessions() {
+            Ok(rows) => {
+                let ids: Vec<String> =
+                    rows.iter().filter(|s| s.name == name).map(|s| s.id.clone()).collect();
+                transcripts.extend(rows.iter().filter(|s| s.name == name).map(|s| (s.session_id.clone(), s.cwd.clone())));
+                if !ids.is_empty() || Instant::now() > deadline {
+                    break ids;
+                }
+            }
+            Err(e) if Instant::now() > deadline => {
+                println!("cleanup: cannot list sessions: {e}");
+                ok = false;
+                break Vec::new();
+            }
+            Err(_) => {}
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    };
+    if ids.is_empty() {
+        println!("cleanup: no row named {name} in claude agents --json --all");
+    }
+    let claude = Claude::default();
+    for id in &ids {
+        match claude.stop(id) {
+            Ok(out) => println!("cleanup: claude stop {id}: {}", out.trim()),
+            Err(e) => {
+                println!("cleanup: claude stop {id}: {e}");
+                ok = false;
+            }
+        }
+        match claude.remove(id, None) {
+            Ok(Removal::Removed(out)) => println!("cleanup: claude rm {id}: {out}"),
+            Ok(Removal::Kept(refusal)) => {
+                println!("cleanup: claude rm {id} kept it: {}", refusal.text);
+                ok = false;
+            }
+            Err(e) => {
+                println!("cleanup: claude rm {id}: {e}");
+                ok = false;
+            }
+        }
+    }
+    match list_sessions() {
+        Ok(rows) if rows.iter().any(|s| s.name == name) => {
+            println!("cleanup: {name} is still listed after rm");
+            ok = false;
+        }
+        Ok(_) => println!("cleanup: {name} no longer listed"),
+        Err(e) => {
+            println!("cleanup: cannot verify removal: {e}");
+            ok = false;
+        }
+    }
+    ok
 }
 
 pub fn start(mode: Mode, view: Entity<FleetView>, window: &mut Window, cx: &mut App) {
@@ -956,10 +979,19 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let name = session_name()?;
     println!("UI thread priority raised to highest: {}", win::raise_ui_thread());
     crate::view::tree_check::set(true);
+    let row = attach_steps(view, &name, cx).await?;
+    session_steps(view, &row.session, cx).await?;
+    window_steps(view, cx).await?;
+    home_steps(view, cx).await?;
+    tree_cache_step().await?;
+    idle_step(view, cx).await
+}
+
+async fn attach_steps(view: &Entity<FleetView>, name: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<SessionRow> {
     let loading = step("3a", loading_until_listed(view, cx)).await?;
     let (phases, _) = step("3a", async { startup_timeline() }).await?;
     println!("step 3a: {loading}; every source logged its startup line: {phases}");
-    let (row, listed_after) = step("3", wait_attachable(view, &name, cx)).await?;
+    let (row, listed_after) = step("3", wait_attachable(view, name, cx)).await?;
     let id = row.session.id.clone();
     println!(
         "step 3: {name} ({id}) listed under {WORKSPACE} / ./{} as {} after {} ms",
@@ -980,23 +1012,29 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     );
     crate::selftest_manage::shot("m5-14-terminal-tab", cx).await;
 
-    let closed = step("5", close_attach(view, &attached, &name, cx)).await?;
+    let closed = step("5", close_attach(view, &attached, name, cx)).await?;
     println!("step 5: tab closed, {closed}");
 
     let scrolled = step("6", shell_tab::wheel_scroll(view, cx)).await?;
     println!("step 6: {scrolled}");
+    Ok(row)
+}
 
-    let work = step("7", crate::selftest_work::run(view, &row.session, cx)).await?;
+async fn session_steps(view: &Entity<FleetView>, session: &Session, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let work = step("7", crate::selftest_work::run(view, session, cx)).await?;
     println!("step 7: {work}");
 
-    let managed = step("7b", crate::selftest_manage::run(view, &row.session, cx)).await?;
+    let managed = step("7b", crate::selftest_manage::run(view, session, cx)).await?;
     println!("step 7b: {managed}");
 
     let bar = step("7c", crate::selftest_left::action_bar(view, cx)).await?;
     let clipped = step("7c", crate::selftest_left::tree_clip(view, cx)).await?;
-    let grid = step("7c", crate::selftest_left::tree_grid(view, &row.session.session_id, cx)).await?;
+    let grid = step("7c", crate::selftest_left::tree_grid(view, &session.session_id, cx)).await?;
     println!("step 7c: {bar}; {clipped}; {grid}");
+    Ok(())
+}
 
+async fn window_steps(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let first_run = step("7d", crate::selftest_first_run::run(view, cx)).await?;
     println!("step 7d: {first_run}");
 
@@ -1023,7 +1061,10 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
 
     let mark = step("7l", crate::selftest_mark::run(view, cx)).await?;
     println!("step 7l: {mark}");
+    Ok(())
+}
 
+async fn home_steps(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let dismissed = step("7n", crate::selftest_messages::run(view, &home(), cx)).await?;
     let held = step("7n", crate::selftest_messages::held(view, &home(), cx)).await?;
     let notices = step("7n", crate::selftest_notices::run(view, cx)).await?;
@@ -1055,7 +1096,10 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
 
     let git = step("7g", crate::selftest_git::run(view, &home(), cx)).await?;
     println!("step 7g: {git}");
+    Ok(())
+}
 
+async fn tree_cache_step() -> anyhow::Result<()> {
     let cached = step("7+c", async {
         crate::view::tree_check::set(false);
         let (mismatches, compared) = crate::view::tree_check::take();
@@ -1067,7 +1111,10 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     })
     .await?;
     println!("step 7+c: {cached}");
+    Ok(())
+}
 
+async fn idle_step(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     set_step("8");
     let (idle_private, idle_ws) = memory();
     let refreshes_before = view.read_with(cx, |v, _| v.refreshes);

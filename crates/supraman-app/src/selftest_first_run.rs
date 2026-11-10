@@ -4,7 +4,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
 use supraman_workman::AuthStatus;
-use supraman_workman::fake::{Answer, FakeWorkman};
+use supraman_workman::fake::{Answer, FakeAuth, FakeWorkman};
+use supraman_workman::Auth;
 use gpui::{AsyncWindowContext, Entity, WindowHandle};
 
 use crate::{
@@ -81,6 +82,29 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let auth = crate::signin::auth(&home);
     let mut lines = Vec::new();
 
+    let handle = signed_in_settings(view, &base, &mut lines, cx).await?;
+    lines.push(claude_entry_checked(&handle, &base, cx).await?);
+    lines.push(sign_out(view, &auth, &base, cx).await?);
+    lines.push(sign_in_again(view, fake, oauth, &base, cx).await?);
+    let (other, switched) = switch_url(view, &handle, cx).await?;
+    lines.push(switched);
+    let closed = supraman_workman::closed_base();
+    lines.push(failed_switch(view, &handle, &closed, other.base(), cx).await?);
+    view.update(cx, |v, cx| v.close_settings(cx));
+    lines.push(unreachable(view, &closed, cx).await?);
+
+    auth.sign_out(other.base()).map_err(|e| anyhow!("signing out of the other fake: {e}"))?;
+    crate::selftest::set_workman(&base)?;
+    crate::signin::sign_in(&home, &base).map_err(|e| anyhow!("signing in to the gate's fake again: {e}"))?;
+    view.update(cx, |v, cx| {
+        v.recheck_workman();
+        crate::work_view::WorkHub::reconfigure(Some(home.clone()), cx);
+    });
+    until(view, cx, "the gate's fake Workman Ready again", |v| matches!(v.workman, WorkmanStatus::Ready { .. }).then_some(())).await?;
+    Ok(lines.join("; "))
+}
+
+async fn signed_in_settings(view: &Entity<FleetView>, base: &str, lines: &mut Vec<String>, cx: &mut AsyncWindowContext) -> anyhow::Result<WindowHandle<SettingsView>> {
     let who = until(view, cx, "Ready as the fake operator", |v| match &v.workman {
         WorkmanStatus::Ready { url, who, .. } if *url == base => who.clone(),
         _ => None,
@@ -102,8 +126,10 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     }
     shot_window("m5-43-settings-signed-in", Some("Supraman Settings"), cx).await;
     lines.push(format!("Settings → Workman: signed in on {base} as {who}"));
-    lines.push(claude_entry_checked(&handle, &base, cx).await?);
+    Ok(handle)
+}
 
+async fn sign_out(view: &Entity<FleetView>, auth: &Auth, base: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     view.update(cx, |v, cx| v.sign_out(cx));
     let problem = until(view, cx, "the not-signed-in notice with Sign in", |v| {
         (matches!(v.workman, WorkmanStatus::NotSignedIn { .. }) && painted(v, "ws-setup-notice") && painted(v, "ws-setup-signin"))
@@ -111,12 +137,14 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
             .flatten()
     })
     .await?;
-    if auth.status(&base) != AuthStatus::NotSignedIn {
-        bail!("after Sign out the sign-in still says {:?}", auth.status(&base));
+    if auth.status(base) != AuthStatus::NotSignedIn {
+        bail!("after Sign out the sign-in still says {:?}", auth.status(base));
     }
     shot("m5-43-not-signed-in", cx).await;
-    lines.push(format!("Sign out: notice \"{problem}\" with Sign in"));
+    Ok(format!("Sign out: notice \"{problem}\" with Sign in"))
+}
 
+async fn sign_in_again(view: &Entity<FleetView>, fake: &FakeWorkman, oauth: &FakeAuth, base: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let issued = oauth.issued().len();
     click(view, "ws-setup-signin", cx).await?;
     until(view, cx, "Ready after Sign in, the notice gone", |v| {
@@ -141,8 +169,10 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         }
         sleep(cx, Duration::from_millis(50)).await;
     }
-    lines.push(format!("the notice's Sign in signed in again ({} new tokens), the Inbox paints its Workman cards read with them", fresh.len()));
+    Ok(format!("the notice's Sign in signed in again ({} new tokens), the Inbox paints its Workman cards read with them", fresh.len()))
+}
 
+async fn switch_url(view: &Entity<FleetView>, handle: &WindowHandle<SettingsView>, cx: &mut AsyncWindowContext) -> anyhow::Result<(FakeWorkman, String)> {
     let other = FakeWorkman::start(vec![("/health".into(), Answer::text("Healthy"))]);
     let other_oauth = other.enable_oauth();
     handle.update(cx, |s, _, cx| s.set_url_text(other.base(), cx)).map_err(|e| anyhow!("settings window: {e}"))?;
@@ -159,33 +189,36 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         bail!("Apply wrote mcpName {named:?}, not workman");
     }
     let mcp = format!("{}/mcp", other.base());
-    settled(&handle, cx, "the warning that claude's workman entry is not the new server", |s| {
+    settled(handle, cx, "the warning that claude's workman entry is not the new server", |s| {
         s.server_check().filter(|c| c.warnings.iter().any(|w| w.contains(&mcp))).map(|_| ())
     })
     .await?;
     if other_oauth.issued().is_empty() {
         bail!("the other server issued nothing");
     }
-    lines.push(format!("URL → {}: signed in there, saved", other.base()));
+    let line = format!("URL → {}: signed in there, saved", other.base());
+    Ok((other, line))
+}
 
-    let closed = supraman_workman::closed_base();
-    handle.update(cx, |s, _, cx| s.set_url_text(&closed, cx)).map_err(|e| anyhow!("settings window: {e}"))?;
+async fn failed_switch(view: &Entity<FleetView>, handle: &WindowHandle<SettingsView>, closed: &str, other: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    handle.update(cx, |s, _, cx| s.set_url_text(closed, cx)).map_err(|e| anyhow!("settings window: {e}"))?;
     handle.update(cx, |s, _, cx| s.apply_url(cx)).map_err(|e| anyhow!("settings window: {e}"))?;
     let error = until(view, cx, "the failed switch's error", |v| v.signing_in.is_none().then(|| v.sign_in_error.clone()).flatten()).await?;
-    if !error.contains(&closed) || saved_url()? != other.base() {
+    if !error.contains(closed) || saved_url()? != other {
         bail!("a failed switch to {closed}: {error:?}, URL now {}", saved_url()?);
     }
     shot_window("m5-43-settings-switch-failed", Some("Supraman Settings"), cx).await;
-    lines.push(format!("URL → {closed} (closed): \"{error}\", the URL stayed"));
-    view.update(cx, |v, cx| v.close_settings(cx));
+    Ok(format!("URL → {closed} (closed): \"{error}\", the URL stayed"))
+}
 
-    crate::selftest::set_workman(&closed)?;
+async fn unreachable(view: &Entity<FleetView>, closed: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    crate::selftest::set_workman(closed)?;
     view.update(cx, |v, _| v.recheck_workman());
     let down = until(view, cx, "the unreachable notice", |v| {
         (v.workman.unreachable() && painted(v, "ws-setup-retry")).then(|| v.workman_notice()).flatten()
     })
     .await?;
-    if !down.contains(&closed) {
+    if !down.contains(closed) {
         bail!("the unreachable notice does not name {closed}: {down:?}");
     }
     let warning = view.read_with(cx, |v, _| v.workman.start_warning("w"));
@@ -195,15 +228,5 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     shot("m5-3-unreachable", cx).await;
     click(view, "ws-setup-dismiss", cx).await?;
     until(view, cx, "× hides the notice", |v| (!painted(v, "ws-setup-notice") && v.workman.unreachable()).then_some(())).await?;
-    lines.push(format!("closed port: \"{down}\", Retry shown, × hid it"));
-
-    auth.sign_out(other.base()).map_err(|e| anyhow!("signing out of the other fake: {e}"))?;
-    crate::selftest::set_workman(&base)?;
-    crate::signin::sign_in(&home, &base).map_err(|e| anyhow!("signing in to the gate's fake again: {e}"))?;
-    view.update(cx, |v, cx| {
-        v.recheck_workman();
-        crate::work_view::WorkHub::reconfigure(Some(home.clone()), cx);
-    });
-    until(view, cx, "the gate's fake Workman Ready again", |v| matches!(v.workman, WorkmanStatus::Ready { .. }).then_some(())).await?;
-    Ok(lines.join("; "))
+    Ok(format!("closed port: \"{down}\", Retry shown, × hid it"))
 }

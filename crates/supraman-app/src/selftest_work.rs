@@ -358,6 +358,20 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
     crate::selftest_manage::shot("m5-14-inbox", cx).await;
     lines.push(format!("Inbox painted blocked sw2/2 under Needs you and Housekeeping closed (done_unverified sw1/1) {} ms into step 7, before any Work tab", shown.as_millis()));
 
+    let (tab, work, opened) = open_board(view, cx).await?;
+    lines.push(opened);
+    click(view, "work-filter-all", cx).await?;
+
+    lines.push(stream_events(view, &work, fake, cx).await?);
+    lines.push(item_page(view, &work, fake, launched, cx).await.context("the detail")?);
+    lines.push(inbox_cards(view, tab, &work, fake, cx).await.context("inbox")?);
+
+    lines.push(reads_only(fake)?);
+    lines.push(middle_click_closes(view, tab, cx).await?);
+    Ok(lines.join("; "))
+}
+
+async fn open_board(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<(u64, Entity<WorkView>, String)> {
     click(view, &format!("work-{WORKSPACE}"), cx).await?;
     let (tab, work) = view
         .read_with(cx, |v, _| {
@@ -375,13 +389,14 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
         }
     }
     let title = view.read_with(cx, |v, _| v.tab(tab).map(|t| t.title.clone()).unwrap_or_default());
-    lines.push(format!(
+    let line = format!(
         "tab \"{title}\": project bound by the folder's origin, navigator | sw2's page (3 rows, depth 1, 1, 2) | sw2 in the detail, {} ms after the click; sw1 under 1 closed",
         loaded.as_millis()
-    ));
+    );
+    Ok((tab, work, line))
+}
 
-    click(view, "work-filter-all", cx).await?;
-
+async fn stream_events(view: &Entity<FleetView>, work: &Entity<WorkView>, fake: &FakeWorkman, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let deadline = Instant::now() + LOADED_WITHIN;
     while fake.streams() == 0 && fake.push(": ping") == 0 {
         if Instant::now() > deadline {
@@ -409,11 +424,10 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
     if is_painted(view, "work-dot-sw2/1=doing", cx) {
         bail!("sw2/1 is painted both in progress and verified");
     }
-    lines.push(format!("3 stream events for sw2 → 1 board + 1 overview re-read; sw2/1's dot Verified {} ms after the push", live_after.as_millis()));
+    Ok(format!("3 stream events for sw2 → 1 board + 1 overview re-read; sw2/1's dot Verified {} ms after the push", live_after.as_millis()))
+}
 
-    lines.push(item_page(view, &work, fake, launched, cx).await.context("the detail")?);
-    lines.push(inbox_cards(view, tab, &work, fake, cx).await.context("inbox")?);
-
+fn reads_only(fake: &FakeWorkman) -> anyhow::Result<String> {
     let oauth = OAUTH.get().ok_or_else(|| anyhow!("no fake OAuth server"))?;
     let issued = oauth.issued();
     let is_oauth = |t: &str| t.starts_with("/.well-known/") || t.starts_with("/connect/");
@@ -428,8 +442,10 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
     if let Some(bad) = seen.iter().find(|s| !(s.target.starts_with("/api/v1/") || s.target == "/api/stream" || s.target == "/health")) {
         bail!("a request outside the read API: {}", bad.target);
     }
-    lines.push(format!("the fake saw {} reads, every one a GET with an access token of the sign-in (none for /health)", seen.len()));
+    Ok(format!("the fake saw {} reads, every one a GET with an access token of the sign-in (none for /health)", seen.len()))
+}
 
+async fn middle_click_closes(view: &Entity<FleetView>, tab: u64, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let position = scrolled_into_view(view, &format!("tab-{tab}"), cx).await?.center();
     cx.update(|window, cx| {
         let modifiers = Modifiers::default();
@@ -440,8 +456,7 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
     if view.read_with(cx, |v, _| v.tab(tab).is_some()) {
         bail!("a middle click on the Work tab left it open");
     }
-    lines.push("middle click closed the tab".into());
-    Ok(lines.join("; "))
+    Ok("middle click closed the tab".into())
 }
 
 async fn item_page(
