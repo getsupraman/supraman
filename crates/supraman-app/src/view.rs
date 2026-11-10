@@ -2128,7 +2128,7 @@ fn tab_sessions(shells: &[(u64, u32)]) -> StdHashMap<u64, String> {
     let Some(dir) = peer::sessions_dir().filter(|_| !shells.is_empty()) else {
         return StdHashMap::new();
     };
-    let procs = proc_tree::snapshot();
+    let procs = supraman_core::process::snapshot();
     shells
         .iter()
         .filter_map(|&(tab, pid)| {
