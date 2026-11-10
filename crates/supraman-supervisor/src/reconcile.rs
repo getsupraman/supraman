@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use supraman_claude::{Health, Session};
 
-use crate::{DesiredState, Millis, NeedsKind, NeedsYou, Policy, Remedy, SECOND, SupervisorMemory, WantedSession};
+use crate::{Attempts, DesiredState, Millis, NeedsKind, NeedsYou, Policy, Remedy, SECOND, SupervisorMemory, WantedSession};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -57,113 +57,168 @@ pub fn reconcile(
     free: usize,
     now: Millis,
 ) -> Vec<Action> {
-    let need = |kind, name: &str, since, detail: String, action| {
+    let cx = Tick {
+        desired,
+        memory,
+        policy,
+        now,
+    };
+    let mut plan = Plan::default();
+    for w in &desired.sessions {
+        cx.wanted(w, observed, &mut plan);
+    }
+    plan.out.extend(retired_stops(desired, observed, now));
+    plan.finish(free)
+}
+
+struct Tick<'a> {
+    desired: &'a DesiredState,
+    memory: &'a SupervisorMemory,
+    policy: &'a Policy,
+    now: Millis,
+}
+
+#[derive(Default)]
+struct Plan {
+    out: Vec<Action>,
+    resumes: Vec<Action>,
+    launches: Vec<Action>,
+    exempt: Vec<Action>,
+    last_stops: Vec<Action>,
+}
+
+impl Tick<'_> {
+    fn wanted(&self, w: &WantedSession, observed: &[Session], plan: &mut Plan) {
+        let rows: Vec<&Session> = observed.iter().filter(|s| s.name == w.name).collect();
+        if rows.len() > 1 {
+            plan.out.push(self.duplicate(w, &rows));
+            return;
+        }
+        let row = rows.first().copied();
+        let live = row.filter(|s| is_live(s, self.now));
+        if !self.desired.started {
+            if let Some(s) = live {
+                plan.stop(w, s);
+            }
+            return;
+        }
+        if let Some(s) = live {
+            plan.out.extend(self.blocked(w, s));
+            return;
+        }
+        if let Some(a) = self.memory.get(&w.name) {
+            let held = self.held(w, a);
+            if !held.is_empty() {
+                plan.out.extend(held);
+                return;
+            }
+        }
+        if let Some(wait) = self.respawn_wait(w, row) {
+            plan.out.push(wait);
+            return;
+        }
+        plan.due(w, row);
+    }
+
+    fn need(&self, kind: NeedsKind, name: &str, since: Millis, detail: String, action: Option<Remedy>) -> Action {
         Action::NeedsYou(NeedsYou {
             kind,
-            workspace: desired.workspace.clone(),
+            workspace: self.desired.workspace.clone(),
             name: name.to_string(),
             since,
             detail,
             action,
         })
-    };
-    let mut out = Vec::new();
-    let mut resumes = Vec::new();
-    let mut launches = Vec::new();
-    let mut exempt = Vec::new();
-    let mut last_stops = Vec::new();
-    for w in &desired.sessions {
-        let rows: Vec<&Session> = observed.iter().filter(|s| s.name == w.name).collect();
-        if rows.len() > 1 {
-            let ids: Vec<&str> = rows.iter().map(|s| s.id.as_str()).collect();
-            let detail = format!("{} sessions are named {}: {}; remove all but one", rows.len(), w.name, ids.join(", "));
-            out.push(need(NeedsKind::Duplicate, &w.name, now, detail, None));
-            continue;
-        }
-        let row = rows.first().copied();
-        let live = row.filter(|s| is_live(s, now));
-        if !desired.started {
-            if let Some(s) = live {
-                let stop = Action::Stop {
-                    name: w.name.clone(),
-                    id: s.id.clone(),
-                };
-                // the relay goes last: the others may still be reporting through it
-                if w.exempt_from_budget() { last_stops.push(stop) } else { out.push(stop) }
-            }
-            continue;
-        }
-        if let Some(s) = live {
-            if let Health::Blocked { waiting_for } = s.supervised_health(now) {
-                let detail = format!("waiting for {}", waiting_for.as_deref().unwrap_or("an answer"));
-                out.push(need(NeedsKind::Blocked, &w.name, now, detail, Some(Remedy::Attach { id: s.id.clone() })));
-            }
-            continue;
-        }
-        if let Some(a) = memory.get(&w.name) {
-            let since = a.last_attempt.unwrap_or(now);
-            if let Some(cwd) = &a.trust_needed {
-                let detail = format!(
-                    "workspace {} is not trusted: run `claude` there once, accept the trust prompt, then Retry",
-                    cwd.display()
-                );
-                let action = Remedy::RunInTerminal {
-                    cwd: cwd.clone(),
-                    command: "claude".into(),
-                };
-                out.push(need(NeedsKind::TrustNeeded, &w.name, since, detail, Some(action)));
-                continue;
-            }
-            let error = a.last_error.as_deref().unwrap_or("unknown error");
-            let (adopting, retry) = match &w.fork_from {
-                Some(from) => (format!("adopting {}: ", from.get(..8).unwrap_or(from)), Remedy::Adopt { from: from.clone() }),
-                None => (String::new(), Remedy::Retry),
+    }
+
+    fn duplicate(&self, w: &WantedSession, rows: &[&Session]) -> Action {
+        let ids: Vec<&str> = rows.iter().map(|s| s.id.as_str()).collect();
+        let detail = format!("{} sessions are named {}: {}; remove all but one", rows.len(), w.name, ids.join(", "));
+        self.need(NeedsKind::Duplicate, &w.name, self.now, detail, None)
+    }
+
+    fn blocked(&self, w: &WantedSession, s: &Session) -> Option<Action> {
+        let Health::Blocked { waiting_for } = s.supervised_health(self.now) else {
+            return None;
+        };
+        let detail = format!("waiting for {}", waiting_for.as_deref().unwrap_or("an answer"));
+        Some(self.need(NeedsKind::Blocked, &w.name, self.now, detail, Some(Remedy::Attach { id: s.id.clone() })))
+    }
+
+    // what holds a due launch or resume back: trust, giving up, settling, backoff; empty when nothing does.
+    fn held(&self, w: &WantedSession, a: &Attempts) -> Vec<Action> {
+        let now = self.now;
+        let since = a.last_attempt.unwrap_or(now);
+        if let Some(cwd) = &a.trust_needed {
+            let detail = format!(
+                "workspace {} is not trusted: run `claude` there once, accept the trust prompt, then Retry",
+                cwd.display()
+            );
+            let action = Remedy::RunInTerminal {
+                cwd: cwd.clone(),
+                command: "claude".into(),
             };
-            if a.gave_up {
-                let detail = format!("{adopting}gave up after {} failures; last: {error}", a.failures);
-                out.push(need(NeedsKind::GaveUp, &w.name, since, detail, Some(retry)));
-                continue;
-            }
-            if let Some(t) = a.started_at
-                && now - t < policy.settle
-            {
-                out.push(Action::Wait {
-                    name: w.name.clone(),
-                    until: Some(t + policy.settle),
-                    reason: WaitReason::Settling,
-                });
-                continue;
-            }
-            if let Some(next) = a.next_allowed
-                && now < next
-            {
-                out.push(Action::Wait {
-                    name: w.name.clone(),
-                    until: Some(next),
-                    reason: WaitReason::Backoff,
-                });
-                let detail = format!(
-                    "{adopting}failure {} of {}: {error}; next try in {} s",
-                    a.failures,
-                    policy.give_up_after,
-                    (next - now + SECOND - 1) / SECOND
-                );
-                let since = a.first_failure.unwrap_or(since);
-                out.push(need(NeedsKind::LaunchFailed, &w.name, since, detail, Some(retry)));
-                continue;
-            }
+            return vec![self.need(NeedsKind::TrustNeeded, &w.name, since, detail, Some(action))];
         }
-        if row.is_some()
-            && let Some(seen) = memory.get(&w.name).and_then(|a| a.last_alive)
-            && now - seen < policy.respawn_grace
+        let error = a.last_error.as_deref().unwrap_or("unknown error");
+        let (adopting, retry) = match &w.fork_from {
+            Some(from) => (format!("adopting {}: ", from.get(..8).unwrap_or(from)), Remedy::Adopt { from: from.clone() }),
+            None => (String::new(), Remedy::Retry),
+        };
+        if a.gave_up {
+            let detail = format!("{adopting}gave up after {} failures; last: {error}", a.failures);
+            return vec![self.need(NeedsKind::GaveUp, &w.name, since, detail, Some(retry))];
+        }
+        if let Some(t) = a.started_at
+            && now - t < self.policy.settle
         {
-            out.push(Action::Wait {
-                name: w.name.clone(),
-                until: Some(seen + policy.respawn_grace),
-                reason: WaitReason::Respawn,
-            });
-            continue;
+            return vec![wait(w, Some(t + self.policy.settle), WaitReason::Settling)];
         }
+        if let Some(next) = a.next_allowed
+            && now < next
+        {
+            let detail = format!(
+                "{adopting}failure {} of {}: {error}; next try in {} s",
+                a.failures,
+                self.policy.give_up_after,
+                (next - now + SECOND - 1) / SECOND
+            );
+            let since = a.first_failure.unwrap_or(since);
+            return vec![
+                wait(w, Some(next), WaitReason::Backoff),
+                self.need(NeedsKind::LaunchFailed, &w.name, since, detail, Some(retry)),
+            ];
+        }
+        Vec::new()
+    }
+
+    fn respawn_wait(&self, w: &WantedSession, row: Option<&Session>) -> Option<Action> {
+        row?;
+        let seen = self.memory.get(&w.name).and_then(|a| a.last_alive)?;
+        let until = seen + self.policy.respawn_grace;
+        (self.now - seen < self.policy.respawn_grace).then(|| wait(w, Some(until), WaitReason::Respawn))
+    }
+}
+
+fn wait(w: &WantedSession, until: Option<Millis>, reason: WaitReason) -> Action {
+    Action::Wait {
+        name: w.name.clone(),
+        until,
+        reason,
+    }
+}
+
+impl Plan {
+    fn stop(&mut self, w: &WantedSession, s: &Session) {
+        let stop = Action::Stop {
+            name: w.name.clone(),
+            id: s.id.clone(),
+        };
+        // the relay goes last: the others may still be reporting through it
+        if w.exempt_from_budget() { self.last_stops.push(stop) } else { self.out.push(stop) }
+    }
+
+    fn due(&mut self, w: &WantedSession, row: Option<&Session>) {
         let action = match row {
             Some(s) => Action::Resume {
                 name: w.name.clone(),
@@ -174,33 +229,40 @@ pub fn reconcile(
             None => Action::Launch(w.clone()),
         };
         match &action {
-            _ if w.exempt_from_budget() => exempt.push(action),
-            Action::Resume { .. } => resumes.push(action),
-            _ => launches.push(action),
+            _ if w.exempt_from_budget() => self.exempt.push(action),
+            Action::Resume { .. } => self.resumes.push(action),
+            _ => self.launches.push(action),
         }
     }
-    // retired names (`sm unwant`): stopped whether the workspace is started or not, before the relay
+
+    fn finish(mut self, mut free: usize) -> Vec<Action> {
+        self.out.append(&mut self.last_stops);
+        self.out.append(&mut self.exempt);
+        for action in self.resumes.into_iter().chain(self.launches) {
+            if free > 0 {
+                free -= 1;
+                self.out.push(action);
+            } else {
+                self.out.push(Action::Wait {
+                    name: action_name(&action).to_string(),
+                    until: None,
+                    reason: WaitReason::Cap,
+                });
+            }
+        }
+        self.out
+    }
+}
+
+// retired names (`sm unwant`): stopped whether the workspace is started or not, before the relay
+fn retired_stops(desired: &DesiredState, observed: &[Session], now: Millis) -> Vec<Action> {
+    let mut out = Vec::new();
     for name in desired.retired.iter().filter(|n| !desired.sessions.iter().any(|w| &w.name == *n)) {
         let live: Vec<&Session> = observed.iter().filter(|s| &s.name == name && is_live(s, now)).collect();
         if let [s] = live.as_slice() {
             out.push(Action::Stop {
                 name: name.clone(),
                 id: s.id.clone(),
-            });
-        }
-    }
-    out.append(&mut last_stops);
-    out.append(&mut exempt);
-    let mut free = free;
-    for action in resumes.into_iter().chain(launches) {
-        if free > 0 {
-            free -= 1;
-            out.push(action);
-        } else {
-            out.push(Action::Wait {
-                name: action_name(&action).to_string(),
-                until: None,
-                reason: WaitReason::Cap,
             });
         }
     }
