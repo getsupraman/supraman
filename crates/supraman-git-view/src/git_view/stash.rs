@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use gpui::{AppContext as _, ClickEvent, Context, Entity, EventEmitter, Pixels, Point, Render, Subscription, Window, div, prelude::*};
 use supraman_gitman::write::stash::{self, Applied};
-use supraman_gitman::write::{LockSet, Session, WriteError, Writer};
-use supraman_gitman::{FileChange, Repo};
+use supraman_gitman::write::{LockSet, Session, WriteError};
+use supraman_gitman::FileChange;
 use supraman_ui::button;
 use supraman_ui::confirm::Confirm;
 use supraman_ui::hit::HitTargets;
@@ -95,7 +95,6 @@ pub(crate) enum StashEvent {
 pub(crate) struct StashActions {
     hits: HitTargets,
     gate: Entity<WriteGate>,
-    writer: Option<Writer>,
     doing: Option<(u64, Doing)>,
     applied: Arc<Mutex<Option<Applied>>>,
     asking: Option<Confirm<Ask>>,
@@ -119,24 +118,7 @@ impl StashActions {
     pub(crate) fn new(gate: Entity<WriteGate>, hits: HitTargets, cx: &mut Context<Self>) -> StashActions {
         let written = cx.subscribe(&gate, |this: &mut StashActions, _, w: &Written, cx| this.written(w, cx));
         cx.observe(&gate, |_, _, cx| cx.notify()).detach();
-        StashActions { hits, gate, writer: None, doing: None, applied: Arc::default(), asking: None, menu: None, editing: None, conflicted: None, _written: written }
-    }
-
-    /// The repo's writer, opened off the UI thread.
-    pub(crate) fn set_repo(&mut self, repo: Repo, cx: &mut Context<Self>) {
-        if self.writer.is_some() {
-            return;
-        }
-        let open = cx.background_spawn(async move { Writer::open(&repo).map_err(|e| e.to_string()) });
-        cx.spawn(async move |this, cx| {
-            let writer = open.await;
-            this.update(cx, |this, _| match writer {
-                Ok(w) => this.writer = Some(w),
-                Err(why) => log::warn!("git tab: cannot open the repository to stash: {why}"),
-            })
-            .ok();
-        })
-        .detach();
+        StashActions { hits, gate, doing: None, applied: Arc::default(), asking: None, menu: None, editing: None, conflicted: None, _written: written }
     }
 
     pub(crate) fn busy(&self, cx: &gpui::App) -> Option<&'static str> {
@@ -154,8 +136,10 @@ impl StashActions {
     }
 
     fn request(&mut self, doing: Doing, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) {
-        let Some(writer) = self.writer.clone() else { return cx.emit(StashEvent::Why(STILL_OPENING.into())) };
-        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request(writer, LockSet::stash(), job, cx)) {
+        if self.gate.read(cx).writer().is_none() {
+            return cx.emit(StashEvent::Why(STILL_OPENING.into()));
+        }
+        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request(LockSet::stash(), job, cx)) {
             self.doing = Some((ticket, doing));
         }
         cx.notify();

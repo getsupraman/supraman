@@ -16,8 +16,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use gpui::{AppContext as _, ClipboardItem, Context, Entity, EventEmitter, Pixels, Point, Render, Subscription, Window, div, prelude::*};
 use supraman_gitman::write::branch::{self, CheckedOut, Merged, Plan, Target, relation};
 use supraman_gitman::write::rebase::{self, Autostash, Rebased};
-use supraman_gitman::write::{LockSet, Session, WriteError, Writer};
-use supraman_gitman::{Refs, Repo, short_sha};
+use supraman_gitman::write::{LockSet, Session, WriteError};
+use supraman_gitman::{Refs, short_sha};
 use supraman_ui::confirm::{Answer, Confirm};
 use supraman_ui::hit::HitTargets;
 use supraman_ui::menu::{ContextMenu, MenuItem};
@@ -120,7 +120,6 @@ enum Doing {
 pub(crate) struct BranchActions {
     hits: HitTargets,
     gate: Entity<WriteGate>,
-    writer: Option<Writer>,
     refs: Arc<Refs>,
     under_way: bool,
     doing: Option<(u64, Doing)>,
@@ -150,24 +149,7 @@ impl BranchActions {
     pub(crate) fn new(gate: Entity<WriteGate>, hits: HitTargets, cx: &mut Context<Self>) -> BranchActions {
         let written = cx.subscribe(&gate, |this: &mut BranchActions, _, w: &Written, cx| this.written(w, cx));
         cx.observe(&gate, |_, _, cx| cx.notify()).detach();
-        BranchActions { hits, gate, writer: None, refs: Arc::new(Refs::empty()), under_way: false, doing: None, outcome: Arc::default(), asking: None, menu: None, naming: None, remote: Arc::default(), _written: written }
-    }
-
-    /// The repo's writer, opened off the UI thread.
-    pub(crate) fn set_repo(&mut self, repo: Repo, cx: &mut Context<Self>) {
-        if self.writer.is_some() {
-            return;
-        }
-        let open = cx.background_spawn(async move { Writer::open(&repo).map_err(|e| e.to_string()) });
-        cx.spawn(async move |this, cx| {
-            let writer = open.await;
-            this.update(cx, |this, _| match writer {
-                Ok(w) => this.writer = Some(w),
-                Err(why) => log::warn!("git tab: cannot open the repository for its refs: {why}"),
-            })
-            .ok();
-        })
-        .detach();
+        BranchActions { hits, gate, refs: Arc::new(Refs::empty()), under_way: false, doing: None, outcome: Arc::default(), asking: None, menu: None, naming: None, remote: Arc::default(), _written: written }
     }
 
     /// The refs the last read found, and whether an operation is under way.
@@ -204,17 +186,11 @@ impl BranchActions {
         self.menu.as_ref().map(|m| m.items.iter().map(|i| i.label.clone()).collect()).unwrap_or_default()
     }
 
-    pub(crate) fn writer(&self) -> Option<Writer> {
-        self.writer.clone()
-    }
-
-    pub(crate) fn top(&self) -> Option<PathBuf> {
-        self.writer.as_ref().map(|w| w.dirs().top.clone())
-    }
-
     fn request(&mut self, doing: Doing, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) {
-        let Some(writer) = self.writer.clone() else { return cx.emit(BranchEvent::Why(STILL_OPENING.into())) };
-        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request(writer, locks, job, cx)) {
+        if self.gate.read(cx).writer().is_none() {
+            return cx.emit(BranchEvent::Why(STILL_OPENING.into()));
+        }
+        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request(locks, job, cx)) {
             self.doing = Some((ticket, doing));
         }
         cx.notify();
@@ -356,7 +332,7 @@ impl BranchActions {
 
     /// A checkout of `target`, decided off the UI thread ([`branch::plan`]).
     pub(crate) fn checkout(&mut self, target: Target, cx: &mut Context<Self>) {
-        let (Some(writer), Some(top)) = (self.writer.clone(), self.top()) else { return cx.emit(BranchEvent::Why(STILL_OPENING.into())) };
+        let (Some(writer), Some(top)) = (self.gate.read(cx).writer().cloned(), self.gate.read(cx).top()) else { return cx.emit(BranchEvent::Why(STILL_OPENING.into())) };
         if self.busy(cx).is_some() {
             return;
         }
@@ -396,7 +372,7 @@ impl BranchActions {
 
     /// Asks before deleting `name`, a second time when it has commits on no other branch and no upstream.
     fn delete_branch(&mut self, name: String, cx: &mut Context<Self>) {
-        let Some(writer) = self.writer.clone() else { return cx.emit(BranchEvent::Why(STILL_OPENING.into())) };
+        let Some(writer) = self.gate.read(cx).writer().cloned() else { return cx.emit(BranchEvent::Why(STILL_OPENING.into())) };
         let of = name.clone();
         let read = cx.background_spawn(async move { branch::only_here(writer.repo(), &of).unwrap_or(true) });
         cx.spawn(async move |this, cx| {
@@ -447,14 +423,14 @@ impl BranchActions {
     /// The menu of `subject` at `position`, once its commit's relation to HEAD is read off the UI thread;
     /// `graph` the ref panel's own items for it.
     pub(crate) fn open_menu(&mut self, subject: Subject, graph: Vec<MenuItem<RefAct>>, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let Some(writer) = self.writer.clone() else { return cx.emit(BranchEvent::Why(STILL_OPENING.into())) };
+        let Some(writer) = self.gate.read(cx).writer().cloned() else { return cx.emit(BranchEvent::Why(STILL_OPENING.into())) };
         let head = self.refs.head.sha().map(str::to_string);
         let pair = subject.sha().map(str::to_string).zip(head);
         let read = cx.background_spawn(async move { pair.and_then(|(sha, head)| relation(writer.repo(), &sha, &head).ok()) });
         cx.spawn(async move |this, cx| {
             let relation = read.await;
             this.update(cx, |this, cx| {
-                let Some(top) = this.top() else { return };
+                let Some(top) = this.gate.read(cx).top() else { return };
                 let refs = this.refs.clone();
                 let facts = Facts { refs: &refs, top: &top, relation, under_way: this.under_way, graph };
                 let mut built = menu::build(&subject, &facts);
@@ -469,7 +445,7 @@ impl BranchActions {
     /// The graph's menu of a commit at `sha` with its branch groups `subjects` (a pill's one, a row's every one),
     /// once its relation to HEAD and its parents are read off the UI thread; `graph` the ref panel's items.
     pub(crate) fn open_commit_menu(&mut self, subjects: Vec<Subject>, sha: String, graph: Vec<MenuItem<RefAct>>, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let Some(writer) = self.writer.clone() else { return cx.emit(BranchEvent::Why(STILL_OPENING.into())) };
+        let Some(writer) = self.gate.read(cx).writer().cloned() else { return cx.emit(BranchEvent::Why(STILL_OPENING.into())) };
         let head = self.refs.head.sha().map(str::to_string);
         let at = sha.clone();
         let read = cx.background_spawn(async move {
@@ -479,7 +455,7 @@ impl BranchActions {
         cx.spawn(async move |this, cx| {
             let (relation, parents) = read.await;
             this.update(cx, |this, cx| {
-                let Some(top) = this.top() else { return };
+                let Some(top) = this.gate.read(cx).top() else { return };
                 let refs = this.refs.clone();
                 let facts = Facts { refs: &refs, top: &top, relation, under_way: this.under_way, graph };
                 let commit = crate::git_view::commit::menu::CommitFacts { sha: &sha, parents, refs: &refs, under_way: this.under_way, remote: &this.remote };
@@ -497,13 +473,13 @@ impl BranchActions {
 
     /// What dropping `dragged` on `target` offers, at `position`; nothing for none.
     pub(crate) fn dropped(&mut self, dragged: Dragged, target: Dragged, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let Some(writer) = self.writer.clone() else { return };
+        let Some(writer) = self.gate.read(cx).writer().cloned() else { return };
         let (a, b) = (dragged.sha.clone(), target.sha.clone());
         let read = cx.background_spawn(async move { relation(writer.repo(), &a, &b).ok() });
         cx.spawn(async move |this, cx| {
             let Some(relation) = read.await else { return };
             this.update(cx, |this, cx| {
-                let Some(top) = this.top() else { return };
+                let Some(top) = this.gate.read(cx).top() else { return };
                 let refs = this.refs.clone();
                 let facts = Facts { refs: &refs, top: &top, relation: None, under_way: this.under_way, graph: Vec::new() };
                 let mut built = menu::drop_menu(&dragged, &target, relation, &facts);

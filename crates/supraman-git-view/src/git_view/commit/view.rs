@@ -64,7 +64,7 @@ impl GitView {
                 None => return,
             },
         };
-        let Some(top) = self.branch.read(cx).top() else { return };
+        let Some(top) = self.gate.read(cx).top() else { return };
         let files = covered(&all, &click.path, click.folder);
         let files = if files.is_empty() && matches!(click.from, Listed::Commit { stash: None, .. }) && !click.folder { vec![unchanged(&click.path)] } else { files };
         let path = top.join(&click.path);
@@ -105,8 +105,7 @@ impl GitView {
             CommitAct::File(FileAct::Stash(files)) => self.stash_files(files, cx),
             CommitAct::File(FileAct::ApplyStashed { sha, files }) => self.stash.update(cx, |s, cx| s.apply_files(sha, files, cx)),
             act => {
-                let writer = self.branch.read(cx).writer();
-                self.commit.update(cx, |c, cx| c.act(act, writer, cx));
+                self.commit.update(cx, |c, cx| c.act(act, cx));
             }
         }
     }

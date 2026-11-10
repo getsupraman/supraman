@@ -2,9 +2,13 @@
 //! tab; while one runs, [`WriteGate::busy`] says why another cannot start. A live session working in the checkout
 //! shows as the graph's agent row, not as a question.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use gpui::{AppContext as _, Context, EventEmitter};
+use futures::FutureExt as _;
+use futures::future::Shared;
+use gpui::{AppContext as _, Context, EventEmitter, Task};
+use supraman_gitman::Repo;
 use supraman_gitman::write::{LockSet, Occupancy, Session, WriteError, Writer};
 
 /// Why a write cannot start while another runs.
@@ -16,10 +20,15 @@ pub(crate) struct Written {
     pub(crate) result: Result<(), String>,
 }
 
+/// The tab's writer once the gate holds it: `None` when the open failed.
+pub(crate) type Opening = Shared<Task<Option<Writer>>>;
+
 pub(crate) struct WriteGate {
     occupancy: Arc<dyn Occupancy>,
     running: bool,
     tickets: u64,
+    writer: Option<Writer>,
+    opening: Option<Opening>,
 }
 
 impl EventEmitter<Written> for WriteGate {}
@@ -33,15 +42,48 @@ pub(crate) fn capitalised(why: &str) -> String {
 impl WriteGate {
     /// `occupancy` answers from memory: it is asked on the UI thread.
     pub(crate) fn new(occupancy: Arc<dyn Occupancy>) -> WriteGate {
-        WriteGate { occupancy, running: false, tickets: 0 }
+        WriteGate { occupancy, running: false, tickets: 0, writer: None, opening: None }
     }
 
-    /// Runs `job` holding `locks` on `writer`'s checkout; the ticket its [`Written`] carries, or `None` (nothing run)
-    /// while [`WriteGate::busy`].
-    pub(crate) fn request(&mut self, writer: Writer, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) -> Option<u64> {
-        if self.busy().is_some() {
-            return None;
+    /// The tab's one writer of `repo`, opened off the UI thread by the first call and again after an open failed.
+    pub(crate) fn open(&mut self, repo: &Repo, cx: &mut Context<Self>) -> Opening {
+        if let Some(opening) = &self.opening {
+            return opening.clone();
         }
+        let repo = repo.clone();
+        let open = cx.background_spawn(async move { Writer::open(&repo).inspect_err(|why| log::warn!("git tab: cannot open the repository to write: {why}")).ok() });
+        let opening = cx
+            .spawn(async move |this, cx| {
+                let writer = open.await;
+                this.update(cx, |this, cx| {
+                    match &writer {
+                        Some(w) => this.writer = Some(w.clone()),
+                        None => this.opening = None,
+                    }
+                    cx.notify();
+                })
+                .ok();
+                writer
+            })
+            .shared();
+        self.opening = Some(opening.clone());
+        opening
+    }
+
+    /// The tab's writer, once open.
+    pub(crate) fn writer(&self) -> Option<&Writer> {
+        self.writer.as_ref()
+    }
+
+    /// The tab's checkout folder, once the writer is open.
+    pub(crate) fn top(&self) -> Option<PathBuf> {
+        self.writer.as_ref().map(|w| w.dirs().top.clone())
+    }
+
+    /// Runs `job` holding `locks` on the tab's checkout; the ticket its [`Written`] carries, or `None` (nothing run)
+    /// while [`WriteGate::busy`] or before the writer is open.
+    pub(crate) fn request(&mut self, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) -> Option<u64> {
+        let writer = self.writer.clone().filter(|_| self.busy().is_none())?;
         self.tickets += 1;
         let ticket = self.tickets;
         self.running = true;
@@ -96,17 +138,22 @@ mod tests {
     fn a_write_where_a_session_works_runs_without_a_question(cx: &mut TestAppContext) {
         cx.update(|cx| supraman_ui::init_globals(cx, "test"));
         let f = Fixture::copy();
-        let (main, side) = (Writer::open(&f.repo()).unwrap(), Writer::open(&Repo::new(f.git.clone(), &f.worktree)).unwrap());
-        let cwd: PathBuf = main.dirs().top.join("src");
+        let cwd: PathBuf = Writer::open(&f.repo()).unwrap().dirs().top.join("src");
         let occupancy: Arc<dyn Occupancy> = Arc::new(move |worktree: &Path| working_in([("fm-alpha", cwd.as_path())], worktree));
-        let gate = cx.new(|_| WriteGate::new(occupancy));
+        let opened = |repo: Repo, cx: &mut TestAppContext| {
+            let gate = cx.new(|_| WriteGate::new(occupancy.clone()));
+            gate.update(cx, |g, cx| drop(g.open(&repo, cx)));
+            cx.run_until_parked();
+            gate
+        };
+        let (gate, side) = (opened(f.repo(), cx), opened(Repo::new(f.git.clone(), &f.worktree), cx));
         let written = Rc::new(RefCell::new(Vec::new()));
         let heard = written.clone();
         cx.update(|cx| cx.subscribe(&gate, move |_, w: &Written, _| heard.borrow_mut().push(w.result.clone())).detach());
 
-        gate.update(cx, |g, cx| g.request(main.clone(), LockSet::new().write(Resource::Index), stage("u.txt"), cx));
+        gate.update(cx, |g, cx| g.request(LockSet::new().write(Resource::Index), stage("u.txt"), cx));
         assert_eq!(gate.read_with(cx, |g, _| g.busy()), Some(WORKING));
-        assert_eq!(gate.update(cx, |g, cx| g.request(main.clone(), LockSet::new().write(Resource::Index), stage("u.txt"), cx)), None, "a second write is not queued while one runs");
+        assert_eq!(gate.update(cx, |g, cx| g.request(LockSet::new().write(Resource::Index), stage("u.txt"), cx)), None, "a second write is not queued while one runs");
         cx.run_until_parked();
         assert_eq!(*written.borrow(), [Ok(())]);
         assert_eq!(gate.read_with(cx, |g, _| g.busy()), None, "free once the write ran");
@@ -114,7 +161,7 @@ mod tests {
 
         std::fs::write(f.worktree.join("w.txt"), b"w
 ").unwrap();
-        gate.update(cx, |g, cx| g.request(side, LockSet::new().write(Resource::Index), stage("w.txt"), cx));
+        side.update(cx, |g, cx| g.request(LockSet::new().write(Resource::Index), stage("w.txt"), cx));
         cx.run_until_parked();
         assert!(staged(&f, &f.worktree).contains(&"w.txt".into()));
     }

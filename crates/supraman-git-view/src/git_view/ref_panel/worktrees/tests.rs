@@ -203,7 +203,7 @@ fn a_read_the_tabs_write_held_off_runs_again_once_the_write_ends(cx: &mut TestAp
     settle(&view, cx);
     assert_eq!(reads(&view, cx), read, "nothing skipped: a write's refresh reads nothing");
 
-    let writer = view.read_with(cx, |v, cx| v.remote.read(cx).writer().cloned()).expect("a writer");
+    let writer = view.read_with(cx, |v, cx| v.gate.read(cx).writer().cloned()).expect("a writer");
     let held = writer.scheduler().try_acquire(LockSet::checkout()).expect("the locks free");
     std::fs::write(t.extra.join("new.txt"), b"new\n").unwrap();
     reread(&view, cx);

@@ -100,7 +100,7 @@ fn job(key: &str, cx: &App) -> Step<Option<Job>> {
     if !bg.settings.is_some_and(|s| s.maintains()) {
         return Step::Run(None);
     }
-    let Some(writer) = views.iter().find_map(|v| v.read(cx).remote.read(cx).writer().cloned()) else { return Step::Skip };
+    let Some(writer) = views.iter().find_map(|v| v.read(cx).gate.read(cx).writer().cloned()) else { return Step::Skip };
     for view in &views {
         let view = view.read(cx);
         let remote = view.remote.read(cx);

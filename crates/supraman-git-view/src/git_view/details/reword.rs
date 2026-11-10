@@ -8,8 +8,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use gpui::{App, ClickEvent, Context, Div, Hsla, Stateful, Subscription, Window, div, prelude::*};
 use supraman_gitman::Amendable;
 use supraman_gitman::write::rebase::{self, Autostash, Rebased};
-use supraman_gitman::write::{LockSet, Session, WriteError, Writer, wip};
-use supraman_gitman::Repo;
+use supraman_gitman::write::{LockSet, Session, WriteError, wip};
 use supraman_ui::confirm::Confirm;
 use supraman_ui::hit::hit_target;
 use supraman_ui::text_input::{InputEvent, TextInput};
@@ -65,8 +64,6 @@ pub(crate) struct Reword {
     reworded: Arc<Mutex<Option<String>>>,
     /// How an older commit's reword ended, as the job left it.
     rebased: Arc<Mutex<Option<Rebased>>>,
-    /// Opened off the UI thread with the repo.
-    writer: Option<Writer>,
 }
 
 /// The muted line the read-only box shows, and what a click on it edits.
@@ -117,23 +114,6 @@ pub(crate) fn pushed_question(branch: &str) -> String {
 }
 
 impl CommitPanel {
-    /// The repo's writer, once, off the UI thread.
-    pub(super) fn open_writer(&mut self, repo: Repo, cx: &mut Context<Self>) {
-        if self.reword.writer.is_some() {
-            return;
-        }
-        let open = cx.background_spawn(async move { Writer::open(&repo).map_err(|e| e.to_string()) });
-        cx.spawn(async move |this, cx| {
-            let writer = open.await;
-            this.update(cx, |this, _| match writer {
-                Ok(w) => this.reword.writer = Some(w),
-                Err(why) => log::warn!("git tab: cannot open the repository to amend: {why}"),
-            })
-            .ok();
-        })
-        .detach();
-    }
-
     /// The field of `sha`'s message, opened once the panel shows it.
     pub(crate) fn edit_when_shown(&mut self, sha: String, cx: &mut Context<Self>) {
         self.reword.edit_next = Some(sha);
@@ -246,14 +226,16 @@ impl CommitPanel {
     /// GitMan's rebase rewording the field's older commit, through the tab's gate.
     fn run_reword(&mut self, message: String, cx: &mut Context<Self>) {
         let Some(Target::Older { sha, .. }) = self.reword.field.as_ref().map(|f| f.target.clone()) else { return };
-        let Some(writer) = self.reword.writer.clone() else { return cx.emit(PanelEvent::Why(STILL_OPENING.into())) };
+        if self.gate.read(cx).writer().is_none() {
+            return cx.emit(PanelEvent::Why(STILL_OPENING.into()));
+        }
         let rebased = self.reword.rebased.clone();
         let job = move |s: &Session<'_>| -> Result<(), WriteError> {
             let outcome = rebase::reword(s, &sha, &message)?;
             *rebased.lock().unwrap_or_else(PoisonError::into_inner) = Some(outcome);
             Ok(())
         };
-        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request(writer, LockSet::rebase(), job, cx)) {
+        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request(LockSet::rebase(), job, cx)) {
             self.reword.doing = Some(ticket);
         }
         cx.notify();
@@ -275,14 +257,16 @@ impl CommitPanel {
 
     /// HEAD's message amended to `message` through the tab's gate; `no_verify` is the commit area's Skip hooks.
     pub(crate) fn amend(&mut self, message: String, no_verify: bool, cx: &mut Context<Self>) {
-        let Some(writer) = self.reword.writer.clone() else { return cx.emit(PanelEvent::Why(STILL_OPENING.into())) };
+        if self.gate.read(cx).writer().is_none() {
+            return cx.emit(PanelEvent::Why(STILL_OPENING.into()));
+        }
         let reworded = self.reword.reworded.clone();
         let job = move |s: &Session<'_>| -> Result<(), WriteError> {
             let sha = wip::reword_head(s, &message, no_verify)?;
             *reworded.lock().unwrap_or_else(PoisonError::into_inner) = Some(sha);
             Ok(())
         };
-        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request(writer, LockSet::commit(), job, cx)) {
+        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request(LockSet::commit(), job, cx)) {
             self.reword.doing = Some(ticket);
         }
         cx.notify();

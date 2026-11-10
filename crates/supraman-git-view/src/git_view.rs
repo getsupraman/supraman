@@ -684,10 +684,9 @@ impl GitView {
                 self.follow.walked = first.walk;
                 self.ref_panel.update(cx, |p, cx| p.set_built(first.refs, cx));
                 self.fit_graph();
-                self.panel.update(cx, |p, cx| p.set_repo(first.repo.clone(), cx));
+                self.gate.update(cx, |g, cx| drop(g.open(&first.repo, cx)));
+                self.panel.update(cx, |p, _| p.set_repo(first.repo.clone()));
                 self.wip_panel.update(cx, |p, cx| p.set_repo(first.repo.clone(), cx));
-                self.stash.update(cx, |s, cx| s.set_repo(first.repo.clone(), cx));
-                self.branch.update(cx, |b, cx| b.set_repo(first.repo.clone(), cx));
                 self.hand_refs(&first.repo, first.all.clone(), &first.status, cx);
                 if let Some(debounces) = refresh::follows(cx) {
                     self.follow(first.repo.clone(), debounces, cx);

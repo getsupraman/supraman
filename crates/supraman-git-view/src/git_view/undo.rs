@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use gpui::{AppContext as _, ClickEvent, Context, Entity, EventEmitter, Render, SharedString, Subscription, Window, div, prelude::*};
 use supraman_gitman::Repo;
 use supraman_gitman::write::journal::{self, Done, Preview, Refused};
-use supraman_gitman::write::{LockSet, Writer};
+use supraman_gitman::write::LockSet;
 use supraman_ui::button;
 use supraman_ui::confirm::Confirm;
 use supraman_ui::hit::HitTargets;
@@ -36,7 +36,6 @@ type Outcome = Arc<Mutex<Option<Result<Done, Refused>>>>;
 pub(crate) struct UndoBar {
     hits: HitTargets,
     gate: Entity<WriteGate>,
-    writer: Option<Writer>,
     preview: Preview,
     /// Bumped by each read, so only the newest preview lands.
     read: u64,
@@ -55,7 +54,7 @@ impl UndoBar {
     pub(crate) fn new(gate: Entity<WriteGate>, hits: HitTargets, cx: &mut Context<Self>) -> UndoBar {
         let written = cx.subscribe(&gate, |this: &mut UndoBar, _, w: &Written, cx| this.written(w, cx));
         cx.observe(&gate, |_, _, cx| cx.notify()).detach();
-        UndoBar { hits, gate, writer: None, preview: Preview::default(), read: 0, running: None, way: None, outcome: Arc::default(), stash: None, _written: written }
+        UndoBar { hits, gate, preview: Preview::default(), read: 0, running: None, way: None, outcome: Arc::default(), stash: None, _written: written }
     }
 
     #[cfg(test)]
@@ -63,17 +62,13 @@ impl UndoBar {
         &self.preview
     }
 
-    /// Reads the preview again; the first read opens the repo's writer.
+    /// Reads the preview again once the tab's writer is open.
     pub(crate) fn refresh(&mut self, repo: &Repo, cx: &mut Context<Self>) {
         self.read += 1;
-        let (read, writer, repo) = (self.read, self.writer.clone(), repo.clone());
+        let (read, opening) = (self.read, self.gate.update(cx, |g, cx| g.open(repo, cx)));
         let task = cx.background_spawn(async move {
-            let writer = match writer {
-                Some(w) => w,
-                None => Writer::open(&repo).map_err(|e| e.to_string())?,
-            };
-            let preview = journal::preview(&writer).map_err(|e| e.to_string())?;
-            Ok::<_, String>((writer, preview))
+            let writer = opening.await.ok_or_else(|| "the repository did not open".to_string())?;
+            journal::preview(&writer).map_err(|e| e.to_string())
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -82,10 +77,7 @@ impl UndoBar {
                     return;
                 }
                 match result {
-                    Ok((writer, preview)) => {
-                        this.writer = Some(writer);
-                        this.preview = preview;
-                    }
+                    Ok(preview) => this.preview = preview,
                     Err(why) => log::warn!("git tab: cannot read the undo journal: {why}"),
                 }
                 cx.notify();
@@ -108,7 +100,9 @@ impl UndoBar {
     }
 
     fn run(&mut self, way: Way, stash: bool, cx: &mut Context<Self>) {
-        let Some(writer) = self.writer.clone() else { return };
+        if self.gate.read(cx).writer().is_none() {
+            return;
+        }
         self.way = Some(way);
         let outcome = self.outcome.clone();
         let job = move |s: &supraman_gitman::write::Session<'_>| {
@@ -119,7 +113,7 @@ impl UndoBar {
             *outcome.lock().unwrap_or_else(PoisonError::into_inner) = Some(done);
             Ok(())
         };
-        self.running = self.gate.update(cx, |g, cx| g.request(writer, LockSet::undo(), job, cx));
+        self.running = self.gate.update(cx, |g, cx| g.request(LockSet::undo(), job, cx));
         cx.notify();
     }
 

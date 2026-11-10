@@ -75,7 +75,7 @@ impl GitView {
 
     /// The ref panel's worktree rows given the other worktrees' words as last read, and whether a read runs.
     pub(crate) fn hand_wips(&mut self, cx: &mut Context<Self>) {
-        let top = self.remote.read(cx).writer().map(|w| w.dirs().top.clone());
+        let top = self.gate.read(cx).top();
         let wips = background::wips(cx.entity_id(), cx).map(|w| w.read(cx));
         let shown = RefWips {
             reading: wips.is_some_and(|w| w.reading()),

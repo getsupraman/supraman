@@ -125,7 +125,7 @@ impl GitView {
         let subject = match panel.entry(path).cloned() {
             Some(entry) => {
                 let refs = self.branch.read(cx).refs().clone();
-                let top = self.branch.read(cx).top();
+                let top = self.gate.read(cx).top();
                 entry_subject(&refs, path, &entry, top.as_deref())
             }
             None => crate::git_view::ref_panel::remote_folder(path).map(|name| Subject::Remote { name: name.to_string() }),
@@ -140,7 +140,7 @@ impl GitView {
             Some(Entry::Branch { name, .. }) => Target::Branch(name),
             Some(Entry::Remote { name, .. }) => Target::Remote(name),
             Some(entry @ Entry::Worktree { .. }) => {
-                let (refs, top) = (self.branch.read(cx).refs().clone(), self.branch.read(cx).top());
+                let (refs, top) = (self.branch.read(cx).refs().clone(), self.gate.read(cx).top());
                 if let Some(Subject::Worktree { path: folder, current: false, .. }) = entry_subject(&refs, path, &entry, top.as_deref()) {
                     cx.emit(OpenGit(folder));
                 }

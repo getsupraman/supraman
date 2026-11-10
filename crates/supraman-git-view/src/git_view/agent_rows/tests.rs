@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use gpui::{Entity, MouseButton, TestAppContext, VisualTestContext};
 use supraman_gitman::fixture::Fixture;
-use supraman_gitman::write::{Call, LockSet, Resource, Writer};
+use supraman_gitman::write::{Call, LockSet, Resource};
 use supraman_ui::marks::Activity;
 
 use crate::git_view::test_support::{self, Opts, painted, press, redraw};
@@ -130,8 +130,7 @@ fn a_write_while_a_session_works_here_runs_without_a_question(cx: &mut TestAppCo
     let (view, cx) = open(f.dir.clone(), live.clone(), cx);
     set(&live, vec![session("fm-alpha", f.dir.join("src"), Activity::Working, None)], &view, cx);
     let gate = view.read_with(cx, |v, _| v.gate().clone());
-    let writer = Writer::open(&f.repo()).unwrap();
-    let asked = gate.update(cx, |g, cx| g.request(writer, LockSet::new().write(Resource::Index), |s| s.output(&Call::new(&["add"]).paths(["new.txt"])).map(drop), cx));
+    let asked = gate.update(cx, |g, cx| g.request(LockSet::new().write(Resource::Index), |s| s.output(&Call::new(&["add"]).paths(["new.txt"])).map(drop), cx));
     assert!(asked.is_some());
     cx.run_until_parked();
     let staged = f.at(&f.dir, &["diff", "--cached", "--name-only"]);

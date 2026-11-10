@@ -22,7 +22,7 @@ use supraman_core::askpass::{Asked, Bridge};
 use supraman_core::secret::SecretStore;
 use supraman_gitman::write::remote::{self, Force, Progress, PullChoice, PullMode, Pulled, Pushed, Transfer};
 use supraman_gitman::write::rebase::Rebased;
-use supraman_gitman::write::{LockSet, Session, WriteError, Writer};
+use supraman_gitman::write::{LockSet, Session, WriteError};
 use supraman_core::Settings;
 use supraman_gitman::{Head, Refs, Remote, Repo, mask_userinfo};
 use supraman_ui::confirm::{Answer, Confirm};
@@ -159,7 +159,6 @@ pub(crate) struct RemoteActions {
     gate: Entity<WriteGate>,
     home: Option<PathBuf>,
     store: Option<Arc<dyn SecretStore>>,
-    writer: Option<Writer>,
     refs: Arc<Refs>,
     under_way: bool,
     remotes: Vec<Remote>,
@@ -190,7 +189,6 @@ impl RemoteActions {
             gate,
             home,
             store,
-            writer: None,
             refs: Arc::new(Refs::empty()),
             under_way: false,
             remotes: Vec::new(),
@@ -215,24 +213,19 @@ impl RemoteActions {
         self.said_facts(cx);
     }
 
-    /// The refs a read found; the repo's writer and remotes read again off the UI thread.
+    /// The refs a read found; the remotes read again off the UI thread.
     pub(crate) fn set_refs(&mut self, repo: Repo, refs: Arc<Refs>, under_way: bool, cx: &mut Context<Self>) {
         self.refs = refs;
         self.under_way = under_way;
-        let writer = self.writer.clone();
+        let opening = self.gate.update(cx, |g, cx| g.open(&repo, cx));
         let read = cx.background_spawn(async move {
-            let writer = match writer {
-                Some(w) => w,
-                None => Writer::open(&repo).map_err(|e| e.to_string())?,
-            };
-            let remotes = supraman_gitman::remotes(writer.repo()).map_err(|e| e.to_string())?;
-            Ok::<_, String>((writer, remotes))
+            let writer = opening.await.ok_or_else(|| "the repository did not open".to_string())?;
+            supraman_gitman::remotes(writer.repo()).map_err(|e| e.to_string())
         });
         cx.spawn(async move |this, cx| {
             let read = read.await;
             this.update(cx, |this, cx| match read {
-                Ok((writer, remotes)) => {
-                    this.writer = Some(writer);
+                Ok(remotes) => {
                     this.remotes = remotes;
                     this.said_facts(cx);
                 }
@@ -247,10 +240,6 @@ impl RemoteActions {
     fn said_facts(&mut self, cx: &mut Context<Self>) {
         cx.emit(RemoteEvent::Facts(Arc::new(RemoteFacts::new(self.remotes.clone(), &self.refs, self.pull))));
         cx.notify();
-    }
-
-    pub(crate) fn writer(&self) -> Option<&Writer> {
-        self.writer.as_ref()
     }
 
     pub(crate) fn has_remotes(&self) -> bool {
@@ -321,7 +310,9 @@ impl RemoteActions {
 
     /// Runs `job` with a [`Transfer`] whose prompts and progress come back here, holding `locks`.
     fn request(&mut self, doing: Doing, locks: LockSet, job: impl FnOnce(&Session<'_>, &Transfer) -> Result<Done, WriteError> + Send + 'static, cx: &mut Context<Self>) {
-        let Some(writer) = self.writer.clone() else { return cx.emit(RemoteEvent::Why(STILL_OPENING.into())) };
+        if self.gate.read(cx).writer().is_none() {
+            return cx.emit(RemoteEvent::Why(STILL_OPENING.into()));
+        }
         if self.busy(cx).is_some() {
             return;
         }
@@ -342,7 +333,7 @@ impl RemoteActions {
             *outcome.lock().unwrap_or_else(PoisonError::into_inner) = Some(done?);
             Ok(())
         };
-        let Some(ticket) = self.gate.update(cx, |g, cx| g.request(writer, locks, wrapped, cx)) else { return };
+        let Some(ticket) = self.gate.update(cx, |g, cx| g.request(locks, wrapped, cx)) else { return };
         self.running = Some(Running { ticket, doing, progress: None, cancel });
         cx.spawn(async move |this, cx| {
             while let Some(h) = hearing.next().await {

@@ -167,9 +167,8 @@ fn diff_picks_wait_while_another_write_runs(cx: &mut TestAppContext) {
     let (view, cx) = open(&f, cx);
     let d = show(&view, Of::Unstaged, Layout::Split, cx);
     let gate = view.read_with(cx, |v, _| v.gate().clone());
-    let writer = supraman_gitman::write::Writer::open(&f.repo()).unwrap();
     let blocked = view.update(cx, |_, cx| {
-        gate.update(cx, |g, cx| g.request(writer, supraman_gitman::write::LockSet::refresh(), |_| Ok(()), cx));
+        gate.update(cx, |g, cx| g.request(supraman_gitman::write::LockSet::refresh(), |_| Ok(()), cx));
         d.update(cx, |d, cx| {
             let blocked = d.picks_blocked(cx);
             d.pick(Act::Hunk(supraman_gitman::write::lines::Pick::Stage, 0), cx);

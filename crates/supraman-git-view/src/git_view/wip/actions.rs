@@ -98,10 +98,10 @@ impl WipPanel {
     }
 
     pub(super) fn request(&mut self, doing: Doing, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) {
-        let Some(writer) = self.writer.clone() else {
+        if self.gate.read(cx).writer().is_none() {
             return cx.emit(PanelEvent::Why("The repository is still opening; try again in a moment".into()));
-        };
-        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request(writer, locks, job, cx)) {
+        }
+        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request(locks, job, cx)) {
             self.doing = Some((ticket, doing));
         }
         cx.notify();

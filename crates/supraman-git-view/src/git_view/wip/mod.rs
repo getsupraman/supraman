@@ -17,7 +17,6 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, SharedString, Subscription};
-use supraman_gitman::write::Writer;
 use supraman_gitman::write::conflicts::Marked;
 use supraman_gitman::write::rebase::Rebased;
 use supraman_gitman::{ChangeKind, Conflict, FileChange, OperationState, Repo, Status, UnderWay};
@@ -105,8 +104,6 @@ pub(crate) struct WipPanel {
     /// Each branch's lane colour in the graph, for the conflict header's pills.
     ref_colours: Rc<HashMap<String, usize>>,
     gate: Entity<WriteGate>,
-    /// Opened off the UI thread with the repo.
-    writer: Option<Writer>,
     /// The repo runs commit hooks: Skip hooks is offered.
     hooks: bool,
     /// The panel's write under way: its gate ticket.
@@ -143,7 +140,6 @@ impl WipPanel {
             staged: List::new(cx),
             ref_colours: Rc::default(),
             gate,
-            writer: None,
             hooks: false,
             doing: None,
             asking: None,
@@ -161,24 +157,13 @@ impl WipPanel {
         self.read_tools(cx);
     }
 
-    /// The repo's writer, once, and whether it runs commit hooks, off the UI thread.
+    /// Whether the repo runs commit hooks, off the UI thread.
     fn read_tools(&mut self, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else { return };
-        let writer = self.writer.clone();
-        let read = cx.background_spawn(async move {
-            let writer = match writer {
-                Some(w) => Ok(w),
-                None => Writer::open(&repo).map_err(|e| e.to_string()),
-            };
-            (writer, supraman_gitman::commit_hooks(&repo).unwrap_or(false))
-        });
+        let read = cx.background_spawn(async move { supraman_gitman::commit_hooks(&repo).unwrap_or(false) });
         cx.spawn(async move |this, cx| {
-            let (writer, hooks) = read.await;
+            let hooks = read.await;
             this.update(cx, |this, cx| {
-                match writer {
-                    Ok(w) => this.writer = Some(w),
-                    Err(why) => log::warn!("git tab: cannot open the repository to write: {why}"),
-                }
                 this.hooks = hooks;
                 cx.notify();
             })

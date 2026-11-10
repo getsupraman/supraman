@@ -288,11 +288,11 @@ fn fetch_job(key: &str, cx: &App) -> Step<FetchJob> {
     }
     let mut job = None;
     for view in &views {
-        let remote = view.read(cx).remote.read(cx);
+        let (remote, writer) = (view.read(cx).remote.read(cx), view.read(cx).gate.read(cx).writer());
         if remote.busy(cx).is_some() || remote.under_way() {
             return Step::Skip;
         }
-        if let Some(writer) = remote.writer().filter(|_| job.is_none() && remote.has_remotes()) {
+        if let Some(writer) = writer.filter(|_| job.is_none() && remote.has_remotes()) {
             job = Some(FetchJob { writer: writer.clone(), remotes: remote.remote_names(), prune: remote.prune() });
         }
     }
