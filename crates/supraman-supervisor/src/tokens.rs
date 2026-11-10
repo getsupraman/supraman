@@ -26,7 +26,6 @@ impl TokenProvider for AppTokens {
 }
 
 /// The MCP URL of the server Supraman signs in to, signed in or not: the one source of every session config's URL.
-/// `Err` is Workman not set up, in words that say to run `/workman:setup`.
 pub fn mcp_url(auth: &Auth) -> Result<String, String> {
     auth.configured_origin().map(|origin| format!("{origin}/mcp")).map_err(|e| e.to_string())
 }

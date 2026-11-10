@@ -1176,7 +1176,7 @@ fn another_homes_busy_sessions_take_no_slot() {
     ];
     assert_eq!(Budget::new(1, &foreign, &[], NOW).free, 0, "unfiltered, they would fill the budget");
 
-    // --selftest-supervise step f with the limit at 1 while another home is mid-turn: alpha goes, then beta
+    // the limit at 1 while another home is mid-turn: alpha goes, then beta
     let mut sups = [workspace("alpha", dir.path()), workspace("beta", dir.path())];
     tick_all(sups.iter_mut(), &["alpha", "beta"], &foreign, 1, NOW);
     assert_eq!(launched(&sups), [1, 0]);
@@ -1387,8 +1387,7 @@ fn unreachable() -> ClaudeError {
     }
 }
 
-/// An unelevated Supraman facing an elevated service gets one row saying why, at once, and
-/// no more launches — not five 45 s failures.
+/// An unelevated Supraman facing an elevated service gets one row saying why, at once, not five 45 s failures.
 #[test]
 fn an_unreachable_service_supraman_cannot_reach_holds_with_one_row() {
     let dir = tempfile::tempdir().unwrap();

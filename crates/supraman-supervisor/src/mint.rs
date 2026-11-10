@@ -1,5 +1,4 @@
-//! Per-session Workman tokens (Skills `docs/workstate/14-agent-launch.md` §2): only the minted `wss_` token reaches a
-//! session, kept in the secret store and printed by `sm mcp-header`; the bearer never leaves Supraman and `sm`.
+//! Per-session Workman tokens (see Skills `docs/workstate/14-agent-launch.md` §2); the bearer never leaves Supraman and `sm`.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -16,8 +15,7 @@ mod keeping;
 
 pub use keeping::{CHECK_EVERY, Keeping, PING_TIMEOUT, RENEW_MARGIN};
 
-/// `POST /api/agent-sessions`. `role` is the Workman role (never above the bearer's),
-/// `external_role` Supraman's.
+/// `POST /api/agent-sessions`; `role` is the Workman role (never above the bearer's), `external_role` Supraman's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MintRequest {
@@ -30,13 +28,10 @@ pub struct MintRequest {
     /// One live token per name: `replace` revokes the old one and keeps the row and its `sessionId`.
     #[serde(default)]
     pub replace: bool,
-    /// The repository a repo session works in: its bare `work_brief()` opens the project bound to it.
-    /// `None` for the workspace session and the relay (the workspace root is not a repo).
+    /// The repository a repo session works in; `None` for the workspace session and the relay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<MintRepo>,
-    /// The claude session uuid the token is for, when it is known before claude starts: a
-    /// resume's, or the `--session-id` of a foreground `claude`. Never a guess: a `--bg` launch's id
-    /// is known only from its row (the PATCH of [`Minter::bind`]).
+    /// The claude session uuid when known before claude starts; a `--bg` launch's comes later by [`Minter::bind`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_session_id: Option<String>,
     /// The row's current `launchedBy`, which this mint moves to `launched_by` ([`mint_as`]); never recorded.
@@ -57,8 +52,7 @@ fn relabelled(label: &str) -> String {
     label.strip_prefix(FORMER_LAUNCHER).and_then(|rest| rest.strip_prefix('/')).map_or_else(|| label.to_string(), launched_by)
 }
 
-/// Mints `request`; a row recorded under another label (`former`) is moved to `request.launched_by` with
-/// `takeoverFrom` (Workman 3.0.2), and minted without it when that 409s, as a row moved already does.
+/// Mints `request`, moving a row under `former` with `takeoverFrom` (Workman 3.0.2), and without it on a 409.
 pub fn mint_as(minter: &dyn Minter, base: &str, bearer: &str, request: &MintRequest, former: Option<&str>) -> Result<Minted, MintError> {
     let Some(former) = former.filter(|f| *f != request.launched_by) else {
         return minter.mint(base, bearer, request);
@@ -70,20 +64,17 @@ pub fn mint_as(minter: &dyn Minter, base: &str, bearer: &str, request: &MintRequ
     }
 }
 
-/// `repo:{root, remote?}` of a mint, as git prints them; Workman normalises both (Skills
-/// `docs/workstate/02-data-model.md`, Identity).
+/// `repo:{root, remote?}` of a mint, as git prints them; Workman normalises both.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MintRepo {
-    /// The main checkout's root: the parent of `git rev-parse --path-format=absolute --git-common-dir`,
-    /// the same for every worktree.
+    /// The main checkout's root, the same for every worktree.
     pub root: String,
     /// `git remote get-url origin`; `None` without an origin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote: Option<String>,
 }
 
-/// The [`MintRepo`] of the git working tree `dir` (a worktree gives its main checkout's root); `None`
-/// when `dir` is not in one or git cannot be run.
+/// The [`MintRepo`] of the git working tree `dir`; `None` when `dir` is not in one or git cannot be run.
 pub fn git_repo(dir: &Path) -> Option<MintRepo> {
     let common = git(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
     let root = Path::new(&common).parent()?.to_str()?.to_string();
@@ -93,7 +84,6 @@ pub fn git_repo(dir: &Path) -> Option<MintRepo> {
     })
 }
 
-/// `git -C <dir> <args>`: trimmed stdout when it succeeds and prints something.
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
     let out = supraman_core::process::git(dir, args).ok()?;
     let text = out.stdout.trim().to_string();
@@ -133,8 +123,7 @@ fn reason_suffix(reason: &str) -> String {
     if reason.is_empty() { String::new() } else { format!(": {reason}") }
 }
 
-/// The three calls on `/api/agent-sessions`. `base` is the server's origin ([`supraman_core::url::origin`]).
-/// Implemented by [`HttpMinter`]; tests use a fake.
+/// The three calls on `/api/agent-sessions`; `base` is the server's origin ([`supraman_core::url::origin`]).
 pub trait Minter {
     fn mint(&self, base: &str, bearer: &str, request: &MintRequest) -> Result<Minted, MintError>;
     /// `PATCH /api/agent-sessions/{id}` `{claudeSessionId}`.
@@ -142,8 +131,6 @@ pub trait Minter {
     /// `DELETE /api/agent-sessions/{id}`; a `404` counts as revoked.
     fn revoke(&self, base: &str, bearer: &str, session_id: &str) -> Result<(), MintError>;
 }
-
-/// The server's origin, from its MCP URL; shared with the read API client.
 
 /// Blocking HTTP/1.1 (TLS for an `https://` server), no proxy, 15 s per call.
 pub struct HttpMinter {
@@ -240,8 +227,7 @@ pub struct MintedSession {
     /// The claude session uuid sent with the mint or PATCHed since; `None` until then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_session_id: Option<String>,
-    /// Epoch ms of the mint or of the last turn seen within the token's window: what slid its expiry
-    /// last. `None` until the first tick sets it.
+    /// Epoch ms of what last slid the token's expiry: its mint or the last turn seen within its window.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_active: Option<crate::Millis>,
     /// The server the token is from ([`supraman_core::url::origin`] of its MCP URL); `None`: unknown.
@@ -258,9 +244,7 @@ struct Entry {
     mint: Option<MintRequest>,
 }
 
-/// Per session name, its [`MintedSession`]; persisted (a workspace's at [`Self::path`], the [+] sessions' at
-/// [`Self::hands_path`], a scheduled run's at [`Self::run_path`]) so a restarted app still revokes what it minted and
-/// [`Keeping`] can mint afresh. Without a path it lives in memory only.
+/// Per session name, its [`MintedSession`], persisted so a restarted app still revokes what it minted.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MintedSessions {
     path: Option<PathBuf>,
@@ -295,8 +279,7 @@ impl MintedSessions {
         Self { path, names: BTreeMap::new() }
     }
 
-    /// Moves a sessions file that cannot be read to `<file>.damaged`, so the next save does not overwrite the only
-    /// record of the sessions it held; the path it went to.
+    /// Moves a sessions file that cannot be read to `<file>.damaged`, so a save never overwrites its only record.
     pub fn set_aside(path: &Path) -> std::io::Result<PathBuf> {
         let mut aside = path.as_os_str().to_owned();
         aside.push(".damaged");
@@ -361,8 +344,7 @@ impl MintedSessions {
         self.names.keys()
     }
 
-    /// Gives each session of unknown origin the origin of the URL in its config file under `mcp_dir`, if
-    /// that is still there; saved when one changed.
+    /// Gives each session of unknown origin the origin of its config file's URL under `mcp_dir`, if still there.
     pub fn adopt_origins(&mut self, mcp_dir: &Path) -> std::io::Result<()> {
         let mut changed = false;
         for (name, m) in self.names.iter_mut().map(|(n, e)| (n, &mut e.session)).filter(|(_, m)| m.origin.is_none()) {
@@ -409,8 +391,7 @@ fn record_files(home: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// Where a session's Workman token is kept: the secret store under its `mcp_token_key`, never a file; its config
-/// under `mcp_dir` runs `sm mcp-header --home <home>` to print it.
+/// Keeps each session's Workman token in the secret store, never a file; its config runs `sm mcp-header` to print it.
 #[derive(Clone)]
 pub struct Keeper {
     home: PathBuf,
@@ -461,8 +442,7 @@ impl Keeper {
         self.store.set(&supraman_claude::mcp_token_key(name), token).map_err(|e| format!("cannot keep the Workman token of {name}: {e}"))
     }
 
-    /// `expires_at` (the mint's RFC 3339 `expiresAt`) and the `launched_by` of a re-mint as what [`Keeping`] knows of
-    /// `name`'s token, while [`keeping::lock`] is held.
+    /// Records `name`'s `expiresAt` and re-mint label for [`Keeping`], while [`keeping::lock`] is held.
     fn note_locked(&self, name: &str, expires_at: Option<&str>, launched_by: Option<&str>) {
         let kept = keeping::Kept { expires_at: expires_at.and_then(supraman_core::time::rfc3339_ms), signed_out: false, launched_by: launched_by.map(str::to_string) };
         if let Err(e) = keeping::edit_locked(&self.home, |t| drop(t.insert(name.to_string(), kept))) {
@@ -523,8 +503,7 @@ impl Keeper {
         failed
     }
 
-    /// After a sign-out whose grant revoke took their tokens: `names` marked signed out, their kept tokens and configs
-    /// left for their helpers, so [`Keeping`] mints them afresh after the next sign-in. What failed.
+    /// Marks `names` signed out, tokens and configs kept, so [`Keeping`] mints them afresh after the next sign-in.
     pub fn signed_out(&self, names: &[String]) -> Vec<String> {
         if names.is_empty() {
             return Vec::new();
@@ -568,9 +547,7 @@ pub struct Revoked {
     pub notices: Vec<String>,
 }
 
-/// The one end of a minted session, once it cannot come back (its claude session deleted): revokes `m`'s token with
-/// `bearer`, unless the token is from another server than `bearer`'s, and deletes `name`'s config and kept token. A
-/// sign-out is no end: [`Keeper::signed_out`].
+/// The one end of a minted session whose claude session is deleted: revoke (another server's token is left), then config and kept token.
 pub fn revoke(keeper: &Keeper, minter: &dyn Minter, bearer: &Bearer, name: &str, m: &MintedSession) -> Revoked {
     let mut done = Revoked::default();
     let failed = match bearer {
@@ -589,15 +566,12 @@ pub fn revoke(keeper: &Keeper, minter: &dyn Minter, bearer: &Bearer, name: &str,
     done
 }
 
-/// What `sm mcp-header` prints when no kept token can be read: a header Workman refuses, so claude fails this one
-/// server instead of falling back to its own sign-in, which blocks every session.
+/// A header Workman refuses, so claude fails this one server instead of falling back to its own blocking sign-in.
 const NO_TOKEN_HEADER: &str = r#"{"Authorization":"Bearer sm-no-token"}"#;
 
 const HEADER_LOG_CAP: u64 = 1024 * 1024;
 
-/// What `sm mcp-header` prints for `name` in `home`: its kept token's `Authorization` header, else
-/// [`NO_TOKEN_HEADER`]; a read of the secret store only, [`Keeping`] keeps the token good. Each call appends a line
-/// to `<home>/logs/mcp-header.log` (never the token), whose failure changes nothing.
+/// `sm mcp-header`: `name`'s kept token's `Authorization` header, else [`NO_TOKEN_HEADER`]; a secret store read only.
 pub fn header(home: Option<&Path>, name: &str) -> String {
     let Some(home) = home else {
         return NO_TOKEN_HEADER.to_string();
@@ -612,8 +586,7 @@ pub fn header(home: Option<&Path>, name: &str) -> String {
     line
 }
 
-/// The one re-mint of a kept token: `replace` on its record's mint under [`launched_by`]'s label, kept with its
-/// `expiresAt` and that label under [`keeping::lock`]; the record is another owner's file and keeps its own.
+/// The one re-mint of a kept token: `replace` on its record's mint, kept under [`keeping::lock`].
 fn remint(keeper: &Keeper, name: &str, bearer: Bearer, minter: &dyn Minter) -> Result<(), String> {
     let _held = keeping::lock(&keeper.home)?;
     let (m, request) = MintedSessions::find(&keeper.home, name).ok_or_else(|| format!("no record of {name}"))?;
@@ -632,8 +605,7 @@ fn remint(keeper: &Keeper, name: &str, bearer: Bearer, minter: &dyn Minter) -> R
     Ok(())
 }
 
-/// The claude sessions of records that `claude agents --json --all` stopped listing: deleted once missing from two
-/// non-empty snapshots in a row. An empty snapshot proves nothing and starts the count over.
+/// Deleted claude sessions: missing from two non-empty snapshots in a row; an empty one starts the count over.
 #[derive(Debug, Default)]
 pub struct Absent(BTreeMap<String, u32>);
 
@@ -657,15 +629,12 @@ impl Absent {
     }
 }
 
-/// Whether `claude_session`'s transcript is still under `claude_dir`: a session a listing misses while its transcript
-/// remains is not taken as deleted. Without a `claude_dir`, never.
+/// Whether `claude_session`'s transcript is still under `claude_dir`; a listing's miss alone is not a deletion.
 pub fn still_has_transcript(claude_dir: Option<&Path>, claude_session: &str) -> bool {
     claude_dir.is_some_and(|dir| supraman_claude::find_transcript(dir, claude_session, None).is_some())
 }
 
-/// Each scheduled run's record whose claude session `absent` finds deleted in `observed` (read without error), and
-/// whose transcript is gone: its name revoked ([`revoke`]) and taken out of its file, the file gone once empty. What
-/// failed.
+/// Revokes each scheduled run whose claude session and transcript are gone, and drops its record; what failed.
 pub fn revoke_deleted_runs(keeper: &Keeper, minter: &dyn Minter, bearer: impl FnOnce() -> Bearer, absent: &mut Absent, observed: &[Session]) -> Vec<String> {
     let runs = runs_of(&keeper.home);
     let bound: Vec<(String, String)> = runs.iter().flat_map(|(_, r)| r.bound()).collect();
@@ -709,8 +678,7 @@ fn runs_of(home: &Path) -> Vec<(PathBuf, MintedSessions)> {
     files_ending(&runs_dir(home), ".json").into_iter().filter_map(|p| Some((p.clone(), MintedSessions::load(Some(p)).ok()?))).collect()
 }
 
-/// Deletes `name`'s Workman config under `mcp_dir` (written by [`Keeper`]); a file that is
-/// already gone is no error.
+/// Deletes `name`'s Workman config under `mcp_dir`; a file already gone is no error.
 pub fn remove_mcp_config(mcp_dir: &Path, name: &str) -> Result<(), String> {
     let file = supraman_claude::mcp_config_path(mcp_dir, name).map_err(|e| format!("cannot delete the Workman config of {name}: {e}"))?;
     match std::fs::remove_file(&file) {
@@ -943,8 +911,7 @@ mod tests {
         }
     }
 
-    /// A keeper of `home` over a fake Workman: `NAME` minted there, recorded at `record`, its token kept and its
-    /// config written.
+    /// A keeper of `home` over a fake Workman with `NAME` minted, recorded at `record` and kept.
     fn kept_at(home: &Path, fake: &FakeWorkman, record: PathBuf) -> (Keeper, String) {
         let keeper = Keeper::new(home, &home.join("mcp"), Arc::new(supraman_core::secret::MemoryStore::default()));
         let mut req = request();

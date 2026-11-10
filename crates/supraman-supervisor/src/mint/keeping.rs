@@ -1,5 +1,4 @@
-//! What the app knows of each kept token beyond the token (`<home>/supervisor/kept.json`), and [`Keeping`], the check
-//! that keeps every kept token good so a session never needs `/mcp` → Reconnect.
+//! `<home>/supervisor/kept.json`, and [`Keeping`], the check that keeps every kept token good.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::ErrorKind;
@@ -13,8 +12,7 @@ use crate::{Millis, MintedSessions};
 
 /// How often the app checks every kept token.
 pub const CHECK_EVERY: Duration = Duration::from_secs(5 * 60);
-/// A kept token is minted afresh this long before its last-known `expiresAt`: a laptop asleep through the check
-/// that was due still wakes to a live token.
+/// A kept token is minted afresh this long before its last-known `expiresAt`, so a laptop asleep through a check wakes to a live one.
 pub const RENEW_MARGIN: Millis = 6 * 3_600 * 1_000;
 /// How long a check waits for Workman's answer to one token's ping.
 pub const PING_TIMEOUT: Duration = Duration::from_secs(5);
@@ -25,7 +23,7 @@ pub(super) struct Kept {
     /// Epoch ms of the `expiresAt` of its mint; `None`: Workman did not say.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<Millis>,
-    /// Signed out of the server that minted it: its grant revoke took the token, the next sign-in mints it afresh.
+    /// Its grant was revoked by a sign-out; the next sign-in mints it afresh.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub signed_out: bool,
     /// The `launchedBy` a re-mint moved its row to; `None`: its record's.
@@ -67,10 +65,7 @@ pub(super) fn edit(home: &Path, edit: impl FnOnce(&mut Table)) -> Result<(), Str
     edit_locked(home, edit)
 }
 
-/// The check of every kept token of a home, run every [`CHECK_EVERY`] off the UI thread. While signed in, each token
-/// whose session can still use it (its config is there) and that is from the signed-in server is minted afresh with
-/// `replace` ([`super::header`]'s re-mint) when a sign-in came since the last check, when it is marked signed out,
-/// when its last-known `expiresAt` is less than the margin away, or when Workman refuses it.
+/// The check of every kept token of a home, run every [`CHECK_EVERY`] off the UI thread.
 #[derive(Debug)]
 pub struct Keeping {
     margin: Millis,
@@ -132,7 +127,6 @@ impl Keeping {
     }
 }
 
-/// Every name recorded in `home`'s files, once.
 fn kept_names(home: &Path) -> BTreeSet<String> {
     record_files(home).into_iter().filter_map(|p| MintedSessions::load(Some(p)).ok()).flat_map(|r| r.names().cloned().collect::<Vec<_>>()).collect()
 }
@@ -165,8 +159,7 @@ mod tests {
         }
     }
 
-    /// `NAME` minted on `fake`, recorded in the workspace file, its token kept with its `expiresAt` and its config
-    /// written, as the supervisor keeps it.
+    /// `NAME` minted on `fake` and kept as the supervisor keeps it.
     fn kept(home: &Path, fake: &FakeWorkman) -> (Keeper, String) {
         let keeper = Keeper::new(home, &home.join("mcp"), Arc::new(supraman_core::secret::MemoryStore::default()));
         let minted = HttpMinter::default().mint(fake.base(), "fake-static", &request()).unwrap();
