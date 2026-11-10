@@ -310,8 +310,8 @@ async fn list_cached(this: &WeakEntity<FleetView>, s: Transcripts, ask: &Transcr
     let repos = known.clone();
     this.update(cx, |this, cx| {
         timeline(&format!("transcripts from the cache done ({} listed)", closed.len()), scanning.elapsed());
-        this.main_repos.extend(known.clone());
-        this.closed_repos = known;
+        this.listing.main_repos.extend(known.clone());
+        this.listing.closed_repos = known;
         this.set_closed(closed, continued, cx);
         this.transcripts.listed_cached();
         this.check_loaded(cx);
@@ -369,8 +369,8 @@ async fn scan_transcripts(
     showing.await;
     let repos = known.clone();
     this.update(cx, |this, cx| {
-        this.main_repos.extend(known.clone());
-        this.closed_repos = known;
+        this.listing.main_repos.extend(known.clone());
+        this.listing.closed_repos = known;
         if this.transcripts.scanned() {
             timeline(&format!("transcripts done ({read} files read, {} listed)", closed.len()), scanning.elapsed());
         }

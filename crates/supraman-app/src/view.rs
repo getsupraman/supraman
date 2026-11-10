@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap as StdHashMap, HashSet},
+    collections::{BTreeMap, HashMap as StdHashMap},
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
@@ -62,6 +62,7 @@ mod left;
 mod left_width;
 mod lifecycle;
 mod links;
+mod listing;
 mod mail;
 mod manage;
 mod menu;
@@ -246,12 +247,7 @@ impl Tab {
 pub struct FleetView {
     pub cli: Cli,
     pub workspaces: Vec<Workspace>,
-    pub registry_error: Option<String>,
-    pub registry_skipped: Vec<String>,
     pub sessions: Vec<Session>,
-    /// [`fleet::main_repos`] of `sessions`, so rendering never walks the filesystem.
-    main_repos: StdHashMap<PathBuf, Option<PathBuf>>,
-    pub sessions_error: Option<String>,
     pub show_stopped: bool,
     /// Set only by a selftest: see [`fleet::Supervised::own_prefix`].
     pub own_prefix: Option<String>,
@@ -280,10 +276,6 @@ pub struct FleetView {
     pub open_link_with: fn(&Link, &mut App),
     pub workman: WorkmanStatus,
     pub hand_notices: Vec<String>,
-    pub closed: Vec<Session>,
-    /// A selftest's closed sessions, kept across transcript scans.
-    pub injected_closed: Vec<Session>,
-    closed_repos: StdHashMap<PathBuf, Option<PathBuf>>,
     pub transcripts: TranscriptsLoad,
     /// Every source of the tree has completed once (`loading`); until then the action bar says what is loading.
     pub loaded: bool,
@@ -294,8 +286,6 @@ pub struct FleetView {
     pub pane_toast: ToastSlot,
     pub updates: crate::updates::Updates,
     pub claude_dir: Option<PathBuf>,
-    pub deleted: StdHashMap<String, i64>,
-    pub deleting: HashSet<String>,
     painted_sessions: bool,
     pub saving: tab_saving::TabSaving,
     pub sidebar: sidebar::Sidebar,
@@ -305,6 +295,7 @@ pub struct FleetView {
     pub polls: polls::Polls,
     pub supervising: supervising::Supervising,
     pub mail: mail::Mail,
+    pub listing: listing::Listing,
     pub scheduling: schedule_state::ScheduleState,
     pub(crate) tab_keys: Entity<tab_keys::TabKeyState>,
 }
@@ -505,11 +496,7 @@ impl FleetView {
         Self {
             cli: Cli::Checking,
             workspaces: Vec::new(),
-            registry_error: None,
-            registry_skipped: Vec::new(),
             sessions: Vec::new(),
-            main_repos: StdHashMap::new(),
-            sessions_error: None,
             show_stopped: false,
             own_prefix: None,
             tabs: Vec::new(),
@@ -539,9 +526,6 @@ impl FleetView {
             },
             workman: WorkmanStatus::Checking,
             hand_notices: Vec::new(),
-            closed: Vec::new(),
-            injected_closed: Vec::new(),
-            closed_repos: StdHashMap::new(),
             transcripts: TranscriptsLoad::new(claude_dir.is_some()),
             loaded: false,
             action_error: None,
@@ -552,8 +536,6 @@ impl FleetView {
             pane_toast: ToastSlot::default(),
             updates,
             claude_dir,
-            deleted: StdHashMap::new(),
-            deleting: HashSet::new(),
             painted_sessions: false,
             saving: tab_saving::TabSaving::new(tabs_writes),
             sidebar: sidebar::Sidebar::new(cx),
@@ -563,6 +545,7 @@ impl FleetView {
             polls,
             supervising: supervising::Supervising::new(desired_writes),
             mail: mail::Mail::default(),
+            listing: listing::Listing::default(),
             scheduling,
             tab_keys: cx.new(|_| tab_keys::TabKeyState::new(defaults.window.tab_keys())),
         }
@@ -572,9 +555,9 @@ impl FleetView {
     fn set_closed(&mut self, closed: Vec<Session>, continued: StdHashMap<String, String>, cx: &mut Context<Self>) {
         let save = self.stars.follow(&continued);
         self.save_off_thread(save, "Cannot save the starred sessions", cx);
-        self.closed = fleet::without_continued(closed, &continued, &self.sessions);
+        self.listing.closed = fleet::without_continued(closed, &continued, &self.sessions);
         self.transcripts.continued = continued;
-        self.closed.extend(self.injected_closed.iter().cloned());
+        self.listing.closed.extend(self.listing.injected_closed.iter().cloned());
         self.drop_deleted();
         self.invalidate_tree();
     }
@@ -771,7 +754,7 @@ impl FleetView {
 
     fn apply(&mut self, refresh: Refresh, cx: &mut Context<Self>) {
         let _stall = supraman_ui::stall::section("poll: apply");
-        let before = (self.workspaces.clone(), self.sessions.clone(), self.main_repos.clone(), self.supervising.hooks.clone(), self.supervising.desired.clone(), self.polls.polled_at);
+        let before = (self.workspaces.clone(), self.sessions.clone(), self.listing.main_repos.clone(), self.supervising.hooks.clone(), self.supervising.desired.clone(), self.polls.polled_at);
         match fresh_registry(refresh.workspaces, refresh.registry_writes, self.polls.registry_writes.load(Ordering::SeqCst)) {
             None => {}
             Some(Ok((workspaces, skipped))) => {
@@ -779,10 +762,10 @@ impl FleetView {
                     self.polls.transcripts_nudge.wake();
                 }
                 self.workspaces = workspaces;
-                self.registry_skipped = skipped;
-                self.registry_error = None;
+                self.listing.registry_skipped = skipped;
+                self.listing.registry_error = None;
             }
-            Some(Err(error)) => self.registry_error = Some(error),
+            Some(Err(error)) => self.listing.registry_error = Some(error),
         }
         match refresh.sessions {
             Some(Ok(sessions)) => {
@@ -802,12 +785,12 @@ impl FleetView {
                 self.occupancy.set_sessions(fleet::live_sessions(&sessions, now));
                 self.sessions = sessions;
                 self.drop_deleted();
-                self.main_repos = refresh.main_repos;
-                self.main_repos.extend(self.closed_repos.iter().map(|(k, v)| (k.clone(), v.clone())));
-                self.sessions_error = None;
+                self.listing.main_repos = refresh.main_repos;
+                self.listing.main_repos.extend(self.listing.closed_repos.iter().map(|(k, v)| (k.clone(), v.clone())));
+                self.listing.sessions_error = None;
                 self.polls.polled_at = refresh.polled_at;
             }
-            Some(Err(error)) => self.sessions_error = Some(error),
+            Some(Err(error)) => self.listing.sessions_error = Some(error),
             None => {}
         }
         if !self.polls.sessions_read {
@@ -831,7 +814,7 @@ impl FleetView {
         let (workspaces, sessions, main_repos, hooks, desired, polled_at) = &before;
         // a permission prompt newer than the last poll makes its row Blocked (fleet::with_hook)
         let prompted = self.polls.polled_at != *polled_at && self.supervising.hooks.values().any(|h| h.is_permission_prompt() && h.last.ts > (*polled_at).min(self.polls.polled_at));
-        if prompted || self.workspaces != *workspaces || self.sessions != *sessions || self.main_repos != *main_repos || self.supervising.hooks != *hooks || self.supervising.desired != *desired {
+        if prompted || self.workspaces != *workspaces || self.sessions != *sessions || self.listing.main_repos != *main_repos || self.supervising.hooks != *hooks || self.supervising.desired != *desired {
             self.invalidate_tree();
         }
         self.polls.last_refresh_took = Some(refresh.took);
@@ -880,7 +863,7 @@ impl FleetView {
         }
         tree_check::BUILDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let tree = Rc::new(self.build_tree(now));
-        let until = fleet::next_change(&self.sessions, &self.closed, now);
+        let until = fleet::next_change(&self.sessions, &self.listing.closed, now);
         *self.sidebar.tree_cache.borrow_mut() = Some(CachedTree { at: now, until, show_stopped: self.show_stopped, own_prefix: self.own_prefix.clone(), tree: tree.clone() });
         tree
     }
@@ -895,8 +878,8 @@ impl FleetView {
             desired: Some(&self.supervising.desired),
             hooks: Some(&self.supervising.hooks),
             polled_at: self.polls.polled_at,
-            main_repos: Some(&self.main_repos),
-            closed: &self.closed,
+            main_repos: Some(&self.listing.main_repos),
+            closed: &self.listing.closed,
             starred: Some(self.stars.ids()),
             expanded: Some(&self.sidebar.closed_expanded),
             disabled_folders: false,

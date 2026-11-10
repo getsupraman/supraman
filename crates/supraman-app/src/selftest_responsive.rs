@@ -42,8 +42,8 @@ pub(crate) async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     view.update(cx, |v, cx| {
         v.shell_args = saved;
         v.polls.injected.lock().unwrap_or_else(|e| e.into_inner()).clear();
-        v.injected_closed.clear();
-        v.closed.retain(|s| !s.session_id.starts_with(FIXTURE));
+        v.listing.injected_closed.clear();
+        v.listing.closed.retain(|s| !s.session_id.starts_with(FIXTURE));
         v.invalidate_tree();
         let mine: Vec<u64> = v.tabs.iter().map(|t| t.id).filter(|id| !before.contains(id)).collect();
         mine.into_iter().for_each(|id| v.close_tab(id, cx));
@@ -212,8 +212,8 @@ async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow:
     let (live, closed) = fixture(view, cx)?;
     view.update(cx, |v, cx| {
         v.polls.injected.lock().unwrap_or_else(|e| e.into_inner()).extend(live);
-        v.closed.extend(closed.iter().cloned());
-        v.injected_closed = closed;
+        v.listing.closed.extend(closed.iter().cloned());
+        v.listing.injected_closed = closed;
         v.invalidate_tree();
         v.polls.poll_nudge.wake();
         cx.notify();

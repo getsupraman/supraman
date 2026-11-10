@@ -120,10 +120,10 @@ impl FleetView {
                 }
                 self.workspaces = workspaces;
                 self.invalidate_tree();
-                self.registry_skipped = skipped;
-                self.registry_error = None;
+                self.listing.registry_skipped = skipped;
+                self.listing.registry_error = None;
             }
-            Err(e) => self.registry_error = Some(e),
+            Err(e) => self.listing.registry_error = Some(e),
         }
         let names: Vec<String> = self.workspaces.iter().map(|w| w.name.clone()).collect();
         self.removing.retain(|name, _| names.contains(name));

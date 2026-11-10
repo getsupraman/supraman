@@ -61,7 +61,7 @@ impl FleetView {
 
     pub(super) fn saved_tab(&self, tab: &Tab, cx: &App) -> Option<SavedTab> {
         let title = tab.title.clone();
-        let named = |sid: &str| self.sessions.iter().chain(&self.closed).find(|s| s.session_id == sid).map(|s| s.name.clone()).filter(|n| !n.is_empty());
+        let named = |sid: &str| self.sessions.iter().chain(&self.listing.closed).find(|s| s.session_id == sid).map(|s| s.name.clone()).filter(|n| !n.is_empty());
         Some(match &tab.kind {
             TabKind::Saved(saved) => saved.clone(),
             TabKind::Schedule(_) | TabKind::Details(_) | TabKind::Start(_) => return None,

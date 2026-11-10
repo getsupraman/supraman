@@ -131,7 +131,7 @@ impl FleetView {
     }
 
     pub fn deletable(&self, row: &SessionRow) -> bool {
-        offers_delete(row, self.wanted(&row.session.name), self.in_tab(&row.session)) && !self.deleting.contains(&row.session.session_id)
+        offers_delete(row, self.wanted(&row.session.name), self.in_tab(&row.session)) && !self.listing.deleting.contains(&row.session.session_id)
     }
 
     fn closed_background(&self, workspace: &str) -> Vec<SessionRow> {
@@ -162,7 +162,7 @@ impl FleetView {
 
     pub(super) fn delete_now(&mut self, session: Session, discard: Option<String>, cx: &mut Context<Self>) {
         let sid = session.session_id.clone();
-        if !self.deleting.insert(sid.clone()) {
+        if !self.listing.deleting.insert(sid.clone()) {
             return;
         }
         let claude_dir = self.claude_dir.clone();
@@ -173,7 +173,7 @@ impl FleetView {
         cx.spawn(async move |this, cx| {
             let outcome = task.await;
             this.update(cx, |this, cx| {
-                this.deleting.remove(&sid);
+                this.listing.deleting.remove(&sid);
                 match outcome {
                     Outcome::Deleted(gone) => {
                         this.forget_rows(&[session.session_id.clone()], cx);
@@ -256,7 +256,7 @@ impl FleetView {
     }
 
     pub(super) fn delete_closed_now(&mut self, workspace: String, sessions: Vec<Session>, mut skipped: Vec<(String, String)>, cx: &mut Context<Self>) {
-        let sessions: Vec<Session> = sessions.into_iter().filter(|s| self.deleting.insert(s.session_id.clone())).collect();
+        let sessions: Vec<Session> = sessions.into_iter().filter(|s| self.listing.deleting.insert(s.session_id.clone())).collect();
         let claude_dir = self.claude_dir.clone();
         let todo = sessions.clone();
         let task = cx.background_executor().spawn(async move {
@@ -268,7 +268,7 @@ impl FleetView {
             this.update(cx, |this, cx| {
                 let (mut deleted, mut failed) = (Vec::new(), Vec::new());
                 for (s, outcome) in results {
-                    this.deleting.remove(&s.session_id);
+                    this.listing.deleting.remove(&s.session_id);
                     match outcome {
                         Outcome::Deleted(_) => deleted.push(s.session_id.clone()),
                         Outcome::Kept(r) => {
@@ -300,7 +300,7 @@ impl FleetView {
         }
         let now = now_ms();
         for sid in session_ids {
-            self.deleted.insert(sid.clone(), now);
+            self.listing.deleted.insert(sid.clone(), now);
         }
         self.drop_deleted();
         if let Some(hands) = self.lifecycle.hands.clone() {
@@ -327,13 +327,13 @@ impl FleetView {
 
     pub(super) fn drop_deleted(&mut self) {
         let now = now_ms();
-        self.deleted.retain(|_, at| now - *at < HIDE_DELETED_MS);
-        if self.deleted.is_empty() {
+        self.listing.deleted.retain(|_, at| now - *at < HIDE_DELETED_MS);
+        if self.listing.deleted.is_empty() {
             return;
         }
-        let deleted = &self.deleted;
+        let deleted = &self.listing.deleted;
         self.sessions.retain(|s| !deleted.contains_key(&s.session_id));
-        self.closed.retain(|s| !deleted.contains_key(&s.session_id));
+        self.listing.closed.retain(|s| !deleted.contains_key(&s.session_id));
         self.invalidate_tree();
     }
 }

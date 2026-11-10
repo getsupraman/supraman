@@ -340,19 +340,19 @@ impl FleetView {
                 banner::tinted(status.error),
             ));
         }
-        if let Some(error) = &self.registry_error {
+        if let Some(error) = &self.listing.registry_error {
             notices.push(notice(
                 format!("Cannot read the workspace registry: {error}"),
                 banner::tinted(status.error),
             ));
         }
-        for skipped in &self.registry_skipped {
+        for skipped in &self.listing.registry_skipped {
             notices.push(notice(
                 format!("A workspace is left out, the others run: {skipped}"),
                 banner::tinted(status.error),
             ));
         }
-        if let Some(error) = &self.sessions_error {
+        if let Some(error) = &self.listing.sessions_error {
             notices.push(notice(
                 format!("Session list is stale, the last read failed (nothing is started or stopped meanwhile): {error}"),
                 banner::tinted(status.warning),
@@ -386,7 +386,7 @@ impl FleetView {
         notices.extend(self.render_confirm(cx));
         notices.extend(self.add_dialog().map(|d| d.clone().into_any_element()));
         notices.extend(self.render_schedule_edit(cx));
-        if self.registry_error.is_none() && self.registry_skipped.is_empty() && self.polls.refreshes > 0 && tree.workspaces.is_empty() && self.adding.is_none() {
+        if self.listing.registry_error.is_none() && self.listing.registry_skipped.is_empty() && self.polls.refreshes > 0 && tree.workspaces.is_empty() && self.adding.is_none() {
             notices.push(notice(
                 "No workspaces registered. Add one with the folder button above, or:  sm workspace add <dir>".into(),
                 banner::plain(cx),

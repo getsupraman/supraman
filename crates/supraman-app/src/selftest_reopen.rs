@@ -124,7 +124,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, own: &str, gone: &Path, cx
         v.sessions.iter().find(|s| s.name == own && fleet::is_alive(&s.health(now_ms()))).cloned()
     })
     .await?;
-    let closed: Session = until(view, cx, WITHIN, &format!("{RECENT} among the closed sessions"), |v| v.closed.iter().find(|s| s.session_id == RECENT).cloned()).await?;
+    let closed: Session = until(view, cx, WITHIN, &format!("{RECENT} among the closed sessions"), |v| v.listing.closed.iter().find(|s| s.session_id == RECENT).cloned()).await?;
     let cwd = crate::selftest::home();
     let (shell, hand, work, attach, doomed) = cx.update(|window, cx| {
         view.update(cx, |v, cx| {
