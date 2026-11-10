@@ -1,6 +1,4 @@
-//! A commit's writes from the graph's menus (docs/research/gitkraken-12.6.1.md §B B1): cherry-pick and revert
-//! (`--mainline 1` for a merge, the work in progress stashed before and popped after; neither undoable), reset
-//! soft, mixed or hard (a hard one snapshots first; all recorded for Undo), and a commit's patch.
+//! A commit's writes from the graph's menus; cherry-pick and revert are not undoable, a reset is.
 
 use std::path::{Path, PathBuf};
 
@@ -59,8 +57,7 @@ fn idle(s: &Session) -> Result<(), WriteError> {
     }
 }
 
-/// `git cherry-pick <sha>`; with `commit` false its changes are left staged (`--no-commit`) on top of the work in
-/// progress, which is then not stashed.
+/// `git cherry-pick <sha>`; with `commit` false its changes are left staged on the work in progress, which is not stashed.
 pub fn cherry_pick(s: &Session, sha: &str, commit: bool) -> Result<Picked, WriteError> {
     apply_commit(s, "cherry-pick", sha, commit)
 }

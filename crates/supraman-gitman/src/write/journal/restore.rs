@@ -103,8 +103,7 @@ fn move_head(s: &Session, message: &str, to: &str, expected: &str) -> Result<(),
     s.output(&Call::new(&["update-ref", "-m", message, "HEAD", to, expected])).map(drop)
 }
 
-/// A reset or GitMan's rebase taken back or done again: HEAD moved from `now` to `to`; a hard one stashes the work
-/// in progress first, resets the files and puts back what its snapshot held.
+/// A reset or GitMan's rebase taken back or done again; a hard one stashes first and puts back what its snapshot held.
 #[allow(clippy::too_many_arguments)]
 fn reset(s: &Session, payload: &Option<Payload>, kind: Kind, message: &str, to: &str, now: &str, action: &str, stash: bool) -> Result<bool, Refused> {
     let (hard, snapshot) = match payload {
@@ -144,8 +143,7 @@ fn index_of(s: &Session, snapshot: &str) -> Result<String, Refused> {
     Ok(index)
 }
 
-/// Stashes the changes to tracked files, and with `untracked` the untracked files a snapshot may overwrite, when
-/// there are any; with `allowed` false that is a refusal.
+/// Stashes the changes (with `untracked`, the untracked files too) when there are any; with `allowed` false that is a refusal.
 fn stash_all(s: &Session, action: &str, allowed: bool, untracked: bool) -> Result<bool, Refused> {
     let entries = crate::status(s.writer().repo()).map_err(WriteError::from)?.entries;
     let files = entries.iter().filter(|e| untracked || e.kind != crate::EntryKind::Untracked).count();
@@ -217,8 +215,7 @@ pub fn discard(s: &Session, paths: &[String]) -> Result<(), WriteError> {
     discard_from_index(s, paths, &[])
 }
 
-/// [`discard`], but the working files of `from_index` (some of `paths`) go back to the index's, their staged change
-/// kept.
+/// [`discard`], but the working files of `from_index` go back to the index's, their staged change kept.
 pub fn discard_from_index(s: &Session, paths: &[String], from_index: &[String]) -> Result<(), WriteError> {
     let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
     let snapshot = s.snapshot(&refs, "Before discard")?;
@@ -241,8 +238,7 @@ pub fn discard_from_index(s: &Session, paths: &[String], from_index: &[String]) 
     record(s, Action::Discard { paths: paths.to_vec(), from_index: from_index.to_vec(), left: Vec::new() }, Some(&snapshot))
 }
 
-/// A discard taken back: what changed in its paths since goes to a stash, then the paths' files and index entries
-/// are the snapshot's again.
+/// A discard taken back: what changed since goes to a stash, then the paths are the snapshot's again.
 fn discard_back(s: &Session, item: &Item, action: &str) -> Result<bool, Refused> {
     let payload = payload(s, item)?.ok_or_else(|| gone(item))?;
     let (Action::Discard { paths, from_index, left }, Some(snapshot)) = (&payload.action, payload.snapshot.as_deref()) else { return Err(gone(item)) };

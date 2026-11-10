@@ -52,8 +52,7 @@ pub fn operation_state(git_dir: &Path) -> OperationState {
     }
 }
 
-/// The two sides an operation under way joins, as branch names or short shas: `current` is git's "ours" (stage 2),
-/// `incoming` its "theirs" (stage 3).
+/// The two sides an operation under way joins: `current` is git's "ours" (stage 2), `incoming` its "theirs" (stage 3).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UnderWay {
     pub current: String,
@@ -64,8 +63,7 @@ pub struct UnderWay {
     pub message: Option<String>,
 }
 
-/// The sides of `state` in the checkout whose git dir is `git_dir` and whose branch is `head`; `None` with nothing
-/// under way. Blocking.
+/// The sides of `state` in the checkout whose git dir is `git_dir` and whose branch is `head`.
 pub fn under_way(repo: &Repo, git_dir: &Path, state: OperationState, head: Option<&str>) -> Result<Option<UnderWay>, GitError> {
     let read = |name: &str| std::fs::read_to_string(git_dir.join(name)).ok().map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
     let current = || match head {

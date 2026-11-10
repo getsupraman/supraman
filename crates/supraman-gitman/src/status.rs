@@ -107,8 +107,7 @@ pub fn status(repo: &Repo) -> Result<Status, GitError> {
     read_status(repo, &git_dir(repo)?, false)
 }
 
-/// [`status`], the first time per git dir in this process with git's optional locks, so git refreshes the
-/// index's stat cache after a clone or a checkout; every later one as [`status`].
+/// [`status`], the first time per git dir with git's optional locks, so git refreshes the index's stat cache.
 pub fn status_first(repo: &Repo) -> Result<Status, GitError> {
     static SEEN: Mutex<Option<HashSet<String>>> = Mutex::new(None);
     let git_dir = git_dir(repo)?;

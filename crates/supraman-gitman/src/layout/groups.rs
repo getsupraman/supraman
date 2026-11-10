@@ -84,8 +84,7 @@ impl RefIndex {
     }
 }
 
-/// HEAD's group first, then by kind, more refs first, then the name ignoring case (a pinned branch would rank
-/// between HEAD and the kind).
+/// HEAD's group first, then by kind, more refs first, then the name ignoring case.
 fn order_key(g: &RefGroup) -> (bool, RefKind, Reverse<usize>, String, String) {
     (!g.head(), g.kind(), Reverse(g.refs.len()), g.name.to_lowercase(), g.name.clone())
 }

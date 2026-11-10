@@ -1,4 +1,4 @@
-//! Repositories built in a temp dir with the git CLI, for tests (C151): never a user's repo.
+//! Repositories built in a temp dir with the git CLI, for tests: never a user's repo.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -46,10 +46,7 @@ pub fn run_git(git: &Git, dir: &Path, args: &[&str], env: &[(&str, String)], inp
     process::run_bytes(&mut cmd, input, TIMEOUT, Kill::Tree).expect("git runs")
 }
 
-/// One repository with a commit of every kind: a root, a rename with co-authors on `feature`, a `--no-ff` merge,
-/// three stashes (one on `feature`, two on the merge: with a message and without), tags (annotated `v1`, light `light`), `origin` (a bare repo beside it) with `main` one ahead and `stale` two
-/// behind, a worktree on `side`, and work in progress (staged, unstaged, a staged rename, a deletion,
-/// an untracked file, and `bin.dat` rewritten unchanged with an old mtime, so a status that may write refreshes the index).
+/// One repository with a commit, ref, stash, worktree and work-in-progress change of every kind ([`Fixture::new_in`]).
 pub struct Fixture {
     pub git: Git,
     pub temp: TempDir,
@@ -118,8 +115,7 @@ impl Fixture {
         Repo::new(self.git.clone(), &self.dir)
     }
 
-    /// A commit by its label: `root`, `second`, `rename`, `main_work`, `merge`, `ahead`, a [`STASHES`] label
-    /// or one with `_index` for its index commit, or `media_base` and `media` (no ref reaches them; [`MEDIA_FILES`]).
+    /// A commit by its label; a [`STASHES`] label with `_index` is its index commit.
     pub fn sha(&self, label: &str) -> &str {
         self.shas.get(label).unwrap_or_else(|| panic!("no commit {label}"))
     }
@@ -195,8 +191,7 @@ impl Fixture {
         assert!(!merge.success(), "the merge stops on a conflict");
     }
 
-    /// GitMan's reword of `sha` in the checkout `repo` run with `todo` in place of the one a reword writes (one
-    /// that drops a commit stops on a conflict in a later pick, which a reword alone cannot).
+    /// GitMan's reword of `sha` in the checkout `repo` run with `todo` in place of the one a reword writes.
     pub fn gitmans_rebase(&self, repo: &Repo, sha: &str, todo: &str) -> crate::write::rebase::Rebased {
         use crate::write::{Call, LockSet, Writer, rebase};
         Writer::open(repo).unwrap().run(LockSet::rebase(), |s| {
@@ -249,8 +244,7 @@ impl Fixture {
         self.stash("stash_wip", 40, "b.txt", b"b\nb2\nstashed\n", None);
     }
 
-    /// `path` rewritten and stashed `after` seconds after the last commit, with `message` or git's own;
-    /// `label` names the stash commit, `<label>_index` its index commit.
+    /// `path` rewritten and stashed `after` seconds after the last commit; `<label>_index` names its index commit.
     fn stash(&mut self, label: &'static str, after: i64, path: &str, bytes: &[u8], message: Option<&str>) {
         let date = format!("@{} +0000", self.time + after);
         let env = [("GIT_AUTHOR_DATE", date.clone()), ("GIT_COMMITTER_DATE", date)];
@@ -318,8 +312,7 @@ impl Default for Fixture {
     }
 }
 
-/// A repository of `commits` commits made with `git fast-import`: `main`, and every tenth commit a merge of a
-/// one-commit topic branch, every twentieth topic kept as `topic/<n>`; a tag every 1000 commits.
+/// A repository of `commits` commits made with `git fast-import`, with merges, topic branches and tags.
 pub struct Generated {
     pub git: Git,
     pub temp: TempDir,

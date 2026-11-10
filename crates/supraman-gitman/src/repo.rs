@@ -6,8 +6,7 @@ use supraman_core::process::{self, GIT_TIMEOUT, Kill, RawOutput, RunError, Strea
 
 use crate::{Dirs, Git};
 
-/// Before every subcommand (docs/research/gitkraken-12.6.1.md §2): no lock a reader could leave behind, no pager, paths and
-/// messages as UTF-8 text, diffs with `a/` `b/` prefixes from the top, and no auto maintenance.
+/// Before every subcommand; see docs/research/gitkraken-12.6.1.md §2.
 const READ_ONLY: &[&str] = &[
     "--no-pager",
     "--no-optional-locks",
@@ -110,8 +109,7 @@ impl Repo {
         self.run_with(READ_ONLY.iter(), args, input)
     }
 
-    /// [`Repo::run`] without `--literal-pathspecs`, for a command that takes paths and refuses pathspec magic
-    /// (`check-ignore`).
+    /// [`Repo::run`] without `--literal-pathspecs`, for a command that refuses pathspec magic (`check-ignore`).
     pub(crate) fn run_paths(&self, args: &[&str], input: Option<Vec<u8>>) -> Result<RawOutput, GitError> {
         self.run_with(READ_ONLY.iter().filter(|a| **a != "--literal-pathspecs"), args, input)
     }

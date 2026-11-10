@@ -2,8 +2,7 @@ use std::path::Path;
 
 use supraman_core::paths::within;
 
-/// The app's answer to "which live Supraman sessions work in this worktree": the names of those whose cwd is the
-/// worktree or below it. A write on a worktree with any asks the user first.
+/// The names of the live Supraman sessions whose cwd is the worktree or below it.
 pub trait Occupancy: Send + Sync {
     fn who_works_in(&self, worktree: &Path) -> Vec<String>;
 }

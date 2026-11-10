@@ -100,8 +100,7 @@ impl WorktreeWip {
     }
 }
 
-/// The work in progress of every worktree of `repo` but the bare one and those at `shown`, [`WIP_READERS`] at a
-/// time, each read in its own folder; nothing while the repository has only one worktree. Blocking.
+/// The work in progress of every worktree of `repo` but the bare one and those at `shown`, [`WIP_READERS`] at a time.
 pub fn wips(repo: &Repo, shown: &[PathBuf]) -> Result<Vec<WorktreeWip>, GitError> {
     let all = worktrees(repo)?;
     if all.len() < 2 {

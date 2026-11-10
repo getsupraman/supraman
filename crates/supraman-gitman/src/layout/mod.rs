@@ -54,8 +54,7 @@ impl Row {
         self.worktree.as_deref()
     }
 
-    /// `n` rows of no commit stacked directly above this one on its lane, each joined to the next by a dashed edge,
-    /// and this row joined to the lowest: the live sessions' rows over the WIP row.
+    /// `n` rows of no commit stacked above this one on its lane, joined by dashed edges: the live sessions' rows.
     pub fn stacked_above(&self, n: usize) -> (Vec<Row>, Row) {
         let (above, edges) = self.edges.stacked_above(n);
         let none: Arc<[RefGroup]> = Arc::from([]);
@@ -155,8 +154,7 @@ impl Layout {
         Row { sha, lane: placed.lane, colour: placed.lane % LANE_COLOURS, edges: placed.edges, max_lane: placed.max_lane, refs, ghost, detached_head, stash: None, worktree: None }
     }
 
-    /// A commit with branch refs hands them to its parents; one with no refs takes the best it was handed and
-    /// hands that on.
+    /// A commit with branch refs hands them to its parents; one with none hands on the best it was handed.
     fn ghost<P: AsRef<str>>(&mut self, sha: &str, parents: &[P]) -> Option<Arc<[RefGroup]>> {
         let handed = self.handed.remove(sha).map(|h| h.groups);
         let (ghost, pass) = match self.refs.branches.get(sha) {

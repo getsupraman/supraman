@@ -47,8 +47,7 @@ pub fn worktree_size(repo: &Repo, path: &str) -> Result<Option<u64>, GitError> {
     Ok(std::fs::metadata(top(repo)?.join(path)).ok().map(|m| m.len()))
 }
 
-/// Each object's size in bytes (`rev:path`, `:0:path`) in one `cat-file --batch-check`, `None` for one git
-/// cannot find; an object name holding a newline is asked alone with `cat-file -s`.
+/// Each object's size in bytes (`rev:path`, `:0:path`) in one `cat-file --batch-check`, `None` for one git cannot find.
 pub fn object_sizes(repo: &Repo, objects: &[&str]) -> Result<Vec<Option<u64>>, GitError> {
     if objects.iter().any(|o| o.contains(['\n', '\r'])) {
         return objects.iter().map(|o| Ok(repo.output(&["cat-file", "-s", "--end-of-options", o], None).ok().and_then(|out| text(&out).trim().parse().ok()))).collect();

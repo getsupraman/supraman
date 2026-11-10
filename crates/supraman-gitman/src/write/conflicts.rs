@@ -1,6 +1,4 @@
-//! The conflict panel's writes (.claude/briefs/gitkraken-actions.md, GA6b): a conflicted file's whole side taken,
-//! a file marked resolved after a check for conflict markers, a resolved one marked conflicted again, and a
-//! cherry-pick's, revert's or am's continue, skip and abort with git's own commands.
+//! The conflict panel's writes.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -80,8 +78,7 @@ pub fn has_markers(bytes: &[u8]) -> bool {
     bytes.split(|b| *b == b'\n').any(|line| [&b"<<<<<<<"[..], b"=======", b">>>>>>>"].iter().any(|m| line.starts_with(m)))
 }
 
-/// Stages the conflicted files among `paths` (`None`: every one) as resolved; unless `anyway`, nothing is staged
-/// while one of them still holds conflict markers.
+/// Stages the conflicted files among `paths` (`None`: every one); unless `anyway`, nothing while one holds conflict markers.
 pub fn mark_resolved(s: &Session, paths: Option<&[String]>, anyway: bool) -> Result<Marked, WriteError> {
     let status = crate::status(s.writer().repo())?;
     let files: Vec<FileChange> = status
@@ -101,8 +98,7 @@ pub fn mark_resolved(s: &Session, paths: Option<&[String]>, anyway: bool) -> Res
     Ok(Marked::Staged(files.len()))
 }
 
-/// The base, current and incoming commits of the conflict under way, as revisions; `None` for a side git keeps
-/// none of (a root commit's base).
+/// The base, current and incoming revisions of the conflict under way; `None` for a side git keeps none of.
 fn sides(s: &Session) -> Result<[Option<String>; 3], WriteError> {
     let rev = |name: &str| s.verify(&format!("{name}^{{commit}}"));
     let state = operation_state(&s.writer().dirs().git_dir);
@@ -139,8 +135,7 @@ fn blobs(s: &Session, rev: &str, paths: &[String]) -> Result<BTreeMap<String, (S
         .collect())
 }
 
-/// Puts each of `paths` back in conflict: its stage 0 removed and its stages 1 to 3 written from the base, current
-/// and incoming commits of the operation under way; the work tree is left as it is.
+/// Puts each of `paths` back in conflict in the index (stages 1 to 3 from the operation under way); the work tree is untouched.
 pub fn mark_conflicted(s: &Session, paths: &[String]) -> Result<(), WriteError> {
     if paths.is_empty() {
         return Ok(());
@@ -194,8 +189,7 @@ impl Sequence {
     }
 }
 
-/// `git <sequence> --continue`, `--skip` or `--abort` (`step`), its editor accepting git's message; stopped again
-/// on a conflict, or done with HEAD's sha. A continue is refused while a file is still conflicted.
+/// `git <sequence> --continue`, `--skip` or `--abort`; a continue is refused while a file is still conflicted.
 pub(super) fn sequence_step(s: &Session, sequence: Sequence, step: &'static str) -> Result<Rebased, WriteError> {
     if step == "--continue" && !stages(s)?.is_empty() {
         return Err(WriteError::Refused(RESOLVE_FIRST));

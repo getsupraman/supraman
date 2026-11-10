@@ -4,8 +4,7 @@ use std::path::PathBuf;
 use crate::parse::{nul_records, text};
 use crate::{GitError, Repo};
 
-/// Where a checkout's files are: its top, its own git dir (HEAD, index) and the common one (refs, objects);
-/// the two git dirs are one outside a linked worktree.
+/// A checkout's top, its own git dir (HEAD, index) and the common one (refs, objects).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dirs {
     pub top: PathBuf,

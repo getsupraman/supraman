@@ -64,8 +64,7 @@ pub fn history(repo: &Repo, tips: &[String], skip: usize, count: usize) -> Resul
     History::start(repo, tips, skip)?.page(count)
 }
 
-/// The commits reachable from `tips` in date order, one `rev-list` read page by page as pages are asked for;
-/// dropped, it kills git.
+/// The commits reachable from `tips` in date order, one `rev-list` read page by page; dropped, it kills git.
 pub struct History {
     tips: Vec<String>,
     git: Option<Streaming>,
@@ -173,14 +172,12 @@ pub fn details(repo: &Repo, sha: &str) -> Result<Details, GitError> {
     Ok(Details { commit, summary, body, co_authors })
 }
 
-/// `summary` and `body` of a message.
 fn split_message(message: &str) -> (String, String) {
     let (first, rest) = message.split_once('\n').unwrap_or((message, ""));
     (first.trim_end().to_string(), rest.trim_matches(|c| c == '\n' || c == '\r').trim_end().to_string())
 }
 
-/// `rev-list --format` records: `commit <sha>\n`, then NUL, the fields NUL-separated, the message, and `\0\0\n`.
-/// With `trailers`, a field of them precedes the message.
+/// `rev-list --format` records, each ending `\0\0\n`; with `trailers`, a field of them precedes the message.
 fn parse_commits(out: &[u8], trailers: bool) -> Result<Vec<(Commit, String)>, String> {
     let fields = if trailers { 9 } else { 8 };
     let mut commits = Vec::new();

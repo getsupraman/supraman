@@ -1,6 +1,4 @@
-//! A file's writes from the file menus (docs/research/gitkraken-12.6.1.md §B items 8, 9 and 11): a file restored
-//! from a commit (undoable as a discard), a working file deleted, and Ignore: a pattern appended to the checkout's
-//! `.gitignore`, its files untracked when asked.
+//! A file's writes from the file menus: restore from a commit, delete, and Ignore.
 
 use super::journal::{self, Action};
 use super::wip::remove_file;
@@ -77,8 +75,7 @@ pub fn ignorable(path: &str) -> bool {
     name != ".gitignore" && name != ".gitattributes"
 }
 
-/// `ignore`'s pattern appended to the checkout's `.gitignore` unless a line holds it already; with `untrack` the
-/// tracked files under it (`paths`) are taken out of the index, their working files kept.
+/// `ignore`'s pattern appended once to the checkout's `.gitignore`; with `untrack`, `paths` leave the index, their files kept.
 pub fn ignore(s: &Session, ignore: &Ignore, untrack: &[String]) -> Result<(), WriteError> {
     let file = s.writer().dirs().top.join(".gitignore");
     let before = match std::fs::read(&file) {
@@ -97,8 +94,7 @@ pub fn ignore(s: &Session, ignore: &Ignore, untrack: &[String]) -> Result<(), Wr
     Ok(())
 }
 
-/// `paths` put back as `sha` has them, index and working file (gone where `sha` has none), after a snapshot;
-/// recorded as a discard for Undo.
+/// `paths` put back as `sha` has them, index and working file, after a snapshot; recorded as a discard for Undo.
 pub fn restore(s: &Session, sha: &str, paths: &[String]) -> Result<(), WriteError> {
     let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
     let snapshot = s.snapshot(&refs, "Before restore")?;
