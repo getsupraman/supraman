@@ -180,3 +180,6 @@ impl GitView {
         div().size_full().flex().items_center().gap_1().overflow_hidden().child(label).child(open).into_any_element()
     }
 }
+
+#[cfg(test)]
+mod tests;

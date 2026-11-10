@@ -6,13 +6,13 @@ use supraman_core::watch::Batch;
 use supraman_gitman::Dirs;
 use supraman_gitman::fixture::{Fixture, Generated, git_in};
 
-use super::cells::ref_cell;
-use super::diff::Content;
-use super::live::{Debounces, FOCUS_DELAY, Refresh, git_class, git_refresh, sent, work_files};
-use super::tests::{open, redraw};
-use super::wip::Section;
-use super::wip::tests::{open_file, open_with_editor, select_wip};
-use super::*;
+use crate::git_view::cells::ref_cell;
+use crate::git_view::diff::Content;
+use crate::git_view::live::{Debounces, FOCUS_DELAY, Refresh, git_class, git_refresh, sent, work_files};
+use crate::git_view::tests::{open, redraw};
+use crate::git_view::wip::Section;
+use crate::git_view::wip::tests::{open_file, open_with_editor, select_wip};
+use crate::git_view::*;
 
 const DEADLINE: Duration = Duration::from_secs(10);
 
@@ -30,17 +30,17 @@ fn until(what: &str, within: Duration, cx: &mut VisualTestContext, mut done: imp
 }
 
 /// Tabs this test opens from here on follow their repositories.
-pub(super) fn follow(cx: &mut TestAppContext) {
+pub(crate) fn follow(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
-    cx.update(|cx| cx.set_global(super::refresh::Follows(Debounces { git: Duration::from_millis(20), work: Duration::from_millis(50) })));
+    cx.update(|cx| cx.set_global(crate::git_view::refresh::Follows(Debounces { git: Duration::from_millis(20), work: Duration::from_millis(50) })));
 }
 
-pub(super) fn following(view: &Entity<GitView>, cx: &mut VisualTestContext) {
+pub(crate) fn following(view: &Entity<GitView>, cx: &mut VisualTestContext) {
     until("the watchers start", DEADLINE, cx, |cx| view.read_with(cx, |v, _| v.follow.live().is_some()));
 }
 
 /// Closes the test's window and waits for the watchers to end, so none wakes the app after the test.
-pub(super) fn close(view: Entity<GitView>, cx: &mut VisualTestContext) -> Vec<supraman_core::watch::Stopped> {
+pub(crate) fn close(view: Entity<GitView>, cx: &mut VisualTestContext) -> Vec<supraman_core::watch::Stopped> {
     let stopped = view.read_with(cx, |v, _| v.follow.live().expect("following").stopped());
     drop(view);
     cx.update(|window, _| window.remove_window());

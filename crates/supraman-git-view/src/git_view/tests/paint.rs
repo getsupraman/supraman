@@ -4,8 +4,8 @@
 use gpui::{Bounds, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, TestAppContext, VisualTestContext, point};
 use supraman_gitman::fixture::Fixture;
 
-use super::tests::{open, redraw};
-use super::*;
+use crate::git_view::tests::{open, redraw};
+use crate::git_view::*;
 
 fn painted(view: &Entity<GitView>, cx: &mut VisualTestContext) -> HitTargets {
     let hits = view.read_with(cx, |v, _| v.hits.clone());

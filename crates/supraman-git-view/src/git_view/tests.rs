@@ -1,3 +1,6 @@
+mod paint;
+mod stream;
+
 use gpui::{Modifiers, TestAppContext, VisualTestContext};
 use supraman_gitman::fixture::{Fixture, Generated, git_in};
 use supraman_gitman::{FIRST_PAGE, NEXT_PAGE};

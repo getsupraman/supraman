@@ -349,3 +349,6 @@ impl Render for WorktreePanel {
         div().size_full().flex().flex_col().bg(bg).text_sm().child(content)
     }
 }
+
+#[cfg(test)]
+mod tests;

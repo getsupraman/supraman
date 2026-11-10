@@ -46,7 +46,7 @@ impl Follow {
     }
 }
 
-/// A test's tabs follow their repositories only under this global (`live_tests::follow`, which allows parking).
+/// A test's tabs follow their repositories only under this global (`live::tests::follow`, which allows parking).
 #[cfg(test)]
 pub(crate) struct Follows(pub(crate) live::Debounces);
 
@@ -388,3 +388,6 @@ impl GitView {
         });
     }
 }
+
+#[cfg(test)]
+pub(crate) mod tests;

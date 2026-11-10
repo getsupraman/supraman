@@ -15,10 +15,10 @@ use supraman_gitman::write::LockSet;
 use supraman_ui::hit::HitTargets;
 use supraman_ui::icon::Icon;
 
-use super::background::{self, refresh_wips};
-use super::ref_panel::{Entry, RefPanel, RefWips};
-use super::tests::redraw;
-use super::{GitSizes, GitView, Selected, bind_keys};
+use crate::git_view::background::{self, refresh_wips};
+use crate::git_view::ref_panel::{Entry, RefPanel, RefWips};
+use crate::git_view::tests::redraw;
+use crate::git_view::{GitSizes, GitView, Selected, bind_keys};
 use crate::occupancy;
 
 struct Holder(Entity<GitView>);
@@ -106,8 +106,8 @@ fn entry(view: &Entity<GitView>, path: &str, cx: &mut VisualTestContext) -> Entr
 /// The summary's words as the row shows them, `reading` for its spinner.
 fn summary(view: &Entity<GitView>, path: &str, cx: &mut VisualTestContext) -> Option<String> {
     panel(view, cx).read_with(cx, |p, _| p.summary(path)).map(|s| match s {
-        super::ref_panel::Summary::Reading => "reading".to_string(),
-        super::ref_panel::Summary::Said { upstream, counts } => [upstream, counts].into_iter().filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" "),
+        crate::git_view::ref_panel::Summary::Reading => "reading".to_string(),
+        crate::git_view::ref_panel::Summary::Said { upstream, counts } => [upstream, counts].into_iter().filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" "),
     })
 }
 

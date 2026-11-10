@@ -2,11 +2,11 @@ use gpui::{TestAppContext, VisualTestContext};
 use supraman_gitman::fixture::{Generated, git_in};
 use supraman_gitman::{FIRST_PAGE, NEXT_PAGE, Row};
 
-use super::live::{FOCUS_DELAY, Refresh};
-use super::live_tests::{close, follow, following};
-use super::tests::{open, redraw};
-use super::wip::tests::repaint;
-use super::*;
+use crate::git_view::live::{FOCUS_DELAY, Refresh};
+use crate::git_view::live::tests::{close, follow, following};
+use crate::git_view::tests::{open, redraw};
+use crate::git_view::wip::tests::repaint;
+use crate::git_view::*;
 
 /// A commit with `message` on `parent`, as `branch`.
 fn commit_on(g: &Generated, parent: &str, branch: &str, message: &str) -> String {
@@ -98,7 +98,7 @@ fn refresh_on_activation_only_for_a_tab_without_watchers(cx: &mut TestAppContext
     close(view, cx);
 }
 
-pub(super) fn paged(view: &Entity<GitView>, pages: usize, cx: &mut VisualTestContext) {
+pub(crate) fn paged(view: &Entity<GitView>, pages: usize, cx: &mut VisualTestContext) {
     for _ in 0..pages {
         view.update(cx, |v, cx| v.load_more(cx));
         cx.run_until_parked();
@@ -106,14 +106,14 @@ pub(super) fn paged(view: &Entity<GitView>, pages: usize, cx: &mut VisualTestCon
 }
 
 /// The rows of the repo's first `count` commits laid out in one go.
-pub(super) fn fresh(g: &Generated, wip: bool, count: usize) -> Vec<Row> {
+pub(crate) fn fresh(g: &Generated, wip: bool, count: usize) -> Vec<Row> {
     let repo = g.repo();
     let refs = supraman_gitman::refs(&repo).unwrap();
     let history = supraman_gitman::history(&repo, &refs.tips(), 0, count).unwrap();
     supraman_gitman::Layout::new(&refs, wip).extend(&history.commits)
 }
 
-pub(super) fn rows(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<Row> {
+pub(crate) fn rows(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<Row> {
     view.read_with(cx, |v, _| v.rows.iter().map(|r| r.row.clone()).collect())
 }
 

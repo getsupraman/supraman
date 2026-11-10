@@ -6,10 +6,10 @@ use supraman_gitman::fixture::{Fixture, MAIN_STASH};
 use supraman_gitman::stashes;
 use supraman_ui::hit::HitTargets;
 
-use super::stash_bar::{NOTHING_TO_POP, NOTHING_TO_STASH, POP_KEY, STASH_KEY};
-use super::tests::redraw;
-use super::wip::tests::select_wip;
-use super::*;
+use crate::git_view::stash_bar::{NOTHING_TO_POP, NOTHING_TO_STASH, POP_KEY, STASH_KEY};
+use crate::git_view::tests::redraw;
+use crate::git_view::wip::tests::select_wip;
+use crate::git_view::*;
 use crate::occupancy;
 
 struct Holder(Entity<GitView>);

@@ -2,7 +2,7 @@ use gpui::{Bounds, Entity, Pixels, TestAppContext, VisualTestContext, px, size};
 use supraman_core::text::byte_size;
 use supraman_gitman::fixture::Fixture;
 
-use super::*;
+use crate::git_view::diff::*;
 use crate::git_view::GitView;
 use crate::git_view::tests::{open as open_tab, redraw};
 

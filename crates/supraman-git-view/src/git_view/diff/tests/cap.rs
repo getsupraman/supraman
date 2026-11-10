@@ -1,7 +1,7 @@
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use supraman_gitman::fixture::{Fixture, git_in};
 
-use super::*;
+use crate::git_view::diff::*;
 use crate::git_view::GitView;
 use crate::git_view::tests::{open as open_tab, redraw};
 

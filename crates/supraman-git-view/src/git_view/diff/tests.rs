@@ -1,3 +1,6 @@
+mod cap;
+mod media;
+
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 use supraman_gitman::fixture::{Fixture, git_in};
 use supraman_gitman::{ChangeKind, FileChange};

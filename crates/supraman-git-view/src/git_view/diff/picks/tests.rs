@@ -5,7 +5,7 @@ use supraman_editor::{ZedEditor, rows};
 use supraman_gitman::fixture::{Fixture, run_git};
 use supraman_gitman::{ChangeKind, FileChange};
 
-use super::*;
+use crate::git_view::diff::*;
 use crate::git_view::GitView;
 use crate::git_view::tests::{open as open_tab, redraw};
 

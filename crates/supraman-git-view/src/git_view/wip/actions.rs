@@ -281,3 +281,6 @@ impl WipPanel {
         cx.notify();
     }
 }
+
+#[cfg(test)]
+pub(crate) mod tests;

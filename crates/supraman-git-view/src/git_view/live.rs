@@ -182,3 +182,6 @@ fn work_refresh(top: &Repo, dirs: &Dirs, batch: &Batch) -> Option<Refresh> {
     let files: HashSet<String> = files.into_iter().filter(|f| !ignored.contains(f)).collect();
     (!files.is_empty()).then_some(Refresh::Wip { files: Some(files) })
 }
+
+#[cfg(test)]
+pub(crate) mod tests;

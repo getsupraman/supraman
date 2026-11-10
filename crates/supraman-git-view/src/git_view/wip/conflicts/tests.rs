@@ -5,9 +5,9 @@ use gpui::{Entity, TestAppContext, VisualTestContext};
 use supraman_gitman::fixture::{Fixture, git_in, run_git};
 use supraman_gitman::OperationState;
 
-use super::conflicts::headline;
-use super::write_tests::{click, open_as, painted, panel, stopped_rebase, texts};
-use super::{Section, Shown};
+use crate::git_view::wip::conflicts::headline;
+use crate::git_view::wip::actions::tests::{click, open_as, painted, panel, stopped_rebase, texts};
+use crate::git_view::wip::{Section, Shown};
 use crate::git_view::tests::redraw;
 use crate::git_view::{GitView, Selected};
 use crate::occupancy;

@@ -123,3 +123,6 @@ impl RefPanel {
 fn words(what: &str, reason: &str) -> String {
     if reason.is_empty() { what.to_string() } else { format!("{what}: {reason}") }
 }
+
+#[cfg(test)]
+mod tests;

@@ -411,3 +411,6 @@ impl gpui::EventEmitter<PickEvent> for DiffView {}
 pub(crate) fn hunk_key(ix: usize, what: &str) -> gpui::SharedString {
     format!("diff-hunk-{ix}-{what}").into()
 }
+
+#[cfg(test)]
+mod tests;

@@ -1,9 +1,9 @@
 use gpui::{Entity, TestAppContext, VisualTestContext, px};
 use supraman_gitman::fixture::{Generated, git_in};
 
-use super::details::PanelEvent;
-use super::tests::open;
-use super::{GitView, Selected, graph};
+use crate::git_view::details::PanelEvent;
+use crate::git_view::tests::open;
+use crate::git_view::{GitView, Selected, graph};
 
 fn rows(view: &Entity<GitView>, cx: &mut VisualTestContext) -> usize {
     view.read_with(cx, |v, _| v.rows.len())
@@ -13,7 +13,7 @@ fn toast(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<String> {
     view.read_with(cx, |v, _| v.toast.text().map(str::to_string))
 }
 
-pub(super) fn tag(g: &Generated, name: &str) -> String {
+pub(crate) fn tag(g: &Generated, name: &str) -> String {
     supraman_gitman::refs(&g.repo()).unwrap().tags.into_iter().find(|t| t.name == name).and_then(|t| t.commit).unwrap()
 }
 
@@ -65,7 +65,7 @@ fn a_parent_click_whose_page_is_not_loaded_reveals_it(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn rows_past_the_cap_drop_while_the_view_is_far_above_and_page_in_again(cx: &mut TestAppContext) {
-    use super::cap::{KEEP_BELOW, MAX_ROWS};
+    use crate::git_view::cap::{KEEP_BELOW, MAX_ROWS};
     let g = Generated::shared(12_000);
     let t1 = tag(&g, "t1");
     let (view, cx) = open(&g.dir, cx);
@@ -81,7 +81,7 @@ fn rows_past_the_cap_drop_while_the_view_is_far_above_and_page_in_again(cx: &mut
         v.select_sha(&top, cx);
         v.table.set_scroll_top(px(0.));
     });
-    super::tests::redraw(&view, cx);
+    crate::git_view::tests::redraw(&view, cx);
     let kept = rows(&view, cx);
     assert!(kept < MAX_ROWS && kept >= KEEP_BELOW, "the tail dropped to a page's end: {kept} rows");
     assert!(view.read_with(cx, |v, _| v.more), "more to page in again");

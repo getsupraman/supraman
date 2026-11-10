@@ -252,5 +252,4 @@ impl GitView {
 }
 
 #[cfg(test)]
-#[path = "agent_rows_tests.rs"]
 mod tests;

@@ -351,3 +351,6 @@ impl Render for StashActions {
         div().children(self.render_editing(cx)).children(menu)
     }
 }
+
+#[cfg(test)]
+mod tests;

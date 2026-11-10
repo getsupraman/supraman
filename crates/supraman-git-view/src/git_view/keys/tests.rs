@@ -1,15 +1,15 @@
 use gpui::{Entity, KeyUpEvent, Keystroke, Modifiers, TestAppContext, VisualTestContext};
 use supraman_gitman::fixture::{Fixture, Generated};
 
-use super::diff::{FileStep, Of, Target};
-use super::keys::SETTLE;
-use super::tests::redraw;
-use super::*;
+use crate::git_view::diff::{FileStep, Of, Target};
+use crate::git_view::keys::SETTLE;
+use crate::git_view::tests::redraw;
+use crate::git_view::*;
 use crate::git_view::wip::Section;
 
 fn open<'a>(folder: &std::path::Path, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
     cx.update(|cx| supraman_editor::init(supraman_ui::fonts::MONO, 13., cx));
-    super::tests::open(folder, cx)
+    crate::git_view::tests::open(folder, cx)
 }
 
 /// Clicks row `ix`, which gives the graph the keyboard and reads the row at once.

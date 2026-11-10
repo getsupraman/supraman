@@ -4,7 +4,7 @@ use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 use supraman_gitman::fixture::{Fixture, MAIN_STASH, git_in};
 use supraman_ui::hit::HitTargets;
 
-use super::reword::{ASK_KEY, CANCEL_KEY, CHECK_OUT_A_BRANCH, CHECK_OUT_TO_REWORD, CLICK_TO_AMEND, CLICK_TO_EDIT_STASH, CLICK_TO_REWORD, EDIT_KEY, REBASES_KEY, TYPE_A_SUMMARY, Target, UPDATE_KEY, offer, pushed_question, rebases_words, reword_question};
+use crate::git_view::details::reword::{ASK_KEY, CANCEL_KEY, CHECK_OUT_A_BRANCH, CHECK_OUT_TO_REWORD, CLICK_TO_AMEND, CLICK_TO_EDIT_STASH, CLICK_TO_REWORD, EDIT_KEY, REBASES_KEY, TYPE_A_SUMMARY, Target, UPDATE_KEY, offer, pushed_question, rebases_words, reword_question};
 use crate::git_view::tests::redraw;
 use crate::git_view::undo::UNDO_KEY;
 use crate::git_view::{GitSizes, GitView, Selected, bind_keys};
@@ -61,7 +61,7 @@ fn keys(view: &Entity<GitView>, keys: &str, cx: &mut VisualTestContext) {
     redraw(view, cx);
 }
 
-fn panel(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Entity<super::CommitPanel> {
+fn panel(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Entity<crate::git_view::details::CommitPanel> {
     view.read_with(cx, |v, _| v.panel().clone())
 }
 

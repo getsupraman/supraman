@@ -5,10 +5,10 @@ use supraman_core::process;
 use supraman_gitman::fixture::Generated;
 use supraman_gitman::{FIRST_PAGE, NEXT_PAGE};
 
-use super::refresh_tests::{fresh, paged, rows};
-use super::seek_tests::tag;
-use super::tests::{open, redraw};
-use super::GitView;
+use crate::git_view::refresh::tests::{fresh, paged, rows};
+use crate::git_view::seek::tests::tag;
+use crate::git_view::tests::{open, redraw};
+use crate::git_view::GitView;
 
 /// Waits up to 10 s for `pid` to end.
 fn gone(pid: u32) -> bool {

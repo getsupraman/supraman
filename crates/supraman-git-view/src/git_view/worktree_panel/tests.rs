@@ -10,13 +10,13 @@ use supraman_gitman::fixture::{Fixture, git_in};
 use supraman_gitman::{BackgroundSettings, ChangeKind, FileChange};
 use supraman_ui::hit::HitTargets;
 
-use super::background::{self, refresh_wips};
-use super::branch::OpenGit;
-use super::diff::{Content, Of};
-use super::tests::redraw;
-use super::wip::Section;
-use super::worktree_panel::list_id;
-use super::{GitSizes, GitView, Selected, bind_keys};
+use crate::git_view::background::{self, refresh_wips};
+use crate::git_view::branch::OpenGit;
+use crate::git_view::diff::{Content, Of};
+use crate::git_view::tests::redraw;
+use crate::git_view::wip::Section;
+use crate::git_view::worktree_panel::list_id;
+use crate::git_view::{GitSizes, GitView, Selected, bind_keys};
 use crate::occupancy;
 
 struct Holder(Entity<GitView>);

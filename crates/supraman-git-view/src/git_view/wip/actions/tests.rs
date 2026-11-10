@@ -8,9 +8,9 @@ use supraman_gitman::write::journal;
 use supraman_gitman::{ChangeKind, FileChange};
 use supraman_ui::hit::HitTargets;
 
-use super::compose::counter_colour;
-use super::tests::select_wip;
-use super::*;
+use crate::git_view::wip::compose::counter_colour;
+use crate::git_view::wip::tests::select_wip;
+use crate::git_view::wip::*;
 use crate::git_view::tests::redraw;
 use crate::git_view::undo::UNDO_KEY;
 use crate::git_view::write_gate::WORKING;
@@ -33,7 +33,7 @@ fn open<'a>(folder: &std::path::Path, live: occupancy::Live, cx: &'a mut TestApp
 }
 
 /// A Git tab of `folder` as it opens, whose write gate reads `live`.
-pub(super) fn open_as<'a>(folder: &std::path::Path, live: occupancy::Live, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
+pub(crate) fn open_as<'a>(folder: &std::path::Path, live: occupancy::Live, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
     cx.update(|cx| {
         supraman_ui::init_globals(cx, "test");
         supraman_ui::text_input::bind_keys(cx);
@@ -48,7 +48,7 @@ pub(super) fn open_as<'a>(folder: &std::path::Path, live: occupancy::Live, cx: &
     (view, cx)
 }
 
-pub(super) fn click(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
+pub(crate) fn click(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
     redraw(view, cx);
     let at = view.read_with(cx, |v, _| v.hits.borrow().get(key).map(|h| h.bounds.center())).unwrap_or_else(|| panic!("{key} is painted"));
     cx.simulate_click(at, Modifiers::none());
@@ -56,7 +56,7 @@ pub(super) fn click(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContex
     redraw(view, cx);
 }
 
-pub(super) fn painted(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) -> bool {
+pub(crate) fn painted(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) -> bool {
     let hits = view.read_with(cx, |v, _| v.hits.clone());
     hits.borrow_mut().clear();
     redraw(view, cx);
@@ -69,7 +69,7 @@ fn keys(view: &Entity<GitView>, keys: &str, cx: &mut VisualTestContext) {
     redraw(view, cx);
 }
 
-pub(super) fn panel<R>(view: &Entity<GitView>, cx: &mut VisualTestContext, read: impl FnOnce(&WipPanel, &gpui::App) -> R) -> R {
+pub(crate) fn panel<R>(view: &Entity<GitView>, cx: &mut VisualTestContext, read: impl FnOnce(&WipPanel, &gpui::App) -> R) -> R {
     view.read_with(cx, |v, cx| read(v.wip_panel().read(cx), cx))
 }
 
@@ -79,11 +79,11 @@ fn lists(view: &Entity<GitView>, cx: &mut VisualTestContext) -> (Vec<String>, Ve
     (paths(&shown.unstaged), paths(&shown.staged))
 }
 
-pub(super) fn toast(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<String> {
+pub(crate) fn toast(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<String> {
     view.read_with(cx, |v, _| v.toast.text().map(str::to_string))
 }
 
-pub(super) fn texts(view: &Entity<GitView>, cx: &mut VisualTestContext) -> (String, String, String) {
+pub(crate) fn texts(view: &Entity<GitView>, cx: &mut VisualTestContext) -> (String, String, String) {
     panel(view, cx, |p, cx| {
         let c = p.composer().expect("the commit area is made");
         (c.summary.read(cx).text().to_string(), c.row.read(cx).text().to_string(), c.description.read(cx).text().to_string())
@@ -342,7 +342,7 @@ fn wip_keys_one_summary_in_two_fields_commit_stage_and_unstage(cx: &mut TestAppC
 }
 
 /// `side` with W1 to W3 changing c.txt, stopped in GitMan's reword of W1 with W2 dropped: the pick of W3 conflicts.
-pub(super) fn stopped_rebase(f: &Fixture) -> String {
+pub(crate) fn stopped_rebase(f: &Fixture) -> String {
     let commits = ["one", "two", "three"].map(|n| {
         std::fs::write(f.worktree.join("c.txt"), format!("{n}\n")).unwrap();
         git_in(&f.git, &f.worktree, &["add", "c.txt"], &[], None);
@@ -390,5 +390,5 @@ fn abort_rebase_restores_the_old_tip_and_pops_gitmans_autostash(cx: &mut TestApp
     click(&view, "wip-confirm-yes", cx);
     assert_eq!(git_in(&f.git, &f.worktree, &["rev-parse", "HEAD"], &[], None), old);
     assert_eq!(std::fs::read(f.worktree.join("u.txt")).unwrap(), b"untracked\n");
-    assert_eq!(toast(&view, cx).as_deref(), Some(super::actions::ABORTED_POPPED));
+    assert_eq!(toast(&view, cx).as_deref(), Some(crate::git_view::wip::actions::ABORTED_POPPED));
 }

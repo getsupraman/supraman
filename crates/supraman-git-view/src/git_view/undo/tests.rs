@@ -4,9 +4,9 @@ use supraman_gitman::write::journal::{self, Action};
 use supraman_gitman::write::{Call, LockSet, Writer};
 use supraman_ui::hit::HitTargets;
 
-use super::tests::redraw;
-use super::undo::{REDO_KEY, UNDO_KEY};
-use super::*;
+use crate::git_view::tests::redraw;
+use crate::git_view::undo::{REDO_KEY, UNDO_KEY};
+use crate::git_view::*;
 use crate::occupancy;
 
 /// A Git tab of `folder` whose write gate reads `live`, as the fleet's poll keeps it.
