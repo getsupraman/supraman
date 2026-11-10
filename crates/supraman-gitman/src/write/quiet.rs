@@ -3,8 +3,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 type Listener = Arc<dyn Fn() + Send + Sync>;
 
-/// GitMan's own writes under way on one repository: its watchers drop their batches while any runs, and each
-/// listener hears once when the last one ends.
+/// GitMan's own writes under way on one repository: watchers drop batches meanwhile, listeners hear when the last ends.
 #[derive(Default)]
 pub struct Quiet {
     state: Mutex<QuietState>,

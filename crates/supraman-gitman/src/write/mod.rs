@@ -1,6 +1,4 @@
-//! GitMan's one write layer: every change to a repository runs through a [`Writer`], which holds the operation's
-//! [`LockSet`] on the repo's [`Scheduler`], pauses the repo's watchers ([`Quiet`]) and runs git with [`PINNED`].
-//! Blocking: callers run it on a background executor.
+//! GitMan's one write layer; blocking, so callers run it on a background executor.
 
 pub mod branch;
 pub mod commit;
@@ -107,8 +105,7 @@ fn dubious(stderr: &str) -> Option<String> {
     Some(rest.split_once('\'').map_or(rest, |(path, _)| path).to_string())
 }
 
-/// One git subcommand of a write: its arguments, the paths it acts on (each a literal pathspec), its stdin,
-/// its own environment and editor.
+/// One git subcommand of a write; its paths each become a literal pathspec.
 #[derive(Debug, Clone, Default)]
 pub struct Call {
     args: Vec<String>,
@@ -154,8 +151,7 @@ struct PerRepo {
     quiet: Arc<Quiet>,
 }
 
-/// The scheduler and the pause of the repository `dirs` belong to, one per common git dir in the process: every
-/// Git tab and every worktree of one repository share them.
+/// The scheduler and the pause of `dirs`' repository, one per common git dir in the process.
 fn per_repo(dirs: &Dirs) -> (Arc<Scheduler>, Arc<Quiet>) {
     static REPOS: Mutex<Option<HashMap<String, PerRepo>>> = Mutex::new(None);
     let mut repos = REPOS.lock().unwrap_or_else(PoisonError::into_inner);
@@ -252,8 +248,7 @@ impl Writer {
         Ok((cmd, input))
     }
 
-    /// Runs `f` holding `locks`; while they include a write the repo's watchers are paused, and they hear once the
-    /// last write ends. Blocks until the locks are free.
+    /// Runs `f` holding `locks`, the repo's watchers paused while they include a write; blocks until the locks are free.
     pub fn run<T>(&self, locks: LockSet, f: impl FnOnce(&Session<'_>) -> Result<T, WriteError>) -> Result<T, WriteError> {
         let held = self.scheduler.acquire(locks);
         let _pausing = held.locks().has_write().then(|| Pausing::new(self.quiet.clone(), held.id()));
@@ -261,8 +256,7 @@ impl Writer {
         f(&session)
     }
 
-    /// [`Writer::run`] of a background job, `None` when `locks` are not free now; the watchers are not paused,
-    /// so they refresh only for what it changed.
+    /// [`Writer::run`] of a background job, `None` when `locks` are not free now; the watchers are not paused.
     pub fn try_run_watched<T>(&self, locks: LockSet, f: impl FnOnce(&Session<'_>) -> Result<T, WriteError>) -> Option<Result<T, WriteError>> {
         let held = self.scheduler.try_acquire(locks)?;
         Some(f(&Session { writer: self, held }))

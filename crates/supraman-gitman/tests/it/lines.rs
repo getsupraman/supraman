@@ -1,5 +1,4 @@
-//! A hunk's or some lines' stage, unstage and discard on fixture copies only (C196), for an LF file, a CRLF one
-//! under `core.autocrlf=true` and a UTF-8 one with a BOM.
+//! A hunk's or some lines' stage, unstage and discard, on fixture copies only (C196).
 
 use std::collections::BTreeSet;
 
@@ -12,7 +11,6 @@ const PATH: &str = "picked.txt";
 const BASE: &str = "one\ntwo\nthree\nfour\nfive\nsix\nseven\n";
 const WORK: &str = "one\nTWO\nthree\nfour\nfive\nsix\nSEVEN\neight\n";
 
-/// How a case's file is stored and checked out.
 #[derive(Clone, Copy)]
 enum Case {
     Lf,
@@ -23,7 +21,6 @@ enum Case {
 const CASES: [Case; 3] = [Case::Lf, Case::AutoCrlf, Case::Bom];
 
 impl Case {
-    /// The bytes git stores for `text`.
     fn stored(self, text: &str) -> Vec<u8> {
         match self {
             Case::Lf | Case::AutoCrlf => text.as_bytes().to_vec(),
@@ -31,7 +28,6 @@ impl Case {
         }
     }
 
-    /// The bytes of the working file for `text`.
     fn checked_out(self, text: &str) -> Vec<u8> {
         match self {
             Case::AutoCrlf => text.replace('\n', "\r\n").into_bytes(),

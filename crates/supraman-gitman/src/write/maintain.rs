@@ -1,5 +1,4 @@
-//! GitMan's background `git maintenance run` (docs/research/gitkraken-12.6.1.md §7): the commit-graph, the loose
-//! objects packed and the packs repacked, never while a git holds an index.
+//! GitMan's background `git maintenance run` (docs/research/gitkraken-12.6.1.md §7).
 
 use std::path::Path;
 
@@ -9,7 +8,6 @@ use crate::{Dirs, Version};
 /// The first git whose `geometric-repack` task replaces `incremental-repack`.
 pub const GEOMETRIC: Version = Version { major: 2, minor: 54, patch: 0 };
 
-/// The tasks run on `version`.
 pub fn tasks(version: Version) -> [&'static str; 3] {
     let repack = if version >= GEOMETRIC { "--task=geometric-repack" } else { "--task=incremental-repack" };
     ["--task=commit-graph", "--task=loose-objects", repack]

@@ -1,6 +1,4 @@
-//! GitMan's fetch, pull and push (docs/research/gitkraken-12.6.1.md §4 part B): never `git pull`, the user's
-//! credential helper untouched, ssh's prompts through the caller's askpass environment ([`Transfer::env`]),
-//! `--progress` read off stderr as it comes, and a Cancel that drops the child so its tree dies.
+//! GitMan's fetch, pull and push (docs/research/gitkraken-12.6.1.md §4 part B); never `git pull`.
 
 use std::ffi::OsString;
 use std::sync::Arc;
@@ -146,8 +144,7 @@ pub fn fetch(s: &Session, remote: &str, prune: bool, t: &Transfer) -> Result<(),
     if moved.success() { Ok(()) } else { Err(moved.failed(&call)) }
 }
 
-/// Every remote fetched at once, their progress said on the calling thread; the ones that failed, each with its
-/// reason, as one error.
+/// Every remote fetched at once; the ones that failed, each with its reason, as one error.
 pub fn fetch_all(s: &Session, remotes: &[String], prune: bool, t: &Transfer) -> Result<(), WriteError> {
     if remotes.is_empty() {
         return Err(WriteError::Refused(NO_REMOTES));
@@ -161,12 +158,10 @@ pub fn fetch_all(s: &Session, remotes: &[String], prune: bool, t: &Transfer) -> 
 "))) }
 }
 
-/// The fetches run at once: each waits on the network, so a usual repo's remotes all go together, while one with
-/// many remotes does not start a git and an ssh for each.
+/// Enough for a usual repo's remotes to go together, without a git and an ssh for each of many.
 const FETCHES_AT_ONCE: usize = 8;
 
-/// The remotes fetched [`FETCHES_AT_ONCE`] at a time, their progress said on the calling thread; each remote's own
-/// outcome.
+/// The remotes fetched [`FETCHES_AT_ONCE`] at a time; each remote's own outcome.
 pub fn fetch_each(s: &Session, remotes: &[String], prune: bool, t: &Transfer) -> Vec<(String, Result<(), WriteError>)> {
     let writer = s.writer();
     let (said, heard) = std::sync::mpsc::channel::<Progress>();
@@ -286,8 +281,7 @@ pub enum Pulled {
     Gone { upstream: String },
 }
 
-/// HEAD's branch brought up to its upstream: that remote fetched, then GitMan's merge (`--autostash`, with
-/// `--ff-only` for [`PullMode::FastForwardOnly`]) or GitMan's rebase with its autostash; never `git pull`.
+/// HEAD's branch brought up to its upstream: that remote fetched, then GitMan's merge or rebase; never `git pull`.
 pub fn pull(s: &Session, mode: PullMode, prune: bool, t: &Transfer) -> Result<Pulled, WriteError> {
     idle(s)?;
     let Some(branch) = current(s)? else { return Err(WriteError::Refused(DETACHED)) };
@@ -378,8 +372,7 @@ fn rejection(porcelain: &str) -> Option<Pushed> {
     }
 }
 
-/// `local`'s upstream set to `branch` on `remote`; while this repo has not fetched that branch, written to the
-/// branch's config as `--set-upstream-to` writes it, since git refuses a tracking ref it does not have.
+/// `local`'s upstream set; written to the config directly while unfetched, since git refuses a tracking ref it lacks.
 pub fn set_upstream(s: &Session, local: &str, remote: &str, branch: &str) -> Result<(), WriteError> {
     if s.verify(&format!("refs/remotes/{remote}/{branch}^{{commit}}"))?.is_some() {
         s.output(&Call::new(&["branch", &format!("--set-upstream-to={remote}/{branch}"), "--", local]))?;

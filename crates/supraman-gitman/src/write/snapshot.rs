@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use super::{Call, Resource, Session, WriteError};
 use crate::parse::{nul_records, text};
 
-/// Who a snapshot commit says made it.
 const SNAPSHOT_AUTHOR: (&str, &str) = ("GitMan", "gitman@supraman.invalid");
 
 /// A copy of the index in the git dir, removed when it drops.
@@ -17,9 +16,7 @@ impl Drop for TempIndex {
 }
 
 impl Session<'_> {
-    /// A dangling commit (parents HEAD and a commit of the index, message `what`) of the index with the working
-    /// files of `paths` (tracked, untracked or deleted) added, built in a copy of the index: the real index is not
-    /// touched. Its sha. The session holds at least the index's read lock.
+    /// A dangling commit (parents HEAD and a commit of the index) of the index plus `paths`' working files, built in a copy of the index.
     pub fn snapshot(&self, paths: &[&str], what: &str) -> Result<String, WriteError> {
         assert!(self.held().locks().access(Resource::Index).is_some(), "a snapshot reads the index under its lock");
         let temp = self.temp_index("snapshot");
@@ -43,7 +40,6 @@ impl Session<'_> {
         self.commit_tree(&tree, &parents, what)
     }
 
-    /// A commit of `tree` with `parents` and `message` by [`SNAPSHOT_AUTHOR`]; its sha.
     pub(super) fn commit_tree(&self, tree: &str, parents: &[&str], message: &str) -> Result<String, WriteError> {
         let (name, email) = SNAPSHOT_AUTHOR;
         let call = commit_tree_call(tree, parents, message).env("GIT_AUTHOR_NAME", name).env("GIT_AUTHOR_EMAIL", email).env("GIT_COMMITTER_NAME", name).env("GIT_COMMITTER_EMAIL", email);

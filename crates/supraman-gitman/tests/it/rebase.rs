@@ -1,5 +1,4 @@
-//! An older commit reworded and the rebase's continue, skip and abort, on fixture copies and their bare temp
-//! remote only (C196).
+//! An older commit reworded and the rebase's steps, on fixture copies and their bare temp remote only (C196).
 
 use supraman_gitman::fixture::Fixture;
 use supraman_gitman::write::rebase::{self, Autostash, Rebased};
