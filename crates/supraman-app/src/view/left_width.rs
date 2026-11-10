@@ -2,20 +2,29 @@
 
 use std::sync::Arc;
 
-use gpui::{Context, Pixels};
+use gpui::{Context, Pixels, px};
 use supraman_core::Settings;
 use supraman_core::store::Newest;
 
-use super::FleetView;
+use super::{FleetView, MIN_LEFT_WIDTH};
 
 #[derive(Default)]
 pub struct LeftWidth {
     saves: Arc<Newest<u32>>,
+    dragged: bool,
+}
+
+impl LeftWidth {
+    /// The width `settings.toml` keeps, unless the user dragged the panel before it was read.
+    pub fn loaded(&self, saved: Option<u32>) -> Option<Pixels> {
+        saved.filter(|_| !self.dragged).map(|width| px(width as f32).max(MIN_LEFT_WIDTH))
+    }
 }
 
 impl FleetView {
     pub(super) fn drag_left(&mut self, width: Pixels, cx: &mut Context<Self>) {
         self.left_width = width;
+        self.left_saves.update(cx, |saves, _| saves.dragged = true);
         cx.notify();
     }
 
@@ -36,3 +45,6 @@ impl FleetView {
         .detach();
     }
 }
+
+#[cfg(test)]
+mod tests;

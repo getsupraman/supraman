@@ -9,7 +9,7 @@ use supraman_core::Settings;
 use supraman_ui::nudge::Nudged;
 use supraman_ui::timeline;
 
-use super::{Cli, FleetView, MIN_LEFT_WIDTH, Poller, REFRESH_EVERY, Refresh, any_exit};
+use super::{Cli, FleetView, Poller, REFRESH_EVERY, Refresh, any_exit};
 use crate::supervise::Report;
 
 impl FleetView {
@@ -24,8 +24,8 @@ impl FleetView {
     }
 
     fn settings_loaded(&mut self, loaded: Settings, cx: &mut Context<Self>) {
-        if let Some(width) = loaded.window.left_width {
-            self.left_width = px(width as f32).max(MIN_LEFT_WIDTH);
+        if let Some(width) = self.left_saves.read(cx).loaded(loaded.window.left_width) {
+            self.left_width = width;
         }
         self.term_font_size = px(loaded.terminal.font_size() as f32);
         self.term_font_family = SharedString::from(loaded.terminal.font_family(&self.installed_fonts));
