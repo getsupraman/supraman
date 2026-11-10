@@ -1,10 +1,9 @@
 use std::path::PathBuf;
 
+use supraman_core::text::{Kind, classify};
+
 use crate::parse::text;
 use crate::{GitError, Repo};
-
-/// How far git looks for a NUL to call a file binary (`buffer_is_binary`).
-const BINARY_PROBE: usize = 8000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Blob {
@@ -62,7 +61,6 @@ pub fn object_sizes(repo: &Repo, objects: &[&str]) -> Result<Vec<Option<u64>>, G
     })
 }
 
-/// Binary as git decides it: a NUL among the first 8000 bytes.
-pub(crate) fn is_binary(bytes: &[u8]) -> bool {
-    bytes[..bytes.len().min(BINARY_PROBE)].contains(&0)
+fn is_binary(bytes: &[u8]) -> bool {
+    classify(bytes) == Kind::Binary
 }

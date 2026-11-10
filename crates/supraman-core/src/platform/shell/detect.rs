@@ -138,9 +138,9 @@ fn dev_shells(vs: &VsInstance, powershell: &Path, cmd: &Path) -> Vec<Shell> {
 
 /// The distros in `wsl.exe -l -q` output (UTF-8 or UTF-16LE, BOM or not), without `docker-desktop*`.
 pub fn parse_wsl(bytes: &[u8]) -> Vec<String> {
-    let text = match crate::text::decode(bytes) {
-        (_, crate::text::Encoding::Utf8 | crate::text::Encoding::Unknown) if bytes.contains(&0) => crate::text::utf16(bytes, true),
-        (text, _) => text,
+    let text = match crate::text::classify(bytes) {
+        crate::text::Kind::Binary => crate::text::utf16(bytes, true),
+        crate::text::Kind::Text(_) => crate::text::decode(bytes).0,
     };
     text.lines()
         .map(|line| line.trim_matches(|c: char| c.is_whitespace() || c == '\0'))

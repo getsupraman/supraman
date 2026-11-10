@@ -127,3 +127,20 @@ fn a_change_only_bytes_show_is_named_and_a_text_change_keeps_its_hunks(cx: &mut 
     assert_eq!((d.read_with(cx, |d, _| d.shown()), d.read_with(cx, |d, _| d.hunk_count())), ("text".to_string(), 1));
     assert!(painted(&view, &d, Mode::Diff, Layout::Split, cx).is_empty(), "a real change shows its hunks");
 }
+
+#[gpui::test]
+fn a_utf16_file_with_a_bom_shows_as_text_in_its_encoding(cx: &mut TestAppContext) {
+    let f = Fixture::shared();
+    let (view, cx) = open(&f, cx);
+    let d = show(&view, &f, "utf16.txt", cx);
+    let said = (d.read_with(cx, |d, _| d.shown()), d.read_with(cx, |d, _| d.encoding_word().to_string()));
+    assert_eq!(said, ("same text: Encoding changed: UTF-16 LE → UTF-8".to_string(), "UTF-16 LE → UTF-8".to_string()));
+    for layout in [Layout::Split, Layout::Inline] {
+        assert_eq!(keys(&painted(&view, &d, Mode::Diff, layout, cx)), ["diff-invisible"], "{layout:?}");
+    }
+
+    let d = show(&view, &f, "wide.txt", cx);
+    let said = (d.read_with(cx, |d, _| d.shown()), d.read_with(cx, |d, _| d.encoding_word().to_string()), d.read_with(cx, |d, _| d.hunk_count()));
+    assert_eq!(said, ("text".to_string(), "UTF-16 LE".to_string(), 1));
+    assert!(painted(&view, &d, Mode::Diff, Layout::Split, cx).is_empty(), "UTF-16 text shows its hunks");
+}
