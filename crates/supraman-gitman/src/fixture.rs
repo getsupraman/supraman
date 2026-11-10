@@ -284,7 +284,7 @@ impl Fixture {
         self.git(&["worktree", "add", "-q", "-b", "side", &worktree, &second]);
     }
 
-    /// Under load a bare repo just made has read as none (7g's selftest once): that refusal is tried again, any other fails.
+    /// A bare repo just made can read as none under load: that refusal is tried again, any other fails.
     fn push_to_new_origin(&self) {
         const NOT_A_REPO: &str = "does not appear to be a git repository";
         let mut refused = String::new();

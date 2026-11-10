@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 
 use async_channel::Receiver;
 use supraman_core::testing::{eventually, polled};
-use supraman_workman::fake::{FakeWorkman, closed_base};
+use supraman_workman::closed_base;
+use supraman_workman::fake::FakeWorkman;
 use supraman_workman::{Client, Stream, StreamConfig, StreamEvent, StreamSignal};
 
 const TOKEN: &str = "fake-reader-token";

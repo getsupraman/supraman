@@ -126,7 +126,6 @@ type Routes = Arc<Mutex<Vec<(String, Answer)>>>;
 type Queued = Arc<Mutex<HashMap<String, VecDeque<Answer>>>>;
 type Log = Arc<(Mutex<Vec<Seen>>, Condvar)>;
 
-pub use crate::closed_base;
 
 /// Every kind of row Workman's inbox serves.
 pub const INBOX_KINDS: [&str; 7] = ["question", "blocked", "blocker_finding", "done_unverified", "stale_in_progress", "expired_claim", "assumption_due"];

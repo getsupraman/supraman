@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn a_closed_port_is_unreachable_before_any_sign_in() {
         let dir = tempfile::tempdir().unwrap();
-        let closed = supraman_workman::fake::closed_base();
+        let closed = supraman_workman::closed_base();
         let auth = Auth::with_store(dir.path(), Arc::new(MemoryStore::default())).with_server_json(Some(crate::test_auth::server_json(dir.path(), &closed)));
         let down = detect(Some(&auth));
         assert_eq!(down, WorkmanStatus::Unreachable { url: closed.clone(), error: "connection refused".into() });

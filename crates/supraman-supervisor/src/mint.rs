@@ -721,7 +721,8 @@ pub fn remove_mcp_config(mcp_dir: &Path, name: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use supraman_workman::fake::{Answer, FakeWorkman, closed_base};
+    use supraman_workman::closed_base;
+    use supraman_workman::fake::{Answer, FakeWorkman};
 
     use super::*;
 

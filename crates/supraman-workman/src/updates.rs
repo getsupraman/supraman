@@ -573,7 +573,7 @@ mod tests {
     fn an_unreachable_server_is_a_failure() {
         let home = tempfile::tempdir().unwrap();
         let source = Source {
-            api: crate::fake::closed_base(),
+            api: crate::closed_base(),
             repo: REPO.into(),
             keys: Ok(vec![key(1).verifying_key()]),
             running: Version::new(0, 1, 0),

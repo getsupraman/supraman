@@ -35,7 +35,8 @@ fn transport(e: &ureq::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fake::{Answer, FakeWorkman, closed_base};
+    use crate::closed_base;
+    use crate::fake::{Answer, FakeWorkman};
 
     const QUICK: Duration = Duration::from_secs(3);
 

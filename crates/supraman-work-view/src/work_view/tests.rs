@@ -651,7 +651,7 @@ fn without_a_kept_overview_a_folder_is_bound_by_one_read_and_unreachable_workman
     assert!(matches!(bound(&fresh, "beta", cx), Binding::Project(p) if p.id == PB));
     assert!(matches!(bound(&fresh, "alpha", cx), Binding::Project(p) if p.id == PA));
     assert_eq!(overview_reads(&fake), before + 1, "read once, then kept");
-    let closed = cx.update(|_, cx| WorkHub::ready(Client::new(&supraman_workman::fake::closed_base(), "fake-test-reader"), cx));
+    let closed = cx.update(|_, cx| WorkHub::ready(Client::new(&supraman_workman::closed_base(), "fake-test-reader"), cx));
     let unreachable = cx.update(|_, cx| WorkInbox::of_repos(closed, repo_of, cx));
     match bound(&unreachable, "alpha", cx) {
         Binding::Unavailable(why) => assert!(!why.is_empty(), "Workman's words"),

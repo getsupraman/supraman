@@ -8,7 +8,8 @@ use supraman_core::secret::{MemoryStore, SecretStore};
 use supraman_core::testing::{eventually, polled};
 use supraman_core::workman_server::{self, ServerJson};
 use supraman_workman::auth::{http_browser, http_browser_with};
-use supraman_workman::fake::{Answer, FakeWorkman, closed_base, location_query};
+use supraman_workman::closed_base;
+use supraman_workman::fake::{Answer, FakeWorkman, location_query};
 use supraman_workman::{Auth, AuthError, AuthStatus, Client};
 
 fn overview() -> Answer {
