@@ -303,7 +303,7 @@ impl FleetView {
             self.deleted.insert(sid.clone(), now);
         }
         self.drop_deleted();
-        if let Some(hands) = self.hands.clone() {
+        if let Some(hands) = self.lifecycle.hands.clone() {
             let ids = session_ids.to_vec();
             let task = cx.background_executor().spawn(async move {
                 let mut hands = hands.lock().unwrap_or_else(|e| e.into_inner());

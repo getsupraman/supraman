@@ -89,7 +89,7 @@ impl FleetView {
     /// Called on every render, so every change to the tabs reaches the file; nothing is written while a quit closes them.
     pub(super) fn persist_tabs(&mut self, cx: &App) {
         let _stall = supraman_ui::stall::section("render: persist_tabs");
-        if !self.saving.tabs_restored || self.saving.tabs_frozen || self.quit_asked || self.home.is_none() {
+        if !self.saving.tabs_restored || self.saving.tabs_frozen || self.lifecycle.quit_asked || self.home.is_none() {
             return;
         }
         let now = self.saved_tabs(cx);
@@ -101,7 +101,7 @@ impl FleetView {
 
     /// Once the first session list is in and the hand tokens of the last run are released.
     pub(super) fn reopen_tabs(&mut self, cx: &mut Context<Self>) {
-        if self.saving.tabs_restored || self.saving.tabs_reopening || !self.sessions_read || !self.hands_ready {
+        if self.saving.tabs_restored || self.saving.tabs_reopening || !self.sessions_read || !self.lifecycle.hands_ready {
             return;
         }
         let Some(home) = self.home.clone() else {

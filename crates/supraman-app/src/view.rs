@@ -41,7 +41,7 @@ use util::paths::PathStyle;
 
 use crate::compose::{self, Compose};
 use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
-use crate::hand::{Extras, Hands};
+use crate::hand::Extras;
 use crate::settings_window::{self, SettingsView};
 use crate::dismissed_messages::DismissedMessages;
 use crate::stars::Stars;
@@ -61,6 +61,7 @@ pub(crate) mod git_tab;
 mod hand_tab;
 mod left;
 mod left_width;
+mod lifecycle;
 mod links;
 mod manage;
 mod menu;
@@ -262,8 +263,6 @@ pub struct FleetView {
     pub probe: FrameProbe,
     pub hits: HitTargets,
     pub(crate) window: AnyWindowHandle,
-    quitting: bool,
-    quit_asked: bool,
     pub home: Option<PathBuf>,
     pub plugin_dir: Option<PathBuf>,
     pub setup_notices: Vec<String>,
@@ -302,12 +301,7 @@ pub struct FleetView {
     pub open_with: fn(&Path) -> Result<(), String>,
     pub open_link_with: fn(&Link, &mut App),
     pub workman: WorkmanStatus,
-    hands: Option<Arc<Mutex<Hands>>>,
-    /// The last run's hand tokens are released, so a reopened tab's mint is not revoked with them.
-    hands_ready: bool,
     pub hand_notices: Vec<String>,
-    hands_released: bool,
-    quit_release: Option<gpui::Task<()>>,
     desired_writes: futures::channel::mpsc::UnboundedSender<DesiredWrite>,
     pub closed: Vec<Session>,
     /// A selftest's closed sessions, kept across transcript scans.
@@ -337,6 +331,7 @@ pub struct FleetView {
     pub sidebar: sidebar::Sidebar,
     pub term_look: term_look::TermLook,
     pub workman_state: workman_state::WorkmanState,
+    lifecycle: lifecycle::Lifecycle,
     pub scheduling: schedule_state::ScheduleState,
     pub(crate) tab_keys: Entity<tab_keys::TabKeyState>,
 }
@@ -571,8 +566,6 @@ impl FleetView {
             probe: FrameProbe::default(),
             hits: HitTargets::default(),
             window: window.window_handle(),
-            quitting: false,
-            quit_asked: false,
             home,
             plugin_dir: None,
             setup_notices: Vec::new(),
@@ -612,11 +605,7 @@ impl FleetView {
                 Link::Path(path) => open::open_off_thread(path.clone(), cx).detach(),
             },
             workman: WorkmanStatus::Checking,
-            hands_ready: hands.is_none(),
-            hands,
             hand_notices: Vec::new(),
-            hands_released: false,
-            quit_release: None,
             desired_writes,
             closed: Vec::new(),
             injected_closed: Vec::new(),
@@ -644,6 +633,7 @@ impl FleetView {
             sidebar: sidebar::Sidebar::new(cx),
             term_look,
             workman_state: workman_state::WorkmanState::new(workman_recheck),
+            lifecycle: lifecycle::Lifecycle::new(hands),
             scheduling,
             tab_keys: cx.new(|_| tab_keys::TabKeyState::new(defaults.window.tab_keys())),
         }
@@ -825,7 +815,7 @@ impl FleetView {
         let Some(home) = self.home.clone() else {
             return;
         };
-        let (auth, hands) = (crate::signin::auth(&home), self.hands.clone());
+        let (auth, hands) = (crate::signin::auth(&home), self.lifecycle.hands.clone());
         let task = cx.background_executor().spawn(async move { supervise::sign_out(&auth, hands) });
         cx.spawn(async move |this, cx| {
             let notices = task.await;
@@ -1681,8 +1671,8 @@ impl FleetView {
                         if let Some(tab) = this.tab_mut(id) {
                             tab.detach = Detach::Failed;
                         }
-                        this.quitting = false;
-                        this.quit_asked = false;
+                        this.lifecycle.quitting = false;
+                        this.lifecycle.quit_asked = false;
                         cx.notify();
                     })
                     .ok();
@@ -1716,21 +1706,21 @@ impl FleetView {
     }
 
     fn quit_step(&mut self, cx: &mut Context<Self>) -> bool {
-        if !self.quitting || self.has_attach_tabs() {
+        if !self.lifecycle.quitting || self.has_attach_tabs() {
             return false;
         }
-        let Some(hands) = self.hands.clone().filter(|_| !self.hands_released) else {
+        let Some(hands) = self.lifecycle.hands.clone().filter(|_| !self.lifecycle.hands_released) else {
             return true;
         };
-        if self.quit_release.is_none() {
+        if self.lifecycle.quit_release.is_none() {
             let release = cx.background_executor().spawn(async move { crate::hand::release_all_within(hands, QUIT_RELEASE_WITHIN) });
-            self.quit_release = Some(cx.spawn(async move |this, cx| {
+            self.lifecycle.quit_release = Some(cx.spawn(async move |this, cx| {
                 for notice in release.await.unwrap_or_default() {
                     log::warn!("{notice}");
                 }
                 this.update(cx, |this, cx| {
-                    this.hands_released = true;
-                    this.quit_release = None;
+                    this.lifecycle.hands_released = true;
+                    this.lifecycle.quit_release = None;
                     if this.quit_step(cx) {
                         this.close_for_quit(cx);
                     }
@@ -1742,7 +1732,7 @@ impl FleetView {
     }
 
     fn close_for_quit(&mut self, cx: &mut Context<Self>) {
-        self.quitting = false;
+        self.lifecycle.quitting = false;
         self.close_settings(cx);
         self.window.update(cx, |_, window, cx| crate::tray::close(window, cx)).ok();
     }
@@ -1775,19 +1765,19 @@ impl FleetView {
     }
 
     pub fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.quit_asked = true;
+        self.lifecycle.quit_asked = true;
         if self.should_close(window, cx) {
             crate::tray::close(window, cx);
         }
     }
 
     fn should_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if !self.quit_asked {
+        if !self.lifecycle.quit_asked {
             self.close_settings(cx);
             crate::tray::hide(window, cx);
             return false;
         }
-        self.quitting = true;
+        self.lifecycle.quitting = true;
         let ids: Vec<u64> = self
             .tabs
             .iter()
@@ -1797,9 +1787,9 @@ impl FleetView {
         for id in ids {
             self.close_tab(id, cx);
         }
-        let close = self.quitting && self.quit_step(cx);
+        let close = self.lifecycle.quitting && self.quit_step(cx);
         if close {
-            self.quitting = false;
+            self.lifecycle.quitting = false;
             self.close_settings(cx);
         }
         close

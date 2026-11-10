@@ -55,7 +55,7 @@ impl FleetView {
             notices.extend(notice);
             this.update(cx, |this, cx| {
                 this.hand_notices.extend(notices);
-                this.hands_ready = true;
+                this.lifecycle.hands_ready = true;
                 this.reopen_tabs(cx);
                 cx.notify();
             })
@@ -166,7 +166,7 @@ impl FleetView {
             tab.launched_session = resumes.clone();
             tab.session_name = own.clone();
         }
-        let (from, hands, at) = (self.extras_from(), self.hands.clone(), cwd.clone());
+        let (from, hands, at) = (self.extras_from(), self.lifecycle.hands.clone(), cwd.clone());
         let mint = hands.clone();
         let ready = cx.background_executor().spawn(async move {
             let launch = mint.map_or(Launch::Plain, |m| crate::hand::launch_locked(&m, &at, own.as_deref(), resumes.as_deref()));

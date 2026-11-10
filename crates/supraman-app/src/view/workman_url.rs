@@ -77,7 +77,7 @@ impl FleetView {
 
     pub(super) fn sync_server(&mut self, origin: String, cx: &mut Context<Self>) {
         self.workman_state.synced_server = Some(origin.clone());
-        let Some(hands) = self.hands.clone() else {
+        let Some(hands) = self.lifecycle.hands.clone() else {
             return;
         };
         let at = origin.clone();
