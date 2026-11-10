@@ -79,8 +79,7 @@ fn pill(key: String, group: &RefGroup, colour: usize, palette: &Palette, hits: &
         .children(kind_icons(group).into_iter().map(|k| div().flex_none().child(k.svg(12., palette.text))))
 }
 
-/// A pill of row `ix`'s group `group`: its right-click menu, its double-click checkout, dragged onto another pill
-/// and taking one dropped on it.
+/// A pill of row `ix`'s group `group`: its menu, double-click checkout, drag and drop.
 fn acting(pill: Div, key: String, ix: usize, group: &RefGroup, at: usize, sha: SharedString, palette: &Palette, cx: &mut Context<GitView>) -> Stateful<Div> {
     let drop_border = palette.text;
     let dragged = DraggedPill { group: group.clone(), sha };
@@ -136,8 +135,7 @@ pub(crate) fn refs(ix: usize, row: &GraphRow, view: RefCellView, selected: bool,
     cell.child(connector).into_any_element()
 }
 
-/// Every group, the first on top, in one block laid over the row's pill: as wide as its widest group and never
-/// narrower than the pill, each group as wide as the block.
+/// Every group in one block over the row's pill, as wide as its widest group and never narrower than the pill.
 fn list(ix: usize, row: &GraphRow, groups: &[RefGroup], colour: usize, palette: &Palette, hits: &HitTargets, cx: &mut Context<GitView>) -> AnyElement {
     let last = groups.len().saturating_sub(1);
     div()
@@ -164,8 +162,7 @@ fn list(ix: usize, row: &GraphRow, groups: &[RefGroup], colour: usize, palette: 
         .into_any_element()
 }
 
-/// The summary, then the body muted, the WIP row's `// WIP` muted too; whichever overflows ends with an ellipsis. A bar in the row's lane colour on the
-/// column's left edge closes the graph's band.
+/// The summary, then the body muted (the WIP row's `// WIP` too), after a bar in the row's lane colour.
 pub(crate) fn message(ix: usize, row: &GraphRow, wip: Option<&str>, palette: &Palette, hits: &HitTargets) -> AnyElement {
     let (summary, body, colour): (SharedString, SharedString, _) = match wip {
         Some(counts) => ("// WIP".into(), counts.to_string().into(), palette.muted),
@@ -199,8 +196,7 @@ pub(crate) fn sha_text(row: &GraphRow) -> &str {
     short_sha(&row.sha)
 }
 
-/// Muted in [`fonts::figures`]: the date and sha columns share one face and keep their digits aligned; centred on the
-/// row's line box as the message is.
+/// Muted in [`fonts::figures`], so the date and sha columns keep their digits aligned.
 fn figures(text: String, palette: &Palette, key: String, hits: &HitTargets) -> AnyElement {
     let line = fonts::figures(div()).relative().whitespace_nowrap().line_height(px(LINE)).text_color(palette.muted).child(SharedString::from(text)).child(hit_target(hits, key));
     div().h_full().flex().items_center().child(line).into_any_element()

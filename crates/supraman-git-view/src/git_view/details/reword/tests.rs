@@ -1,4 +1,4 @@
-//! The message box's amend and reword through the real tab, on fixture copies and their bare temp remote (C196).
+//! The message box's amend and reword through the real tab, on fixture copies and their bare temp remote.
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use supraman_gitman::fixture::{Fixture, MAIN_STASH};

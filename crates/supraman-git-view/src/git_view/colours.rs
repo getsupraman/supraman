@@ -1,5 +1,4 @@
-//! The Git tab's colours, all from the selected theme (C152): its lanes ([`supraman_ui::themes::lanes`]), and the bands, pill
-//! fills and connectors as those lanes at fixed alpha steps over the tab's background.
+//! The Git tab's colours, all from the selected theme: its lanes, and those lanes at fixed alphas over the background.
 
 use gpui::Hsla;
 use supraman_ui::themes::lanes::{self, AVATAR, BAND, PILL};

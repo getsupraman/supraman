@@ -1,5 +1,4 @@
-//! The background fetch and maintenance through real tabs on fixture copies and their temp bare `origin` (C196), the
-//! test executor's clock driving the intervals.
+//! The background fetch and maintenance through real tabs on fixture copies, the test executor's clock driving them.
 
 use std::cell::Cell;
 use std::path::Path;
@@ -31,8 +30,7 @@ fn held() -> Option<Box<dyn std::any::Any + Send>> {
     Some(Box::new(()))
 }
 
-/// The background on for this test, its heavy-job lock free (the gate's own cargo holds the real one) and its clock
-/// the test's.
+/// The background on for this test, its heavy-job lock free (the gate's own cargo holds the real one).
 fn start(home: Option<&Path>, settings: BackgroundSettings, cx: &mut TestAppContext) {
     cx.update(|cx| {
         supraman_ui::init_globals(cx, "test");

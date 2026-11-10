@@ -1,5 +1,4 @@
-//! The ref writes through the real tab: the ref panel's and the pills' double-click checkout and menus, the name
-//! dialog and the row's field, the questions, and a pill dropped on another, on fixture copies (C196).
+//! The ref writes through the real tab on fixture copies: checkout, menus, the name field, the questions, drops.
 
 use std::path::Path;
 

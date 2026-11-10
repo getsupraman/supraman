@@ -1,7 +1,4 @@
-//! A repository's background work while a Git tab shows it (docs/research/gitkraken-12.6.1.md §4 part B, §7): one
-//! schedule per common git dir, shared by every tab and worktree of the repository and dropped with its last tab.
-//! It fetches every remote silently when a tab opens, each time one becomes the active tab and every
-//! `[gitman] fetch_every_minutes`, runs `git maintenance` ([`maintain`]) and reads the other worktrees ([`wips`]).
+//! A repository's background work while a Git tab shows it (docs/research/gitkraken-12.6.1.md §4 part B, §7).
 
 mod maintain;
 mod wips;
@@ -119,8 +116,7 @@ impl Background {
     }
 }
 
-/// The background keys a tab read from its home, taken while none are: `None` (they did not parse) leaves the
-/// schedules unset, so nothing runs on a default the user did not choose.
+/// The background keys a tab read, taken while none are; `None` (unparsed) leaves the schedules unset.
 pub(super) fn offer(home: Option<PathBuf>, settings: Option<BackgroundSettings>, cx: &mut App) {
     if !enabled(cx) {
         return;
@@ -318,8 +314,7 @@ async fn fetch_loop(key: String, mut nudged: Nudged, cx: &mut AsyncApp) {
     }
 }
 
-/// The fetch's failures kept per remote, a success forgetting its remote's; the tabs read the repo again when a
-/// ref moved.
+/// The fetch's failures kept per remote, a success forgetting its remote's; the tabs reread the repo when a ref moved.
 fn fetched_into(key: &str, fetched: Option<Result<Fetched, WriteError>>, cx: &mut App) {
     let fetched = match fetched {
         None => return,

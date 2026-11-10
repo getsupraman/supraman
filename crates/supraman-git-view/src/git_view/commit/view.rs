@@ -1,5 +1,4 @@
-//! The tab's side of the commit, WIP row and file menus: a row's right-click turned into its menu, a list's file
-//! or folder into its items, and each item sent to the owner of its write.
+//! The tab's side of the commit, WIP row and file menus: right-clicks turned into menus, each item sent to its write's owner.
 
 use gpui::{AnyElement, AppContext as _, Context, Entity, MouseButton, MouseDownEvent, Pixels, Point, div, prelude::*};
 use supraman_ui::menu::item;
@@ -11,7 +10,7 @@ use crate::git_view::branch::menu::{RefAct, Subject};
 use crate::git_view::branch::{group_subject, pill_graph_items};
 use crate::git_view::wip::Ask as WipAsk;
 
-/// The WIP row's menu (B2).
+/// The WIP row's menu.
 fn wip_items() -> Vec<supraman_ui::menu::MenuItem<RefAct>> {
     vec![
         item("wip-menu-stage-all", "Stage all changes", RefAct::Commit(CommitAct::StageAll)),

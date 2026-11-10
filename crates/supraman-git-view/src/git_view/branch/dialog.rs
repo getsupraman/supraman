@@ -1,6 +1,4 @@
-//! The name of a new branch or tag, a renamed branch or an annotated tag's message: a dialog over the tab, or for
-//! a branch or a light tag at a row the graph shows, one field in that row's Branch / Tag cell. Hit keys:
-//! `git-name-create`, `git-name-cancel`, `git-name-checkout`.
+//! The name of a new or renamed branch or tag, or an annotated tag's message: a dialog, or a field in the row's cell.
 
 use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, Subscription, Window, div, prelude::*, px};
 use supraman_gitman::write::branch::name_problem;

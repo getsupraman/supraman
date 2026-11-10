@@ -1,5 +1,4 @@
-//! A file's change in the graph's place: the file at the commit, or its diff against the parent split or
-//! inline, on Zed's editor (`supraman_editor`), read-only (C146), read off the UI thread.
+//! A file's change in the graph's place, on Zed's editor (`supraman_editor`), read-only and read off the UI thread.
 
 mod image;
 mod invisible;

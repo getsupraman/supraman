@@ -1,5 +1,4 @@
-//! What the diff viewer reads for one file, blocking, for `cx.background_spawn`: its two sides (a commit and
-//! its parent, HEAD and the index, the index and the worktree), decoded, and the language that highlights it.
+//! What the diff viewer reads for one file, blocking: its two sides decoded, and the language that highlights it.
 
 use std::sync::Arc;
 
@@ -70,8 +69,7 @@ pub(crate) struct Sizes {
 /// The largest file the viewer reads; a larger side shows only its size.
 pub(crate) const MAX_SHOWN_BYTES: u64 = 6 * 1024 * 1024;
 
-/// Why a file is not shown: a side over [`MAX_SHOWN_BYTES`], or an image side over [`image::MAX_PIXELS`]
-/// (`width × height` per side).
+/// Why a file is not shown: a side over [`MAX_SHOWN_BYTES`], or an image side over [`image::MAX_PIXELS`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TooLarge {
     Bytes(Sizes),

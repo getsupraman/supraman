@@ -1,6 +1,4 @@
-//! The ref menus (docs/research/gitkraken-12.6.1.md §B): one builder per kind, each filling a [`RefMenu`]'s groups
-//! in GitKraken's G1–G13 order, a rule between the non-empty ones. Another unit adds its items by pushing them into
-//! the group they belong to ([`RefMenu::add`]) in the builder of their kind.
+//! The ref menus (docs/research/gitkraken-12.6.1.md §B): one builder per kind, each filling a [`RefMenu`]'s groups.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -11,25 +9,24 @@ use supraman_ui::menu::{MenuItem, item};
 
 use crate::git_view::ref_panel::RefAction;
 
-/// A menu's groups in the order they show; `Sync`, `Worktree`, `Rewrite` and `Compare` are filled by
-/// gitman-actions/remote and gitman-actions/commit-menus.
+/// A menu's groups in the order they show.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Group {
-    /// Pull, push, set upstream (gitman-actions/remote).
+    /// Pull, push, set upstream.
     Sync,
     Merge,
     Checkout,
-    /// Create worktree from (gitman-actions/commit-menus).
+    /// Create worktree from.
     Worktree,
-    /// Create branch here; cherry-pick, reset, revert (commit-menus).
+    /// Create branch here; cherry-pick, reset, revert.
     Commit,
-    /// Interactive rebase and its shortcuts (commit-menus).
+    /// Interactive rebase and its shortcuts.
     Rewrite,
     Manage,
     Copy,
     Graph,
-    /// Compare against the working directory (commit-menus).
+    /// Compare against the working directory.
     Compare,
     Tags,
 }
@@ -97,7 +94,6 @@ pub(crate) enum Subject {
     Tag { name: String, sha: String, annotated: bool },
     Detached { sha: String },
     Worktree { path: PathBuf, label: String, branch: Option<String>, main: bool, current: bool, locked: bool, prunable: bool },
-    /// A remote's row: its items are gitman-actions/remote's.
     Remote { name: String },
 }
 
@@ -167,7 +163,7 @@ pub(crate) fn build(subject: &Subject, facts: &Facts) -> RefMenu<RefAct> {
     menu
 }
 
-/// B3 G3: merge, fast-forward and rebase between `clicked` and HEAD's branch.
+/// Merge, fast-forward and rebase between `clicked` and HEAD's branch.
 fn merge_items(menu: &mut RefMenu<RefAct>, clicked: &str, local: bool, sha: &str, facts: &Facts) {
     let Some(current) = facts.current() else { return };
     if clicked == current || facts.head_sha() == Some(sha) || facts.under_way {
@@ -206,7 +202,7 @@ pub(crate) fn commit_items(menu: &mut RefMenu<RefAct>, sha: &str) {
     menu.add(Group::Tags, item("ref-create-annotated", "Create annotated tag here", RefAct::CreateTag { at: sha.into(), annotated: true }));
 }
 
-/// B3: a branch row, a remote branch row, or a pill's group of a local branch and its remotes.
+/// A branch row, a remote branch row, or a pill's group of a local branch and its remotes.
 fn refs_menu(menu: &mut RefMenu<RefAct>, locals: &[String], remotes: &[String], sha: &str, facts: &Facts) {
     let current = facts.current();
     let (clicked, local) = match (locals.first(), remotes.first()) {
@@ -242,7 +238,6 @@ fn refs_menu(menu: &mut RefMenu<RefAct>, locals: &[String], remotes: &[String], 
     menu.add(Group::Copy, item("ref-copy-name", "Copy branch name", RefAct::Copy { text: clicked.into(), what: "the branch name" }));
 }
 
-/// B4: a tag.
 fn tag_menu(menu: &mut RefMenu<RefAct>, name: &str, sha: &str, annotated: bool, facts: &Facts) {
     if let Some(current) = facts.current().filter(|_| facts.head_sha() != Some(sha) && !facts.under_way)
         && matches!(facts.relation, Some(Relation::Ahead | Relation::Diverged))
@@ -262,7 +257,6 @@ fn tag_menu(menu: &mut RefMenu<RefAct>, name: &str, sha: &str, annotated: bool, 
     menu.add(Group::Copy, item("ref-copy-name", "Copy tag name", RefAct::Copy { text: name.into(), what: "the tag name" }));
 }
 
-/// §B part 1 item 5: a worktree's row.
 fn worktree_menu(menu: &mut RefMenu<RefAct>, subject: &Subject) {
     let Subject::Worktree { path, label, branch, main, current, locked, prunable } = subject else { return };
     if !*current && !*prunable {
@@ -290,7 +284,7 @@ fn remove_items(menu: &mut RefMenu<RefAct>, path: &Path, branch: Option<&str>, l
     }
 }
 
-/// A ref dragged onto another, as B7 names them: its branch name, whether it is local, its commit.
+/// A ref dragged onto another: its branch name, whether it is local, its commit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Dragged {
     pub(crate) name: String,
@@ -298,8 +292,7 @@ pub(crate) struct Dragged {
     pub(crate) sha: String,
 }
 
-/// B7: what dropping `dragged` on `target` offers; `relation` is the dragged commit's to the target's. Empty when
-/// the two are one commit or neither is a local branch.
+/// What dropping `dragged` on `target` offers (`relation`: dragged to target); empty for one commit or no local branch.
 pub(crate) fn drop_menu(dragged: &Dragged, target: &Dragged, relation: Relation, facts: &Facts) -> RefMenu<RefAct> {
     let mut menu = RefMenu::default();
     if dragged.sha == target.sha || dragged.name == target.name || facts.under_way {

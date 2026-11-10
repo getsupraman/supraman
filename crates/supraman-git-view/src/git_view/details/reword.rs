@@ -1,6 +1,4 @@
-//! The message box edited in place: HEAD's message as a summary and a description, amended through the tab's
-//! write gate (asked first once a remote holds HEAD), an older commit's reworded by GitMan's rebase (asked first
-//! once pushed or with work in progress), or a stash's message, saved by the tab's stash writes.
+//! The message box edited in place: HEAD's amended, an older commit's reworded by GitMan's rebase, or a stash's saved.
 
 use supraman_core::text::count;
 use std::sync::{Arc, Mutex, PoisonError};

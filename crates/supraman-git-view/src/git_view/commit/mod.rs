@@ -1,7 +1,4 @@
-//! The commit row's, the WIP row's and the file lists' menus (docs/research/gitkraken-12.6.1.md §B B1, B2, items
-//! 8, 9 and 11) and the writes they start that no other owner has: cherry-pick, revert, rebase onto and reset of a
-//! commit, a commit's patch, a file restored from a commit, ignored, deleted or opened. Every write runs through the
-//! tab's [`WriteGate`] off the UI thread.
+//! The commit row's, the WIP row's and the file lists' menus (docs/research/gitkraken-12.6.1.md §B) and the writes no other owner has.
 
 pub(crate) mod files;
 pub(crate) mod menu;

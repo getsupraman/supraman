@@ -1,6 +1,4 @@
-//! The other worktrees' work in progress of a schedule's repository, read when a tab opens or becomes the active one,
-//! at each fetch tick and on [`refresh`]; never on a timer of its own, never by a watcher. A read the repository's
-//! locks hold off waits for the next of these, as a fetch does.
+//! The other worktrees' work in progress of a schedule's repository; never read on a timer or by a watcher.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -87,8 +85,7 @@ pub(crate) fn after_write(id: EntityId, cx: &App) {
     }
 }
 
-/// A writer of the schedule `key`, and the worktrees to leave out: the one every tab shows, none when its tabs show
-/// different ones.
+/// A writer of the schedule `key`, and the worktree to leave out when every tab shows the same one.
 fn job(key: &str, cx: &App) -> Step<(Writer, Vec<PathBuf>)> {
     let Some(bg) = cx.try_global::<Background>() else { return Step::End };
     let views = bg.views(key);

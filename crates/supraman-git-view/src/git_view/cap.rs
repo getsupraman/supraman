@@ -1,5 +1,4 @@
-//! The loaded rows' cap: while the view is far above the last loaded row, the rows below a page's end are
-//! dropped and that page's layout kept, so scrolling back down pages them in again from there.
+//! The loaded rows' cap: far above the last loaded row, the rows below a page's end drop, its layout kept to page them in again.
 
 use gpui::{AppContext as _, Context, px};
 use std::rc::Rc;
@@ -53,8 +52,7 @@ impl Marks {
 }
 
 impl GitView {
-    /// Drops the rows below a page's end while more than [`MAX_ROWS`] are loaded and the view's top is more
-    /// than twice [`KEEP_BELOW`] above the last; the selected row stays.
+    /// Drops the rows below a page's end while over [`MAX_ROWS`] are loaded and the view is far above; the selection stays.
     pub(super) fn trim_tail(&mut self, cx: &mut Context<Self>) {
         let pages = self.pages.read(cx);
         if pages.rows.len() <= MAX_ROWS || pages.paging || self.seek.is_some() || pages.layout.is_none() {
@@ -69,8 +67,7 @@ impl GitView {
 }
 
 impl Pages {
-    /// The rows below the page end at or below `keep` dropped, unless fewer than [`KEEP_BELOW`] lie below it: where
-    /// they were cut and the rows dropped.
+    /// The rows below the page end at or below `keep` dropped unless fewer than [`KEEP_BELOW`]: where cut, and the rows.
     fn cut(&mut self, keep: usize) -> Option<(usize, Vec<GraphRow>)> {
         if keep + KEEP_BELOW > self.rows.len() {
             return None;

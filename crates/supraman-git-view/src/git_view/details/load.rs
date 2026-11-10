@@ -1,5 +1,4 @@
-//! What the commit panel reads for one commit or stash, blocking, for `cx.background_spawn`: its details, its
-//! changed files and the whole tree at it, with both file trees built.
+//! What the commit panel reads for one commit or stash, blocking: its details, changed files and whole tree.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -49,8 +48,7 @@ pub(crate) struct Loaded {
     pub(crate) counts: Counts,
     /// The changed files as a tree.
     pub(crate) changed: FileTree,
-    /// Every file at the commit, the changed ones marked, and the deleted ones it no longer holds; read only
-    /// with View all files on.
+    /// Every file at the commit, the changed and deleted ones marked; read only with View all files on.
     pub(crate) all: Option<Whole>,
     /// The changed files' paths.
     pub(crate) files: HashSet<String>,

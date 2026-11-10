@@ -1,5 +1,4 @@
-//! The graph's column header menu (docs/research/gitkraken-12.6.1.md §B B8): a tick per column in their order, the
-//! last one shown kept, and the default and compact layouts. Which columns are hidden is kept in the layout file.
+//! The graph's column header menu (docs/research/gitkraken-12.6.1.md §B); the hidden columns are kept in the layout file.
 
 use gpui::{AnyElement, Context, Pixels, Point};
 use supraman_ui::menu::{ContextMenu, MenuItem, item};
