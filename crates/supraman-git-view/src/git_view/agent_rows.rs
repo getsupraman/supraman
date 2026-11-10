@@ -2,6 +2,7 @@
 //! laid out again from the rows loaded as the live set changes, without a git read; the panel a selected one shows.
 
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -117,53 +118,63 @@ impl GitView {
             self.agents.shown = sessions;
             return;
         }
-        let selected = self.selected();
-        let ix = self.unstack_agents(self.table.selected());
-        let ix = self.stack_agents(sessions, ix);
+        let selected = self.selected(cx);
+        let ix = self.unstack_agents(self.table.selected(), cx);
+        let ix = self.stack_agents(sessions, ix, cx);
         let ix = match &selected {
-            Some(Selected::Agent(name)) => self.agent_row(name),
+            Some(Selected::Agent(name)) => self.agent_row(name, cx),
             _ => ix,
         };
         self.table.select(ix);
-        if self.selected() != selected {
+        if self.selected(cx) != selected {
             self.selection_moved(cx);
         }
     }
 
     /// The rows read afresh with the sessions working here stacked on them.
-    pub(super) fn stack_fresh(&mut self) {
+    pub(super) fn stack_fresh(&mut self, cx: &mut App) {
         self.agents.reset();
         let sessions = self.agents_here();
-        self.stack_agents(sessions, None);
+        self.stack_agents(sessions, None, cx);
     }
 
-    pub(super) fn agent_row(&self, name: &str) -> Option<usize> {
-        self.rows.iter().position(|r| r.agent.as_deref() == Some(name))
+    pub(super) fn agent_row(&self, name: &str, cx: &App) -> Option<usize> {
+        self.pages.read(cx).rows.iter().position(|r| r.agent.as_deref() == Some(name))
     }
 
     /// Takes the stack away; where the row `ix` is then.
-    fn unstack_agents(&mut self, ix: Option<usize>) -> Option<usize> {
+    fn unstack_agents(&mut self, ix: Option<usize>, cx: &mut App) -> Option<usize> {
         let Some(base) = self.agents.base.take() else { return ix };
         let (at, n) = (self.agents.at, self.agents.stacked);
-        self.rows.drain(at..at + n);
-        self.rows[at].row = base;
-        self.marks.shift(at, -(n as isize));
+        self.pages.update(cx, |p, _| {
+            let rows = Rc::make_mut(&mut p.rows);
+            rows.drain(at..at + n);
+            rows[at].row = base;
+            p.marks.shift(at, -(n as isize));
+        });
         ix.and_then(|i| if i < at { Some(i) } else if i < at + n { None } else { Some(i - n) })
     }
 
     /// Stacks a row per session on the WIP row, else on HEAD's row once it is loaded; where the row `ix` is then.
-    fn stack_agents(&mut self, sessions: Vec<LiveSession>, ix: Option<usize>) -> Option<usize> {
+    fn stack_agents(&mut self, sessions: Vec<LiveSession>, ix: Option<usize>, cx: &mut App) -> Option<usize> {
         self.agents.shown = sessions;
         let n = self.agents.shown.len();
-        let wip = self.rows.first().filter(|r| r.wip()).map(|_| 0);
-        let head = || self.heads.head.as_ref().and_then(|head| self.rows.iter().position(|r| r.commit() && r.sha == *head));
-        let Some(at) = wip.or_else(head).filter(|_| n > 0) else { return ix };
-        let (above, base) = self.rows[at].row.stacked_above(n);
-        self.agents.base = Some(std::mem::replace(&mut self.rows[at].row, base));
+        let (shown, head) = (&self.agents.shown, self.heads.head.as_ref());
+        let stacked = self.pages.update(cx, |p, _| {
+            let wip = p.rows.first().filter(|r| r.wip()).map(|_| 0);
+            let head = || head.and_then(|head| p.rows.iter().position(|r| r.commit() && r.sha == *head));
+            let at = wip.or_else(head).filter(|_| n > 0)?;
+            let rows = Rc::make_mut(&mut p.rows);
+            let (above, base) = rows[at].row.stacked_above(n);
+            let base = std::mem::replace(&mut rows[at].row, base);
+            let added: Vec<GraphRow> = above.into_iter().zip(shown).map(|(row, s)| GraphRow { agent: Some(s.name.clone().into()), ..load::graph_row(row, None) }).collect();
+            rows.splice(at..at, added);
+            p.marks.shift(at, n as isize);
+            Some((at, base))
+        });
+        let Some((at, base)) = stacked else { return ix };
+        self.agents.base = Some(base);
         (self.agents.at, self.agents.stacked) = (at, n);
-        let rows: Vec<GraphRow> = above.into_iter().zip(&self.agents.shown).map(|(row, s)| GraphRow { agent: Some(s.name.clone().into()), ..load::graph_row(row, None) }).collect();
-        self.rows.splice(at..at, rows);
-        self.marks.shift(at, n as isize);
         ix.map(|i| if i >= at { i + n } else { i })
     }
 
@@ -179,7 +190,8 @@ impl GitView {
     /// Row `ix`'s cell of column `col`, row `ix` an agent's: the bot node, then `agent <name> is working here` after
     /// its state's dot; a double-click attaches it.
     pub(super) fn agent_cell(&mut self, ix: usize, col: usize, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
-        let row = &self.rows[ix];
+        let rows = self.pages.read(cx).rows.clone();
+        let row = &rows[ix];
         let Some(name) = row.agent.clone() else { return div().into_any_element() };
         let cell = match col {
             1 => graph::cell(ix, row, false, palette, &self.hits),
@@ -246,8 +258,8 @@ pub(super) fn state_dot(activity: Activity, cx: &App) -> gpui::Div {
 
 #[cfg(test)]
 impl GitView {
-    pub(crate) fn agent_rows(&self) -> Vec<(usize, String)> {
-        self.rows.iter().enumerate().filter_map(|(i, r)| Some((i, r.agent.as_ref()?.to_string()))).collect()
+    pub(crate) fn agent_rows(&self, cx: &App) -> Vec<(usize, String)> {
+        self.pages.read(cx).rows.iter().enumerate().filter_map(|(i, r)| Some((i, r.agent.as_ref()?.to_string()))).collect()
     }
 }
 

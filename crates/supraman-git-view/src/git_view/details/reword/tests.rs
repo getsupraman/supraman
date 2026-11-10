@@ -107,7 +107,7 @@ fn heads_message_box_opens_to_a_summary_and_description_and_amends_only_the_mess
     assert_eq!(who(&f), before, "author, date and tree kept");
     assert_eq!(f.git(&["diff", "--cached"]), staged, "the staged changes stay staged and out of the commit");
     assert_eq!(toast(&view, cx).as_deref(), Some("Amended \u{201c}Ahead, amended\u{201d}"));
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(new.into())), "the new HEAD is selected");
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Commit(new.into())), "the new HEAD is selected");
     assert!(!open_field(&view, cx));
 }
 
@@ -216,7 +216,7 @@ fn an_older_commits_box_offers_reword_naming_the_commits_it_rebases_and_rewords_
     assert_eq!(toast(&view, cx).as_deref(), Some("Reworded \u{201c}W one, reworded\u{201d}"));
     let new = side_head(&f);
     assert_ne!(new, w3);
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(new.into())), "the new HEAD is selected");
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Commit(new.into())), "the new HEAD is selected");
     assert!(!open_field(&view, cx));
 }
 

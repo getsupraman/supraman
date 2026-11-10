@@ -77,7 +77,7 @@ fn show(view: &Entity<GitView>, r: &Repo, path: &str, cx: &mut VisualTestContext
     view.update(cx, |v, cx| v.open_diff(target, cx));
     cx.run_until_parked();
     redraw(view, cx);
-    view.read_with(cx, |v, _| v.diff().cloned()).expect("the viewer is open")
+    view.read_with(cx, |v, cx| v.diff(cx).cloned()).expect("the viewer is open")
 }
 
 fn rows(d: &Entity<DiffView>, cx: &mut VisualTestContext) -> Vec<(std::ops::Range<u32>, std::ops::Range<u32>)> {
@@ -212,7 +212,7 @@ fn diff_view_opens_at_its_first_change_split_and_inline(cx: &mut TestAppContext)
     for layout in [Layout::Split, Layout::Inline] {
         view.update(cx, |v, cx| {
             v.close_diff(cx);
-            v.diff_layout = layout;
+            v.viewer.update(cx, |w, _| w.layout = layout);
         });
         let d = show(&view, &r, "big.txt", cx);
         assert_eq!(d.read_with(cx, |d, _| d.layout()), layout);
@@ -236,7 +236,7 @@ fn diff_view_reloaded_after_a_change_below_keeps_its_top_row_and_change(cx: &mut
     for layout in [Layout::Split, Layout::Inline] {
         view.update(cx, |v, cx| {
             v.close_diff(cx);
-            v.diff_layout = layout;
+            v.viewer.update(cx, |w, _| w.layout = layout);
         });
         let d = show(&view, &r, "big.txt", cx);
         d.update_in(cx, |d, window, cx| d.next_change(window, cx));
@@ -277,7 +277,7 @@ fn diff_view_compares_a_merge_with_its_first_parent(cx: &mut TestAppContext) {
     cx.simulate_click(row, Modifiers::none());
     cx.run_until_parked();
     redraw(&view, cx);
-    let d = view.read_with(cx, |v, _| v.diff().cloned()).expect("a file's click opens the viewer");
+    let d = view.read_with(cx, |v, cx| v.diff(cx).cloned()).expect("a file's click opens the viewer");
     assert_eq!(texts(&d, cx), ("a\n".into(), "a\nb\n".into()), "against the first parent, which lacked the line");
     assert_eq!(rows(&d, cx), [(1..1, 1..2)]);
 }
@@ -287,12 +287,12 @@ fn diff_view_opens_a_5000_line_file_without_a_stall(cx: &mut TestAppContext) {
     let r = repo();
     let (view, cx) = open(&r, cx);
     for layout in [Layout::Split, Layout::Inline] {
-        view.update(cx, |v, _| v.diff_layout = layout);
+        view.update(cx, |v, cx| v.viewer.update(cx, |w, _| w.layout = layout));
         let started = std::time::Instant::now();
         let target = Target::commit(r.change.clone(), Some(r.base.clone()), "big.txt".into(), change(&r, "big.txt"));
         let d = view.update(cx, |v, cx| {
             v.open_diff(target, cx);
-            v.diff().cloned().expect("the viewer is open")
+            v.diff(cx).cloned().expect("the viewer is open")
         });
         assert!(d.read_with(cx, |d, _| matches!(d.content(), Content::Loading)), "{layout:?}: read and diffed off the UI thread");
         cx.run_until_parked();
@@ -311,9 +311,9 @@ fn diff_view_closes_back_to_the_graph_as_it_was(cx: &mut TestAppContext) {
     view.update(cx, |v, cx| v.select_sha(&r.change, cx));
     redraw(&view, cx);
     let at = |view: &Entity<GitView>, cx: &mut VisualTestContext| {
-        view.read_with(cx, |v, _| {
+        view.read_with(cx, |v, cx| {
             let ix = v.table.selected().expect("a row is selected");
-            (v.selected(), v.hits.borrow().get(&format!("git-row-{ix}")).map(|h| h.bounds.origin))
+            (v.selected(cx), v.hits.borrow().get(&format!("git-row-{ix}")).map(|h| h.bounds.origin))
         })
     };
     let before = at(&view, cx);
@@ -327,13 +327,13 @@ fn diff_view_closes_back_to_the_graph_as_it_was(cx: &mut TestAppContext) {
     cx.simulate_click(view.read_with(cx, |v, _| v.hits.borrow()["diff-close"].bounds.center()), Modifiers::none());
     view.read_with(cx, |v, _| v.hits.borrow_mut().clear());
     redraw(&view, cx);
-    assert!(view.read_with(cx, |v, _| v.diff().is_none()));
+    assert!(view.read_with(cx, |v, cx| v.diff(cx).is_none()));
     assert_eq!(at(&view, cx), before, "selection and scroll kept");
     let d = show(&view, &r, "m.rs", cx);
     assert_eq!(d.read_with(cx, |d, _| d.layout()), Layout::Inline, "the next file opens in the last layout");
     cx.simulate_keystrokes("escape");
     redraw(&view, cx);
-    assert!(view.read_with(cx, |v, _| v.diff().is_none()), "Esc closes too");
+    assert!(view.read_with(cx, |v, cx| v.diff(cx).is_none()), "Esc closes too");
 }
 
 #[test]
@@ -369,6 +369,6 @@ fn a_stash_file_opens_its_change_against_the_base(cx: &mut TestAppContext) {
     assert_eq!(of, [(&Of::Commit { sha: f.sha("stash_message").into(), parent: Some(f.sha("merge").into()) }, "a.txt")], "the stash commit against its base");
     view.update(cx, |v, cx| v.open_diff(files[0].clone(), cx));
     cx.run_until_parked();
-    let d = view.read_with(cx, |v, _| v.diff().cloned()).expect("the viewer is open");
+    let d = view.read_with(cx, |v, cx| v.diff(cx).cloned()).expect("the viewer is open");
     assert_eq!(texts(&d, cx), ("one\ntwo\n".to_string(), "one\ntwo\nstashed\n".to_string()));
 }

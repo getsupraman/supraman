@@ -2,7 +2,6 @@
 //! under way or files are conflicted, a conflicted file's buttons (Take current, Take incoming, Mark Resolved),
 //! a resolved file's Mark Conflicted, and their writes through the tab's gate.
 
-use std::sync::PoisonError;
 
 use gpui::{Context, Div, SharedString, Stateful, div, prelude::*, px};
 use supraman_gitman::write::conflicts::{self, Marked, Sequence, Side};
@@ -13,7 +12,7 @@ use supraman_ui::icon::Icon;
 use supraman_ui::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
-use super::actions::{Doing, index_write};
+use super::actions::{Doing, Kept, index_write};
 use super::compose::split;
 use super::render::live;
 use super::{Shown, WipPanel};
@@ -57,12 +56,9 @@ impl WipPanel {
     /// Mark resolved of `paths` (`None`: every conflicted file); asks first while one still holds conflict
     /// markers, unless `anyway`.
     pub(crate) fn resolve(&mut self, paths: Option<Vec<String>>, anyway: bool, cx: &mut Context<Self>) {
-        let (marked, which) = (self.marked.clone(), paths.clone());
-        self.request(Doing::Resolve { paths, anyway }, index_write(), move |s| {
-            let outcome = conflicts::mark_resolved(s, which.as_deref(), anyway)?;
-            *marked.lock().unwrap_or_else(PoisonError::into_inner) = Some(outcome);
-            Ok(())
-        }, cx);
+        let which = paths.clone();
+        let job = self.writes.keeping(Kept::Marked, move |s| conflicts::mark_resolved(s, which.as_deref(), anyway));
+        self.request(Doing::Resolve { paths, anyway }, index_write(), job, cx);
     }
 
     pub(crate) fn unresolve(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
@@ -71,8 +67,8 @@ impl WipPanel {
 
     /// The files the last mark resolved left conflicted for their markers.
     pub(super) fn markers_left(&self) -> Option<Vec<String>> {
-        match self.marked.lock().unwrap_or_else(PoisonError::into_inner).take() {
-            Some(Marked::Markers(files)) => Some(files),
+        match self.writes.kept() {
+            Some(Kept::Marked(Marked::Markers(files))) => Some(files),
             _ => None,
         }
     }

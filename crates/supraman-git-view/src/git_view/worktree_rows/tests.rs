@@ -38,13 +38,13 @@ fn head(dir: &Path, f: &Fixture) -> String {
 
 /// Each worktree row's folder and the sha of the row below it.
 fn worktree_rows(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<(String, String)> {
-    view.read_with(cx, |v, _| {
-        v.rows.iter().enumerate().filter_map(|(ix, r)| Some((path_key(r.worktree()?), v.rows.get(ix + 1).map(|b| b.sha.to_string()).unwrap_or_default()))).collect()
+    view.read_with(cx, |v, cx| {
+        v.pages.read(cx).rows.iter().enumerate().filter_map(|(ix, r)| Some((path_key(r.worktree()?), v.pages.read(cx).rows.get(ix + 1).map(|b| b.sha.to_string()).unwrap_or_default()))).collect()
     })
 }
 
 fn row_of(view: &Entity<GitView>, dir: &Path, cx: &mut VisualTestContext) -> usize {
-    view.read_with(cx, |v, _| v.rows.iter().position(|r| r.worktree().is_some_and(|p| path_key(p) == path_key(dir)))).expect("a row of the worktree")
+    view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| r.worktree().is_some_and(|p| path_key(p) == path_key(dir)))).expect("a row of the worktree")
 }
 
 #[gpui::test]
@@ -65,15 +65,15 @@ fn a_worktree_row_shows_above_its_head_only_while_changed_or_worked_in_and_not_w
     let mut expected = vec![(path_key(&f.worktree), head(&f.worktree, &f)), (path_key(&extra), f.sha("root").to_string())];
     expected.sort();
     assert_eq!(rows, expected, "a live session below a clean worktree shows it too");
-    let commits = view.read_with(cx, |v, _| (v.commits, v.rows.iter().filter(|r| r.commit()).count()));
+    let commits = view.read_with(cx, |v, cx| (v.pages.read(cx).commits, v.pages.read(cx).rows.iter().filter(|r| r.commit()).count()));
     assert_eq!(commits.0, commits.1, "the worktree rows count as no commits");
 
     view.update(cx, |v, cx| {
-        let ix = v.rows.iter().position(|r| r.worktree().is_some()).unwrap();
+        let ix = v.pages.read(cx).rows.iter().position(|r| r.worktree().is_some()).unwrap();
         v.table.select(Some(ix));
         v.selection_moved(cx);
     });
-    assert!(matches!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Worktree(_))));
+    assert!(matches!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Worktree(_))));
 
     let reads = cx.update(|_, cx| background::wips(view.entity_id(), cx).map(|w| w.read(cx).reads)).unwrap();
     cx.update(|_, cx| background::apply(BackgroundSettings { worktree_wip: Some(false), ..QUIET }, cx));

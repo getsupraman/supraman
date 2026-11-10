@@ -53,7 +53,7 @@ impl GitView {
             RemoteEvent::Facts(facts) => {
                 let facts = facts.clone();
                 self.branch.update(cx, |b, _| b.set_remote_facts(facts));
-                if let Some(writer) = self.remote.read(cx).writer().cloned() {
+                if let Some(writer) = self.gate.read(cx).writer().cloned() {
                     crate::git_view::background::join(self, &writer, cx);
                 }
             }

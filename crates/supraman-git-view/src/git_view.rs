@@ -18,6 +18,7 @@ mod keys;
 pub(crate) mod layout;
 mod live;
 mod load;
+mod pages;
 pub mod probe;
 mod refresh;
 mod seek;
@@ -27,6 +28,7 @@ mod splice;
 pub(crate) mod stash;
 mod stash_bar;
 pub(crate) mod undo;
+mod viewer;
 mod wip;
 mod wip_row;
 mod worktree_panel;
@@ -43,7 +45,7 @@ use std::sync::Arc;
 
 use gpui::{AnyElement, App, AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle, Pixels, Render, SharedString, Subscription, Task, Window, div, prelude::*, px};
 use supraman_gitman::write::Occupancy;
-use supraman_gitman::{History, Layout, Repo, WorktreeRow};
+use supraman_gitman::{Repo, WorktreeRow};
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::{banner, button};
 use supraman_ui::tooltip::Tooltip;
@@ -58,9 +60,9 @@ use theme::ActiveTheme as _;
 
 use cells::ref_cell;
 use details::{CommitPanel, PanelEvent};
-use diff::{DiffView, Layout as DiffLayout, Mode as DiffMode};
+use diff::DiffView;
 use colours::Palette;
-use load::{GraphRow, Heads, Problem, Wip};
+use load::{Heads, Problem, Wip};
 use ref_panel::{RefEvent, RefPanel};
 use stash::StashActions;
 use branch::{BranchActions, OpenGit};
@@ -161,21 +163,12 @@ pub struct GitView {
     /// Why some of `[gitman]` is not taken, until dismissed.
     settings_notice: Option<String>,
     repo: Option<Repo>,
-    tips: Arc<[String]>,
     heads: Heads,
-    /// Away while a page is laid out with it.
-    layout: Option<Layout>,
-    /// The walk's `rev-list`, read on by the next page; away while a page reads it.
-    history: Option<History>,
-    rows: Vec<GraphRow>,
-    commits: usize,
+    pages: Entity<pages::Pages>,
     /// The other worktrees whose WIP rows the last graph read laid out.
     worktree_rows: Vec<WorktreeRow>,
     agents: agent_rows::Agents,
     wip: Option<Wip>,
-    more: bool,
-    paging: bool,
-    page_error: Option<String>,
     table: TableState,
     /// The columns' preferred widths.
     widths: Vec<Pixels>,
@@ -189,19 +182,12 @@ pub struct GitView {
     panel_width: Pixels,
     ref_panel: Entity<RefPanel>,
     seek: Option<seek::Seek>,
-    marks: cap::Marks,
     /// Why a pick or a key selected nothing, over the graph.
     toast: ToastSlot,
     /// A ref's commit to reveal once the refresh under way walks it.
     reveal_after: Option<SharedString>,
     _panel_events: [Subscription; 4],
-    /// The file viewer in the graph's place, while one is open.
-    diff: Option<(Entity<DiffView>, [Subscription; 3])>,
-    /// The last viewer's mode and layout, the next one's start.
-    diff_mode: DiffMode,
-    diff_layout: DiffLayout,
-    /// The viewer opened since the last frame and takes the keyboard on the next.
-    focus_diff: bool,
+    viewer: Entity<viewer::Viewer>,
     /// The viewer closed since the last frame and the graph takes the keyboard on the next.
     focus_graph: bool,
     band: band::Band,
@@ -271,18 +257,11 @@ impl GitView {
                 load: Load::Loading,
                 settings_notice: None,
                 repo: None,
-                tips: Arc::from([]),
                 heads: Heads::default(),
-                layout: None,
-                history: None,
-                rows: Vec::new(),
-                commits: 0,
+                pages: cx.new(|_| pages::Pages::default()),
                 worktree_rows: Vec::new(),
                 agents: agent_rows::Agents::default(),
                 wip: None,
-                more: false,
-                paging: false,
-                page_error: None,
                 table: TableState::new(cx),
                 widths: columns(None).iter().map(|c| c.default).collect(),
                 graph_max: None,
@@ -294,14 +273,10 @@ impl GitView {
                 panel_width: PANEL_WIDTH,
                 ref_panel,
                 seek: None,
-                marks: cap::Marks::default(),
                 toast: ToastSlot::default(),
                 reveal_after: None,
                 _panel_events: events,
-                diff: None,
-                diff_mode: DiffMode::default(),
-                diff_layout: DiffLayout::default(),
-                focus_diff: false,
+                viewer: cx.new(|_| viewer::Viewer::default()),
                 focus_graph: false,
                 band: band::Band::new(cx),
                 settle: None,
@@ -492,7 +467,7 @@ impl GitView {
 
     /// [`GitView::toggle_diff`] of a file of the worktree at `worktree`, else of the tab's.
     pub(crate) fn toggle_diff_in(&mut self, worktree: Option<Arc<std::path::Path>>, target: diff::Target, cx: &mut Context<Self>) {
-        if self.diff().is_none_or(|d| d.read(cx).target != target || d.read(cx).worktree != worktree) {
+        if self.diff(cx).is_none_or(|d| d.read(cx).target != target || d.read(cx).worktree != worktree) {
             return self.open_diff_in(worktree, target, cx);
         }
         self.back_to_graph(cx);
@@ -533,8 +508,8 @@ impl GitView {
         &self.wip_panel
     }
 
-    pub(crate) fn diff(&self) -> Option<&Entity<DiffView>> {
-        self.diff.as_ref().map(|(d, _)| d)
+    pub(crate) fn diff<'a>(&self, cx: &'a App) -> Option<&'a Entity<DiffView>> {
+        self.viewer.read(cx).view()
     }
 
     /// Shows `target` in the graph's place; the graph keeps its selection and scroll for when it closes.
@@ -549,7 +524,8 @@ impl GitView {
         self.close_diff(cx);
         let working = worktree.is_none() && matches!(target.of, diff::Of::Unstaged | diff::Of::Staged);
         let repo = worktree.as_ref().map_or_else(|| tab.clone(), |w| Repo::new(tab.git().clone(), w.to_path_buf()));
-        let view = DiffView::open(repo.clone(), target, self.diff_mode, self.diff_layout, self.hits.clone(), cx);
+        let (mode, layout) = self.viewer.read_with(cx, |v, _| (v.mode, v.layout));
+        let view = DiffView::open(repo.clone(), target, mode, layout, self.hits.clone(), cx);
         view.update(cx, |d, _| d.worktree = worktree);
         if working {
             view.update(cx, |d, cx| d.enable_picks(self.gate.clone(), repo, cx));
@@ -557,8 +533,7 @@ impl GitView {
         let closed = cx.subscribe(&view, |this: &mut GitView, _, _: &diff::Close, cx| this.back_to_graph(cx));
         let go = cx.subscribe(&view, |this: &mut GitView, _, go: &diff::Go, cx| this.go_file(go.0, cx));
         let picked = cx.subscribe(&view, |this: &mut GitView, _, e: &diff::PickEvent, cx| this.picked_lines(e, cx));
-        self.diff = Some((view, [closed, go, picked]));
-        self.focus_diff = true;
+        self.viewer.update(cx, |v, _| v.show(view, [closed, go, picked]));
         cx.notify();
     }
 
@@ -575,12 +550,7 @@ impl GitView {
     }
 
     pub(crate) fn close_diff(&mut self, cx: &mut Context<Self>) {
-        if let Some((view, _)) = self.diff.take() {
-            let (mode, layout, of) = view.read_with(cx, |v, _| (v.mode(), v.layout(), v.target.of.clone()));
-            if of != diff::Of::Conflicted {
-                self.diff_mode = mode;
-            }
-            self.diff_layout = layout;
+        if self.viewer.update(cx, |v, cx| v.close(cx)) {
             cx.notify();
         }
     }
@@ -590,8 +560,8 @@ impl GitView {
         self.hover_ref.or(self.over_list)
     }
 
-    pub(crate) fn selected(&self) -> Option<Selected> {
-        let row = self.rows.get(self.table.selected()?)?;
+    pub(crate) fn selected(&self, cx: &App) -> Option<Selected> {
+        let row = self.pages.read(cx).rows.get(self.table.selected()?)?;
         if let Some(name) = &row.agent {
             return Some(Selected::Agent(name.clone()));
         }
@@ -613,10 +583,10 @@ impl GitView {
 
     /// The panels read the selected row.
     fn load_details(&mut self, cx: &mut Context<Self>) {
-        let colour = self.table.selected().and_then(|ix| self.rows.get(ix)).map_or(0, |r| r.row.colour);
-        let selected = self.selected();
+        let colour = self.table.selected().and_then(|ix| self.pages.read(cx).rows.get(ix)).map_or(0, |r| r.row.colour);
+        let selected = self.selected(cx);
         if selected == Some(Selected::Wip) {
-            let colours = self.ref_colours();
+            let colours = self.ref_colours(cx);
             self.wip_panel.update(cx, |p, cx| {
                 p.set_ref_colours(colours);
                 p.show(colour, cx)
@@ -632,7 +602,7 @@ impl GitView {
 
     /// Selects the row of `sha` when a loaded page holds it.
     pub(crate) fn select_sha(&mut self, sha: &str, cx: &mut Context<Self>) {
-        let Some(ix) = self.rows.iter().position(|r| r.sha.as_ref() == sha) else { return };
+        let Some(ix) = self.pages.read(cx).rows.iter().position(|r| r.sha.as_ref() == sha) else { return };
         self.table.select(Some(ix));
         self.table.reveal(ix);
         self.selection_moved(cx);
@@ -640,13 +610,14 @@ impl GitView {
     }
 
     /// The WIP row's index: the first row under the agent rows, when it is the WIP row.
-    pub(crate) fn wip_row(&self) -> Option<usize> {
-        self.rows.iter().position(|r| r.agent.is_none()).filter(|ix| self.rows[*ix].wip())
+    pub(crate) fn wip_row(&self, cx: &App) -> Option<usize> {
+        let rows = &self.pages.read(cx).rows;
+        rows.iter().position(|r| r.agent.is_none()).filter(|ix| rows[*ix].wip())
     }
 
     /// Selects the WIP row, when the graph has one.
     pub(crate) fn select_wip(&mut self, cx: &mut Context<Self>) {
-        let Some(ix) = self.wip_row() else { return };
+        let Some(ix) = self.wip_row(cx) else { return };
         self.table.select(Some(ix));
         self.table.reveal(ix);
         self.selection_moved(cx);
@@ -655,7 +626,7 @@ impl GitView {
 
     pub(crate) fn reload(&mut self, cx: &mut Context<Self>) {
         self.load = Load::Loading;
-        self.history = None;
+        self.pages.update(cx, |p, _| p.history = None);
         let (home, folder, walk) = (self.home.clone(), self.folder.clone(), self.ref_panel.read(cx).walk().clone());
         let first = cx.background_spawn(async move { load::first(home.as_deref(), &folder, &walk) });
         cx.spawn(async move |this, cx| {
@@ -673,21 +644,15 @@ impl GitView {
                 if let Some((settings, notice)) = first.settings {
                     self.take_settings(settings, notice, cx);
                 }
-                self.commits = first.page.rows.iter().filter(|r| r.commit()).count();
-                self.rows = first.page.rows;
-                self.more = first.page.more;
-                self.marks.reset(self.rows.len(), self.commits, &first.page.layout);
-                self.layout = Some(first.page.layout);
-                self.history = first.history;
-                self.tips = first.tips.into();
+                let (page, history, tips) = (first.page, first.history, first.tips);
+                self.pages.update(cx, |p, _| p.start(page.rows, page.more, page.layout, history, tips));
                 self.heads = first.heads;
                 self.follow.walked = first.walk;
                 self.ref_panel.update(cx, |p, cx| p.set_built(first.refs, cx));
-                self.fit_graph();
-                self.panel.update(cx, |p, cx| p.set_repo(first.repo.clone(), cx));
+                self.fit_graph(cx);
+                self.gate.update(cx, |g, cx| drop(g.open(&first.repo, cx)));
+                self.panel.update(cx, |p, _| p.set_repo(first.repo.clone()));
                 self.wip_panel.update(cx, |p, cx| p.set_repo(first.repo.clone(), cx));
-                self.stash.update(cx, |s, cx| s.set_repo(first.repo.clone(), cx));
-                self.branch.update(cx, |b, cx| b.set_repo(first.repo.clone(), cx));
                 self.hand_refs(&first.repo, first.all.clone(), &first.status, cx);
                 if let Some(debounces) = refresh::follows(cx) {
                     self.follow(first.repo.clone(), debounces, cx);
@@ -695,7 +660,7 @@ impl GitView {
                 self.repo = Some(first.repo);
                 let before = std::mem::replace(&mut self.wip, first.wip);
                 self.load = Load::Ready;
-                self.stack_fresh();
+                self.stack_fresh(cx);
                 self.select_conflict(before, cx);
                 self.refresh_undo(cx);
                 if *self.ref_panel.read(cx).walk() != self.follow.walked || self.wanted_worktrees(cx) != self.worktree_rows {
@@ -720,8 +685,8 @@ impl GitView {
 
     /// Widens the graph column to hold the first page's lanes, never past [`graph::MAX_FIT`] or its max, unless the
     /// repo keeps a graph width of its own.
-    fn fit_graph(&mut self) {
-        self.measure_lanes();
+    fn fit_graph(&mut self, cx: &App) {
+        self.measure_lanes(cx);
         if self.own_graph {
             return;
         }
@@ -731,25 +696,23 @@ impl GitView {
         }
     }
 
-    fn measure_lanes(&mut self) {
-        self.graph_max = Some(px(graph::width_for(graph::lanes(&self.rows))));
+    fn measure_lanes(&mut self, cx: &App) {
+        self.graph_max = Some(px(graph::width_for(graph::lanes(&self.pages.read(cx).rows))));
     }
 
     /// [`GitView::measure_lanes`] of the rows from `from` on, kept when wider.
-    fn measure_lanes_from(&mut self, from: usize) {
-        let added = px(graph::width_for(graph::lanes(&self.rows[from.min(self.rows.len())..])));
+    fn measure_lanes_from(&mut self, from: usize, cx: &App) {
+        let rows = &self.pages.read(cx).rows;
+        let added = px(graph::width_for(graph::lanes(&rows[from.min(rows.len())..])));
         self.graph_max = Some(self.graph_max.map_or(added, |max| max.max(added)));
     }
 
     /// The next page, unless one is on its way or none is left.
     pub(crate) fn load_more(&mut self, cx: &mut Context<Self>) {
-        if self.paging || !self.more {
-            return;
-        }
-        let (Some(repo), Some(layout)) = (self.repo.clone(), self.layout.take()) else { return };
-        self.paging = true;
-        let (tips, skip, generation, walker) = (self.tips.clone(), self.commits, self.follow.generation, self.history.take());
-        let page = cx.background_spawn(async move { load::next(&repo, &tips, skip, layout, walker) });
+        let Some(repo) = self.repo.clone() else { return };
+        let Some(next) = self.pages.update(cx, |p, _| p.next()) else { return };
+        let generation = self.follow.generation;
+        let page = cx.background_spawn(async move { load::next(&repo, &next.tips, next.skip, next.layout, next.history) });
         cx.spawn(async move |this, cx| {
             let page = page.await;
             this.update(cx, |this, cx| if this.follow.generation == generation { this.apply_page(page, cx) }).ok();
@@ -758,33 +721,20 @@ impl GitView {
         cx.notify();
     }
 
-    fn apply_page(&mut self, page: Result<(load::Page, Option<History>), String>, cx: &mut Context<Self>) {
+    fn apply_page(&mut self, page: Result<(load::Page, Option<supraman_gitman::History>), String>, cx: &mut Context<Self>) {
         let _stall = stall::section("git tab: next page");
-        self.paging = false;
-        match page {
-            Ok((page, walker)) => {
-                self.history = walker;
-                self.commits += page.rows.iter().filter(|r| r.commit()).count();
-                let from = self.rows.len();
-                self.rows.extend(page.rows);
-                self.measure_lanes_from(from);
-                self.more = page.more;
-                self.marks.push(self.rows.len(), self.commits, &page.layout);
-                self.layout = Some(page.layout);
-                self.relay_agents(cx);
-            }
-            Err(e) => {
-                self.more = false;
-                self.page_error = Some(e);
-            }
+        if let Some(from) = self.pages.update(cx, |p, _| p.landed(page)) {
+            self.measure_lanes_from(from, cx);
+            self.relay_agents(cx);
         }
         self.seek_on(cx);
         cx.notify();
     }
 
     fn cell(&mut self, ix: usize, col: usize, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
-        let Some(row) = self.rows.get(ix) else {
-            let footer = if col == 2 { self.page_error.clone().unwrap_or_else(|| "Loading more commits…".into()) } else { String::new() };
+        let rows = self.pages.read(cx).rows.clone();
+        let Some(row) = rows.get(ix) else {
+            let footer = if col == 2 { self.pages.read(cx).page_error.clone().unwrap_or_else(|| "Loading more commits…".into()) } else { String::new() };
             return div().text_color(palette.muted).child(SharedString::from(footer)).into_any_element();
         };
         if row.worktree().is_some() {
@@ -814,12 +764,13 @@ impl GitView {
     fn render_table(&mut self, cx: &mut Context<Self>) -> AnyElement {
         self.trim_tail(cx);
         let palette = Palette::of(cx.theme());
-        let footer = usize::from(self.paging || self.page_error.is_some());
+        let pages = self.pages.read(cx);
+        let (footer, rows) = (usize::from(pages.paging || pages.page_error.is_some()), pages.rows.len());
         let shown = self.shown_columns();
         let all = columns(self.graph_max);
         let (cols, widths): (Vec<Column>, Vec<Pixels>) = shown.iter().map(|i| (all[*i].clone(), self.widths[*i])).unzip();
         let (painted, resized) = (shown.clone(), shown);
-        Table::new(TABLE, &self.table, &self.hits, cols, &widths, self.rows.len() + footer, move |this: &mut GitView, ix, col, _, cx| this.cell(ix, painted[col], &palette, cx))
+        Table::new(TABLE, &self.table, &self.hits, cols, &widths, rows + footer, move |this: &mut GitView, ix, col, _, cx| this.cell(ix, painted[col], &palette, cx))
             .row_height(px(graph::ROW))
             .inset(px(graph::GAP / 2.))
             .footer(footer)
@@ -842,7 +793,7 @@ impl GitView {
 impl GitView {
     /// The WIP panel for the WIP row, else the commit panel under the banner of a dirty tree.
     fn render_panel(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let selected = self.selected();
+        let selected = self.selected(cx);
         if selected == Some(Selected::Wip) {
             return div().size_full().child(self.wip_panel.clone()).into_any_element();
         }
@@ -858,15 +809,15 @@ impl GitView {
     }
 
     fn render_split(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let first = match &self.diff {
-            Some((view, _)) if self.selected() == Some(Selected::Wip) => div()
+        let first = match self.diff(cx).cloned() {
+            Some(view) if self.selected(cx) == Some(Selected::Wip) => div()
                 .size_full()
                 .key_context(keys::WIP_LIST_CONTEXT)
                 .on_action(cx.listener(|this, _: &keys::StageSelected, _, cx| this.wip_panel.update(cx, |p, cx| p.stage_selected(cx))))
                 .on_action(cx.listener(|this, _: &keys::UnstageSelected, _, cx| this.wip_panel.update(cx, |p, cx| p.unstage_selected(cx))))
-                .child(view.clone())
+                .child(view)
                 .into_any_element(),
-            Some((view, _)) => view.clone().into_any_element(),
+            Some(view) => view.into_any_element(),
             None => self.render_graph(cx),
         };
         let table = div().relative().flex_1().min_w_0().h_full().child(first).children(self.toast.render(&self.hits, "git-toast", cx));
@@ -944,10 +895,8 @@ impl Render for GitView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _stall = stall::section("render: git tab");
         self.watch_activation(window, cx);
-        if std::mem::take(&mut self.focus_diff)
-            && let Some((view, _)) = &self.diff
-        {
-            let focus = view.read(cx).focus_handle().clone();
+        let focus = self.viewer.update(cx, |v, cx| std::mem::take(&mut v.focus).then(|| v.view().map(|d| d.read(cx).focus_handle().clone())).flatten());
+        if let Some(focus) = focus {
             window.focus(&focus, cx);
         }
         if std::mem::take(&mut self.focus_graph) {

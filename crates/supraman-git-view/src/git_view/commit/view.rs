@@ -23,7 +23,7 @@ fn wip_items() -> Vec<supraman_ui::menu::MenuItem<RefAct>> {
 impl GitView {
     /// Row `ix`'s cell taking the row's right-click: a commit's menu, the WIP row's; a stash row has its own.
     pub(crate) fn commit_row(&self, ix: usize, cell: AnyElement, cx: &mut Context<Self>) -> AnyElement {
-        if self.rows.get(ix).is_none_or(|r| r.stash().is_some()) {
+        if self.pages.read(cx).rows.get(ix).is_none_or(|r| r.stash().is_some()) {
             return cell;
         }
         div()
@@ -38,7 +38,7 @@ impl GitView {
 
     /// Row `ix`'s menu at `position`: the WIP row's, else its commit's with its branch groups.
     pub(crate) fn row_menu(&mut self, ix: usize, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let Some(row) = self.rows.get(ix) else { return };
+        let Some(row) = self.pages.read(cx).rows.get(ix).cloned() else { return };
         if row.wip() {
             return self.branch.update(cx, |b, cx| b.show_menu("Work in progress".into(), wip_items(), position, cx));
         }
@@ -64,7 +64,7 @@ impl GitView {
                 None => return,
             },
         };
-        let Some(top) = self.branch.read(cx).top() else { return };
+        let Some(top) = self.gate.read(cx).top() else { return };
         let files = covered(&all, &click.path, click.folder);
         let files = if files.is_empty() && matches!(click.from, Listed::Commit { stash: None, .. }) && !click.folder { vec![unchanged(&click.path)] } else { files };
         let path = top.join(&click.path);
@@ -105,8 +105,7 @@ impl GitView {
             CommitAct::File(FileAct::Stash(files)) => self.stash_files(files, cx),
             CommitAct::File(FileAct::ApplyStashed { sha, files }) => self.stash.update(cx, |s, cx| s.apply_files(sha, files, cx)),
             act => {
-                let writer = self.branch.read(cx).writer();
-                self.commit.update(cx, |c, cx| c.act(act, writer, cx));
+                self.commit.update(cx, |c, cx| c.act(act, cx));
             }
         }
     }

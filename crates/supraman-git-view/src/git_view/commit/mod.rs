@@ -1,7 +1,7 @@
 //! The commit row's, the WIP row's and the file lists' menus (docs/research/gitkraken-12.6.1.md §B B1, B2, items
 //! 8, 9 and 11) and the writes they start that no other owner has: cherry-pick, revert, rebase onto and reset of a
 //! commit, a commit's patch, a file restored from a commit, ignored, deleted or opened. Every write runs through the
-//! tab's [`WriteGate`] off the UI thread, with the writer the ref writes opened.
+//! tab's [`WriteGate`] off the UI thread.
 
 pub(crate) mod files;
 pub(crate) mod menu;
@@ -12,13 +12,12 @@ mod tests;
 
 use supraman_core::text::count;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, PoisonError};
 
-use gpui::{AppContext as _, ClipboardItem, Context, Entity, EventEmitter, Render, Subscription, Window, div, prelude::*};
+use gpui::{AppContext as _, ClipboardItem, Context, Entity, EventEmitter, Render, Window, div, prelude::*};
 use supraman_gitman::write::commit::{self, Picked, ResetMode};
 use supraman_gitman::write::files::{self as file_writes, Ignore};
 use supraman_gitman::write::rebase::{self, Rebased};
-use supraman_gitman::write::{LockSet, Resource, Session, WriteError, Writer, journal};
+use supraman_gitman::write::{LockSet, Resource, Session, WriteError, journal};
 use supraman_gitman::short_sha;
 use supraman_ui::confirm::{Answer, Confirm};
 use supraman_ui::hit::HitTargets;
@@ -26,8 +25,7 @@ use supraman_ui::hit::HitTargets;
 use files::FileAct;
 
 use super::details::reword::kept_words;
-use super::stash::STILL_OPENING;
-use super::write_gate::{WriteGate, Written, capitalised};
+use super::write_gate::{STILL_OPENING, WriteGate, Writes, Written, capitalised};
 
 /// What a commit's, the WIP row's or a file's menu item does.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,14 +103,9 @@ enum Doing {
 
 pub(crate) struct CommitActions {
     hits: HitTargets,
-    gate: Entity<WriteGate>,
-    writer: Option<Writer>,
-    doing: Option<(u64, Doing)>,
-    outcome: Arc<Mutex<Option<Outcome>>>,
-    asking: Option<Confirm<Ask>>,
+    writes: Writes<Ask, Doing, Outcome>,
     /// A patch's commit waiting for the folder picker, which the next frame opens.
     patching: Option<String>,
-    _written: Subscription,
 }
 
 impl EventEmitter<CommitEvent> for CommitActions {}
@@ -123,53 +116,30 @@ fn index_write() -> LockSet {
 
 impl CommitActions {
     pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
-        self.asking.as_ref().map(|asked| asked.render_band_answer(&self.hits, "git-commit-ask", |this: &mut Self, answer, _, cx| this.answer(answer, cx), cx))
+        self.writes.band_answer(&self.hits, "git-commit-ask", Self::answer, cx)
     }
 
     pub(crate) fn new(gate: Entity<WriteGate>, hits: HitTargets, cx: &mut Context<Self>) -> CommitActions {
-        let written = cx.subscribe(&gate, |this: &mut CommitActions, _, w: &Written, cx| this.written(w, cx));
-        cx.observe(&gate, |_, _, cx| cx.notify()).detach();
-        CommitActions { hits, gate, writer: None, doing: None, outcome: Arc::default(), asking: None, patching: None, _written: written }
+        CommitActions { hits, writes: Writes::new(gate, Self::written, cx), patching: None }
     }
 
     #[cfg(test)]
     pub(crate) fn asking(&self) -> Option<&str> {
-        self.asking.as_ref().map(|c| c.text.as_str())
-    }
-
-    fn busy(&self, cx: &gpui::App) -> bool {
-        self.gate.read(cx).busy().is_some()
+        self.writes.asked()
     }
 
     fn request(&mut self, doing: Doing, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) {
-        let Some(writer) = self.writer.clone() else { return cx.emit(CommitEvent::Why(STILL_OPENING.into())) };
-        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request(writer, locks, job, cx)) {
-            self.doing = Some((ticket, doing));
-        }
-        cx.notify();
-    }
-
-    fn keeping<T: Send + 'static>(&self, wrap: fn(T) -> Outcome, job: impl FnOnce(&Session<'_>) -> Result<T, WriteError> + Send + 'static) -> impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static {
-        let outcome = self.outcome.clone();
-        move |s| {
-            let done = job(s)?;
-            *outcome.lock().unwrap_or_else(PoisonError::into_inner) = Some(wrap(done));
-            Ok(())
+        if let Err(why) = self.writes.request(doing, locks, job, cx) {
+            cx.emit(CommitEvent::Why(why.into()));
         }
     }
 
     fn ask(&mut self, ask: Ask, cx: &mut Context<Self>) {
-        if !self.busy(cx) {
-            self.asking = Some(ask.question());
-            cx.notify();
-        }
+        self.writes.ask(ask.question(), cx);
     }
 
-    /// The menu's item `act`, with the repo's `writer`; the WIP panel's and the stash's items are the tab's.
-    pub(crate) fn act(&mut self, act: CommitAct, writer: Option<Writer>, cx: &mut Context<Self>) {
-        if writer.is_some() {
-            self.writer = writer;
-        }
+    /// The menu's item `act`; the WIP panel's and the stash's items are the tab's.
+    pub(crate) fn act(&mut self, act: CommitAct, cx: &mut Context<Self>) {
         match act {
             CommitAct::CherryPick(sha) => self.ask(Ask::Pick { sha, revert: false }, cx),
             CommitAct::Revert(sha) => self.ask(Ask::Pick { sha, revert: true }, cx),
@@ -186,7 +156,7 @@ impl CommitActions {
 
     /// `ask` first when HEAD's branch is one a remote holds, else its write at once; read off the UI thread.
     fn unless_pushed(&mut self, ask: Ask, cx: &mut Context<Self>) {
-        let Some(writer) = self.writer.clone() else { return cx.emit(CommitEvent::Why(STILL_OPENING.into())) };
+        let Some(writer) = self.writes.writer(cx) else { return cx.emit(CommitEvent::Why(STILL_OPENING.into())) };
         let read = cx.background_spawn(async move {
             let branch = supraman_gitman::refs(writer.repo()).ok().and_then(|r| match r.head {
                 supraman_gitman::Head::Branch { name, .. } => Some(name),
@@ -208,7 +178,7 @@ impl CommitActions {
 
     /// The answer to the question shown.
     pub(crate) fn answer(&mut self, answer: Answer, cx: &mut Context<Self>) {
-        let Some(asked) = self.asking.take() else { return };
+        let Some(asked) = self.writes.asking.take() else { return };
         if let Some(ask) = asked.take(answer) {
             self.run(ask, answer, cx);
         }
@@ -221,7 +191,7 @@ impl CommitActions {
             Ask::Reset { sha, mode, .. } => self.reset(sha, mode, cx),
             Ask::Rebase { branch, sha } => {
                 let (b, onto) = (branch.clone(), sha.clone());
-                let job = self.keeping(Outcome::Rebased, move |s| rebase::onto(s, &b, &onto));
+                let job = self.writes.keeping(Outcome::Rebased, move |s| rebase::onto(s, &b, &onto));
                 self.request(Doing::Rebase { branch, sha }, LockSet::rebase(), job, cx);
             }
             Ask::DiscardAll(paths) => {
@@ -243,7 +213,7 @@ impl CommitActions {
 
     fn pick(&mut self, sha: String, revert: bool, commit: bool, cx: &mut Context<Self>) {
         let job_sha = sha.clone();
-        let job = self.keeping(Outcome::Picked, move |s| if revert { commit::revert(s, &job_sha, commit) } else { commit::cherry_pick(s, &job_sha, commit) });
+        let job = self.writes.keeping(Outcome::Picked, move |s| if revert { commit::revert(s, &job_sha, commit) } else { commit::cherry_pick(s, &job_sha, commit) });
         self.request(Doing::Pick { sha, revert, commit }, LockSet::checkout(), job, cx);
     }
 
@@ -258,7 +228,7 @@ impl CommitActions {
     }
 
     fn file(&mut self, act: FileAct, cx: &mut Context<Self>) {
-        let Some(top) = self.writer.as_ref().map(|w| w.dirs().top.clone()) else { return cx.emit(CommitEvent::Why(STILL_OPENING.into())) };
+        let Some(top) = self.writes.top(cx) else { return cx.emit(CommitEvent::Why(STILL_OPENING.into())) };
         match act {
             FileAct::DiscardAll(paths) => self.ask(Ask::DiscardAll(paths), cx),
             FileAct::Ignore { ignore, untrack } => self.ask(Ask::Ignore { ignore, untrack }, cx),
@@ -279,7 +249,7 @@ impl CommitActions {
 
     /// Asks first when the work tree changed one of `paths`, read off the UI thread.
     fn restore(&mut self, sha: String, paths: Vec<String>, cx: &mut Context<Self>) {
-        let Some(writer) = self.writer.clone() else { return };
+        let Some(writer) = self.writes.writer(cx) else { return };
         let wanted = paths.clone();
         let read = cx.background_spawn(async move {
             supraman_gitman::status(writer.repo()).map(|s| s.entries.iter().any(|e| wanted.contains(&e.path))).unwrap_or(true)
@@ -308,7 +278,7 @@ impl CommitActions {
 
     /// `sha`'s patch written into `folder`, off the UI thread.
     fn save_patch(&mut self, sha: String, folder: PathBuf, cx: &mut Context<Self>) {
-        let Some(writer) = self.writer.clone() else { return };
+        let Some(writer) = self.writes.writer(cx) else { return };
         let saved = cx.background_spawn(async move { commit::format_patch(writer.repo(), &sha, &folder).map_err(|e| e.to_string()) });
         cx.spawn(async move |this, cx| {
             let saved = saved.await;
@@ -322,8 +292,8 @@ impl CommitActions {
     }
 
     fn written(&mut self, w: &Written, cx: &mut Context<Self>) {
-        let Some((_, doing)) = self.doing.take_if(|(ticket, _)| *ticket == w.ticket) else { return };
-        let outcome = self.outcome.lock().unwrap_or_else(PoisonError::into_inner).take();
+        let Some(doing) = self.writes.written(w) else { return };
+        let outcome = self.writes.kept();
         if let Err(why) = &w.result {
             cx.emit(CommitEvent::Wrote(None));
             return cx.emit(CommitEvent::Why(capitalised(why)));

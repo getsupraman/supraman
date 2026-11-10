@@ -121,7 +121,7 @@ fn the_stash_rows_menus_delete_after_asking_edit_the_message_and_apply_refuses_o
     click(&view, "git-stash-message-save", cx);
     assert_eq!(labels(&f)[0], "Better words", "the stash keeps its commit and goes on top");
 
-    let row = view.read_with(cx, |v, _| v.rows.iter().position(|r| r.stash().is_some()).expect("a stash row"));
+    let row = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| r.stash().is_some()).expect("a stash row"));
     press(&view, &format!("git-row-{row}"), MouseButton::Right, 1, cx);
     click(&view, "menu-stash-apply", cx);
     assert!(asking(&view, cx).is_some_and(|q| q.starts_with("Apply ")), "the work in progress is asked about");

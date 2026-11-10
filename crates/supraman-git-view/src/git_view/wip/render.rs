@@ -34,7 +34,7 @@ pub(super) fn live(button: Stateful<Div>, busy: Option<&'static str>, cx: &mut C
 
 impl WipPanel {
     pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<Div> {
-        self.asking.as_ref().map(|asked| asked.render_band(&self.hits, "wip-confirm", |this: &mut WipPanel, yes, _, cx| this.answer(yes, cx), cx))
+        self.writes.band(&self.hits, "wip-confirm", Self::answer, cx)
     }
 
     /// The red trash button: Discard all changes, asked first.

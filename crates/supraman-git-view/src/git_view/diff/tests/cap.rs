@@ -52,7 +52,7 @@ fn show(view: &Entity<GitView>, target: Target, cx: &mut VisualTestContext) -> E
     view.update(cx, |v, cx| v.open_diff(target, cx));
     cx.run_until_parked();
     redraw(view, cx);
-    view.read_with(cx, |v, _| v.diff().cloned()).expect("the viewer is open")
+    view.read_with(cx, |v, cx| v.diff(cx).cloned()).expect("the viewer is open")
 }
 
 #[gpui::test]

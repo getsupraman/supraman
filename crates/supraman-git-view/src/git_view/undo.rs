@@ -1,12 +1,10 @@
 //! The Git tab's Undo and Redo: the journal's preview read off the UI thread after every refresh, each undo or
 //! redo run through the tab's [`WriteGate`], and the question before work in progress goes to a stash.
 
-use std::sync::{Arc, Mutex, PoisonError};
-
-use gpui::{AppContext as _, ClickEvent, Context, Entity, EventEmitter, Render, SharedString, Subscription, Window, div, prelude::*};
+use gpui::{AppContext as _, ClickEvent, Context, Entity, EventEmitter, Render, SharedString, Window, div, prelude::*};
 use supraman_gitman::Repo;
 use supraman_gitman::write::journal::{self, Done, Preview, Refused};
-use supraman_gitman::write::{LockSet, Writer};
+use supraman_gitman::write::LockSet;
 use supraman_ui::button;
 use supraman_ui::confirm::Confirm;
 use supraman_ui::hit::HitTargets;
@@ -14,7 +12,7 @@ use supraman_ui::icon::Icon;
 use supraman_ui::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
-use super::write_gate::{WriteGate, Written};
+use super::write_gate::{WriteGate, Writes, Written};
 
 pub(crate) const UNDO_KEY: &str = "git-undo";
 pub(crate) const REDO_KEY: &str = "git-redo";
@@ -31,31 +29,19 @@ enum Way {
     Redo,
 }
 
-type Outcome = Arc<Mutex<Option<Result<Done, Refused>>>>;
-
 pub(crate) struct UndoBar {
     hits: HitTargets,
-    gate: Entity<WriteGate>,
-    writer: Option<Writer>,
+    writes: Writes<Way, Way, Result<Done, Refused>>,
     preview: Preview,
     /// Bumped by each read, so only the newest preview lands.
     read: u64,
-    /// The ticket of the undo or redo under way.
-    running: Option<u64>,
-    /// The newest undo or redo asked for.
-    way: Option<Way>,
-    outcome: Outcome,
-    stash: Option<Confirm<Way>>,
-    _written: Subscription,
 }
 
 impl EventEmitter<UndoEvent> for UndoBar {}
 
 impl UndoBar {
     pub(crate) fn new(gate: Entity<WriteGate>, hits: HitTargets, cx: &mut Context<Self>) -> UndoBar {
-        let written = cx.subscribe(&gate, |this: &mut UndoBar, _, w: &Written, cx| this.written(w, cx));
-        cx.observe(&gate, |_, _, cx| cx.notify()).detach();
-        UndoBar { hits, gate, writer: None, preview: Preview::default(), read: 0, running: None, way: None, outcome: Arc::default(), stash: None, _written: written }
+        UndoBar { hits, writes: Writes::new(gate, Self::written, cx), preview: Preview::default(), read: 0 }
     }
 
     #[cfg(test)]
@@ -63,17 +49,13 @@ impl UndoBar {
         &self.preview
     }
 
-    /// Reads the preview again; the first read opens the repo's writer.
+    /// Reads the preview again once the tab's writer is open.
     pub(crate) fn refresh(&mut self, repo: &Repo, cx: &mut Context<Self>) {
         self.read += 1;
-        let (read, writer, repo) = (self.read, self.writer.clone(), repo.clone());
+        let (read, opening) = (self.read, self.writes.gate().update(cx, |g, cx| g.open(repo, cx)));
         let task = cx.background_spawn(async move {
-            let writer = match writer {
-                Some(w) => w,
-                None => Writer::open(&repo).map_err(|e| e.to_string())?,
-            };
-            let preview = journal::preview(&writer).map_err(|e| e.to_string())?;
-            Ok::<_, String>((writer, preview))
+            let writer = opening.await.ok_or_else(|| "the repository did not open".to_string())?;
+            journal::preview(&writer).map_err(|e| e.to_string())
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -82,10 +64,7 @@ impl UndoBar {
                     return;
                 }
                 match result {
-                    Ok((writer, preview)) => {
-                        this.writer = Some(writer);
-                        this.preview = preview;
-                    }
+                    Ok(preview) => this.preview = preview,
                     Err(why) => log::warn!("git tab: cannot read the undo journal: {why}"),
                 }
                 cx.notify();
@@ -108,35 +87,25 @@ impl UndoBar {
     }
 
     fn run(&mut self, way: Way, stash: bool, cx: &mut Context<Self>) {
-        let Some(writer) = self.writer.clone() else { return };
-        self.way = Some(way);
-        let outcome = self.outcome.clone();
-        let job = move |s: &supraman_gitman::write::Session<'_>| {
-            let done = match way {
+        let job = self.writes.keeping(|done| done, move |s| {
+            Ok(match way {
                 Way::Undo => journal::undo(s, stash),
                 Way::Redo => journal::redo(s, stash),
-            };
-            *outcome.lock().unwrap_or_else(PoisonError::into_inner) = Some(done);
-            Ok(())
-        };
-        self.running = self.gate.update(cx, |g, cx| g.request(writer, LockSet::undo(), job, cx));
-        cx.notify();
+            })
+        });
+        self.writes.request(way, LockSet::undo(), job, cx).ok();
     }
 
     fn written(&mut self, written: &Written, cx: &mut Context<Self>) {
-        if self.running != Some(written.ticket) {
-            return;
-        }
-        self.running = None;
-        let Some(outcome) = self.outcome.lock().unwrap_or_else(PoisonError::into_inner).take() else { return };
+        let Some(way) = self.writes.written(written) else { return };
+        let Some(outcome) = self.writes.kept() else { return };
         match (written.result.clone(), outcome) {
             (Err(why), _) => cx.emit(UndoEvent::Why(why)),
             (Ok(()), Ok(done)) => cx.emit(UndoEvent::Done(done.toast)),
             (Ok(()), Err(Refused::WouldStash { files, action })) => {
-                let way = self.way.unwrap_or(Way::Undo);
                 let verb = if way == Way::Undo { "undo" } else { "redo" };
                 let text = format!("{files} changed files go to a stash before the {verb} of {action}. Go on?");
-                self.stash = Some(Confirm::ask(text, format!("Stash and {verb}"), way));
+                self.writes.asking = Some(Confirm::ask(text, format!("Stash and {verb}"), way));
             }
             (Ok(()), Err(refused)) => cx.emit(UndoEvent::Why(refused.to_string())),
         }
@@ -145,7 +114,7 @@ impl UndoBar {
 
     /// The answer to the stash question; a no changes nothing.
     pub(crate) fn answer(&mut self, yes: bool, cx: &mut Context<Self>) {
-        if let Some(way) = self.stash.take().and_then(|asked| asked.action).filter(|_| yes) {
+        if let Some(way) = self.writes.answer(yes) {
             self.run(way, true, cx);
         }
         cx.notify();
@@ -153,11 +122,11 @@ impl UndoBar {
 
     #[cfg(test)]
     pub(crate) fn asking(&self) -> Option<&str> {
-        self.stash.as_ref().map(|c| c.text.as_str())
+        self.writes.asked()
     }
 
     fn button(&self, key: &'static str, icon: Icon, caption: &'static str, enabled: bool, tooltip: String, cx: &mut Context<Self>) -> impl IntoElement {
-        let busy = self.gate.read(cx).busy();
+        let busy = self.writes.busy(cx);
         let (enabled, tooltip) = match busy {
             Some(why) => (false, why.to_string()),
             None => (enabled, tooltip),
@@ -191,7 +160,7 @@ impl Render for UndoBar {
 
 impl UndoBar {
     pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
-        self.stash.as_ref().map(|asked| asked.render_band(&self.hits, "git-undo-stash", |this: &mut Self, yes, _, cx| this.answer(yes, cx), cx))
+        self.writes.band(&self.hits, "git-undo-stash", Self::answer, cx)
     }
 }
 

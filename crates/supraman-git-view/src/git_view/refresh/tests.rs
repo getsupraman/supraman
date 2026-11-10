@@ -41,7 +41,7 @@ fn refresh_that_fails_says_so_over_the_graph_until_one_succeeds(cx: &mut TestApp
     let (view, cx) = open(&g.dir, Opts::default(), cx);
     let notice = |cx: &mut VisualTestContext| repaint(&view, cx).borrow().contains_key("git-follow-notice-dismiss");
     assert!(!notice(cx), "no notice after a good read");
-    let rows = view.read_with(cx, |v, _| v.rows.len());
+    let rows = view.read_with(cx, |v, cx| v.pages.read(cx).rows.len());
     let (git, gone) = (g.dir.join(".git"), g.dir.join("git-gone"));
     std::fs::rename(&git, &gone).unwrap();
     refreshed(&view, cx);
@@ -49,7 +49,7 @@ fn refresh_that_fails_says_so_over_the_graph_until_one_succeeds(cx: &mut TestApp
     std::fs::rename(&gone, &git).unwrap();
     assert!(said.is_some_and(|s| s.starts_with("Could not read the repository again")), "the failure is kept for the banner");
     assert!(notice(cx), "the banner is painted");
-    assert_eq!(view.read_with(cx, |v, _| v.rows.len()), rows, "the rows read before stay");
+    assert_eq!(view.read_with(cx, |v, cx| v.pages.read(cx).rows.len()), rows, "the rows read before stay");
     refreshed(&view, cx);
     assert!(!notice(cx), "a good read takes the notice away");
 }
@@ -79,7 +79,7 @@ fn refresh_of_a_hidden_tab_waits_until_it_is_shown(cx: &mut TestAppContext) {
     view.update(cx, |v, cx| v.set_shown(true, cx));
     cx.run_until_parked();
     assert_eq!(refreshes(&view, cx), before + 1, "shown, it reads once what changed");
-    assert!(view.read_with(cx, |v, _| v.rows.iter().any(|r| r.sha.as_ref() == top)), "the commit made while hidden");
+    assert!(view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().any(|r| r.sha.as_ref() == top)), "the commit made while hidden");
     view.update(cx, |v, cx| v.set_shown(false, cx));
     view.update(cx, |v, cx| v.set_shown(true, cx));
     cx.run_until_parked();
@@ -114,7 +114,7 @@ pub(crate) fn fresh(g: &Generated, wip: bool, count: usize) -> Vec<Row> {
 }
 
 pub(crate) fn rows(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<Row> {
-    view.read_with(cx, |v, _| v.rows.iter().map(|r| r.row.clone()).collect())
+    view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().map(|r| r.row.clone()).collect())
 }
 
 #[gpui::test]
@@ -124,25 +124,25 @@ fn refresh_after_a_commit_on_top_keeps_the_rows_paged_below_and_the_place(cx: &m
     let (view, cx) = open(&g.dir, Opts::default(), cx);
     paged(&view, 2, cx);
     let loaded = FIRST_PAGE + 2 * NEXT_PAGE;
-    assert_eq!(view.read_with(cx, |v, _| v.commits), loaded);
+    assert_eq!(view.read_with(cx, |v, cx| v.pages.read(cx).commits), loaded);
     let row = px(graph::ROW);
     let (sha, ix, top) = view.update(cx, |v, cx| {
-        let sha = v.rows[loaded - 100].sha.clone();
+        let sha = v.pages.read(cx).rows[loaded - 100].sha.clone();
         v.select_sha(&sha, cx);
         v.table.set_scroll_top(row * (loaded - 110) as f32);
         (sha, v.table.selected().unwrap(), v.table.scroll_top())
     });
     redraw(&view, cx);
-    let wip = view.read_with(cx, |v, _| v.rows[0].wip());
+    let wip = view.read_with(cx, |v, cx| v.pages.read(cx).rows[0].wip());
     let on_top = commit_on(&g, "main", "main", "On top");
     refreshed(&view, cx);
-    view.read_with(cx, |v, _| {
-        assert_eq!(v.commits, loaded + 1, "the paged rows stay below the new commit");
-        assert!(v.rows.iter().any(|r| r.sha.as_ref() == on_top));
-        assert_eq!(v.selected(), Some(Selected::Commit(sha.clone())), "the same commit selected");
+    view.read_with(cx, |v, cx| {
+        assert_eq!(v.pages.read(cx).commits, loaded + 1, "the paged rows stay below the new commit");
+        assert!(v.pages.read(cx).rows.iter().any(|r| r.sha.as_ref() == on_top));
+        assert_eq!(v.selected(cx), Some(Selected::Commit(sha.clone())), "the same commit selected");
         assert_eq!(v.table.selected(), Some(ix + 1), "one row down");
         assert_eq!(v.table.scroll_top(), top + row, "the scroll followed it");
-        assert!(v.more);
+        assert!(v.pages.read(cx).more);
     });
     assert_eq!(rows(&view, cx), fresh(&g, wip, loaded + 1), "laid out as a fresh read of as many commits");
     paged(&view, 1, cx);
@@ -156,22 +156,22 @@ fn refresh_after_a_rewrite_or_a_hidden_ref_reads_the_first_page_afresh(cx: &mut 
     paged(&view, 2, cx);
     let rewritten = commit_on(&g, "main~1", "main", "Rewritten");
     refreshed(&view, cx);
-    view.read_with(cx, |v, _| {
-        assert_eq!(v.commits, FIRST_PAGE, "the old tip is gone: the first page only");
-        assert!(v.more && v.rows.iter().any(|r| r.sha.as_ref() == rewritten));
+    view.read_with(cx, |v, cx| {
+        assert_eq!(v.pages.read(cx).commits, FIRST_PAGE, "the old tip is gone: the first page only");
+        assert!(v.pages.read(cx).more && v.pages.read(cx).rows.iter().any(|r| r.sha.as_ref() == rewritten));
     });
     paged(&view, 2, cx);
     let key = "refs/heads/topic/240".to_string();
     view.update(cx, |v, cx| v.ref_panel().update(cx, |p, cx| p.toggle_hidden(&[key], cx)));
     cx.run_until_parked();
-    assert_eq!(view.read_with(cx, |v, _| v.commits), FIRST_PAGE, "a hidden ref: the first page only");
+    assert_eq!(view.read_with(cx, |v, cx| v.pages.read(cx).commits), FIRST_PAGE, "a hidden ref: the first page only");
 }
 
 /// The selected commit's row, the scroll, and where the row sits below the view's top.
 fn place(view: &Entity<GitView>, sha: &str, cx: &mut VisualTestContext) -> (usize, Pixels, Pixels) {
-    view.read_with(cx, |v, _| {
+    view.read_with(cx, |v, cx| {
         let ix = v.table.selected().expect("a row selected");
-        assert_eq!(v.rows[ix].sha.as_ref(), sha, "the selection stays on its commit");
+        assert_eq!(v.pages.read(cx).rows[ix].sha.as_ref(), sha, "the selection stays on its commit");
         let top = v.table.scroll_top();
         (ix, top, px(graph::ROW) * ix as f32 - top)
     })
@@ -179,7 +179,7 @@ fn place(view: &Entity<GitView>, sha: &str, cx: &mut VisualTestContext) -> (usiz
 
 fn select_at(view: &Entity<GitView>, ix: usize, top: Pixels, cx: &mut VisualTestContext) -> String {
     let sha = view.update(cx, |v, cx| {
-        let sha = v.rows[ix].sha.to_string();
+        let sha = v.pages.read(cx).rows[ix].sha.to_string();
         v.select_sha(&sha, cx);
         v.table.set_scroll_top(top);
         sha
@@ -193,7 +193,7 @@ fn refresh_with_new_commits_on_top_follows_them_while_the_selection_stays_in_vie
     let g = Generated::copy(200);
     let (view, cx) = open(&g.dir, Opts::default(), cx);
     let row = px(graph::ROW);
-    let first = view.read_with(cx, |v, _| usize::from(v.rows[0].wip()));
+    let first = view.read_with(cx, |v, cx| usize::from(v.pages.read(cx).rows[0].wip()));
 
     let sha = select_at(&view, first, px(0.), cx);
     commit_on(&g, "main", "main", "An agent's commit");
@@ -213,9 +213,9 @@ fn refresh_with_new_commits_on_top_follows_them_while_the_selection_stays_in_vie
     refreshed(&view, cx);
     let (ix, top, now) = place(&view, &sha, cx);
     assert_eq!((ix, top, now), (first + 106, before + row, offset), "far down: the selected row keeps its place on screen");
-    view.read_with(cx, |v, _| {
-        assert_eq!(v.selected(), Some(Selected::Commit(sha.clone().into())), "the same commit selected");
-        assert_eq!(v.rows.iter().filter(|r| ["An agent's commit", "Another", "A third"].contains(&&*r.summary)).count(), 3, "each new commit has its row");
+    view.read_with(cx, |v, cx| {
+        assert_eq!(v.selected(cx), Some(Selected::Commit(sha.clone().into())), "the same commit selected");
+        assert_eq!(v.pages.read(cx).rows.iter().filter(|r| ["An agent's commit", "Another", "A third"].contains(&&*r.summary)).count(), 3, "each new commit has its row");
     });
 }
 

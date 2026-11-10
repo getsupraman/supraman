@@ -6,7 +6,7 @@ use supraman_core::text::count;
 use gpui::{AnyElement, App, AppContext as _, ClickEvent, Context, Entity, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, Subscription, Window, anchored, deferred, div, point, prelude::*, px};
 use supraman_editor::{ZedEditor, rows};
 use supraman_gitman::write::lines::{self, Change, Pick, Picked};
-use supraman_gitman::write::{LockSet, Resource, Writer};
+use supraman_gitman::write::{LockSet, Resource};
 use supraman_gitman::{ChangeKind, OperationState, Repo};
 use supraman_ui::button;
 use supraman_ui::icon::Icon;
@@ -55,8 +55,8 @@ struct Hover {
 
 pub(crate) struct Picks {
     gate: Entity<WriteGate>,
-    writer: Option<Writer>,
-    state: OperationState,
+    /// The operation under way, once read with the tab's writer.
+    state: Option<OperationState>,
     hover: Option<Hover>,
     menu: Option<ContextMenu<Act>>,
     doing: Option<(u64, Act)>,
@@ -93,29 +93,21 @@ impl DiffView {
     pub(crate) fn enable_picks(&mut self, gate: Entity<WriteGate>, repo: Repo, cx: &mut Context<Self>) {
         let written = cx.subscribe(&gate, |this: &mut DiffView, _, w: &Written, cx| this.pick_written(w, cx));
         let observed = cx.observe(&gate, |_, _, cx| cx.notify());
-        self.picks = Some(Picks { gate, writer: None, state: OperationState::None, hover: None, menu: None, doing: None, inline_lines: None, _gate: [written, observed] });
+        self.picks = Some(Picks { gate, state: None, hover: None, menu: None, doing: None, inline_lines: None, _gate: [written, observed] });
         self.read_pick_tools(repo, cx);
     }
 
-    /// The repo's writer, once, and the operation under way, off the UI thread.
+    /// The operation under way, off the UI thread once the tab's writer is open.
     pub(super) fn read_pick_tools(&mut self, repo: Repo, cx: &mut Context<Self>) {
         let Some(picks) = &self.picks else { return };
-        let writer = picks.writer.clone();
-        let read = cx.background_spawn(async move {
-            let writer = match writer {
-                Some(w) => w,
-                None => Writer::open(&repo).map_err(|e| e.to_string())?,
-            };
-            let state = supraman_gitman::operation_state(&writer.dirs().git_dir);
-            Ok::<_, String>((writer, state))
-        });
+        let opening = picks.gate.update(cx, |g, cx| g.open(&repo, cx));
+        let read = cx.background_spawn(async move { opening.await.map(|writer| supraman_gitman::operation_state(&writer.dirs().git_dir)) });
         cx.spawn(async move |this, cx| {
             let read = read.await;
             this.update(cx, |this, cx| {
                 let Some(picks) = &mut this.picks else { return };
-                match read {
-                    Ok((writer, state)) => (picks.writer, picks.state) = (Some(writer), state),
-                    Err(why) => log::warn!("diff view: cannot open the repository to write: {why}"),
+                if read.is_some() {
+                    picks.state = read;
                 }
                 cx.notify();
             })
@@ -135,10 +127,8 @@ impl DiffView {
     /// Why no pick can run now.
     pub(crate) fn picks_blocked(&self, cx: &App) -> Option<&'static str> {
         let picks = self.picks.as_ref()?;
-        if picks.writer.is_none() {
-            return Some("The repository is still opening");
-        }
-        if picks.state != OperationState::None {
+        let Some(state) = picks.state else { return Some("The repository is still opening") };
+        if state != OperationState::None {
             return Some("Lines cannot be staged or discarded during a merge or rebase");
         }
         picks.gate.read(cx).busy()
@@ -166,7 +156,6 @@ impl DiffView {
             return cx.emit(PickEvent::Why(why.into()));
         }
         let (Some(picked), Some(picks)) = (self.picked(&act), self.picks.as_mut()) else { return };
-        let Some(writer) = picks.writer.clone() else { return };
         let pick = act.pick();
         let locks = if pick == Pick::Discard { LockSet::reset() } else { LockSet::new().write(Resource::Index) };
         let job = move |s: &supraman_gitman::write::Session<'_>| match pick {
@@ -176,7 +165,7 @@ impl DiffView {
         };
         picks.hover = None;
         picks.menu = None;
-        if let Some(ticket) = picks.gate.update(cx, |g, cx| g.request(writer, locks, job, cx)) {
+        if let Some(ticket) = picks.gate.update(cx, |g, cx| g.request(locks, job, cx)) {
             picks.doing = Some((ticket, act));
         }
         cx.notify();

@@ -59,35 +59,36 @@ pub fn bind_keys(cx: &mut App) {
 }
 
 impl GitView {
-    fn row_of(&self, sha: &str) -> Option<usize> {
-        self.rows.iter().position(|r| r.sha.as_ref() == sha)
+    fn row_of(&self, sha: &str, cx: &App) -> Option<usize> {
+        self.pages.read(cx).rows.iter().position(|r| r.sha.as_ref() == sha)
     }
 
     /// The row of `ix`'s first parent: HEAD's commit for the WIP row.
-    pub(super) fn first_parent(&self, ix: usize) -> Option<usize> {
-        let row = self.rows.get(ix)?;
+    pub(super) fn first_parent(&self, ix: usize, cx: &App) -> Option<usize> {
+        let row = self.pages.read(cx).rows.get(ix)?;
         let parent = if row.wip() { self.heads.head.as_ref() } else { row.parents.first() };
-        self.row_of(parent?)
+        self.row_of(parent?, cx)
     }
 
     /// The row of `ix`'s child: the WIP row for HEAD's commit, else the nearest row above whose first parent
     /// it is, else the nearest that merged it, else the nearest stash made on it.
-    pub(super) fn child(&self, ix: usize) -> Option<usize> {
-        let row = self.rows.get(ix).filter(|r| !r.wip())?;
-        if let Some(wip) = self.wip_row().filter(|_| self.heads.head.as_ref() == Some(&row.sha)) {
+    pub(super) fn child(&self, ix: usize, cx: &App) -> Option<usize> {
+        let rows = &self.pages.read(cx).rows;
+        let row = rows.get(ix).filter(|r| !r.wip())?;
+        if let Some(wip) = self.wip_row(cx).filter(|_| self.heads.head.as_ref() == Some(&row.sha)) {
             return Some(wip);
         }
-        let above = |stash: bool| (0..ix).rev().filter(move |i| self.rows[*i].stash().is_some() == stash);
+        let above = |stash: bool| (0..ix).rev().filter(move |i| rows[*i].stash().is_some() == stash);
         above(false)
-            .find(|i| self.rows[*i].parents.first() == Some(&row.sha))
-            .or_else(|| above(false).find(|i| self.rows[*i].parents.contains(&row.sha)))
-            .or_else(|| above(true).find(|i| self.rows[*i].parents.contains(&row.sha)))
+            .find(|i| rows[*i].parents.first() == Some(&row.sha))
+            .or_else(|| above(false).find(|i| rows[*i].parents.contains(&row.sha)))
+            .or_else(|| above(true).find(|i| rows[*i].parents.contains(&row.sha)))
     }
 
     /// Selects the row of `sha` as a key does, or seeks it when its page is not loaded.
     pub(super) fn go_to(&mut self, sha: Option<gpui::SharedString>, cx: &mut Context<Self>) {
         let Some(sha) = sha else { return };
-        match self.row_of(&sha) {
+        match self.row_of(&sha, cx) {
             Some(ix) => self.select_by_key(Some(ix), cx),
             None => self.seek_sha(sha, cx),
         }
@@ -120,7 +121,7 @@ impl GitView {
 
     /// The panel's files when it shows the selected row, in its list's order.
     fn files(&self, cx: &App) -> Vec<diff::Target> {
-        match self.selected() {
+        match self.selected(cx) {
             Some(Selected::Wip) => self.wip_panel.read(cx).file_order(),
             Some(Selected::Commit(sha)) => self.panel.read(cx).file_order(&sha),
             Some(Selected::Stash(stash)) => self.panel.read(cx).file_order(&stash.sha),
@@ -132,13 +133,13 @@ impl GitView {
     /// Opens the file `step` leads to from the one open, selected in the panel's list.
     pub(crate) fn go_file(&mut self, step: FileStep, cx: &mut Context<Self>) {
         let files = self.files(cx);
-        let worktree = match self.selected() {
+        let worktree = match self.selected(cx) {
             Some(Selected::Worktree(path)) => Some(path),
             _ => None,
         };
-        let at = self.diff().and_then(|d| files.iter().position(|f| *f == d.read(cx).target && d.read(cx).worktree == worktree));
+        let at = self.diff(cx).and_then(|d| files.iter().position(|f| *f == d.read(cx).target && d.read(cx).worktree == worktree));
         let Some(target) = step.index(files.len(), at).map(|ix| files[ix].clone()) else { return };
-        match self.selected() {
+        match self.selected(cx) {
             Some(Selected::Wip) => self.wip_panel.update(cx, |p, cx| p.mark_file(&target, cx)),
             Some(Selected::Worktree(_)) => self.worktree_panel.update(cx, |p, cx| p.mark_file(&target, cx)),
             _ => self.panel.update(cx, |p, cx| p.mark_file(&target, cx)),
@@ -149,7 +150,7 @@ impl GitView {
     /// Right on a row: its first file's diff, once the panel shows the row.
     fn open_first_file(&mut self, cx: &mut Context<Self>) {
         self.settled(cx);
-        if self.diff.is_none() {
+        if self.diff(cx).is_none() {
             self.go_file(FileStep::First, cx);
         }
     }
@@ -160,11 +161,11 @@ impl GitView {
             .size_full()
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(|this, _: &FirstParent, _, cx| {
-                let to = this.table.selected().and_then(|ix| this.first_parent(ix));
+                let to = this.table.selected().and_then(|ix| this.first_parent(ix, cx));
                 this.select_by_key(to, cx)
             }))
             .on_action(cx.listener(|this, _: &Child, _, cx| {
-                let to = this.table.selected().and_then(|ix| this.child(ix));
+                let to = this.table.selected().and_then(|ix| this.child(ix, cx));
                 this.select_by_key(to, cx)
             }))
             .on_action(cx.listener(|this, _: &GoToHead, _, cx| this.go_to(this.heads.head.clone(), cx)))

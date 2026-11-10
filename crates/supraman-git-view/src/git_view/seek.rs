@@ -24,11 +24,12 @@ impl GitView {
 
     pub(super) fn seek_within(&mut self, sha: SharedString, pages: usize, cx: &mut Context<Self>) {
         self.seek = None;
-        if self.rows.iter().any(|r| r.sha == sha) {
+        if self.pages.read(cx).rows.iter().any(|r| r.sha == sha) {
             return self.select_sha(&sha, cx);
         }
-        if !self.more || pages == 0 {
-            let beyond = self.more;
+        let more = self.pages.read(cx).more;
+        if !more || pages == 0 {
+            let beyond = more;
             return self.not_found(&sha, beyond, cx);
         }
         self.seek = Some(Seek { sha, pages });
@@ -38,7 +39,7 @@ impl GitView {
     /// The page in has been applied: the seek goes on with one page less.
     pub(super) fn seek_on(&mut self, cx: &mut Context<Self>) {
         if let Some(seek) = self.seek.take() {
-            if self.page_error.is_some() {
+            if self.pages.read(cx).page_error.is_some() {
                 return;
             }
             self.seek_within(seek.sha, seek.pages.saturating_sub(1), cx);
@@ -48,7 +49,7 @@ impl GitView {
     /// A ref picked in the ref panel: a ref out of the walk only selects a row already loaded.
     pub(super) fn picked(&mut self, sha: SharedString, walked: bool, cx: &mut Context<Self>) {
         self.close_diff(cx);
-        if walked || self.rows.iter().any(|r| r.sha == sha) {
+        if walked || self.pages.read(cx).rows.iter().any(|r| r.sha == sha) {
             return self.seek_sha(sha, cx);
         }
         self.seek = None;

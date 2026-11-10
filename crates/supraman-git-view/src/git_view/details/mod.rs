@@ -167,8 +167,7 @@ impl CommitPanel {
         }
     }
 
-    pub(crate) fn set_repo(&mut self, repo: Repo, cx: &mut Context<Self>) {
-        self.open_writer(repo.clone(), cx);
+    pub(crate) fn set_repo(&mut self, repo: Repo) {
         self.repo = Some(repo);
     }
 

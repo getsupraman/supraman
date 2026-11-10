@@ -72,7 +72,7 @@ pub(crate) fn refresh(id: EntityId, cx: &App) {
 impl GitView {
     /// The other worktrees' work in progress, as last read.
     pub(crate) fn other_wips(&self, cx: &Context<Self>) -> Vec<WorktreeWip> {
-        let Some(top) = self.remote.read(cx).writer().map(|w| w.dirs().top.clone()) else { return Vec::new() };
+        let Some(top) = self.gate.read(cx).top() else { return Vec::new() };
         wips(cx.entity_id(), cx).map(|w| w.read(cx).others(&top)).unwrap_or_default()
     }
 }
@@ -98,7 +98,7 @@ fn job(key: &str, cx: &App) -> Step<(Writer, Vec<PathBuf>)> {
     if !bg.worktree_wips() {
         return Step::Skip;
     }
-    let writers: Vec<_> = views.iter().filter_map(|v| v.read(cx).remote.read(cx).writer().cloned()).collect();
+    let writers: Vec<_> = views.iter().filter_map(|v| v.read(cx).gate.read(cx).writer().cloned()).collect();
     let Some(first) = writers.first() else { return Step::Skip };
     let top = &first.dirs().top;
     let shown = if writers.iter().all(|w| path_key(&w.dirs().top) == path_key(top)) { vec![top.clone()] } else { Vec::new() };
