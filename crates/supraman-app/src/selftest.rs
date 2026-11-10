@@ -236,7 +236,7 @@ pub(crate) fn lock() -> MutexGuard<'static, Option<Scratch>> {
 pub(crate) fn install_guards(mode: Mode) {
     let budget = match mode {
         Mode::Selftest if std::env::var_os("SUPRAMAN_SHOTS").is_some() => Duration::from_secs(360),
-        Mode::Selftest => Duration::from_secs(200),
+        Mode::Selftest => Duration::from_secs(300), // slow frames while the display is off: docs/LEARNINGS.md 2026-11-10
         Mode::SelftestDetach(cycles) => Duration::from_secs(90 + 15 * u64::from(cycles)),
         Mode::SelftestSupervise => Duration::from_secs(420),
         Mode::SelftestPerf => Duration::from_secs(300),
