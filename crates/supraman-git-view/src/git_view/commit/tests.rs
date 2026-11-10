@@ -146,3 +146,9 @@ fn a_commits_file_is_restored_from_it_asked_first_over_local_changes(cx: &mut gp
     let staged = run_git(&f.git, &f.dir, &["diff", "--cached", "--quiet", f.sha("second"), "--", "a.txt"], &[], None);
     assert!(staged.success(), "the index has second's a.txt too");
 }
+
+#[test]
+fn a_copied_path_is_in_the_platforms_own_separators() {
+    let copied = super::copied_path(std::path::Path::new("C:/x/repo"), "a/b.txt");
+    assert_eq!(copied, if cfg!(windows) { r"C:\x\repo\a\b.txt" } else { "C:/x/repo/a/b.txt" });
+}
