@@ -1,6 +1,4 @@
-//! Checkout, branches and tags, fast-forward and merge, and the worktrees' writes (docs/research/gitkraken-12.6.1.md
-//! §4 part A). A checkout is kept for Undo, and so is a branch delete; the work in progress a write stashes is
-//! always put back after it, or kept in a named stash the outcome names.
+//! GitMan's ref writes; the work in progress a write stashes is put back after it, or kept in a stash the outcome names.
 
 use std::path::{Path, PathBuf};
 
@@ -62,7 +60,6 @@ fn checked_name(s: &Session, name: &str) -> Result<(), WriteError> {
     Ok(())
 }
 
-/// HEAD's branch, `None` when detached.
 fn current(s: &Session) -> Result<Option<String>, WriteError> {
     let name = text(&s.run(&Call::new(&["symbolic-ref", "-q", "--short", "HEAD"]))?.stdout).trim().to_string();
     Ok((!name.is_empty()).then_some(name))
@@ -102,7 +99,6 @@ pub enum Plan {
     Detached(String),
 }
 
-/// `remote`'s branch name below its remote: `main` for `origin/main`.
 pub(crate) fn local_name<'a>(refs: &'a Refs, remote: &'a str) -> &'a str {
     refs.remotes.iter().find(|r| r.name == remote).map_or(remote, crate::RemoteBranch::branch)
 }
@@ -227,9 +223,7 @@ impl Plan {
     }
 }
 
-/// The checkout `plan` says, recorded for Undo. A branch's checkout that git refuses over local changes is
-/// [`CheckedOut::WouldOverwrite`] unless `stash`; with `stash` (and always for a reset or a detached checkout) the
-/// work in progress is stashed first and put back after, a conflict keeping the stash.
+/// The checkout `plan` says, recorded for Undo; without `stash`, git's refusal over local changes is [`CheckedOut::WouldOverwrite`].
 pub fn checkout(s: &Session, plan: &Plan, stash: bool) -> Result<CheckedOut, WriteError> {
     idle(s)?;
     let Some(call) = plan.call() else { return Err(WriteError::Refused("Nothing to check out")) };
@@ -282,8 +276,7 @@ pub fn delete_branch(s: &Session, name: &str) -> Result<(), WriteError> {
     journal::delete_branch(s, name)
 }
 
-/// Whether the local branch `name` has no upstream and commits no other branch, remote branch or tag reaches:
-/// a delete loses them; blocking.
+/// Whether deleting the local branch `name` loses commits: no upstream, and commits no other ref reaches.
 pub fn only_here(repo: &Repo, name: &str) -> Result<bool, GitError> {
     if repo.run(&["config", "--get", &format!("branch.{name}.remote")], None)?.success() {
         return Ok(false);
@@ -321,8 +314,7 @@ pub fn delete_tag(s: &Session, name: &str) -> Result<(), WriteError> {
     s.output(&Call::new(&["tag", "-d", name])).map(drop)
 }
 
-/// Moves the local branch `branch` forward to `to`: HEAD's by `merge --ff-only`, another's ref alone, with no
-/// checkout. Refused when `to` is not ahead of it, or another worktree has it checked out.
+/// Moves the local branch `branch` forward to `to` with no checkout; refused when another worktree has it checked out.
 pub fn fast_forward(s: &Session, branch: &str, to: &str) -> Result<(), WriteError> {
     idle(s)?;
     let to = s.rev(&format!("{to}^{{commit}}"))?;
@@ -341,8 +333,7 @@ pub fn fast_forward(s: &Session, branch: &str, to: &str) -> Result<(), WriteErro
     s.output(&Call::new(&["update-ref", "-m", &format!("fast-forward: {branch} to {}", crate::history::short_sha(&to)), &full, &to, &old])).map(drop)
 }
 
-/// Where a merge into a branch other than HEAD's left the checkout while its conflicts wait: what was checked
-/// out before, and the work in progress stashed then.
+/// What a merge into a branch other than HEAD's checked out away from, while its conflicts wait.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Away {
     pub back: String,
@@ -365,8 +356,7 @@ fn conflicted(s: &Session) -> bool {
     operation_state(&s.writer().dirs().git_dir) == OperationState::Merge
 }
 
-/// `source` merged into `into` with a merge commit (`--no-ff`): HEAD's branch in place; another branch checked
-/// out for it with the work in progress stashed, then the checkout before put back and the stash popped.
+/// `source` merged into `into` with `--no-ff`; another branch than HEAD's is checked out for it, then the checkout before put back.
 pub fn merge(s: &Session, source: &str, into: &str) -> Result<Merged, WriteError> {
     idle(s)?;
     let source_sha = s.rev(&format!("{source}^{{commit}}"))?;
@@ -437,13 +427,11 @@ pub fn remove_worktree(s: &Session, path: &Path, branch: Option<&str>) -> Result
     }
 }
 
-/// Locks or unlocks the worktree at `path`.
 pub fn lock_worktree(s: &Session, path: &Path, lock: bool) -> Result<(), WriteError> {
     let path = path.to_string_lossy();
     s.output(&Call::new(&["worktree", if lock { "lock" } else { "unlock" }, &path])).map(drop)
 }
 
-/// Removes what git keeps of worktrees whose folders are gone.
 pub fn prune_worktrees(s: &Session) -> Result<(), WriteError> {
     s.output(&Call::new(&["worktree", "prune"])).map(drop)
 }

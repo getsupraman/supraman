@@ -1,6 +1,4 @@
-//! Supraman's OAuth 2.1 native client for Workman's `/api`; the contract is Skills `docs/workstate/10-read-api.md`
-//! rule 5 and `14-agent-launch.md` "Minting with OAuth". No token is ever in a message, a log line, a plain-text file
-//! or a `Debug` output.
+//! Supraman's OAuth 2.1 client for Workman (Skills `docs/workstate/14-agent-launch.md`); no token in a message, log, plain file or `Debug`.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -376,8 +374,7 @@ impl Auth {
         self.cancel.store(true, Ordering::SeqCst);
     }
 
-    /// Registers a fresh client each time: a stale cached one fails on the server's page in the browser,
-    /// where Supraman never sees `invalid_client`. Blocks up to 5 minutes: run it off the UI thread.
+    /// Registers a fresh client each time: a stale one fails unseen in the browser. Blocks up to 5 minutes.
     pub fn sign_in(&self, origin: &str, browser: &dyn Fn(&str) -> Result<(), String>) -> Result<AuthStatus, AuthError> {
         let origin = supraman_core::url::origin(origin);
         let signed = self.sign_in_flow(&origin, browser);

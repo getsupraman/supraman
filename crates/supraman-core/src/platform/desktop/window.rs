@@ -118,8 +118,7 @@ pub fn hand_activation_away(hwnd: isize) {
 #[cfg(not(windows))]
 pub fn hand_activation_away(_hwnd: isize) {}
 
-/// Hidden, with no posted, input or paint message left for it. Sent messages are left alone: peeking for them
-/// would dispatch them here, inside the caller.
+/// Hidden, with no posted, input or paint message left; sent ones are not peeked, which would dispatch them here.
 #[cfg(windows)]
 pub fn drained(hwnd: isize) -> bool {
     use windows::Win32::UI::WindowsAndMessaging::{

@@ -1,5 +1,4 @@
-//! One vocabulary of state, the web UI's (`frontend/src/state.ts`, `plan.ts`): what a row's dot, a run's squares,
-//! the detail's pill and the list's filters say, so Supraman and the web agree.
+//! One vocabulary of state, the web UI's (`frontend/src/state.ts`, `plan.ts`), so Supraman and the web agree.
 
 use gpui::{App, Hsla};
 use supraman_ui::marks::Mark;

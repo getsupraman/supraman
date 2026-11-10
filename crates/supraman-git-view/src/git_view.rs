@@ -1,5 +1,4 @@
-//! The Git tab of one repository: its commit graph loaded off the UI thread page by page, its panels, and the
-//! writes they make through the tab's one [`write_gate::WriteGate`].
+//! The Git tab of one repository: its commit graph, its panels and their writes through its one [`write_gate::WriteGate`].
 
 mod agent_rows;
 pub mod background;
@@ -79,7 +78,6 @@ pub use agent_rows::AttachAgent;
 pub(crate) const TABLE: &str = "git";
 
 pub use keys::bind_keys;
-/// The near-end distance that asks for the next page.
 const NEAR_END: Pixels = px(1400.);
 const PANEL_WIDTH: Pixels = px(380.);
 const GRAPH_MIN: f32 = 320.;
@@ -138,9 +136,7 @@ pub enum Selected {
     Commit(SharedString),
     /// A stash's row, its index commit.
     Stash(Arc<supraman_gitman::Stash>),
-    /// Another worktree's WIP row.
     Worktree(Arc<std::path::Path>),
-    /// A live session's row, by its name.
     Agent(SharedString),
 }
 
@@ -177,7 +173,6 @@ pub struct GitView {
     over_list: Option<usize>,
     panel: Entity<CommitPanel>,
     wip_panel: Entity<WipPanel>,
-    /// The panel of another worktree's WIP row.
     worktree_panel: Entity<WorktreePanel>,
     panel_width: Pixels,
     ref_panel: Entity<RefPanel>,
@@ -200,7 +195,6 @@ pub struct GitView {
     find: Option<find::Find>,
     undo: Entity<UndoBar>,
     _undo_events: Subscription,
-    /// Every write of the tab passes it: Undo, Redo, the WIP panel's and the stash's.
     gate: Entity<WriteGate>,
     stash: Entity<StashActions>,
     _stash_events: Subscription,
@@ -208,10 +202,8 @@ pub struct GitView {
     _branch_events: Subscription,
     commit: Entity<CommitActions>,
     _commit_events: Subscription,
-    /// Fetch, pull and push.
     remote: Entity<RemoteActions>,
     _remote_events: Subscription,
-    /// The graph's columns hidden, by id.
     hidden_columns: Vec<String>,
     column_menu: Option<supraman_ui::menu::ContextMenu<columns::ColumnAct>>,
     /// The commit summary takes the keyboard on the next frame.
@@ -229,8 +221,7 @@ impl GitView {
         GitView::open_with(folder, home, hits, saved, Arc::new(|_: &std::path::Path| Vec::new()), cx)
     }
 
-    /// `saved` are the sizes a tab saved before the layout file kept them, read when the repo has no entry there;
-    /// `occupancy` says which live sessions work in the repo before a write.
+    /// `saved` are the sizes used while the repo has no layout entry; `occupancy`, the live sessions working in it.
     pub fn open_with(folder: PathBuf, home: Option<PathBuf>, hits: HitTargets, saved: &GitSizes, occupancy: Arc<dyn Occupancy>, cx: &mut App) -> Entity<GitView> {
         cx.new(|cx| {
             let gate = cx.new(|_| WriteGate::new(occupancy));
@@ -517,8 +508,7 @@ impl GitView {
         self.open_diff_in(None, target, cx);
     }
 
-    /// [`GitView::open_diff`] of a file of the worktree at `worktree`, read from its folder and read-only, else of the
-    /// tab's.
+    /// [`GitView::open_diff`] of a file of the worktree at `worktree`, read-only, else of the tab's.
     pub(crate) fn open_diff_in(&mut self, worktree: Option<Arc<std::path::Path>>, target: diff::Target, cx: &mut Context<Self>) {
         let Some(tab) = self.repo.clone() else { return };
         self.close_diff(cx);
@@ -683,8 +673,7 @@ impl GitView {
         self.settings_notice = notice;
     }
 
-    /// Widens the graph column to hold the first page's lanes, never past [`graph::MAX_FIT`] or its max, unless the
-    /// repo keeps a graph width of its own.
+    /// Widens the graph column to the first page's lanes, up to [`graph::MAX_FIT`], unless the repo keeps its own width.
     fn fit_graph(&mut self, cx: &App) {
         self.measure_lanes(cx);
         if self.own_graph {
@@ -831,8 +820,7 @@ impl GitView {
         self.with_refs(split.into_any_element(), cx)
     }
 
-    /// `rest` right of the ref panel: beside a divider that drags its width, or beside its strip when collapsed.
-    /// In a tab too narrow for both, the panel gives its width before the graph and the commit panel do.
+    /// `rest` right of the ref panel, which in a narrow tab gives its width before the graph and commit panel do.
     fn with_refs(&mut self, rest: AnyElement, cx: &mut Context<Self>) -> AnyElement {
         let refs = self.ref_panel.read(cx);
         let (shut, width) = (refs.shut(), refs.width());

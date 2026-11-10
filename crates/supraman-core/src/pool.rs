@@ -1,8 +1,7 @@
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// `f` of each item, on up to `at_most` threads that each take the next item when done with one; the results in the
-/// items' order. Blocking.
+/// `f` of each item on up to `at_most` threads, blocking; the results in the items' order.
 pub fn map<T: Send, R: Send>(items: Vec<T>, at_most: usize, f: impl Fn(T) -> R + Sync) -> Vec<R> {
     let total = items.len();
     let slots: Vec<Mutex<Option<T>>> = items.into_iter().map(|i| Mutex::new(Some(i))).collect();

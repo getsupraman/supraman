@@ -1,6 +1,3 @@
-//! The `/api/stream` subscriber against FakeWorkman: frames, a dropped connection, the reconnect with
-//! `Last-Event-ID`, a stop while the server is silent, and the backoff while unreachable.
-
 use std::time::{Duration, Instant};
 
 use async_channel::Receiver;

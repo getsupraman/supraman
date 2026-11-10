@@ -1,6 +1,4 @@
-//! Which claude session runs under a terminal tab's shell: the shell's descendants from one
-//! process snapshot, the nearest `claude.exe` that registered itself in `~/.claude/sessions` (read
-//! only, as [`crate::peer`] reads it: the pid must run with the start time it registered).
+//! Which claude session runs under a terminal tab's shell: the nearest descendant registered as [`crate::peer`] reads it.
 
 use std::collections::{HashSet, VecDeque};
 use std::path::Path;
@@ -32,8 +30,7 @@ pub fn claudes_under(procs: &[Proc], root: u32) -> Vec<u32> {
     found
 }
 
-/// The registry entry of the nearest claude below `root` that has one. A process whose registered
-/// start is before `root_start` only inherited a reused parent pid, so it is not the shell's.
+/// The registry entry of the nearest claude below `root`; one started before `root_start` only inherited a reused pid.
 pub fn session_under(procs: &[Proc], root: u32, root_start: Option<u64>, dir: &Path, live: &impl Liveness) -> Option<RegistryEntry> {
     claudes_under(procs, root)
         .into_iter()

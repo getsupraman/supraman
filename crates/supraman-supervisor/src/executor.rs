@@ -11,7 +11,7 @@ use crate::{
     NeedsYou, Policy, Remedy, SECOND, SupervisorMemory, WantedSession, adopt_prompt, is_live, mid_turn, reconcile,
 };
 
-/// The three `claude` writes the supervisor performs. Implemented for [`Claude`]; tests use a fake.
+/// The three `claude` writes the supervisor performs.
 pub trait Launcher {
     fn launch(&self, spec: &LaunchSpec) -> supraman_claude::Result<String>;
     /// Must pass no flag but `--bg --resume <session_id> [-- <prompt>]` (any flag forks a copy).
@@ -33,8 +33,7 @@ impl Launcher for Claude {
     }
 }
 
-/// The bearer of the mint, PATCH and DELETE of a session's own token ([`crate::mint`]): the app's
-/// OAuth access token, never written anywhere.
+/// The bearer of a session token's mint, PATCH and DELETE: the app's OAuth access token, never written anywhere.
 #[derive(Clone, PartialEq, Eq)]
 pub struct RoleToken {
     /// The Workman MCP URL; its origin is the API's base.
@@ -52,40 +51,31 @@ impl std::fmt::Debug for RoleToken {
 
 /// Where the bearer comes from: the app's sign-in.
 pub trait TokenProvider {
-    /// `Ok(None)`: not signed in or Workman not set up, so the role launches with a token-less helped config at
-    /// [`Self::mcp_url`], or none without one. `Err`:
-    /// signed in but no token now (the server unreachable, the sign-in to redo); a launch or resume fails with it.
+    /// `Ok(None)`: not signed in or Workman not set up (a token-less config); `Err`: no token now, which fails the launch.
     fn token(&self, role: &str) -> Result<Option<RoleToken>, String>;
 
     /// The MCP URL a session's config names while it has no token: [`crate::mcp_url`]; `Err` is Workman not set up.
     fn mcp_url(&self) -> Result<String, String>;
 }
 
-/// Launch options every session of this supervisor gets. Every launch is `--strict-mcp-config`: a
-/// session gets the role's Workman server or none, never the user-scope one.
+/// Launch options every session gets; every launch is `--strict-mcp-config`, never the user-scope Workman.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LaunchConfig {
     /// `<SUPRAMAN_HOME>/mcp`, where [`crate::Keeper`] writes each session's helped config.
     pub mcp_dir: PathBuf,
     pub plugin_dirs: Vec<PathBuf>,
-    /// Passed to the session as `SUPRAMAN_HOME`, with `SUPRAMAN_ROLE`, `SUPRAMAN_WORKSPACE`, `SUPRAMAN_SESSION` (its
-    /// name, what `sm tell` signs with) and `SUPRAMAN_REPO` for a repo session, through
-    /// `--settings {"env":…}` (env on `claude --bg` itself does not reach it).
+    /// The session's `SUPRAMAN_HOME`, through `--settings {"env":…}`: env on `claude --bg` itself does not reach it.
     pub supraman_home: Option<PathBuf>,
-    /// `--settings {"worktree":{"bgIsolation":"none"}}`: in a main checkout a `--bg` session otherwise
-    /// moves its writes into a worktree of its own that a plain `claude rm` refuses to delete.
+    /// `bgIsolation: none`, else a `--bg` session in a main checkout writes into a worktree `claude rm` refuses to delete.
     pub bg_isolation_none: bool,
-    /// `--allowedTools`: permission rules every session gets, so `sm` (Supraman's CLI, run by controllers
-    /// themselves) never parks for permission (`Bash(sm:*)` matches; PowerShell rules do not).
+    /// `--allowedTools` every session gets, so `sm` never parks (`Bash(sm:*)` matches; PowerShell rules do not).
     pub allowed_tools: Vec<String>,
-    /// Claude Code's config dir, where the workman plugin's `agents` server is looked up for each session's own
-    /// config ([`supraman_claude::plugin_server`]); `None` gives no plugin server.
+    /// Claude Code's config dir, for [`supraman_claude::plugin_server`]; `None` gives no plugin server.
     pub claude_dir: Option<PathBuf>,
 }
 
 impl LaunchConfig {
-    /// The `claude --bg` of `w` in `workspace`, before its Workman token: what the supervisor launches and
-    /// what a schedule's run launches (`sm schedule fire`). `env` adds to the session's `SUPRAMAN_*` env.
+    /// The `claude --bg` of `w` before its Workman token, for the supervisor and a schedule's run; `env` adds to its env.
     pub fn launch_spec(&self, workspace: &str, w: &WantedSession, env: &[(&str, &str)]) -> LaunchSpec {
         let mut spec = LaunchSpec::new(&w.name, &w.cwd, &w.prompt);
         spec.permission_mode = w.permission_mode.clone();
@@ -171,7 +161,7 @@ pub struct Supervisor<L, T> {
     launcher: L,
     tokens: T,
     minter: Box<dyn Minter + Send>,
-    /// The `repo` of a repo session's mint, from its cwd: [`crate::git_repo`]; tests use a fake.
+    /// The `repo` of a repo session's mint, from its cwd: [`crate::git_repo`].
     repo_of: fn(&Path) -> Option<MintRepo>,
     /// The sessions this supervisor minted a token for, by name.
     minted: MintedSessions,
@@ -185,13 +175,11 @@ pub struct Supervisor<L, T> {
     unwanted: BTreeMap<String, u32>,
     needs: Vec<NeedsYou>,
     notices: Vec<String>,
-    /// Names whose Re-mint was pressed: the next tick stops their live row, and the resume that
-    /// follows mints a fresh token. A name stays until its stop succeeds or it has no live row.
+    /// Names whose Re-mint was pressed, until their stop succeeds or they have no live row.
     remint_due: Vec<String>,
     /// Consecutive failed `claude stop`s, by name: from [`STOP_FAILURES_SHOWN`] on, an Inbox row.
     stop_failures: BTreeMap<String, StopFailure>,
-    /// Resumes whose output named no id ([`Resumed::Unknown`]): (name, id, when), settled against the
-    /// next snapshots ([`Self::confirm_resumes`]).
+    /// Resumes whose output named no id: (name, id, when), settled by [`Self::confirm_resumes`].
     unconfirmed: Vec<(String, String, Millis)>,
     /// The server Supraman is signed in to, as [`Self::server_changed`] last saw it.
     origin: Option<String>,
@@ -201,14 +189,12 @@ pub struct Supervisor<L, T> {
     mint_unminted_due: bool,
     /// While set, no launch or resume goes: they would only fail after 45 s. Why, and since when.
     held: Option<(String, Millis)>,
-    /// Why a `--bg` that could not reach the background service will keep failing, if it will:
-    /// [`supraman_claude::daemon_mismatch`]; tests use a fake.
+    /// Why a `--bg` that could not reach the background service will keep failing: [`supraman_claude::daemon_mismatch`].
     daemon_check: fn() -> Option<String>,
 }
 
 impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
-    /// Mints session tokens over HTTP ([`HttpMinter`]); the minted sessions are kept at
-    /// [`MintedSessions::path`] when `config.supraman_home` is set.
+    /// Mints over HTTP; the minted sessions are kept at [`MintedSessions::path`] when `config.supraman_home` is set.
     pub fn new(desired: DesiredState, config: LaunchConfig, launcher: L, tokens: T) -> Self {
         let path = config.supraman_home.as_deref().map(|home| MintedSessions::path(home, &desired.workspace));
         let mut notices = Vec::new();
@@ -261,8 +247,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         self
     }
 
-    /// The app's own [`supraman_claude::daemon_mismatch`] before launching: `Some` holds every
-    /// launch and resume and shows one Inbox row saying why; `None` lets them go again.
+    /// The app's own [`supraman_claude::daemon_mismatch`]: `Some` holds every launch and resume behind one Inbox row.
     pub fn hold(&mut self, why: Option<String>, now: Millis) {
         self.held = why.map(|why| match self.held.take() {
             Some((_, since)) => (why, since),
@@ -284,8 +269,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         self
     }
 
-    /// What went wrong outside a launch since the last call (a failed PATCH or revoke): not Inbox
-    /// rows, nothing the human must do.
+    /// What went wrong outside a launch since the last call (a failed PATCH or revoke); nothing for the Inbox.
     pub fn take_notices(&mut self) -> Vec<String> {
         std::mem::take(&mut self.notices)
     }
@@ -298,8 +282,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         &self.keeper
     }
 
-    /// The sign-out of `origin`, whose grant revoke took the tokens minted there: each session minted there is
-    /// [`Keeper::signed_out`], its record, kept token and config left for the re-mint after the next sign-in.
+    /// The sign-out of `origin`: each session minted there is [`Keeper::signed_out`].
     pub fn signed_out(&mut self, origin: &str) {
         self.signed_out_as_of(origin, u64::MAX);
     }
@@ -327,8 +310,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         &self.needs
     }
 
-    /// The human's Retry: forgets `name`'s failures (incl. trust and give-up); the next tick acts.
-    /// On a [`NeedsKind::TokenExpired`] row it is the Re-mint: the next tick stops the live row.
+    /// The human's Retry: forgets `name`'s failures; on a [`NeedsKind::TokenExpired`] row it is the Re-mint.
     pub fn retry(&mut self, name: &str) {
         self.memory.retry(name);
         self.held = None;
@@ -339,10 +321,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         }
     }
 
-    /// The server Supraman is signed in to (`None`: not signed in), on every tick. The first time it is
-    /// `origin`, every wanted session minted elsewhere (or on an unknown server) is stopped at the next
-    /// tick and resumed (by its full uuid) with a token minted on `origin`, `replace: true`, in the same
-    /// config file; a stopped one gets it at its next resume anyway. Returns those (name, its origin).
+    /// The server signed in to, every tick; on a new one, each wanted session minted elsewhere is re-minted there. Returns those.
     pub fn server_changed(&mut self, origin: Option<&str>) -> Vec<(String, Option<String>)> {
         let was = std::mem::replace(&mut self.origin, origin.map(supraman_core::url::origin));
         self.mint_unminted_due |= was.is_none() && self.origin.is_some();
@@ -364,8 +343,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         stale
     }
 
-    /// Whether `m`'s token is from another server than `url`'s: its PATCH and DELETE would name another
-    /// server's session, so they are left to that server's grant revoke.
+    /// Whether `m`'s token is from another server than `url`'s, whose PATCH and DELETE are that server's grant revoke's.
     fn elsewhere(m: &MintedSession, url: &str) -> bool {
         m.origin.as_deref().is_some_and(|o| o != supraman_core::url::origin(url))
     }
@@ -375,9 +353,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         &mut self.tokens
     }
 
-    /// Wanted sessions started less than `settle` ago that the snapshot does not show mid-turn: each
-    /// holds a slot of the shared [`Budget`] until it is counted as working, or `settle` passes. A fresh
-    /// process shows `status=idle` for a second before its first prompt, so "live" is not enough.
+    /// Wanted sessions started less than `settle` ago, not yet mid-turn: a fresh process shows `status=idle` first.
     pub fn starting(&self, observed: &[Session], now: Millis) -> usize {
         if !self.desired.started {
             return 0;
@@ -397,10 +373,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             .count()
     }
 
-    /// `observed` is one fresh `claude agents --json --all`. Observes, reconciles, executes the
-    /// launches/resumes/stops, records their results, and returns the Inbox rows as they stand
-    /// after execution (a launch refused for trust shows in the same tick). Launches and resumes
-    /// go only while `budget` has free slots; each one that starts takes one.
+    /// One tick on a fresh `claude agents --json --all`; returns the Inbox rows as they stand after execution.
     pub fn tick(&mut self, observed: &[Session], budget: &mut Budget, now: Millis) -> Vec<NeedsYou> {
         let mut stops = BTreeMap::new();
         let reminting = self.stop_for_remint(observed, &mut stops, now);
@@ -495,8 +468,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         needs
     }
 
-    /// `None` when `result` could not reach the background service and [`Self::daemon_check`] says it
-    /// never will from here: then the supervisor holds instead of counting a failure.
+    /// `None` when `result` could not reach the background service and [`Self::daemon_check`] says it never will.
     fn unless_held(&mut self, result: Result<(), Failure>, now: Millis) -> Option<Result<(), Failure>> {
         if matches!(result, Err(Failure::DaemonUnreachable(_)))
             && let Some(why) = (self.daemon_check)()
@@ -546,13 +518,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         self.launcher.launch(&spec).map_err(|e| Failure::from(&e))
     }
 
-    /// Mints `w`'s own token with the signed-in bearer, always with `replace` (a relaunch or resume gets a
-    /// fresh token on the same Workman row), and remembers its `sessionId`. Returns the MCP URL and the
-    /// minted token; `None` when the role has no Workman (not signed in). A failed mint fails the launch.
-    ///
-    /// `claude_session_id` is the uuid a resume wakes, which `--bg --resume` keeps; a `--bg` launch
-    /// ignores `--session-id`, so a launch sends none and its row's id is PATCHed later
-    /// ([`Self::bind_claude_sessions`]).
+    /// Mints `w`'s own token, always with `replace`; a launch sends no `claude_session_id`, as `--bg` ignores `--session-id`.
     fn mint(&mut self, w: &WantedSession, claude_session_id: Option<&str>, now: Millis) -> Result<Option<(String, Minted)>, Failure> {
         let Some(t) = self
             .tokens
@@ -598,8 +564,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         Ok(())
     }
 
-    /// Once per sign-in: each live wanted session launched with a token-less config gets its token kept for its
-    /// helper, without a stop; the session reaches it at its next connect.
+    /// Once per sign-in: each live wanted session with a token-less config gets its token kept, without a stop.
     fn mint_unminted(&mut self, observed: &[Session], now: Millis) {
         if !std::mem::take(&mut self.mint_unminted_due) {
             return;
@@ -646,8 +611,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         }
     }
 
-    /// PATCHes the claude session uuid onto each minted session once its single live row shows it:
-    /// once per mint, failed or not (a failure is a notice).
+    /// PATCHes the claude session uuid onto each minted session once its single live row shows it, once per mint.
     fn bind_claude_sessions(&mut self, observed: &[Session], now: Millis) {
         let mut due = Vec::new();
         for w in &self.desired.sessions {
@@ -681,9 +645,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         }
     }
 
-    /// Ends each minted session whose claude session is deleted ([`Absent`]) with its transcript. Stop, `sm unwant`, give-up and a
-    /// workspace's removal keep token, config and kept token: the session can come back, and Workman's idle window
-    /// lapses an unused token.
+    /// Ends each minted session whose claude session and transcript are deleted ([`Absent`]); nothing else ends one.
     fn revoke_deleted(&mut self, observed: &[Session]) {
         let bound = self.minted.bound();
         let mut deleted = self.absent.deleted(&bound, observed);
@@ -694,9 +656,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         }
     }
 
-    /// Ends each record never bound to a claude session whose name no snapshot lists and the desired state left for
-    /// [`UNWANTED_UNBOUND_TICKS`] non-empty snapshots in a row: no session can use its token. An empty snapshot
-    /// proves nothing and starts the count over.
+    /// Ends each never-bound record unwanted and unlisted for [`UNWANTED_UNBOUND_TICKS`] non-empty snapshots in a row.
     fn end_unwanted_unbound(&mut self, observed: &[Session]) {
         let mut counts = BTreeMap::new();
         let mut due = Vec::new();
@@ -732,9 +692,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         self.save_minted();
     }
 
-    /// The Re-mint: stops the single live row of each name whose Re-mint was pressed. The supervisor
-    /// resumes it after the respawn grace (R13, R3), and the resume mints a fresh token ([`Self::remint`]);
-    /// a `--bg --resume` of a live row would start a copy instead. Returns the names stopped.
+    /// The Re-mint: stops each pressed name's live row, as a resume of a live row starts a copy; R13 and R3 resume it.
     fn stop_for_remint(&mut self, observed: &[Session], stops: &mut Stops, now: Millis) -> Vec<String> {
         let mut stopped = Vec::new();
         for name in std::mem::take(&mut self.remint_due) {
@@ -788,8 +746,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             .collect()
     }
 
-    /// A [`Resumed::Unknown`] resume is confirmed once the snapshot shows its own id live, and fails when
-    /// it shows another live row of the name (a copy); unseen, it waits up to `settle`.
+    /// A [`Resumed::Unknown`] resume: its own id live confirms it, another live row of the name fails it.
     fn confirm_resumes(&mut self, observed: &[Session], now: Millis) {
         for (name, id, at) in std::mem::take(&mut self.unconfirmed) {
             let copies: Vec<&str> =
@@ -802,9 +759,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         }
     }
 
-    /// A turn seen on a minted session's single live row slides its token's expiry, unless the token
-    /// already lapsed (use does not renew a lapsed token). Saved at most once a minute, as the server
-    /// renews it.
+    /// A turn on a minted session's live row slides its token's expiry, unless lapsed; saved at most once a minute.
     fn track_activity(&mut self, observed: &[Session], now: Millis) {
         let window = self.policy.token_window;
         let mut changed = false;
@@ -830,8 +785,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         }
     }
 
-    /// [`NeedsKind::TokenExpired`] for each wanted, minted session whose single live row had no turn
-    /// within the token window, except those stopped for a Re-mint this tick.
+    /// [`NeedsKind::TokenExpired`] for each wanted, minted session whose live row had no turn within the window.
     fn expired_tokens(&self, observed: &[Session], reminting: &[String], now: Millis) -> Vec<NeedsYou> {
         if !self.desired.started {
             return Vec::new();
@@ -866,8 +820,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         out
     }
 
-    /// [`NeedsKind::OtherServer`] for each wanted, minted session whose single live row holds a token
-    /// from another server than the signed-in one, except those stopped for a Re-mint this tick.
+    /// [`NeedsKind::OtherServer`] for each wanted, minted session whose live row holds another server's token.
     fn other_server_tokens(&self, observed: &[Session], reminting: &[String], now: Millis) -> Vec<NeedsYou> {
         let Some(origin) = self.origin.as_deref().filter(|_| self.desired.started) else {
             return Vec::new();
@@ -903,8 +856,6 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     }
 }
 
-/// What `w` tells Workman about itself: its name, `supraman/<workspace>` as launcher, the repo in its
-/// origin, its cwd and Supraman role.
 pub fn session_identity(workspace: &str, w: &WantedSession) -> SessionIdentity {
     let launched_by = crate::mint::launched_by(workspace);
     SessionIdentity {

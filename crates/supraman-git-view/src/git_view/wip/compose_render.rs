@@ -1,6 +1,4 @@
-//! The commit area under the WIP panel's lists: Amend previous commit, the summary with its counter, the
-//! description, a failed commit's words, Commit options, the operation's Abort, and the commit button; a
-//! cherry-pick, revert or am shows only its steps, an external rebase only its Abort.
+//! The commit area under the WIP panel's lists; a cherry-pick, revert or am shows only its steps, an external rebase only its Abort.
 
 use gpui::{ClickEvent, Context, Div, SharedString, Stateful, div, prelude::*, px};
 use supraman_gitman::OperationState;

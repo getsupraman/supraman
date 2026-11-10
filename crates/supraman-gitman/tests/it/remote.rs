@@ -1,5 +1,4 @@
-//! Fetch, pull and push against the fixture's bare temp remote and temp clones of it only (C196): file paths as
-//! URLs, and a fake `GIT_SSH_COMMAND` for the slow transfer; no network, no ssh server.
+//! Fetch, pull and push against the fixture's bare temp remote and its clones only (C196); no network, no ssh server.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;

@@ -1,6 +1,4 @@
-//! A private desktop in this process's window station that is never switched to, and a child started on it
-//! with its stdout and stderr piped back. Windows a child opens there neither take the user's focus nor see
-//! the user's keyboard. Nothing here calls `SwitchDesktop`.
+//! A private desktop that is never switched to, and a child started on it with its pipes back.
 
 use std::ffi::OsString;
 use std::io::{self, PipeReader};
@@ -141,8 +139,7 @@ mod imp {
         block
     }
 
-    /// Starts `program args` on `desktop` with no console, no stdin, both pipes captured, and this process's
-    /// environment plus `env`. It inherits the two pipe ends and no other handle.
+    /// Starts `program args` on `desktop`: no console, no stdin, both pipes captured, this env plus `env`, no other handle inherited.
     pub fn spawn_on(desktop: &HiddenDesktop, program: &Path, args: &[OsString], env: &[(&str, &str)]) -> io::Result<DesktopChild> {
         let (out_r, out_w) = io::pipe()?;
         let (err_r, err_w) = io::pipe()?;

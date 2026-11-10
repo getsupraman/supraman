@@ -1,5 +1,4 @@
-//! Selecting a commit whose row may not be loaded yet: pages load until one holds it, at most [`SEEK_PAGES`],
-//! and a toast over the graph says when it is not there.
+//! Selecting a commit whose row may not be loaded yet: pages load until one holds it, at most [`SEEK_PAGES`].
 
 use gpui::{Context, SharedString};
 use supraman_gitman::short_sha;
@@ -17,7 +16,6 @@ pub(super) struct Seek {
 }
 
 impl GitView {
-    /// Selects the row of `sha`, loading up to [`SEEK_PAGES`] pages until one holds it.
     pub(crate) fn seek_sha(&mut self, sha: SharedString, cx: &mut Context<Self>) {
         self.seek_within(sha, SEEK_PAGES, cx);
     }

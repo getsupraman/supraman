@@ -1,5 +1,4 @@
-//! The commit panel's sections: the header, the message box over its height bar, the author block, the
-//! counts, the file toolbar and the list.
+//! The commit panel's sections: header, message box, author block, counts, file toolbar and list.
 
 use std::rc::Rc;
 

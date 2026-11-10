@@ -52,8 +52,7 @@ pub(super) struct Placed {
 }
 
 impl Lanes {
-    /// Places one row: the lowest lane reserved for it, else the lowest free; its first parent continues in
-    /// its lane, a further parent joins the lane already waiting for it or opens the lowest free one.
+    /// Places one row in the lowest lane reserved for it, else the lowest free; its first parent continues there.
     pub fn place<P: AsRef<str>>(&mut self, sha: &str, parents: &[P], dashed: bool, stash: bool) -> Placed {
         let waiting = self.waiting.remove(sha).unwrap_or_default();
         let mut incoming: Vec<usize> = waiting.iter().map(|(l, _)| *l).collect();

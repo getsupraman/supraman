@@ -108,7 +108,7 @@ pub fn use_claude_dir(dir: PathBuf) {
 fn claude_dir_or(over: Option<&Path>) -> Option<PathBuf> {
     over.map(Path::to_path_buf).or_else(supraman_core::paths::claude_dir)
 }
-/// Ctrl+Z: `claude attach`'s own detach, which leaves the session running (LEARNINGS m1/7).
+/// Ctrl+Z: `claude attach`'s own detach, which leaves the session running.
 pub const DETACH_INPUT: &[u8] = b"\x1a";
 pub const DETACH_WITHIN: Duration = Duration::from_secs(5);
 const SHELL_SETTLED: Duration = Duration::from_millis(500);
@@ -179,7 +179,6 @@ pub struct Tab {
     pub launched_session: Option<String>,
     pub session_name: Option<String>,
     pub asks_schedule: Option<start::AsksSchedule>,
-    /// The program and arguments its terminal was started with.
     pub started: Option<crate::saved_tabs::SavedShell>,
     watchers: Vec<Nudge>,
 }
@@ -359,7 +358,6 @@ pub struct FleetView {
     tabs_saved: Option<crate::saved_tabs::SavedTabs>,
     tabs_writes: futures::channel::mpsc::UnboundedSender<crate::saved_tabs::SavedTabs>,
     pub tab_notices: Vec<String>,
-    /// Each workspace's schedules as the last poll read them.
     pub schedules: BTreeMap<String, Vec<crate::schedules::ScheduleRow>>,
     pub schedule_errors: Vec<String>,
     schedule_errors_dismissed: Vec<String>,
@@ -372,14 +370,11 @@ pub struct FleetView {
     pub(crate) other_scans: u64,
     pub schedule_store: Arc<dyn supraman_core::secret::SecretStore>,
     pub schedule_edit: Option<schedules::ScheduleEdit>,
-    /// Scheduled runs whose Inbox notice was dismissed, by workspace and run id.
     pub runs_dismissed: DismissedMessages,
-    /// [`schedules::Waiting::key`]s whose Inbox entry René dismissed.
     pub waiting_dismissed: DismissedMessages,
     pub(crate) tab_keys: Entity<tab_keys::TabKeyState>,
 }
 
-/// The dismissed run notices beside the dismissed messages.
 const RUNS_DISMISSED: &str = "schedules/dismissed.json";
 const WAITING_DISMISSED: &str = "schedules/waiting-dismissed.json";
 
@@ -520,8 +515,7 @@ impl Poller {
         }
     }
 
-    /// The supervisor ticks only on the snapshot [`Poller::read`] took in this poll, and only while no registry write
-    /// came after it: a stale list never drives a launch.
+    /// Ticks only on this poll's snapshot, and only while no registry write came after it: a stale list never drives a launch.
     fn tick(&mut self) -> Option<Report> {
         let ticking = Instant::now();
         let first = std::mem::take(&mut self.first);
@@ -812,7 +806,6 @@ impl FleetView {
         cx.notify();
     }
 
-    /// A store's save written off the UI thread; a failure is the action error `failed: <why>`.
     pub fn save_off_thread(&self, save: Option<supraman_core::store::Save>, failed: &'static str, cx: &mut Context<Self>) {
         supraman_ui::store::save_off_thread(save, cx, move |this, saved, cx| {
             if let Err(e) = saved {
@@ -1225,8 +1218,7 @@ impl FleetView {
         });
     }
 
-    /// Sends `text` to `workspace`'s session as the human's answer to the outbox `file`, off the UI thread (a
-    /// stalled pipe holds a direct write for up to `DELIVER_TIMEOUT`); `done` gets the outcome on it.
+    /// Off the UI thread: a stalled pipe holds a direct write for up to `DELIVER_TIMEOUT`.
     pub fn answer(&mut self, workspace: &str, file: &str, text: &str, cx: &mut Context<Self>, done: impl FnOnce(&mut Self, Result<Sent, String>) + 'static) {
         let Some(home) = self.home.clone() else {
             done(self, Err("Not sent: no Supraman home.".into()));
@@ -1344,8 +1336,7 @@ impl FleetView {
         Some(self.attach(workspace, "supervised", &session, window, cx))
     }
 
-    /// Typed, not run: the human presses Enter and answers the trust prompt; Supraman never answers it.
-    /// A PowerShell tab in `cwd` that runs `command` once its prompt is up (C113).
+    /// Typed, not run: the human answers the trust prompt, never Supraman; a PowerShell tab (see C113).
     pub fn run_in_terminal(&mut self, cwd: PathBuf, command: String, window: &mut Window, cx: &mut Context<Self>) -> u64 {
         let title = format!("trust · {}", cwd.display());
         self.type_in_shell_when(cwd, title, gpui::Task::ready(entered(&command)), window, cx)
@@ -1630,7 +1621,6 @@ impl FleetView {
         self.open_plain(title, Some(cwd), shell, cx)
     }
 
-    /// Open terminal here: `place` and the default shell's short name.
     pub fn open_terminal_here(&mut self, cwd: PathBuf, place: &str, cx: &mut Context<Self>) -> u64 {
         let (short, shell) = self.default_shell();
         self.open_plain(format!("{place} · {short}"), Some(cwd), shell, cx)
@@ -2028,7 +2018,6 @@ fn stale_tabs(tabs: &[Tab], elsewhere: &[(String, Option<String>)]) -> Vec<u64> 
         .collect()
 }
 
-/// `command` as typed at a shell's prompt and entered.
 fn entered(command: &str) -> String {
     format!("{command}\r")
 }
@@ -2158,7 +2147,6 @@ pub mod tree_check {
     pub(super) static BUILDS: AtomicUsize = AtomicUsize::new(0);
     pub(super) static RENDERS: AtomicUsize = AtomicUsize::new(0);
 
-    /// Trees built and root renders so far.
     pub fn counts() -> (usize, usize) {
         (BUILDS.load(Ordering::Relaxed), RENDERS.load(Ordering::Relaxed))
     }
@@ -2184,7 +2172,6 @@ pub mod tree_check {
         }
     }
 
-    /// The mismatches found and how many cached trees were compared.
     pub fn take() -> (Vec<String>, usize) {
         (std::mem::take(&mut *MISMATCHES.lock().unwrap_or_else(|e| e.into_inner())), COMPARED.swap(0, Ordering::Relaxed))
     }
@@ -2193,7 +2180,6 @@ pub mod tree_check {
 pub const SEND_SECTION: &str = "compose send";
 pub const APPROVE_SECTION: &str = "approve";
 
-/// What the human reads when a send did not go through.
 fn not_sent(to: &str, e: &supraman_claude::SendError) -> String {
     if e.may_arrive {
         format!("Not confirmed: the direct write to {to} timed out ({}) and may still arrive; it was not sent again through the relay.", e.direct)

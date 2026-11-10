@@ -1,5 +1,4 @@
-//! A commit's and a file's writes from the graph's menus: cherry-pick, revert, reset, a patch, a file restored
-//! from a commit, deleted or ignored; on fixture copies only (C196).
+//! A commit's and a file's writes from the graph's menus, on fixture copies only (C196).
 
 use std::path::Path;
 

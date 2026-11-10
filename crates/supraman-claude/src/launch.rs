@@ -1,5 +1,4 @@
-//! The write side: `claude --bg`, `stop`, `rm`, and `--bg --resume`. Facts behind each shape are in
-//! `docs/LEARNINGS.md` (m1/5 trust refusal, m2/1 launcher probes).
+//! The write side: `claude --bg`, `stop`, `rm`, and `--bg --resume`; the facts behind each shape are in `docs/LEARNINGS.md`.
 
 use std::ffi::OsString;
 use std::io::ErrorKind;
@@ -26,12 +25,10 @@ pub struct LaunchSpec {
     pub plugin_dirs: Vec<PathBuf>,
     /// `--add-dir`: dirs outside `cwd` the session's tools may use.
     pub add_dirs: Vec<PathBuf>,
-    /// Set on the `claude --bg` process only. The session does NOT inherit it: the daemon spawns
-    /// the session. Use `--settings {"env":…}` in `extra_args` for env the session must see.
+    /// Set on the `claude --bg` process only, which the daemon-spawned session does not inherit: see `--settings {"env":…}`.
     pub env: Vec<(String, String)>,
     pub extra_args: Vec<String>,
-    /// `--resume <sessionId>`: beside the other flags it starts a copy under a new id that carries that
-    /// session's transcript; the original keeps its id and name. claude cannot rename a session.
+    /// `--resume <sessionId>`: beside the other flags, a copy under a new id carrying that transcript.
     pub resume: Option<String>,
     /// More servers for the session's own config beside Workman's: (name, its JSON object).
     pub mcp_servers: Vec<(String, String)>,
@@ -69,8 +66,7 @@ impl LaunchSpec {
         Ok(self)
     }
 
-    /// Everything after the program name. The prompt goes after `--` because `--mcp-config` is
-    /// variadic and would otherwise swallow it.
+    /// Everything after the program name; the prompt goes after `--`, as the variadic `--mcp-config` would swallow it.
     pub fn argv(&self) -> Vec<OsString> {
         let mut args: Vec<OsString> = vec!["--bg".into(), "--name".into(), self.name.clone().into()];
         if let Some(session_id) = &self.resume {
@@ -103,14 +99,12 @@ impl LaunchSpec {
     }
 }
 
-/// A fresh v4 uuid for `--session-id`. A foreground `claude` takes it; `claude --bg` accepts the flag
-/// and ignores it, so a background session's id is known only from its row.
+/// A fresh v4 uuid for `--session-id`, which `claude --bg` accepts and ignores.
 pub fn new_session_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-/// `--bg --resume <sessionId> [-- <prompt>]` and nothing else: with any other flag the CLI starts a
-/// copy under a new id; without, it wakes the same session "with its saved options".
+/// `--bg --resume <sessionId> [-- <prompt>]` and nothing else: with any other flag the CLI starts a copy.
 pub fn resume_argv(session_id: &str, prompt: Option<&str>) -> Vec<OsString> {
     let mut args: Vec<OsString> = vec!["--bg".into(), "--resume".into(), session_id.into()];
     if let Some(prompt) = prompt {
@@ -136,8 +130,7 @@ pub struct SessionIdentity {
     pub supraman_role: String,
 }
 
-/// The `mcpServers` key of a session's Workman server: its tools are `mcp__workman__*`, and a [+] session's entry
-/// overrides the user-scope server of the same name (`/workman:setup` registers it).
+/// The `mcpServers` key of a session's Workman server; a [+] session's entry overrides the user-scope one of that name.
 pub const MCP_SERVER: &str = "workman";
 
 /// The [`MCP_SERVER`] entry with the token and `headers` written in, shaped like the workman plugin's `plugin.mcp.json`.
@@ -179,10 +172,7 @@ fn workman_mcp_config_auth(url: &str, auth: Authorization, headers: &[(&str, Str
     config.to_string()
 }
 
-/// Writes `<dir>/workstate-<agent>.json` with `headers` beside the `Authorization` one. Its new content is
-/// staged in a file restricted to the current user (Windows: inheritance removed, the user alone granted full
-/// control; unix: 0600) before the token goes in, then renamed over the old one, so the token is never readable
-/// by anyone else and a session reading its config never sees it empty.
+/// Writes `<dir>/workstate-<agent>.json`, staged owner-only then renamed, so no one else reads the token nor sees it empty.
 pub fn write_mcp_config(dir: &Path, agent: &str, url: &str, token: &str, headers: &[(&str, String)]) -> std::io::Result<PathBuf> {
     write_mcp_config_with(dir, agent, url, token, headers, &[])
 }
@@ -194,8 +184,7 @@ pub fn write_mcp_config_with(dir: &Path, agent: &str, url: &str, token: &str, he
     Ok(path)
 }
 
-/// [`write_mcp_config`] whose `Authorization` comes from `helper`, a command claude runs at each connect and on a
-/// 401 (its `headersHelper`, LEARNINGS restart-keeps-hands): no token in the file.
+/// [`write_mcp_config`] whose `Authorization` comes from `helper`, claude's `headersHelper`: no token in the file.
 pub fn write_mcp_config_helped(dir: &Path, agent: &str, url: &str, helper: &str, servers: &[(String, String)]) -> std::io::Result<PathBuf> {
     let path = mcp_config_path(dir, agent)?;
     supraman_core::fs::write_atomic_prepared(&path, workman_mcp_config_auth(url, Authorization::Helper(helper), &[], servers), restrict_to_owner)?;
@@ -224,8 +213,7 @@ pub fn mcp_token_key(agent: &str) -> String {
     format!("mcp-token/{agent}")
 }
 
-/// The `headersHelper` command for `agent`: `sm mcp-header`, with the home its token is kept in. A home holding a
-/// character a shell expands goes as hex ([`mcp_header_home`]), so cmd and bash alike pass it as written.
+/// The `headersHelper` command for `agent`: `sm mcp-header`; a home a shell would expand goes as hex ([`mcp_header_home`]).
 pub fn mcp_header_command(sm: &Path, home: &Path, agent: &str) -> String {
     let shown = home.display().to_string();
     if shown.contains(SHELL_EXPANDS) {
@@ -242,8 +230,7 @@ pub fn mcp_header_home(hex: &str) -> Option<PathBuf> {
     String::from_utf8(supraman_core::hex::decode(hex)?).ok().map(PathBuf::from)
 }
 
-/// What `sm mcp-header` prints for `agent`: `{"Authorization":"Bearer <token>"}` from `store`. The error never
-/// carries the token.
+/// What `sm mcp-header` prints for `agent`: `{"Authorization":"Bearer <token>"}`; the error never carries the token.
 pub fn mcp_header(store: &dyn supraman_core::secret::SecretStore, agent: &str) -> std::result::Result<String, String> {
     mcp_config_path(Path::new("."), agent).map_err(|e| e.to_string())?;
     match store.get(&mcp_token_key(agent))? {
@@ -318,9 +305,7 @@ impl Claude {
         Self { program: program.into() }
     }
 
-    /// Refuses with [`ClaudeError::NameTaken`] when any row (stopped ones included) already carries
-    /// the name — the CLI itself accepts duplicates, but names are Supraman's join key — then
-    /// [`Claude::launch_unchecked`].
+    /// Refuses with [`ClaudeError::NameTaken`] when any row carries the name (the CLI accepts duplicates, Supraman joins on it).
     pub fn launch(&self, spec: &LaunchSpec) -> Result<String> {
         if name_taken(&self.list_sessions()?, &spec.name) {
             return Err(ClaudeError::NameTaken { name: spec.name.clone() });
@@ -328,8 +313,7 @@ impl Claude {
         self.launch_unchecked(spec)
     }
 
-    /// Starts the session and returns `--bg`'s stdout (`backgrounded · <id8> · <name>`). Resolve the
-    /// session from its `agents --json --all` row by name ([`Claude::find_by_name`]), never from this text.
+    /// Returns `--bg`'s stdout; resolve the session by name ([`Claude::find_by_name`]), never from this text.
     pub fn launch_unchecked(&self, spec: &LaunchSpec) -> Result<String> {
         let out = self.exec(spec.argv(), Some(&spec.cwd), &spec.env, WRITE_TIMEOUT)?;
         match classify(&out) {
@@ -338,8 +322,7 @@ impl Claude {
         }
     }
 
-    /// Wakes a stopped session under the same `id`/`sessionId`, transcript and launch options kept
-    /// (`--mcp-config` included). Run from the session's `cwd`.
+    /// Wakes a stopped session under the same ids with its launch options (`--mcp-config` included), from its `cwd`.
     pub fn resume(&self, session_id: &str, cwd: &Path, prompt: Option<&str>) -> Result<String> {
         let out = self.exec(resume_argv(session_id, prompt), Some(cwd), &[], WRITE_TIMEOUT)?;
         match classify(&out) {
@@ -356,8 +339,7 @@ impl Claude {
         self.simple(&["rm", id])
     }
 
-    /// `claude rm <id>`, with `--discard-unpushed <value>` when `discard` is given (the value rm's own
-    /// refusal printed). A refusal to lose a worktree's commits is [`Removal::Kept`], not an error.
+    /// `claude rm <id>`, with `--discard-unpushed` as rm's refusal printed it; a refusal is [`Removal::Kept`], not an error.
     pub fn remove(&self, id: &str, discard: Option<&str>) -> Result<Removal> {
         let mut args = vec!["rm", id];
         if let Some(value) = discard {
@@ -381,8 +363,7 @@ impl Claude {
         parse(&self.run_within(&["agents", "--json", "--all"], timeout)?)
     }
 
-    /// Every row named `name`, newest first. Polls until one exists or `within` passes, because the
-    /// row trails `--bg` by about a second.
+    /// Every row named `name`, newest first, polled until one exists or `within` passes: the row trails `--bg` by a second.
     pub fn find_by_name(&self, name: &str, within: Duration) -> Result<Vec<Session>> {
         let deadline = Instant::now() + within;
         loop {

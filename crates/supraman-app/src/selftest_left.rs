@@ -110,7 +110,7 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     ))
 }
 
-/// Closing a window before Windows has shown, activated and painted it races those messages (F-06b).
+/// Closing a window before Windows has shown, activated and painted it races those messages.
 pub(crate) async fn shown_and_painted(handle: WindowHandle<SettingsView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     until_with(cx, WITHIN, "the settings window shown", |cx| {
         handle.update(cx, |_, window, _| crate::tray::is_shown(window)).ok().filter(|shown| *shown).map(|_| ())
@@ -302,8 +302,7 @@ pub fn on_grid(v: &FleetView, rows: &[(String, usize)]) -> anyhow::Result<String
     Ok(format!("{} rows on the grid ({})", rows.len(), xs.join(", ")))
 }
 
-/// Every painted row of the gate workspace is laid out on the one grid, levels 0 to 2 at least; the gate's own
-/// session row (`own`, level 2) is scrolled into view, so the levels are painted wherever the rows sort.
+/// Every painted row of the gate workspace sits on the one grid, levels 0 to 2, with `own` scrolled into view.
 pub async fn tree_grid(view: &Entity<FleetView>, own: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     view.update(cx, |v, cx| v.collapse_all(false, cx));
     let own = format!("session-row-{own}");

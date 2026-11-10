@@ -495,8 +495,7 @@ impl SecretStore for BlobLimited {
     }
 }
 
-/// The server spent the old refresh token, so a new one the store refuses is kept for this process
-/// and the status says the sign-in will not outlive it.
+/// A refresh token the store refuses is kept for this process, and the status says the sign-in will not outlive it.
 #[test]
 fn a_refresh_token_the_store_refuses_is_kept_in_memory_and_reported() {
     let (dir, fake, oauth, _store, _auth) = setup();

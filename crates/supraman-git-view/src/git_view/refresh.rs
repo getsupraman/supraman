@@ -1,5 +1,4 @@
-//! The tab's refreshes as the repository changes ([`live`]) or the window comes back to the front: read off
-//! the UI thread, a late read dropped by its token, applied without losing the user's place.
+//! The tab's refreshes as the repository changes or the window comes back: read off the UI thread, a late read dropped by its token.
 
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -66,8 +65,7 @@ pub(super) fn follows(cx: &gpui::App) -> Option<live::Debounces> {
     }
 }
 
-/// The row a refresh keeps in place: the selected commit while it is wholly in view, else the first commit row at or
-/// below the top; how far below the top it starts, and where the view was.
+/// The row a refresh keeps in place: the selected commit while wholly in view, else the first commit row at or below the top.
 struct Anchor {
     sha: SharedString,
     offset: Pixels,
@@ -124,8 +122,7 @@ impl GitView {
         .detach();
     }
 
-    /// A refresh `FOCUS_DELAY` after the window becomes active, from the first frame on, for a tab not following
-    /// its repository.
+    /// A refresh `FOCUS_DELAY` after the window becomes active, for a tab not following its repository.
     pub(super) fn watch_activation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.follow.activation.is_some() {
             return;
@@ -185,8 +182,7 @@ impl GitView {
         }
     }
 
-    /// The refs, the WIP and the first page read again, the commits loaded below it kept while the walk below is
-    /// the same; `files` the work dir's changed ones.
+    /// The refs, the WIP and the first page read again, the rows below kept while the walk below is the same.
     pub(crate) fn refresh_graph(&mut self, files: Option<HashSet<String>>, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else { return };
         self.follow.graph_token += 1;
@@ -323,8 +319,7 @@ impl GitView {
         Some(Anchor { sha: r.sha.clone(), offset: row * ix as f32 - top, top })
     }
 
-    /// Rows added above the anchor take the view to the top when it was there or the selected row stays wholly in
-    /// view at the top; otherwise the anchor keeps its place.
+    /// Rows added above the anchor scroll to the top when the view or the selected row was there; else the anchor keeps its place.
     fn restore(&self, anchor: Anchor, cx: &App) {
         let Some(ix) = self.pages.read(cx).rows.iter().position(|r| r.sha == anchor.sha) else { return };
         let row = px(graph::ROW);

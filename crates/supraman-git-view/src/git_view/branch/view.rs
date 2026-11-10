@@ -1,6 +1,4 @@
-//! The tab's side of the ref writes: the ref panel's right-click and double-click and the graph's pills (their
-//! menu, double-click and drag onto another pill) turned into [`BranchActions`]' subjects and targets, and its
-//! events back in the tab.
+//! The tab's side of the ref writes: the ref panel's and the pills' clicks and drags as [`BranchActions`]' subjects.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -162,8 +160,7 @@ impl GitView {
         self.branch.update(cx, |b, cx| b.open_commit_menu(vec![subject], sha, graph, position, cx));
     }
 
-    /// The graph pill of row `ix`'s group `group` double-clicked: its local branch checked out, else its one remote
-    /// branch, else a menu of its remote branches; a tag's or HEAD's nothing.
+    /// The graph pill of row `ix`'s group `group` double-clicked: its local branch, else its one remote one, else a menu.
     pub(crate) fn pill_double_clicked(&mut self, ix: usize, group: usize, position: Point<Pixels>, cx: &mut Context<Self>) {
         let Some(g) = self.pages.read(cx).rows.get(ix).and_then(|r| r.row.refs.get(group)).cloned() else { return };
         let (locals, remotes, _) = split(&g);

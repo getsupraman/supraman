@@ -1,5 +1,4 @@
-//! A selftest runs on a hidden desktop of its own unless `--visible` (or `SUPRAMAN_SELFTEST_VISIBLE=1`) asks for
-//! the user's: its windows then never take the user's focus, and the user's held keys never reach its posted ones.
+//! A selftest runs on a hidden desktop of its own unless `--visible`, so it never takes the user's focus or keys.
 
 use std::ffi::OsString;
 use std::io::{Read, Write};

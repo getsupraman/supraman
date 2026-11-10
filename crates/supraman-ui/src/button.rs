@@ -41,8 +41,7 @@ pub fn icon(hits: &HitTargets, key: impl Into<SharedString>, icon: Svg, side: Pi
         .child(icon.group_hover(key, |s| s.text_color(text)))
 }
 
-/// An [`icon`] button that is always laid out and painted, so its slot never shifts and its hit key exists, but
-/// shows only while the `group` (its row) is hovered or `shown` (the row is selected).
+/// An [`icon`] always laid out and painted (slot and hit key kept), shown while `group` is hovered or `shown`.
 pub fn revealed(hits: &HitTargets, key: impl Into<SharedString>, icon: Svg, side: Pixels, group: impl Into<SharedString>, shown: bool, cx: &App) -> Stateful<Div> {
     reveal(self::icon(hits, key, icon, side, cx), group, shown)
 }
@@ -101,8 +100,7 @@ pub fn bordered(hits: &HitTargets, key: impl Into<SharedString>, label: impl Int
         .child(label.into())
 }
 
-/// A prompt's answer, bold: on `tone`'s tint inside a solid `tone` border, or outlined in the border colour
-/// without a tone (Cancel).
+/// A prompt's answer, bold: on `tone`'s tint inside a solid `tone` border, or outlined without one (Cancel).
 pub fn tinted(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<SharedString>, tone: Option<Hsla>, cx: &App) -> Stateful<Div> {
     let colors = cx.theme().colors();
     let (fill, hover, border) = match tone {
@@ -147,8 +145,7 @@ pub fn outline(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into
         .child(label.into())
 }
 
-/// A quiet outlined pill in `fg` whose border, fill and text come up on hover; its label's letters centred in it,
-/// painted under `<key>-label`.
+/// A quiet outlined pill in `fg`, lit on hover; its label's letters centred, painted under `<key>-label`.
 pub fn pill(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<SharedString>, fg: Hsla, cx: &App) -> Stateful<Div> {
     let colors = cx.theme().colors();
     let key = key.into();
@@ -167,8 +164,7 @@ pub fn pill(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<Sh
         .child(label)
 }
 
-/// A tick box: [`tick`] in the accent colour, its border lit on hover, on the letters of the label the caller puts
-/// beside it ([`ink::mark`]); the caller adds its click.
+/// A tick box: [`tick`] in the accent colour on the letters of the caller's label ([`ink::mark`]); the caller adds its click.
 pub fn checkbox(hits: &HitTargets, key: impl Into<SharedString>, on: bool, cx: &App) -> Stateful<Div> {
     let key = key.into();
     let colors = cx.theme().colors();
@@ -222,8 +218,7 @@ pub fn choice(id: impl Into<ElementId>, label: impl Into<SharedString>, selected
         .child(div().flex_1().child(label.into()))
 }
 
-/// One option of a [`crate::segmented`] group: [`choice`]'s fills without a border of its own, `icon` and
-/// `label` side by side; paints under `key`.
+/// One option of a [`crate::segmented`] group: [`choice`]'s fills, `icon` and `label`, under `key`.
 pub fn segment(hits: &HitTargets, key: impl Into<SharedString>, icon: Option<Icon>, label: Option<SharedString>, selected: bool, cx: &App) -> Stateful<Div> {
     let key = key.into();
     let colors = cx.theme().colors();

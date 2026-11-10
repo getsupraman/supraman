@@ -1,5 +1,4 @@
-//! GitMan's layout per repository, `<home>/gitman/layout.json`, keyed by the repo's main checkout: the one reader and
-//! writer of that file. Read once off the UI thread; each change written off it.
+//! GitMan's layout per repository, `<home>/gitman/layout.json`, keyed by the main checkout; its one reader and writer.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -38,7 +37,7 @@ pub(crate) struct Opening {
 }
 
 impl File {
-    /// The repo's entry, else `saved` (a tab saved before this file kept it), else the last layout used.
+    /// The repo's entry, else `saved` (a tab's own sizes), else the last layout used.
     pub(crate) fn opening(&self, key: &str, saved: &GitSizes) -> Opening {
         if let Some(own) = self.repos.get(key) {
             return Opening { sizes: own.clone(), own_graph: has_graph(own), adopt: false };

@@ -1,6 +1,4 @@
-//! A hunk's or some lines' stage, unstage and discard (docs/research/gitkraken-12.6.1.md, "Staging"): no
-//! `git apply`; the whole file's text is built from the two sides the viewer showed, with the picked lines
-//! moved from one side to the other, and written as a blob into the index or, smudged, to the working file.
+//! A hunk's or some lines' stage, unstage and discard without `git apply`: the whole file rebuilt from the two sides shown.
 
 use std::collections::BTreeSet;
 use std::ops::Range;
@@ -30,8 +28,7 @@ pub struct Change {
     pub new: Range<u32>,
 }
 
-/// Lines of the diff the viewer showed of `path`: its texts (`\r\n` read as `\n`, rows as the editor counts them,
-/// a lone `\r` ending one), every change of it, and the rows picked of each side.
+/// Lines picked of the diff the viewer showed of `path`; `shown` has `\r\n` as `\n`, rows as the editor counts them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Picked {
     pub path: String,
@@ -49,7 +46,6 @@ impl Picked {
     }
 }
 
-/// A side of the file as text and its encoding.
 struct Side {
     text: String,
     encoding: Encoding,
@@ -63,7 +59,6 @@ fn side(bytes: &[u8]) -> Result<Side, WriteError> {
     Ok(Side { text, encoding })
 }
 
-/// `text` as the viewer reads it: `\r\n` as `\n`.
 fn as_shown(text: &str) -> String {
     text.replace("\r\n", "\n")
 }
@@ -85,14 +80,12 @@ fn line_of_rows(shown: &str) -> Vec<u32> {
     rows
 }
 
-/// A change's rows as lines.
 fn lines(rows: &Range<u32>, of: &[u32]) -> Range<usize> {
     let at = |row: u32| of.get(row as usize).or(of.last()).copied().unwrap_or(0) as usize;
     if rows.is_empty() { at(rows.start)..at(rows.start) } else { at(rows.start)..at(rows.end - 1) + 1 }
 }
 
-/// The text between `old` and `new`: `base`'s lines outside the changes, and inside each change the old lines
-/// kept and the new lines taken. With `toward_new` the picked lines move from old to new; without, back.
+/// `base`'s lines outside the changes, and inside each the picked lines moved toward new (`toward_new`) or back.
 fn build(old: &[&str], new: &[&str], changes: &[(Range<usize>, Range<usize>)], picked: (&BTreeSet<usize>, &BTreeSet<usize>), toward_new: bool) -> String {
     let base = if toward_new { old } else { new };
     let mut out = String::new();
@@ -225,8 +218,7 @@ pub fn unstage(s: &Session, picked: &Picked) -> Result<(), WriteError> {
     Ok(())
 }
 
-/// Puts the picked lines of the Unstaged diff back to the index's in the working file, a snapshot first and
-/// recorded for Undo.
+/// Puts the picked lines of the Unstaged diff back to the index's in the working file, after a snapshot; recorded for Undo.
 pub fn discard(s: &Session, picked: &Picked) -> Result<(), WriteError> {
     let path = picked.path.as_str();
     let sides = Sides { old: side(&index_bytes(s, path)?)?, new: side(&clean_worktree(s, path)?)?, toward_new: false };

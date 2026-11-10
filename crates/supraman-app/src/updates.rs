@@ -1,5 +1,4 @@
-//! The update check's loop and what the window shows of it: a banner when a newer release is
-//! available (view/left.rs) and a line on Settings → About.
+//! The update check's loop, its banner and Settings → About's line.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,11 +16,9 @@ use supraman_workman::updates::{self, Available, Checked, Downloaded, Outcome, S
 use crate::view::{Confirm, Confirmed, FleetView};
 use supraman_ui::open::Link;
 
-/// What Update does with the release the banner names.
 pub type UpdateAction = fn(&mut FleetView, &Available, &mut Context<FleetView>);
 
-/// Downloads, verifies and unpacks the release, then hands the install over to `sm update apply` and quits;
-/// a build that is not an installed release (no `VERSION` beside it) or a release without its zip opens the page.
+/// A build that is not an installed release (no `VERSION` beside it), or a release without its zip, opens the page.
 pub fn install_update(view: &mut FleetView, available: &Available, cx: &mut Context<FleetView>) {
     if matches!(view.updates.stage, Stage::Downloading { .. } | Stage::Applying) {
         return;
@@ -91,7 +88,6 @@ impl Target {
 pub enum Stage {
     Idle,
     Downloading { done: u64, total: u64 },
-    /// Handed over to `sm update apply`.
     Applying,
     Failed(String),
 }
@@ -202,7 +198,6 @@ impl Updates {
         (a.manifest.semver() > self.running() && updates::shows(a, self.dismissed.as_ref())).then_some(a)
     }
 
-    /// Settings → About's line: "Up to date, checked 10:42", "Supraman 0.2.0 is available" or why it failed.
     pub fn status_line(&self, on: bool) -> String {
         if !on {
             return "Checking is off.".into();
@@ -225,7 +220,6 @@ impl FleetView {
         self.updates.check_now();
     }
 
-    /// Opens an http(s) URL; anything else is refused with a toast.
     pub fn open_web(&mut self, url: &str, cx: &mut Context<Self>) {
         match supraman_ui::open::allowed(url, &supraman_ui::open::WEB_SCHEMES) {
             Ok(()) => (self.open_link_with)(&Link::Url(url.to_string()), cx),

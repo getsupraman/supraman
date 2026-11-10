@@ -1,5 +1,4 @@
-//! The conflict panel through the real tab: its header, lists and buttons in a merge, a rebase, a cherry-pick, a
-//! revert and an external rebase, and the graph's conflict node, on fixture copies (C196).
+//! The conflict panel through the real tab in a merge, a rebase, a cherry-pick, a revert and an external rebase.
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use supraman_gitman::fixture::{Fixture, run_git};

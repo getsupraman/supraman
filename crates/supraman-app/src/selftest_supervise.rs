@@ -320,7 +320,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
 
     relay_step(tb, &relay_name, view, cx).await.context("step r")?;
 
-    // `claude stop`, not a kill: the daemon respawns a session killed while `state=working`/`blocked` (R13), never a stopped one.
+    // `claude stop`, not a kill: the daemon respawns a session killed while `state=working`/`blocked`, never a stopped one.
     let idle = wait_for("step c: workspace session idle", Duration::from_secs(120), cx, |rows| {
         rows.iter().find(|s| s.name == ctrl && s.supervised_health(now_ms()) == Health::Idle && s.pid.is_some()).cloned()
     })
@@ -672,10 +672,7 @@ async fn park_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowC
     Ok(())
 }
 
-/// m5/61, through the window: a background session this run launched itself, unmanaged, in a folder of a started
-/// workspace is adopted from its menu. The original is stopped (stop, never rm) and stays listed;
-/// `fm-<ws>-<folder>` runs as a copy under a new id whose transcript carries the original's turn, and the desired
-/// state forks no more once that row shows.
+/// An unmanaged background session in a started workspace's folder, adopted from its menu: stopped, never rm'd.
 async fn adopt_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let (name, dir) = (&tb.y.0, &tb.y.1);
     let mut ws = Workspace::new(name.as_str(), dir, Vec::new());

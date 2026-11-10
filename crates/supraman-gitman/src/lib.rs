@@ -1,5 +1,4 @@
-//! GitMan over the user's system git. Every function blocks; callers run it off the UI thread.
-//! The readers change no ref, index, worktree, config or reflog (C146); every change goes through [`write`].
+//! GitMan over the user's system git, blocking; the readers write nothing (see C146), every change goes through [`write`].
 
 mod blob;
 mod changes;

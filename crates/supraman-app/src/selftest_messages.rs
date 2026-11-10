@@ -1,6 +1,4 @@
-//! `--selftest` step 7n's messages: each note's × painted where a click lands on it, and the hold that keeps a note
-//! back under a resting pointer (real mouse moves over the real sidebar); what a dismissal keeps and when a note shows
-//! again are `dismissed_messages`' tests.
+//! `--selftest` step 7n's messages: each note's × and the hold under a resting pointer, with real mouse moves.
 
 use std::{
     path::Path,

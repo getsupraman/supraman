@@ -16,8 +16,7 @@ pub fn key(home: &Path) -> String {
     format!("{hash:016x}")
 }
 
-/// The nearest existing ancestor canonicalized (8.3 names expanded) and the rest appended, so a home hashes the
-/// same before and after it is created.
+/// The nearest existing ancestor canonicalized and the rest appended, so a home hashes alike before and after it exists.
 fn canonical(home: &Path) -> std::path::PathBuf {
     let absolute = std::path::absolute(home).unwrap_or_else(|_| home.to_path_buf());
     let mut base = absolute.as_path();

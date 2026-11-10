@@ -49,12 +49,10 @@ impl ForeignTask {
         format!(r"{}\{}", self.folder.trim_end_matches('\\'), self.name)
     }
 
-    /// `OK` for 0, else the code in hex.
     pub fn result_text(&self) -> Option<String> {
         self.last_result.map(|r| if r == 0 { "OK".to_string() } else { format!("0x{:08X}", r as u32) })
     }
 
-    /// The working directory, then the script's folder.
     pub fn dirs(&self) -> impl Iterator<Item = &Path> {
         let script = match &self.via {
             Via::Script(p) => p.parent(),
@@ -114,8 +112,7 @@ pub fn of_task(task: &TaskState, read: &dyn Fn(&Path) -> Option<String>) -> Opti
     })
 }
 
-/// `claude` as the command; a shell whose arguments name `claude`; or a `.ps1`/`.cmd`/`.bat`, as the command or
-/// in the arguments, whose text names it. Relative scripts resolve against `working_dir`.
+/// `claude` as the command, a shell whose arguments name it, or a script (relative to `working_dir`) whose text does.
 pub fn runs_claude(command: &str, args: &str, working_dir: Option<&Path>, read: &dyn Fn(&Path) -> Option<String>) -> Option<Via> {
     let command = expand_env(command.trim().trim_matches('"'));
     let exe = Path::new(&command).file_name().and_then(|n| n.to_str()).unwrap_or_default().to_ascii_lowercase();
@@ -163,8 +160,7 @@ pub fn read_script(path: &Path) -> Option<String> {
     Some(crate::text::decode(&bytes).0)
 }
 
-/// `on logon`, `at startup`, `daily at 09:00`, `weekly Mon, Thu at 08:00`, `once at 2026-11-02 07:30`, several
-/// joined by `, `; `custom` for anything else.
+/// `on logon`, `daily at 09:00`, `weekly Mon, Thu at 08:00`, … joined by `, `; `custom` for anything else.
 pub fn trigger_words(xml: &str) -> String {
     let Ok(doc) = Document::parse(xml) else { return "custom".into() };
     let Some(triggers) = doc.descendants().find(|n| n.tag_name().name() == "Triggers") else { return "on demand".into() };
@@ -221,8 +217,7 @@ pub fn owner<'w>(task: &ForeignTask, workspaces: &'w [Workspace]) -> Option<&'w 
     task.dirs().find_map(|d| holder_of(d, workspaces))
 }
 
-/// An OLE automation date (local days since 1899-12-30) as epoch ms; `None` for never, which Task Scheduler
-/// reports as `0` or a date before 2000.
+/// An OLE automation date as epoch ms; `None` for Task Scheduler's never (`0` or a date before 2000).
 pub fn ole_date_ms(days: f64) -> Option<i64> {
     if !days.is_finite() || days <= 0.0 {
         return None;

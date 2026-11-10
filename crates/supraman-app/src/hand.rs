@@ -84,8 +84,7 @@ fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
 
-/// Under legacy arg passing (5.1, pwsh < 7.3) a native claude is started with its args as one MSVC-quoted command
-/// line of the process's own, so the line never sits in claude's environment.
+/// Under legacy arg passing (5.1, pwsh < 7.3) claude gets one MSVC-quoted command line, never via its environment.
 const RUNNER: &str = r#"function supramanClaude($supramanArgv) {
     $c = Get-Command -Name <command> -ErrorAction SilentlyContinue | Select-Object -First 1
     if ("$PSNativeCommandArgumentPassing" -in '', 'Legacy' -and $c.CommandType -eq 'Application' -and $c.Extension -notin '.cmd', '.bat') {
@@ -126,8 +125,7 @@ pub struct Extras {
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
     pub path: Option<PathBuf>,
-    /// A UTF-8 file holding claude's first prompt; the script reads it into a variable and deletes it, so the text
-    /// reaches claude as one argument, never through the script's own quoting (LEARNINGS sched2/6).
+    /// claude's first prompt, read and deleted by the script so it arrives as one argument (LEARNINGS sched2/6).
     pub prompt: Option<PathBuf>,
 }
 
@@ -246,8 +244,7 @@ struct Pending {
 }
 
 impl Pending {
-    /// A 409 is a name whose token another process still uses, or another launcher's: never taken, a fresh name from
-    /// `fresh(wanted, tried, held)` is tried instead, up to [`FRESH_TRIES`], and the notice says so.
+    /// A 409 is never taken: a name from `fresh` is tried instead, up to [`FRESH_TRIES`], and the notice says so.
     fn mint(&mut self, mut fresh: impl FnMut(&str, &[String], &str) -> Option<String>) -> Result<Minted, MintError> {
         let wanted = self.request.name.clone();
         let mut tried = vec![wanted.clone()];
@@ -360,8 +357,7 @@ impl Hands {
             .filter(move |n| self.minted.get(n).is_none() && !self.helped.contains(n) && (n == held || !self.picked.contains_key(n)))
     }
 
-    /// A tab without a token of its own still gets its helped config under a free name, never the user's own
-    /// `workman` registration.
+    /// A tab without a token of its own gets its helped config under a free name, never the user's `workman` entry.
     fn helped(&mut self, name: String, notice: Option<String>) -> Launch {
         match supraman_supervisor::mcp_url(&self.auth).and_then(|url| self.keeper().write_unminted(&name, &url, &[])) {
             Ok(config) => {
@@ -372,8 +368,7 @@ impl Hands {
         }
     }
 
-    /// The claude that last held `claude_session`'s token here has exited (its config is gone) and no live
-    /// continuation of it holds the token: taking that token is safe.
+    /// The claude that last held `claude_session`'s token here has exited and no live continuation holds the token.
     fn holder_exited(&self, claude_session: Option<&str>) -> bool {
         claude_session.is_some_and(|sid| {
             self.newest(sid) == sid
@@ -413,8 +408,7 @@ impl Hands {
         })
     }
 
-    /// `name`'s claude session follows its `continued-in` chain to the newest session, which holds the token
-    /// from then on; whether it moved.
+    /// `name`'s token follows its claude session's `continued-in` chain to the newest; whether it moved.
     fn follow(&mut self, name: &str) -> bool {
         let Some(sid) = self.minted.get(name).and_then(|m| m.claude_session_id.clone()) else { return false };
         let newest = self.newest(&sid);
@@ -534,8 +528,7 @@ impl Hands {
         self.minted.get(name).is_some() && self.config_path(name).is_ok_and(|p| !p.exists())
     }
 
-    /// Revokes `name`'s token, unless its claude session runs or a continuation of it holds the token
-    /// ([`Self::follow`]): those keep token and config, and Workman's idle window lapses them once unused.
+    /// Revokes `name`'s token unless its claude session or a continuation of it still holds it ([`Self::follow`]).
     pub fn release(&mut self, name: &str) -> Option<String> {
         if self.minted.get(name).is_some() && (self.follow(name) || self.carried.contains(name) || self.holder_runs(name)) {
             log::info!("hand {name} kept: the claude session holding its token runs");
@@ -563,8 +556,7 @@ impl Hands {
         }
     }
 
-    /// The sign-out of `origin`, whose grant revoke took the tokens minted there: each hand minted there is
-    /// [`Keeper::signed_out`].
+    /// The sign-out of `origin`: each hand minted there is [`Keeper::signed_out`].
     pub fn signed_out(&mut self, origin: &str) -> Vec<String> {
         let origin = supraman_core::url::origin(origin);
         let names: Vec<String> = self.minted.names().filter(|n| self.minted.get(n).is_some_and(|m| m.origin.as_deref() == Some(origin.as_str()))).cloned().collect();
@@ -586,8 +578,7 @@ impl Hands {
         names.iter().filter_map(|n| self.release(n)).collect()
     }
 
-    /// At start, the tokens of the last run: a claude that still runs holding one (the newest of its chain)
-    /// keeps it; every other is revoked.
+    /// At start, the last run's tokens: one a running claude (the newest of its chain) holds is kept, the rest revoked.
     pub fn release_last_run(&mut self) -> Vec<String> {
         let names: Vec<String> = self.minted.names().cloned().collect();
         for name in &names {

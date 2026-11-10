@@ -1,4 +1,4 @@
-//! The WIP panel's writes through the real tab: its buttons, keys, Confirm and the write gate, on fixture copies (C196).
+//! The WIP panel's writes through the real tab: its buttons, keys, Confirm and the write gate, on fixture copies.
 
 
 use gpui::{Context, Entity, TestAppContext, VisualTestContext};
@@ -14,14 +14,14 @@ use crate::git_view::write_gate::WORKING;
 use crate::git_view::GitView;
 use crate::occupancy;
 
-/// A Git tab of `folder`, its WIP row selected, whose write gate reads `live`.
+/// A Git tab of `folder` with `live`, its WIP row selected.
 fn open<'a>(folder: &std::path::Path, live: occupancy::Live, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
     let (view, cx) = open_as(folder, live, cx);
     select_wip(&view, cx);
     (view, cx)
 }
 
-/// A Git tab of `folder` as it opens, whose write gate reads `live`.
+/// A Git tab of `folder` as it opens, with `live`.
 pub(crate) fn open_as<'a>(folder: &std::path::Path, live: occupancy::Live, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
     test_support::open(folder, Opts::default().live(live).editor().size(1200., 900.), cx)
 }

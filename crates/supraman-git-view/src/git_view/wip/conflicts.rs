@@ -1,6 +1,4 @@
-//! The conflict panel (.claude/briefs/gitkraken-actions.md, GA6b): the WIP panel's header while an operation is
-//! under way or files are conflicted, a conflicted file's buttons (Take current, Take incoming, Mark Resolved),
-//! a resolved file's Mark Conflicted, and their writes through the tab's gate.
+//! The conflict panel: the WIP panel's header while an operation is under way, the conflicted files' buttons and their writes.
 
 
 use gpui::{Context, Div, SharedString, Stateful, div, prelude::*, px};
@@ -53,8 +51,7 @@ impl WipPanel {
         self.request(Doing::Take(side), index_write(), move |s| conflicts::take(s, &paths, side), cx);
     }
 
-    /// Mark resolved of `paths` (`None`: every conflicted file); asks first while one still holds conflict
-    /// markers, unless `anyway`.
+    /// Mark resolved of `paths` (`None`: every conflicted file); asks first while one holds conflict markers, unless `anyway`.
     pub(crate) fn resolve(&mut self, paths: Option<Vec<String>>, anyway: bool, cx: &mut Context<Self>) {
         let which = paths.clone();
         let job = self.writes.keeping(Kept::Marked, move |s| conflicts::mark_resolved(s, which.as_deref(), anyway));
@@ -114,8 +111,7 @@ impl WipPanel {
         div().flex().flex_col().flex_none().items_center().gap_1().py_1p5().px_2().text_color(palette.text).child(first).children(second)
     }
 
-    /// A conflicted file's conflict always shown, and on hover Take current, Take incoming and Mark resolved as
-    /// icons whose tooltips say them.
+    /// A conflicted file's conflict, and on hover Take current, Take incoming and Mark resolved as icons.
     pub(super) fn conflicted_tail(&mut self, path: &str, group: SharedString, cx: &mut Context<Self>) -> Div {
         let (hits, busy, shown) = (self.hits.clone(), self.busy(cx), self.shown());
         let muted = cx.theme().colors().text_muted;

@@ -14,8 +14,7 @@ use crate::occupancy;
 /// The repo's background work on, with no fetch and no maintenance.
 pub(crate) const QUIET: BackgroundSettings = BackgroundSettings { fetch_every_minutes: Some(0), maintenance: Some(false), worktree_wip: None };
 
-/// How a test opens its Git tab: the layout file's home, the live sessions its write gate reads (and whether the
-/// tab follows them), the repo's background work at [`QUIET`], Zed's editor for a diff, and the window's size.
+/// How a test opens its Git tab: layout home, live sessions, background at [`QUIET`], editor and window size.
 pub(crate) struct Opts {
     home: Option<PathBuf>,
     live: Option<occupancy::Live>,
@@ -147,8 +146,7 @@ pub(crate) fn settle(view: &Entity<GitView>, cx: &mut VisualTestContext) {
     }
 }
 
-/// `button` pressed `click_count` times at the middle of `key` as a frame drawn now paints it; the hit keys after
-/// are the next frame's only.
+/// `button` pressed `click_count` times at the middle of `key` as painted now; the hit keys after are the next frame's.
 pub(crate) fn press(view: &Entity<GitView>, key: &str, button: MouseButton, click_count: usize, cx: &mut VisualTestContext) {
     let position = repaint(view, cx).borrow().get(key).unwrap_or_else(|| panic!("{key} is painted")).bounds.center();
     let modifiers = Modifiers::none();

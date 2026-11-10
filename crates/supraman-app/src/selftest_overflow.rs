@@ -1,6 +1,4 @@
-//! 30 tabs overflow the strip: they shrink to the minimum before any is cut off, the first and the last are reached by
-//! the wheel, the ⌄ list and Ctrl+1 and Ctrl+9, and a drag scrolls at the edge. A unit test cannot: it needs a real window's layout,
-//! wheel and drag; the arithmetic itself is `supraman_ui::tabs::fit`'s tests.
+//! 30 tabs overflowing the strip in a real window's layout, wheel and drag; the arithmetic is `tabs::fit`'s tests.
 
 use std::time::Duration;
 
@@ -64,8 +62,7 @@ fn visible(view: &Entity<FleetView>, id: u64, cx: &mut AsyncWindowContext) -> bo
     hit(view, &format!("tab-{id}"), cx).is_some_and(|h| h.fully_visible())
 }
 
-/// One tab at a time up to [`COUNT`]: each opened tab is whole in view, and while `n` tabs fit at the minimum
-/// every one of them is, at the room's even share.
+/// One tab at a time up to [`COUNT`]: each opened tab is whole in view, at the room's even share while they fit.
 async fn open(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<(Vec<u64>, String)> {
     let cwd = crate::selftest::home();
     let mut ids = Vec::new();
@@ -147,8 +144,7 @@ async fn wheel(view: &Entity<FleetView>, ids: &[u64], cx: &mut AsyncWindowContex
     Ok(format!("the wheel reached the first tab in {} notches and the last in {}", notches[0], notches[1]))
 }
 
-/// The ⌄ list from its button: every tab listed from the first, the active one marked, a query narrowing it, a click
-/// and Enter each activating and revealing their tab.
+/// The ⌄ list: every tab listed, the active one marked, a query narrowing it, a click and Enter revealing a tab.
 async fn list(view: &Entity<FleetView>, ids: &[u64], cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let (first, last) = (ids[0], ids[COUNT - 1]);
     let row = |id: u64| format!("{LIST}-row-{id}");

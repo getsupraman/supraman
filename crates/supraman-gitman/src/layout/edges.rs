@@ -2,12 +2,10 @@ use std::sync::Arc;
 
 use super::lanes::{Edge, EdgeKind, LANE_COLOURS};
 
-/// A row's edges, compact: the lanes open above it, those ending at its node and those starting from it; each
-/// [`Edge`] is derived as it is read.
+/// A row's edges, compact: each [`Edge`] is derived as it is read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Edges {
-    /// Two bitsets of equal length, the lanes open above the row and which of them are dashed; shared with the
-    /// row above while they stay the same.
+    /// The lanes open above the row and which are dashed; shared with the row above while the same.
     open: Arc<[u64]>,
     /// The lanes ending at the node, ascending, then the lanes starting from it, in parent order.
     lanes: Box<[u32]>,
@@ -42,8 +40,7 @@ impl Edges {
 }
 
 impl Edges {
-    /// The edges of `n` rows stacked directly above this row on its node's lane, each joined to the next by a dashed
-    /// edge, and this row's own with the lowest of them joined to its node.
+    /// The edges of `n` rows stacked above this row on its node's lane, joined by dashed edges, then this row's own.
     pub fn stacked_above(&self, n: usize) -> (Vec<Edges>, Edges) {
         if n == 0 {
             return (Vec::new(), self.clone());

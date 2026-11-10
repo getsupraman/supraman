@@ -1,6 +1,4 @@
-//! A table of columns over rows that lays out only the rows in view ([`gpui::uniform_list`]): a header whose
-//! dividers drag to resize, one selected row moved by the keys of [`bind_keys`], and a call when the view nears the last row.
-//! The owner keeps the column widths and the rows; the table keeps the selection and the scroll.
+//! A table of columns over rows that lays out only the rows in view; the owner keeps the widths and rows, the table the selection and scroll.
 
 use std::{cell::RefCell, ops::Range, rc::Rc};
 
@@ -334,9 +332,7 @@ impl<V: 'static> Table<V> {
         self
     }
 
-    /// Gets every column's preferred width when a divider is let go or double-clicked: the owner's `widths`
-    /// with the dragged column's new one, the moment to keep and persist them. A drag in between moves only
-    /// the table's own widths.
+    /// Every column's preferred width when a divider is let go or double-clicked: the moment to keep and persist them.
     pub fn on_resize(mut self, f: impl Fn(&mut V, Vec<Pixels>, &mut Context<V>) + 'static) -> Self {
         self.on_resize = Some(Rc::new(f));
         self

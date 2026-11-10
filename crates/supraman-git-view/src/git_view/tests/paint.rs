@@ -1,5 +1,4 @@
-//! Where the graph's rows paint: the graph band's edges, one inset and one line box across the columns, and a menu
-//! over a pill group's list.
+//! Where the graph's rows paint: the band's edges, one inset and line box across the columns, a menu over a pill list.
 
 use gpui::{Bounds, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, TestAppContext, point};
 use supraman_gitman::fixture::Fixture;

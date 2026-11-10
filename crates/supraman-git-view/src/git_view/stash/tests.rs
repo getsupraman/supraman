@@ -1,5 +1,4 @@
-//! The stash's writes through the real tab: the toolbar's Stash and Pop, the stash row's menus and the WIP's and
-//! a stash's file buttons, on fixture copies (C196).
+//! The stash's writes through the real tab: the toolbar's Stash and Pop, the stash row's menus and the file buttons.
 
 use gpui::{Entity, MouseButton, TestAppContext, VisualTestContext};
 use supraman_gitman::fixture::{Fixture, MAIN_STASH};

@@ -1,5 +1,4 @@
-//! Checkout, branches, tags, fast-forward, merge, rebase onto and the worktrees' writes, on fixture copies and
-//! their bare temp remote only (C196).
+//! The ref and worktree writes, on fixture copies and their bare temp remote only (C196).
 
 use std::path::Path;
 

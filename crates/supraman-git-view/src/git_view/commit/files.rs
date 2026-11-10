@@ -1,6 +1,4 @@
-//! The file and folder menus of the WIP and commit panels' lists (docs/research/gitkraken-12.6.1.md §B items 8, 9
-//! and 11): per state the stage, unstage, discard and conflict items of their owners, Ignore ▸, stash, open, show
-//! in folder, copy path and delete; a commit's file restored from it, a stash's applied.
+//! The file and folder menus of the WIP and commit panels' lists (docs/research/gitkraken-12.6.1.md §B items 8, 9 and 11).
 
 use gpui::{Pixels, Point};
 use supraman_gitman::write::conflicts::Side;
@@ -54,8 +52,7 @@ pub(crate) enum FileAct {
     ApplyStashed { sha: String, files: Vec<FileChange> },
 }
 
-/// What the menu of a click reads: the files it covers (the file, or a folder's below it) and whether the path is
-/// in the work tree.
+/// What the menu of a click reads: the files it covers and whether the path is in the work tree.
 pub(crate) struct FileFacts<'a> {
     pub(crate) click: &'a FileClick,
     pub(crate) files: Vec<FileChange>,

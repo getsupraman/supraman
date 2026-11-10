@@ -10,7 +10,7 @@ pub enum Link {
     Path(PathBuf),
 }
 
-/// The schemes a link may open; a program's output must not reach any other protocol handler (sched2/11).
+/// The schemes a link may open; a program's output must not reach any other protocol handler.
 pub const LINK_SCHEMES: [&str; 4] = ["http", "https", "mailto", "file"];
 /// The schemes of a web page (release notes, the sign-in page).
 pub const WEB_SCHEMES: [&str; 2] = ["http", "https"];
@@ -64,8 +64,7 @@ pub fn file_url_path(url: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| format!("Not opened: {url} names no file path."))
 }
 
-/// Opens `target`, an [`allowed`] URL or a path [`document`] passes, with its handler; blocking, so never on the UI thread: ShellExecuteW
-/// pumps its thread's messages, and there gpui re-enters inside the click's borrow (m5/68).
+/// Opens an [`allowed`] URL or a [`document`] path with its handler; never on the UI thread, where ShellExecuteW's pump re-enters gpui.
 pub fn open(target: &OsStr) -> Result<(), String> {
     supraman_core::platform::open::open(target)
 }

@@ -119,7 +119,6 @@ impl FleetView {
         .detach();
     }
 
-    /// The roots, kept and live ids a transcript scan reads, once the first poll is applied.
     fn transcripts_ask(&self) -> Option<TranscriptsAsk> {
         self.sessions_read.then(|| TranscriptsAsk {
             roots: self.workspaces.iter().flat_map(|w| w.folders.iter().filter(|r| r.enabled).map(|r| r.path.clone())).collect(),

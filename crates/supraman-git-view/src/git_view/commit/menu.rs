@@ -1,6 +1,4 @@
-//! A commit's items in the graph's menus (docs/research/gitkraken-12.6.1.md §B B1): checkout this commit,
-//! cherry-pick, rebase onto, reset ▸, edit message, revert, a patch, joined to GA7's [`RefMenu`] groups; and a
-//! commit row's menu: B1 alone, the one branch group's menu, or B1 then a section per group.
+//! A commit's items in the graph's menus (docs/research/gitkraken-12.6.1.md §B), joined to [`RefMenu`]'s groups, and a commit row's menu.
 
 use std::collections::HashSet;
 
@@ -77,8 +75,7 @@ pub(crate) fn add(menu: &mut RefMenu<RefAct>, f: &CommitFacts, checkout: bool) {
 /// The items a branch group's own menu repeats from the row's commit items.
 const COMMIT_LEVEL: [&str; 4] = ["ref-create-branch", "ref-copy-sha", "ref-create-tag", "ref-create-annotated"];
 
-/// A commit row's menu: `groups` are its branch groups' subjects (its tags kept out). None: B1; one: that group's
-/// menu with the commit's items; more: B1, then a section per group with its own items.
+/// A commit row's menu by its branch groups (tags kept out): none, the commit's items; one, that group's; more, a section each.
 pub(crate) fn row_menu(groups: &[Subject], facts: &Facts, f: &CommitFacts) -> Vec<MenuItem<RefAct>> {
     match groups {
         [] => {

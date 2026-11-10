@@ -1,4 +1,4 @@
-//! `--selftest` step 7: the Work tab against a [`FakeWorkman`] on 127.0.0.1 (never the real server, C21): its stream, the Inbox's
+//! `--selftest` step 7: the Work tab against a [`FakeWorkman`] on 127.0.0.1 (never the real server): its stream, the Inbox's
 //! cards clicked in the real sidebar and an Attach to the gate's claude session; the board's logic is work-view's tests.
 
 use std::{

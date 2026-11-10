@@ -1,5 +1,4 @@
-//! `sm probe session-id`: does `claude --bg --session-id <uuid>` start the session under that uuid, and does
-//! `claude --bg --resume <uuid>` wake it under the same one? Answers: `docs/LEARNINGS.md` m5/40.
+//! `sm probe session-id`: whether `--session-id` and `--resume` keep a `--bg` session's uuid; see `docs/LEARNINGS.md` m5/40.
 
 use std::fs;
 use std::path::{Path, PathBuf};

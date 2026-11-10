@@ -1,14 +1,10 @@
-//! Two commits no ref reaches, `media_base` and `media`, of files whose diff is not lines of text: images,
-//! binaries, and text whose change only its bytes show. Dangling, so the graph, the refs and the work in
-//! progress stay as the rest of the fixture has them.
+//! `media_base` and `media`: dangling commits of files whose diff is not lines of text, so the rest of the fixture stays as it is.
 
 use std::io::Cursor;
 
 use super::{BINARY, Fixture, git_in};
 
-/// The paths `media` changes from `media_base`: png changed (4×3 → 8×6), added (3×3) and deleted (2×2), a
-/// png that does not decode, an svg (10×10 → 20×10), a binary, a BOM added and removed, CRLF → LF and back,
-/// a text change, and invalid UTF-8 that decodes the same.
+/// The paths `media` changes from `media_base`.
 pub const MEDIA_FILES: [&str; 12] = [
     "changed.png",
     "added.png",
@@ -27,7 +23,6 @@ pub const MEDIA_FILES: [&str; 12] = [
 const SVG_SMALL: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>"#;
 const SVG_WIDE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect width="20" height="10" fill="blue"/></svg>"#;
 
-/// A `width` × `height` PNG of one colour.
 pub fn png(width: u32, height: u32, rgba: [u8; 4]) -> Vec<u8> {
     let image = image::RgbaImage::from_pixel(width, height, image::Rgba(rgba));
     let mut out = Cursor::new(Vec::new());

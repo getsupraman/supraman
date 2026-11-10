@@ -4,8 +4,7 @@ use std::time::Duration;
 #[cfg(windows)]
 pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// A child of the app gets no console window of its own: Supraman has no console to share when started
-/// from Explorer, and every `claude`, `git` and `icacls` would flash one. Elsewhere a child has no window to hide.
+/// No console window for a child: started from Explorer, every `claude` and `git` would flash one.
 pub(crate) fn no_window(command: &mut Command) -> &mut Command {
     #[cfg(windows)]
     {
@@ -27,9 +26,7 @@ pub(crate) fn suspended(command: &mut Command) -> &mut Command {
     command
 }
 
-/// Resumes a child started [`suspended`]. `NtResumeProcess` resumes it by the process handle `Child` holds:
-/// std keeps no handle to its main thread, and finding that thread through Toolhelp32 snapshots every
-/// thread on the machine.
+/// Resumes a child started [`suspended`] by its process handle: std keeps no handle to its main thread.
 #[cfg(windows)]
 pub(crate) fn resume(child: &Child) -> std::io::Result<()> {
     use std::os::windows::io::AsRawHandle as _;
@@ -71,8 +68,7 @@ pub(crate) fn wait_exit(child: &mut Child, wait: Duration) -> std::io::Result<Op
     }
 }
 
-/// A job object holding one child's tree. It kills the tree when its last handle closes, so a tree whose owner
-/// dies goes with it; [`Job::release`] lifts that once the child exited, and its descendants keep running.
+/// A job object that kills one child's tree when its last handle closes, until [`Job::release`].
 #[cfg(windows)]
 pub(crate) struct Job(windows::Win32::Foundation::HANDLE);
 
@@ -197,8 +193,7 @@ pub fn terminate_started(pid: u32, start: u64) -> bool {
     started(pid) == Some(start) && crate::process::command("kill").args(["-9", &pid.to_string()]).status().is_ok_and(|s| s.success())
 }
 
-/// Blocks until one of `pids` exits or `timeout` passes; `true` when one exited. A pid that cannot be
-/// opened is not waited on, and with none left it returns `false` at once.
+/// Blocks until one of `pids` exits or `timeout` passes; `true` when one exited, `false` at once with none openable.
 #[cfg(windows)]
 pub fn wait_any_exit(pids: &[u32], timeout: Duration) -> bool {
     use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};

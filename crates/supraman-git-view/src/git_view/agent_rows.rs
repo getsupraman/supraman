@@ -1,5 +1,4 @@
-//! The graph's rows of the live sessions working in the tab's worktree, stacked on the WIP row (else HEAD's row) and
-//! laid out again from the rows loaded as the live set changes, without a git read; the panel a selected one shows.
+//! The graph's rows of the live sessions working in the tab's worktree, laid out without a git read, and their panel.
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -187,8 +186,7 @@ impl GitView {
         self.agents.live.as_ref()?.working_in(path).into_iter().find(|s| s.name == name).map(|s| s.activity)
     }
 
-    /// Row `ix`'s cell of column `col`, row `ix` an agent's: the bot node, then `agent <name> is working here` after
-    /// its state's dot; a double-click attaches it.
+    /// Row `ix`'s cell of column `col` for an agent row: the bot node, its dot and `agent <name> is working here`.
     pub(super) fn agent_cell(&mut self, ix: usize, col: usize, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let rows = self.pages.read(cx).rows.clone();
         let row = &rows[ix];

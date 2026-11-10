@@ -61,8 +61,7 @@ pub enum Kind {
 }
 
 impl Kind {
-    /// The kind a reflog message or a journal label names; `rebase: from` is GitMan's own label, git's rebase
-    /// lines are none.
+    /// The kind a reflog message or a journal label names; git's own rebase lines are none.
     pub fn of(label: &str) -> Option<Kind> {
         const PREFIXES: [(&str, Kind); 7] = [
             ("commit: ", Kind::Commit),
@@ -156,9 +155,7 @@ fn split_undo(label: &str) -> (bool, &str) {
     }
 }
 
-/// HEAD's lines and the journal's entries (both oldest first) as items, newest first: an entry follows the HEAD
-/// line it names; one of an action that moved HEAD is that line's (a rebase's also takes the lines down to its
-/// start); a reset that moved nothing (a stash's, or the one an undo of a hard reset runs) is left out.
+/// HEAD's lines and the journal's entries (both oldest first) as items, newest first; a reset that moved nothing is left out.
 pub fn items(head: &[Line], journal: &[Entry]) -> Vec<Item> {
     let mut anchored: HashMap<&str, Vec<&Entry>> = HashMap::new();
     for entry in journal.iter().rev() {
@@ -219,8 +216,7 @@ pub struct Walk {
     pub redo: Option<Again>,
 }
 
-/// From the newest item down: an `undo: X` pairs with the next X, so Undo acts on the newest action not undone
-/// and stops at the first it cannot undo; Redo acts on the newest item while it is an undo.
+/// From the newest item down, an `undo: X` pairs with the next X; Redo acts on the newest item while it is an undo.
 pub fn walk(items: &[Item]) -> Walk {
     let mut pending = 0usize;
     let mut walk = Walk::default();

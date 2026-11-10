@@ -43,8 +43,7 @@ fn line_endings(old: &str, new: &str) -> Vec<String> {
     said
 }
 
-/// Each change between `old` and `new`, bytes whose text is the same once decoded and read with LF endings;
-/// empty when the bytes are the same too.
+/// Each change between `old` and `new` whose text is the same once decoded with LF endings; empty when the bytes are too.
 pub(crate) fn changes(old: &[u8], new: &[u8]) -> Vec<String> {
     if old == new {
         return Vec::new();

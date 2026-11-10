@@ -1,5 +1,4 @@
-//! The Git palette's rows as plain values: the commands and the mode rows of the top list, and the
-//! refs, files and loaded commits its modes search, each with how a query fits it and how it paints.
+//! The Git palette's rows as plain values, each with how a query fits it and how it paints.
 
 use std::ops::Range;
 use std::rc::Rc;
@@ -187,8 +186,7 @@ pub(crate) fn commits(rows: &[GraphRow]) -> Vec<GitEntry> {
         .collect()
 }
 
-/// A query of four or more hex digits that starts the sha ranks first, marked on the short sha; else a fuzzy
-/// match of summary and author.
+/// Four or more hex digits that start the sha rank first; else a fuzzy match of summary and author.
 fn commit_fit(entry: &GitEntry, query: &str) -> Option<(Fit, Marks)> {
     let GitEntry::Commit { sha, .. } = entry else { return None };
     let text = entry.text();

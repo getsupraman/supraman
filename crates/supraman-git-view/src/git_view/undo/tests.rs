@@ -8,7 +8,7 @@ use crate::git_view::undo::{REDO_KEY, UNDO_KEY};
 use crate::git_view::*;
 use crate::occupancy;
 
-/// A Git tab of `folder` whose write gate reads `live`, as the fleet's poll keeps it.
+/// A Git tab of `folder` with `live` as the fleet's poll keeps it.
 fn open<'a>(folder: &std::path::Path, live: occupancy::Live, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
     test_support::open(folder, Opts::default().live(live), cx)
 }

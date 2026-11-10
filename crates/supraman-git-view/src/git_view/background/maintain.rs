@@ -1,8 +1,4 @@
-//! `git maintenance run` in the background, [`AFTER`] a repository's first tab opens and then at most once per
-//! [`EVERY`], its last run per common git dir kept in `<home>/gitman/maintenance.json` so a restart does not run it
-//! again. It is a write: it waits for nothing and asks nobody, it is skipped while a live session works in the
-//! repository, a git holds an index, a build or selftest holds the heavy-job lock, or another write holds the
-//! repository, and tried again [`RETRY`] later. Its failures are logged only.
+//! `git maintenance run` in the background, at most once per [`EVERY`] per repository; its failures are logged only.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -56,8 +52,7 @@ impl Ran {
     }
 }
 
-/// `key` ran at `now`, written under the file's lock over the runs other processes wrote since; a file that
-/// cannot be read is left as it is.
+/// `key` ran at `now`, written under the file's lock; a file that cannot be read is left as it is.
 fn record_in(store: &mut JsonStore<Runs>, key: &str, now: i64) -> Result<(), String> {
     let ran = |runs: &mut Runs| runs.insert(key.to_string(), now) != Some(now);
     let Some(path) = store.path().map(Path::to_path_buf) else {
@@ -89,8 +84,7 @@ struct Job {
     now: i64,
 }
 
-/// What the tabs of `key` allow now: nothing while maintenance is off, a tab's write is under way or a session
-/// works in one of the repository's worktrees.
+/// What the tabs of `key` allow now: nothing while maintenance is off, a write is under way or a session works there.
 fn job(key: &str, cx: &App) -> Step<Option<Job>> {
     let Some(bg) = cx.try_global::<Background>() else { return Step::End };
     let views = bg.views(key);

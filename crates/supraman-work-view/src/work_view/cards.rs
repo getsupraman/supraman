@@ -1,4 +1,4 @@
-//! What the Inbox paints of a Workman row: why René sees it and what he can do. The resolving call is only ever copied (workman-ui/inbox-cards).
+//! What the Inbox paints of a Workman row: why the user sees it and what they can do; the resolving call is only ever copied.
 
 use supraman_core::time;
 use supraman_workman::{InboxRow, ItemRef};

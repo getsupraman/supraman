@@ -1,5 +1,4 @@
-//! The WIP panel's writes, each through the tab's write gate off the UI thread: stage, unstage, discard (asked
-//! first), commit, and the next step of the operation under way; their outcome goes to the tab as a [`PanelEvent`].
+//! The WIP panel's writes through the tab's write gate; their outcome goes to the tab as a [`PanelEvent`].
 
 use supraman_core::text::count;
 
@@ -129,7 +128,6 @@ impl WipPanel {
         self.request(Doing::Unstage, index_write(), |s| wip::unstage(s, &sections(&supraman_gitman::status(s.writer().repo())?).1), cx);
     }
 
-    /// The file selected in `section`'s list.
     pub(crate) fn selected_file(&self, section: Section) -> Option<FileChange> {
         let shown = self.shown()?;
         let list = self.list(section);
@@ -222,8 +220,7 @@ impl WipPanel {
         self.request(Doing::Step(step), LockSet::rebase(), job, cx);
     }
 
-    /// A rebase's step done: once it finished, the new HEAD selected with what became of GitMan's autostash
-    /// (`None`: said); else the toast of [`PanelEvent::Wrote`].
+    /// A rebase's step done: once finished, the new HEAD selected with its autostash's outcome; else [`PanelEvent::Wrote`]'s toast.
     fn stepped(&mut self, step: Step, cx: &mut Context<Self>) -> Option<Option<String>> {
         let outcome = match self.writes.kept() {
             Some(Kept::Stepped(rebased)) => Some(rebased),

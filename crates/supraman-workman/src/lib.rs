@@ -1,7 +1,4 @@
-//! Supraman's every Workman read: the read API v1 shapes ([`model`]), a blocking [`Client`] and the
-//! `/api/stream` subscriber ([`Stream`]), and the OAuth sign-in whose access token they and every mint
-//! carry ([`Auth`]). Read only (C21): the MCP tools stay the agents' write path.
-//! Contract: Skills `docs/workstate/10-read-api.md`, frozen at v1, additive only.
+//! Supraman's every Workman read, never a write (C21); contract: Skills `docs/workstate/10-read-api.md`, v1, additive only.
 
 pub mod auth;
 mod client;

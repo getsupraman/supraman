@@ -8,8 +8,7 @@ use crate::{Attempts, DesiredState, Millis, NeedsKind, NeedsYou, Policy, Remedy,
 pub enum Action {
     /// The wanted name has no row: `claude --bg`.
     Launch(WantedSession),
-    /// The row exists but its process is gone: `claude --bg --resume <session_id>` from `cwd`,
-    /// which keeps the transcript, `id`, `sessionId` and name.
+    /// The row exists but its process is gone: `claude --bg --resume <session_id>` from `cwd`.
     Resume {
         name: String,
         id: String,
@@ -18,8 +17,7 @@ pub enum Action {
     },
     /// `claude stop <id>`; never `rm`, so the transcript stays.
     Stop { name: String, id: String },
-    /// A launch/resume that is due but deferred. `until` is `None` for [`WaitReason::Cap`]: it
-    /// goes as soon as a slot frees.
+    /// A due launch/resume deferred; `until` is `None` for [`WaitReason::Cap`].
     Wait {
         name: String,
         until: Option<Millis>,
@@ -30,25 +28,19 @@ pub enum Action {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WaitReason {
-    /// Started successfully moments ago; the row or its pid has not shown yet.
     Settling,
     Backoff,
     Cap,
-    /// Lost its pid moments ago: the daemon may respawn it, and until it notices the death a
-    /// resume starts a copy.
+    /// Lost its pid moments ago: until the daemon notices the death, a resume starts a copy.
     Respawn,
 }
 
-/// A process is there: a pid, or the fresh pid-less row right after `--bg` (`Running`/`Blocked`
-/// without pid only before [`supraman_claude::ORPHAN_AFTER`]). Such a session is never launched or
-/// resumed — whatever its `state` says (`done` on a live pid is Idle).
+/// A pid, or the fresh pid-less row right after `--bg`; `state` is never consulted.
 pub fn is_live(s: &Session, now: Millis) -> bool {
     s.pid.is_some() || matches!(s.health(now), Health::Running | Health::Blocked { .. })
 }
 
-/// Pure. `memory` must already have seen this tick's observations ([`SupervisorMemory::observe`]),
-/// as [`crate::Supervisor::tick`] does. `free` is how many launches/resumes the shared budget still
-/// allows ([`crate::Budget`]). The rule table is in the crate docs.
+/// Pure; `memory` must already have observed this tick. The rule table is in the crate docs.
 pub fn reconcile(
     desired: &DesiredState,
     observed: &[Session],
@@ -145,7 +137,6 @@ impl Tick<'_> {
         Some(self.need(NeedsKind::Blocked, &w.name, self.now, detail, Some(Remedy::Attach { id: s.id.clone() })))
     }
 
-    // what holds a due launch or resume back: trust, giving up, settling, backoff; empty when nothing does.
     fn held(&self, w: &WantedSession, a: &Attempts) -> Vec<Action> {
         let now = self.now;
         let since = a.last_attempt.unwrap_or(now);
@@ -254,7 +245,6 @@ impl Plan {
     }
 }
 
-// retired names (`sm unwant`): stopped whether the workspace is started or not, before the relay
 fn retired_stops(desired: &DesiredState, observed: &[Session], now: Millis) -> Vec<Action> {
     let mut out = Vec::new();
     for name in desired.retired.iter().filter(|n| !desired.sessions.iter().any(|w| &w.name == *n)) {
@@ -430,7 +420,6 @@ mod tests {
         }
     }
 
-    // another SUPRAMAN_HOME's session (a selftest's park) is not this desired state's to report
     #[test]
     fn another_homes_parked_session_raises_nothing() {
         let d = desired(true, &["fm-demo-workspace"]);
@@ -564,8 +553,7 @@ mod tests {
     fn cap_counts_working_fm_sessions_and_defers_the_rest() {
         let names = ["fm-demo-a", "fm-demo-b", "fm-demo-c"];
         let d = desired(true, &names);
-        // Two working fm- sessions elsewhere; a working non-fm one, an idle fm- one and a dead
-        // `working` row do not count.
+        // only the two working fm- sessions elsewhere count
         let observed = [
             running("fm-x-1", 10),
             running("fm-x-2", 11),
@@ -596,10 +584,8 @@ mod tests {
         // mid-turn is `status=busy`, whatever `state` says
         let busy = row("fm-x-2", 2, Some(SessionState::Done), Some(Status::Busy), Some(8));
         assert_eq!(Budget::new(1, &[waiting, busy], &["x"], NOW).free, 0);
-        // a parked session waits on the human, not on the model
         let parked = row("fm-x-3", 3, Some(SessionState::Blocked), Some(Status::Waiting), Some(9));
         assert_eq!(Budget::new(1, &[parked], &["x"], NOW).free, 1);
-        // no status yet (the pid-less row right after `--bg`): `state=working` still counts
         let mut fresh = row("fm-x-4", 4, Some(SessionState::Working), None, None);
         fresh.started_at = Some(NOW - 2_000);
         assert_eq!(Budget::new(1, &[fresh], &["x"], NOW).free, 0);
@@ -662,8 +648,7 @@ mod tests {
         );
         let later = reconcile(&d, std::slice::from_ref(&orphan), &m, &p, FREE, NOW + 25 * SECOND);
         assert_eq!(later, [resume_of(&orphan)], "the daemon did not respawn it: resume");
-        // an idle session killed is `done` without pid: the daemon still counts it running for a few
-        // seconds, so it waits too
+        // an idle session killed is `done` without pid, and the daemon still counts it running
         let done = row("fm-demo-workspace", 1, Some(SessionState::Done), None, None);
         assert!(matches!(
             run_with(&d, std::slice::from_ref(&done), &m).as_slice(),
@@ -695,11 +680,9 @@ mod tests {
                 &["fm-demo-workspace", "fm-demo-alpha", "fm-demo-relay"]
             };
             assert_eq!(stops, expected, "started={started}");
-            // stopped: nothing more, no resume
             let observed = [running("fm-demo-relay", 1), running("fm-demo-workspace", 2), stopped("fm-demo-alpha", 3)];
             assert!(run(&d, &observed).iter().all(|a| action_name(a) != "fm-demo-alpha"));
         }
-        // wanted again: launched or resumed as usual
         let mut d = desired(true, &[]);
         d.unwant("fm-demo-alpha");
         d.want(wanted("fm-demo-alpha"));

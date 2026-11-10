@@ -131,8 +131,7 @@ impl LockSet {
     }
 }
 
-/// One repository's locks: every request waits in one queue, and on every change the requests whose locks are
-/// all free run in queue order (first-fit: a later request on free resources overtakes a blocked one).
+/// One repository's locks: one queue, first-fit (a later request on free resources overtakes a blocked one).
 #[derive(Default)]
 pub struct Scheduler {
     state: Mutex<State>,
@@ -183,7 +182,6 @@ impl Scheduler {
         self.changed.notify_all();
     }
 
-    /// How many requests wait for their locks.
     #[cfg(any(test, feature = "test-support"))]
     pub fn waiting(&self) -> usize {
         self.state().queue.len()
@@ -227,8 +225,7 @@ impl Held {
         self.id
     }
 
-    /// `locks` from inside this hold: what it already grants is not asked again; `None` when it grants all.
-    /// Panics on an upgrade (a read held, its write asked), which would wait for itself.
+    /// `locks` from inside this hold, asking only what it does not grant; panics on an upgrade, which would wait for itself.
     pub fn nested(&self, locks: LockSet) -> Option<Held> {
         let more = locks.beyond(&self.locks);
         assert!(!more.conflicts(&self.locks), "a nested lock upgrades one already held: {more:?} in {:?}", self.locks);

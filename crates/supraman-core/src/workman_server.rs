@@ -44,8 +44,7 @@ impl ServerJson {
     }
 }
 
-/// What claude's user config ([`crate::paths::claude_json`] at `path`) lacks for `server`: a user-scope `workman`
-/// entry whose url is `<origin>/mcp`, as `/workman:setup` registers it. Never quotes claude's url.
+/// What claude's user config lacks for `server`: a `workman` entry whose url is `<origin>/mcp`; never quotes its url.
 pub fn claude_warning(server: &ServerJson, path: &Path, found: Result<UserMcpServer, String>) -> Option<String> {
     let shown = path.display();
     let fix = "run /workman:setup to register it, then restart claude";
@@ -87,8 +86,7 @@ pub fn save(path: &Path, server: &ServerJson) -> std::io::Result<()> {
     crate::fs::write_atomic(path, text)
 }
 
-/// A server URL as the origin to keep: `http(s)://host[:port]`, any path dropped. Plain `http` only for this machine
-/// (a token must not cross a network in the clear).
+/// A server URL as its origin; plain `http` only for this machine, so a token never crosses a network in the clear.
 pub fn validate_workman_url(text: &str) -> Result<String, String> {
     let text = text.trim();
     let (scheme, rest) = text.split_once("://").ok_or("a URL starts with https:// (or http:// for this machine)")?;

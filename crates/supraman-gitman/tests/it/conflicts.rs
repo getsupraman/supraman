@@ -1,5 +1,4 @@
-//! The conflict panel's writes and reads on fixture copies only (C196): a side taken whole, mark resolved with its
-//! marker check, mark conflicted, and a cherry-pick's and revert's continue, skip and abort.
+//! The conflict panel's writes and reads, on fixture copies only (C196).
 
 use supraman_gitman::fixture::Fixture;
 use supraman_gitman::write::conflicts::{self, Marked, RESOLVE_FIRST, Sequence, Side};

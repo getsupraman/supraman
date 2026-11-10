@@ -1,4 +1,4 @@
-//! `sm update apply` on temp installs: never René's install or home (C109).
+//! `sm update apply` on temp installs: never the user's install or home (C109).
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -48,8 +48,7 @@ struct Case {
     log: PathBuf,
 }
 
-/// An install of the old release (with its `FILES` and a file of the user's it never named) and the new
-/// release unpacked beside it.
+/// An install of the old release, with a file of the user's it never named, and the new release unpacked beside it.
 fn case() -> Case {
     let tmp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
     let install = tmp.path().join("install");
@@ -176,8 +175,7 @@ fn a_running_hooks_copy_is_renamed_aside_and_the_next_start_removes_it() {
     assert_new(&c);
 }
 
-/// An apply stopped as a kill would after each number of moves: every file is wholly old or wholly new,
-/// `VERSION` is the old one, and the next start plus a second apply finish the update.
+/// An apply killed after each number of moves leaves every file wholly old or new; a start and a second apply finish it.
 #[test]
 fn a_killed_apply_leaves_a_startable_install_at_every_step() {
     let (old, new) = (old_files(), new_files());
@@ -387,8 +385,7 @@ fn a_running_hooks_copy_is_replaced_in_one_rename_and_its_path_never_goes_missin
     assert_new(&c);
 }
 
-/// The apply stopped as a kill would at every step while the hooks copy runs: the copy is always there, old
-/// or new, and the next start plus a second apply finish the update.
+/// An apply killed at every step while the hooks copy runs always leaves the copy, old or new; a start and an apply finish it.
 #[test]
 fn a_kill_at_any_step_leaves_a_running_hooks_copy_in_place() {
     let mut k = 0;

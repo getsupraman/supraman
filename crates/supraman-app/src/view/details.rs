@@ -1,5 +1,4 @@
-//! A session's and a workspace's Details tab: `row_details`' sections on the shared page, and the row's menu
-//! items as its actions, each run through `run_action` as the menu runs it.
+//! A session's and a workspace's Details tab; its actions are the row's menu items, run through `run_action`.
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -23,15 +22,12 @@ pub struct DetailsPage {
     pub target: MenuTarget,
     pub scroll: ScrollHandle,
     pub seen: Option<SessionRow>,
-    /// The tree's folder row holding the session: name and path.
     pub folder: Option<(String, PathBuf)>,
     pub listed: bool,
     pub disk: OnDisk,
-    /// An [`OnDisk::read`] for it runs on the background executor.
     reading: bool,
 }
 
-/// One session page's [`OnDisk::read`]: its tab, cwd, session id and the transcript found before.
 struct DiskRead {
     tab: u64,
     cwd: PathBuf,
@@ -74,7 +70,6 @@ impl FleetView {
         Some((node.rows().find(|r| r.session.session_id == session_id)?.clone(), folder_of(node, session_id)))
     }
 
-    /// Opens the Details tab of a session or a workspace, or focuses the one open.
     pub fn open_details(&mut self, target: MenuTarget, cx: &mut Context<Self>) -> Option<u64> {
         self.menu = None;
         if let Some((tab, _)) = self.details_page(&target) {
@@ -129,7 +124,6 @@ impl FleetView {
         .detach();
     }
 
-    /// Each session page takes its row from this poll's tree, or keeps the last one seen; its disk is read off the UI thread.
     pub(super) fn refresh_details(&mut self, cx: &mut Context<Self>) {
         let _stall = supraman_ui::stall::section("poll: refresh_details");
         if !self.tabs.iter().any(|t| matches!(&t.kind, TabKind::Details(p) if matches!(p.target, MenuTarget::Session { .. }))) {

@@ -31,8 +31,7 @@ pub fn missing(path: &Path) -> Option<String> {
     (!path.is_absolute() || !path.exists()).then(|| format!("Not opened: there is no file or folder {}.", path.display()))
 }
 
-/// `path`, else its longest prefix ending before a space that exists (an unquoted path with spaces is offered
-/// through its last word with a separator), else why nothing opens. Reads the disk, so never on the UI thread.
+/// `path`, else its longest existing prefix ending before a space, else why nothing opens; never on the UI thread.
 pub fn resolve(path: PathBuf) -> Result<PathBuf, String> {
     let Some(why) = missing(&path) else { return Ok(path) };
     let text = path.to_string_lossy();
@@ -43,8 +42,7 @@ pub fn resolve(path: PathBuf) -> Result<PathBuf, String> {
         .ok_or(why)
 }
 
-/// What a Ctrl+click on `target` hands to the opener, or why it opens nothing: a refused scheme, a missing path, or a
-/// file that runs as a program. Reads the disk, so never on the UI thread.
+/// Reads the disk, so never on the UI thread.
 pub fn followed(target: &MaybeNavigationTarget) -> Result<Link, String> {
     match link_target(target)? {
         Link::Path(path) => {

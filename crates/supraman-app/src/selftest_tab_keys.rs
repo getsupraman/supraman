@@ -1,6 +1,4 @@
-//! The browser chords in a terminal, a Work and a Git tab, under both Ctrl+T/Ctrl+W modes. A unit test cannot: it needs
-//! gpui's keystroke dispatch through the bindings on to a terminal's PTY and the settings window's save; the chord table
-//! and the index rules are `view::tab_keys`' and `supraman_ui::tabs`' tests.
+//! The browser chords in a terminal, a Work and a Git tab, under both Ctrl+T/Ctrl+W modes, through gpui's real keystroke dispatch.
 
 use std::time::Duration;
 

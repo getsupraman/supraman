@@ -29,8 +29,7 @@ mod imp {
     // Kernel handles; usable from any thread.
     unsafe impl Send for Instance {}
 
-    /// The session-wide lock `name`: [`Claimed::First`] when this process takes it, else [`Claimed::Running`]
-    /// after the holder was asked to open.
+    /// The session-wide lock `name`: [`Claimed::First`] when taken, else [`Claimed::Running`] after asking the holder to open.
     pub fn claim(name: &str) -> Result<Claimed, String> {
         let mutex = unsafe { CreateMutexW(None, true, &HSTRING::from(format!("Local\\{name}"))) }.map_err(|e| e.to_string())?;
         if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {

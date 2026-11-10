@@ -1,5 +1,4 @@
-//! The toolbar's Stash and Pop beside Undo and Redo, a stash row's right-click on the graph, and the stash
-//! writes' outcome in the tab: the toast, the refresh and the commit summary they spend or fill.
+//! The toolbar's Stash and Pop, a stash row's right-click on the graph, and the stash writes' outcome in the tab.
 
 use gpui::{AnyElement, App, ClickEvent, Context, Div, Entity, MouseButton, MouseDownEvent, SharedString, div, prelude::*};
 use supraman_gitman::FileChange;

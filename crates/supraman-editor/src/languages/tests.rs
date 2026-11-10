@@ -15,8 +15,7 @@ fn theme() -> Arc<SyntaxTheme> {
     registry.get(&first).unwrap().syntax().clone()
 }
 
-/// Every node of `sample` a capture of `language`'s highlights query takes, as its text and the theme key
-/// that colours it.
+/// Each node of `sample` `language`'s highlights query captures, as its text and the theme key that colours it.
 fn coloured(language: &Language, sample: &str) -> Vec<(String, String)> {
     let theme = theme();
     let grammar = language.grammar().expect("a grammar");
@@ -48,8 +47,7 @@ fn misses(path: &str, sample: &str, wanted: &[(&str, &str)]) -> Vec<String> {
     missed
 }
 
-/// First parts of capture names no theme needs to colour: names Zed's own queries leave to a theme, text a
-/// document shows plain, and the helpers a query's predicates match on.
+/// First parts of capture names no theme needs to colour (plain text, predicate helpers, names Zed leaves to a theme).
 const UNTHEMED: &[&str] =
     &["module", "namespace", "none", "spell", "nospell", "conceal", "lifetime", "label", "text", "error", "array", "assignvalue", "clean", "selector"];
 

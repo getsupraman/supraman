@@ -1,5 +1,4 @@
-//! `--selftest` step 7n's notices: each × painted where a click lands on it in the real sidebar; which notice a ×
-//! removes and when one shows again are `view::notices`' and `supraman_ui::notices`' tests.
+//! `--selftest` step 7n's notices: each × painted where a click lands on it in the real sidebar.
 
 use std::time::Duration;
 

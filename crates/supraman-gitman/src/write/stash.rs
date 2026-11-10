@@ -1,6 +1,4 @@
-//! The stash's writes (docs/research/gitkraken-12.6.1.md, "Stashing"): stash everything or some files, apply or
-//! pop a stash with everything back unstaged, apply some of its files, delete it, give it a new message. None is
-//! undoable: none writes a journal entry.
+//! The stash's writes (docs/research/gitkraken-12.6.1.md, "Stashing"); none writes a journal entry.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -51,8 +49,7 @@ fn push(s: &Session, call: Call) -> Result<(), WriteError> {
     drop_noop_reset(s)
 }
 
-/// Stashes every change, untracked files too (all staged first), or with `staged_only` only what is staged;
-/// `message` empty for [`default_message`].
+/// Stashes every change, untracked files too, or with `staged_only` only what is staged; empty `message` for [`default_message`].
 pub fn stash_all(s: &Session, message: &str, staged_only: bool) -> Result<(), WriteError> {
     let status = crate::status(s.writer().repo())?;
     if status.entries.iter().any(|e| e.kind == EntryKind::Unmerged) {
@@ -75,9 +72,7 @@ pub fn stash_all(s: &Session, message: &str, staged_only: bool) -> Result<(), Wr
     push(s, Call::new(&["stash", "push", "-q", &message]))
 }
 
-/// Stashes `files` (a rename with its old path, an untracked file in the stash's untracked commit) and nothing
-/// else, staged and unstaged changes alike, then puts those paths back to HEAD's; a conflicted one refuses. Built
-/// with plumbing: `stash push -- <paths>` keeps every other staged change in the stash's tree.
+/// Stashes `files` alone, built with plumbing: `stash push -- <paths>` keeps every other staged change in the stash's tree.
 pub fn stash_files(s: &Session, files: &[FileChange], message: &str) -> Result<(), WriteError> {
     if files.iter().any(|f| f.kind == ChangeKind::Unmerged) {
         return Err(WriteError::Refused(CONFLICTED));
@@ -168,8 +163,7 @@ fn reflog_name(n: usize) -> String {
     format!("stash@{{{n}}}")
 }
 
-/// Applies the stash `sha` (its staged changes not kept apart) with everything back unstaged, and with `pop`
-/// drops it, unless the apply left conflicts. Refused while anything is staged.
+/// Applies the stash `sha` with everything back unstaged, dropping it with `pop` unless it conflicts; refused while anything is staged.
 pub fn apply(s: &Session, sha: &str, pop: bool) -> Result<Applied, WriteError> {
     let head = s.verify("HEAD")?.is_some();
     if head && !s.run(&Call::new(&["diff", "--cached", "--quiet"]))?.success() {
@@ -215,7 +209,6 @@ pub fn apply_files(s: &Session, sha: &str, files: &[FileChange]) -> Result<(), W
     Ok(())
 }
 
-/// Deletes the stash `sha`.
 pub fn delete(s: &Session, sha: &str) -> Result<(), WriteError> {
     let (n, _) = find(s, sha)?;
     s.output(&Call::new(&["stash", "drop", "-q", &reflog_name(n)])).map(drop)

@@ -82,7 +82,7 @@ impl Fixture {
         Registry::at(&self.home).load("demo").unwrap()
     }
 
-    /// Adds `s` and stands in for René's Approve in the window (C100: sm itself never approves).
+    /// Adds `s` and stands in for the window's Approve; sm itself never approves (C100).
     fn add_approved(&self, s: Schedule) -> String {
         let id = s.id.clone();
         schedule::edit(&self.home, &self.workspace(), |all| {
@@ -541,8 +541,7 @@ fn the_polls_recovery_tries_a_dead_runs_kept_session_again() {
     assert_eq!((host.ended, dead.exists()), (2, false), "the kept session is ended on the poll's second try");
 }
 
-/// A live file whose sm is gone is ended as interrupted, by the next fire and by the window's poll; one whose sm
-/// runs, or whose lock a fire holds, is left alone.
+/// A live file whose sm is gone ends interrupted by the next fire and the window's poll; a live sm's or a held lock's is left.
 #[test]
 fn a_run_whose_sm_is_gone_is_recovered_as_interrupted_and_a_live_one_is_left() {
     let f = fixture();
@@ -592,8 +591,7 @@ fn files_holding(dir: &Path, needle: &str) -> Vec<PathBuf> {
     found
 }
 
-/// The secrets reach the script's environment; stderr tails and the gate output are masked; no file
-/// Supraman writes holds them.
+/// The secrets reach the script's environment, masked in stderr tails and gate output, and in no file Supraman writes.
 #[test]
 fn fire_passes_secrets_to_the_script_and_writes_them_nowhere() {
     let f = fixture();
@@ -649,8 +647,7 @@ fn sm_bin(name: &str, f: &Fixture, args: &[&str], stdin: &str) -> std::process::
     child.wait_with_output().unwrap()
 }
 
-/// The real binaries: Run now through `sm`, the task's line through `smw`, and the window's Run now through `smw`.
-/// Folder Alpha is no git repo, so the session stage stops at its worktree, before any `claude` or Workman call.
+/// The real binaries: Run now through `sm`, the task's line and the window's Run now through `smw`.
 #[test]
 fn sm_and_smw_fire_and_run_now_through_the_real_binaries() {
     let f = fixture();

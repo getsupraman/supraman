@@ -1,6 +1,4 @@
-//! The Schedules group's actions: the schedule's Details tab with Approve (the only approval in the app, C100), Run
-//! now, Dry run, Pause and Resume, Remove, and the Edit dialog. Every change of a schedule's task goes through
-//! `schedule::sync`.
+//! The Schedules group's actions; every change of a schedule's task goes through `schedule::sync`.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -26,7 +24,7 @@ use crate::schedules::{self, Primary, ScheduleRow, Waiting};
 
 const DRY_RUN_WITHIN: Duration = Duration::from_secs(60);
 
-/// Task Scheduler as the window registers with it: the real one, or the selftest's fake (C101).
+/// The real Task Scheduler, or the selftest's fake (see C101).
 pub type SharedRegistrar = Arc<dyn Registrar + Send + Sync>;
 
 /// `<ws>/<id>`: a schedule's key in hit keys and maps.
@@ -51,7 +49,6 @@ pub struct SchedulePage {
     pub dry_running: bool,
 }
 
-/// The section a Details tab opens on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum At {
     Top,
@@ -94,8 +91,7 @@ impl Form {
         }
     }
 
-    /// The form's values on `s`, all or none; `Err` names the field that does not parse. `schedule::edit` validates
-    /// the rest.
+    /// All or none; `Err` names the field that does not parse, `schedule::edit` validates the rest.
     pub fn apply(&self, s: &mut Schedule) -> Result<(), String> {
         let at: Clock = self.at.trim().parse().map_err(|e| format!("At: {e}"))?;
         let trigger = match self.kind {
@@ -208,7 +204,6 @@ impl FleetView {
         schedules::sections(row, &schedules::zone_words(now), page.and_then(|p| p.dry_run.as_deref()), now)
     }
 
-    /// Opens the schedule's Details tab, or focuses the one open, scrolled to `at`.
     pub fn open_schedule(&mut self, workspace: &str, id: &str, at: At, cx: &mut Context<Self>) -> Option<u64> {
         let row = self.schedule_row(workspace, id)?.clone();
         self.menu = None;
@@ -238,8 +233,7 @@ impl FleetView {
         Some(tab)
     }
 
-    /// Approve on the page: the fingerprint of the covered state the page shows, which [`Self::approve_schedule`]
-    /// refuses once the file holds another.
+    /// The fingerprint the page shows, which [`Self::approve_schedule`] refuses once the file holds another.
     pub fn approve_shown(&mut self, workspace: &str, id: &str, cx: &mut Context<Self>) {
         match self.schedule_row(workspace, id).map(|r| r.approvable.clone()) {
             Some(Some(Ok(covered))) => self.approve_schedule(workspace.to_string(), id.to_string(), covered.fingerprint, cx),
@@ -249,7 +243,7 @@ impl FleetView {
         cx.notify();
     }
 
-    /// René's Approve: `schedule::approve`, then `sync`. A fingerprint other than the one shown is refused.
+    /// The app's only approval (see C100).
     pub fn approve_schedule(&mut self, workspace: String, id: String, fingerprint: String, cx: &mut Context<Self>) {
         let store = self.schedule_store.clone();
         self.change_schedule(workspace, id, "approved; its task is registered", cx, move |home, w, id| {
@@ -297,8 +291,7 @@ impl FleetView {
         });
     }
 
-    /// Runs `edit` then `sync` off the UI thread; a sync failure stays on the row and in the Inbox until a sync of
-    /// the workspace succeeds.
+    /// A sync failure stays on the row and in the Inbox until a sync of the workspace succeeds.
     fn change_schedule(
         &mut self,
         workspace: String,
@@ -340,8 +333,7 @@ impl FleetView {
         cx.notify();
     }
 
-    /// `smw schedule run --home <home> <ws> <id>`, detached and off the UI thread; the row shows the run from
-    /// its live file.
+    /// Detached and off the UI thread; the row shows the run from its live file.
     pub fn run_schedule_now(&mut self, workspace: &str, id: &str, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
             return;
@@ -368,7 +360,6 @@ impl FleetView {
         .detach();
     }
 
-    /// `sm schedule dry-run`'s output in the Dry run section of the schedule's Details tab.
     pub fn dry_run_schedule(&mut self, workspace: &str, id: &str, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
             return;
@@ -469,8 +460,7 @@ impl FleetView {
         cx.notify();
     }
 
-    /// Saved through `schedule::edit` off the UI thread: a covered change makes the schedule pending, so it needs
-    /// Approve again.
+    /// A covered change makes the schedule pending, so it needs Approve again.
     pub fn save_schedule_edit(&mut self, cx: &mut Context<Self>) {
         let Some(edit) = &self.schedule_edit else {
             return;
@@ -704,8 +694,7 @@ impl FleetView {
 }
 
 impl FleetView {
-    /// The Schedules group of `node` on the tree's grid: its row at level 1, a row per schedule at level 2 and each
-    /// schedule's run sessions at level 3. A run whose schedule is gone stays under the workspace.
+    /// A run whose schedule is gone stays under the workspace.
     pub(super) fn render_schedules(&self, node: &WorkspaceNode, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let rows = self.schedules.get(&node.name).cloned().unwrap_or_default();
         let others = self.others();
@@ -804,7 +793,6 @@ impl FleetView {
         self.render_others(None, &others.unowned, 0, cx)
     }
 
-    /// The Other schedules group at `level` with its rows; nothing when there are none.
     fn render_others(&self, workspace: Option<&str>, tasks: &[ForeignTask], level: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
         if tasks.is_empty() {
             return vec![];
@@ -1020,7 +1008,6 @@ impl FleetView {
         schedules::tray_tooltip(runs.len() + syncs.len(), self.schedules_waiting().len())
     }
 
-    /// The Inbox's entries for scheduled runs and failed syncs.
     pub(super) fn render_schedule_inbox(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();

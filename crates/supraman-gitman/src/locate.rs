@@ -6,8 +6,7 @@ use serde::{Deserialize, Serialize};
 use supraman_core::Settings;
 use supraman_core::process::{self, GIT_TIMEOUT, Kill};
 
-/// The oldest git GitMan runs: `worktree list --porcelain -z` arrived in 2.36; the rest it uses
-/// (`--diff-merges=first-parent` 2.31, `--end-of-options` 2.24, `--no-optional-locks` 2.15, porcelain v2 2.11) is older.
+/// The oldest git GitMan runs: `worktree list --porcelain -z` arrived in 2.36.
 pub const FLOOR: Version = Version { major: 2, minor: 36, patch: 0 };
 
 /// GitMan's table in `settings.toml`.
@@ -31,8 +30,7 @@ pub struct RemoteSettings {
     pub prune: Option<bool>,
 }
 
-/// `[gitman]`'s remote keys; their defaults when the table is absent or does not parse (its notice is
-/// [`locate`]'s).
+/// `[gitman]`'s remote keys; their defaults when the table is absent or does not parse.
 pub fn remote_settings(settings: &Settings) -> RemoteSettings {
     settings.section(SECTION).unwrap_or_default()
 }
@@ -88,9 +86,7 @@ impl Default for TabSettings {
     }
 }
 
-/// `[gitman]` of `home`'s `settings.toml` for a Git tab; blocking. `Err` (the tab's problem) when the file is not
-/// read or the table is not GitMan's; a remote or background key that does not parse leaves its part `None` and is
-/// the notice.
+/// `[gitman]` of `home`'s `settings.toml` for a Git tab; a part whose keys do not parse is `None`, with the notice.
 pub fn read_settings(home: &Path) -> Result<(TabSettings, Option<String>), String> {
     let settings = Settings::load(home).map_err(|e| format!("[gitman] git is not read: {e}"))?;
     let git = section(&settings)?.git;

@@ -1,7 +1,4 @@
-//! GitMan's undo journal (docs/research/gitkraken-12.6.1.md, "Undo/redo"): HEAD's reflog merged with the reflog of
-//! [`JOURNAL`], per worktree. Each undoable write [`record`]s an entry: an empty-tree marker commit holding the
-//! action (its snapshot a parent, so the journal's reflog keeps it alive) and a reflog line naming the HEAD line
-//! it follows; the ref then rests on another commit, so no marker outlives its reflog line.
+//! GitMan's undo journal: HEAD's reflog merged with [`JOURNAL`]'s, whose marker commits keep each snapshot alive.
 
 mod restore;
 mod walk;
@@ -31,8 +28,7 @@ pub enum Action {
     Reset { hard: bool },
     /// GitMan's own rebase of the branch that was at `from`.
     Rebase { from: String },
-    /// `paths` from the checkout's top, `/`-separated, with the snapshot of them; `from_index` those of them whose
-    /// working file went back to the index's, their staged change kept.
+    /// `from_index`: the paths whose working file went back to the index's, their staged change kept.
     Discard {
         paths: Vec<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -141,7 +137,6 @@ pub enum Refused {
     Write(#[from] WriteError),
 }
 
-/// An undo or a redo done: the toast's words.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Done {
     pub toast: String,
@@ -168,8 +163,7 @@ pub fn preview(writer: &Writer) -> Result<Preview, WriteError> {
     })
 }
 
-/// Undoes the newest action not undone; with `stash` false it refuses with [`Refused::WouldStash`] where work in
-/// progress would be stashed first.
+/// Undoes the newest action not undone; with `stash` false a needed stash is [`Refused::WouldStash`].
 pub fn undo(s: &Session, stash: bool) -> Result<Done, Refused> {
     s.nested(LockSet::undo(), |s| Ok(undo_held(s, stash)))?
 }
@@ -228,7 +222,6 @@ fn head_log(s: &Session) -> Result<Vec<Line>, WriteError> {
     log(&s.writer().dirs().git_dir.join("logs").join("HEAD"))
 }
 
-/// HEAD's reflog and the journal's, merged newest first.
 fn read(s: &Session) -> Result<Vec<Item>, WriteError> {
     let journal = log(&s.writer().dirs().git_dir.join("logs").join(JOURNAL))?;
     let entries: Vec<Entry> = journal.iter().filter_map(Entry::parse).collect();
@@ -312,7 +305,6 @@ fn write_entry(s: &Session, label: &str, payload: &Payload) -> Result<(), WriteE
     Ok(())
 }
 
-/// The journal entry of `item` (an action GitMan recorded), read from its marker.
 fn payload(s: &Session, item: &Item) -> Result<Option<Payload>, Refused> {
     let Some(entry) = &item.entry else { return Ok(None) };
     let out = s.run(&Call::new(&["cat-file", "commit", &entry.marker]))?;
@@ -324,7 +316,6 @@ fn payload(s: &Session, item: &Item) -> Result<Option<Payload>, Refused> {
     serde_json::from_str(json).map(Some).map_err(|e| Refused::Write(WriteError::Journal(e.to_string())))
 }
 
-/// Writes `label`'s entry again with `payload`, `undo: ` before it when `undo`.
 fn rewrite(s: &Session, label: &str, payload: &Payload, undo: bool) -> Result<(), WriteError> {
     let label = if undo { format!("{UNDO}{label}") } else { label.to_string() };
     write_entry(s, &label, payload)

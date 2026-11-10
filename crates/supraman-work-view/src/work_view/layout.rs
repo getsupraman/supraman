@@ -1,5 +1,4 @@
-//! The Work tab's column widths, `<home>/work-layout.json`: the one reader and writer of that file. Read off
-//! the UI thread at open; each change written off it.
+//! The Work tab's column widths: the one reader and writer of `<home>/work-layout.json`, off the UI thread.
 
 use std::path::{Path, PathBuf};
 

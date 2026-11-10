@@ -6,8 +6,7 @@ use serde::de::DeserializeOwned;
 
 use crate::fs::{load_json_or_notice, write_atomic};
 
-/// A small JSON state file held in memory (stars, dismissals): read once with [`load_json_or_notice`], each
-/// change saved whole through [`Save::write`] off the UI thread.
+/// A small JSON state file held in memory, read once and each change saved whole through [`Save::write`].
 #[derive(Debug, Default)]
 pub struct JsonStore<T> {
     path: Option<PathBuf>,
@@ -37,8 +36,7 @@ impl<T: Serialize + DeserializeOwned + Default> JsonStore<T> {
         (Self { path: Some(path), value, pending: Arc::default() }, notice)
     }
 
-    /// [`JsonStore::load`], except that an unreadable file is kept as it is: the store then lives in memory only,
-    /// and the notice says why.
+    /// [`JsonStore::load`] leaving an unreadable file as it is: the store in memory only, the notice its why.
     pub fn load_kept(path: Option<PathBuf>, lost: &str) -> (Self, Option<String>) {
         match Self::load(path, lost) {
             (_, Some(notice)) => (Self::default(), Some(notice)),

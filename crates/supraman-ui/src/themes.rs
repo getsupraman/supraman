@@ -1,8 +1,4 @@
-//! Themes: Zed theme JSON (`https://zed.dev/schema/themes/v0.2.0.json`) read tolerantly over a
-//! base theme, the bundled VS Code Dark Modern (the default) and Supraman Dark (One Dark with Campbell's
-//! ANSI colours), files in `<SUPRAMAN_HOME>\themes\*.json`, and the terminal colours
-//! switch. Everything the app paints reads `cx.theme()`, so [`apply`] is the one place a theme changes.
-//! The Git tab's lanes are [`lanes`]: a theme sets lane N with the style key `gitman.lane.N` (0–9).
+//! Themes: Zed theme JSON read tolerantly over a base theme; everything paints from `cx.theme()`, so [`apply`] is the one place a theme changes.
 
 use std::{
     borrow::Cow,
@@ -33,9 +29,7 @@ pub const DEFAULT_THEME: &str = DARK_MODERN;
 pub const DARK_MODERN_JSON: &str = include_str!("../assets/themes/vscode-dark-modern.json");
 pub const DARK_MODERN_LICENSE: &str = include_str!("../assets/themes/vscode-dark-modern.LICENSE");
 
-/// The tree's text against the panel (m5/26, LEARNINGS 2026-10-27): blends of the theme's text. A name
-/// in [`QUIET`] keeps >= [`NAME_FLOOR`]:1 and secondary text in [`SECONDARY`] >= [`SECONDARY_FLOOR`]:1
-/// (WCAG); a row faded to [`DIMMED`] (a foreign or gone session) keeps >= 4.5 and >= 3.
+/// The tree's text as blends of the theme's text: a name in [`QUIET`] holds [`NAME_FLOOR`], secondary text [`SECONDARY_FLOOR`] (WCAG).
 pub const QUIET: f32 = 0.78;
 pub const SECONDARY: f32 = 0.62;
 pub const DIMMED: f32 = 0.8;
@@ -173,7 +167,7 @@ fields!(status_field, StatusColors, [
     warning_background, warning_border,
 ]);
 
-/// A key the loader changed so the m5/26 floors hold.
+/// A key the loader changed so the contrast floors hold.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Adjustment {
     pub key: Cow<'static, str>,
@@ -430,7 +424,7 @@ pub fn worst_contrast(theme: &Theme, fg: Hsla, alpha: f32, on: On) -> f32 {
 /// Where a [`FLOORS`] colour is painted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum On {
-    /// The tree's blends: the panel only, as m5/26 measured them.
+    /// The tree's blends: the panel only.
     Panel,
     /// Every one of the [`surfaces`].
     Surfaces,
@@ -487,9 +481,7 @@ pub fn fit_floors(theme: &mut Theme) -> Vec<Adjustment> {
     adjusted
 }
 
-/// Placeholder and hint text: legible, yet clearly below the [`SECONDARY_FLOOR`] that content
-/// holds, so it reads as a hint. `text.placeholder` keeps [`PLACEHOLDER_FLOOR`] <= ratio <
-/// [`PLACEHOLDER_CEILING`] on the panel and the editor background (the inputs').
+/// `text.placeholder` keeps [`PLACEHOLDER_FLOOR`] <= ratio < [`PLACEHOLDER_CEILING`] on the panel and the editor background: a hint.
 pub const PLACEHOLDER_FLOOR: f32 = 2.5;
 pub const PLACEHOLDER_CEILING: f32 = 4.0;
 /// Where [`fit_placeholder`] moves a placeholder that is out of range.
@@ -502,9 +494,7 @@ pub fn placeholder_contrast(theme: &Theme, color: Hsla) -> (f32, f32) {
     (ratios[0].min(ratios[1]), ratios[0].max(ratios[1]))
 }
 
-/// Makes `text.placeholder` opaque (blended over the editor background; text drawn with an alpha
-/// colour is not relied on), then, when it is out of range, moves its lightness toward
-/// [`PLACEHOLDER_TARGET`]. Returns what changed.
+/// Makes `text.placeholder` opaque over the editor background, then moves one out of range toward [`PLACEHOLDER_TARGET`].
 pub fn fit_placeholder(theme: &mut Theme) -> Option<Adjustment> {
     let old = theme.colors().text_placeholder;
     let was = placeholder_contrast(theme, old).0;
@@ -526,8 +516,6 @@ pub fn fit_placeholder(theme: &mut Theme) -> Option<Adjustment> {
 }
 
 /// Backgrounds text is painted on, over the panel: (key, the alpha of the theme's text on it, floor).
-/// The marked row holds its ids and states in secondary text; a search result marks
-/// the matched part of a name.
 pub const BACKGROUND_FLOORS: [(&str, f32, f32); 2] = [
     ("ghost_element.selected", SECONDARY, SECONDARY_FLOOR),
     ("search.match_background", 1., NAME_FLOOR),
@@ -799,8 +787,6 @@ mod tests {
         assert!(parse_family("[").is_err());
     }
 
-    /// m5/26's floors under each bundled theme: names (text at [`QUIET`]) >= 7:1, secondary (text at
-    /// [`SECONDARY`]) >= 4.5:1 against every surface, a dimmed row >= 4.5 and >= 3, the hierarchy kept.
     /// Every key the loader had to change is printed (`cargo test -- --nocapture`) and pinned.
     #[test]
     fn the_contrast_floors_hold_under_each_bundled_theme() {
@@ -833,9 +819,6 @@ mod tests {
         assert_eq!(keys(&dark), pinned(&EXPECTED_SUPRAMAN_DARK));
     }
 
-    /// Under each bundled theme, on their own backgrounds: the search box's text, a matched name, the
-    /// marked row's name, secondary and warning text, the toast's text; the Messages row: its sender (text)
-    /// and its workspace and age (quiet) on the row's info or warning tint, resting and under the pointer.
     #[test]
     fn the_newer_elements_read_under_each_bundled_theme() {
         for mut theme in [dark_modern().theme, supraman_dark().theme] {
@@ -866,8 +849,6 @@ mod tests {
         }
     }
 
-    /// Placeholder text reads as a hint under each bundled theme, below what content holds, and is
-    /// opaque; a theme whose placeholder is as bright as its text, or too dim, is moved into the range.
     #[test]
     fn the_placeholder_reads_as_a_hint_under_each_bundled_theme() {
         for theme in [dark_modern().theme, supraman_dark().theme] {
@@ -890,10 +871,7 @@ mod tests {
         }
     }
 
-    /// What VS Code Dark Modern needed (reported in LEARNINGS m5/31).
-    /// `info` is a 40% grey there (`#BFBFBF66`, 2.58:1 on #1F1F1F); the tree paints Idle in it.
-    /// The marked row's `#04395E` left the ids on it at 3.82:1; a match's `#C6510666` a name at 6.94:1.
-    /// Its translucent placeholder `#FFFFFF56` is made opaque (3.07:1 on the editor background).
+    /// Dark Modern's `info` is 2.58:1 on #1F1F1F, its marked row leaves ids at 3.82:1, its placeholder is translucent.
     const EXPECTED_ADJUSTMENTS: [(&str, &str, &str); 4] = [
         ("info", "#BFBFBF66", "#868686"),
         ("ghost_element.selected", "#04395E", "#04395E80"),

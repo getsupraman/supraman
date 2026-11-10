@@ -1,6 +1,4 @@
-//! The viewer's line picks on a working-tree diff of a modified file (docs/research/gitkraken-12.6.1.md,
-//! "Staging"): each hunk's buttons, a changed row's + or − on hover, and the right-click menu of the rows under the
-//! pointer or selected. Every write goes through the tab's [`WriteGate`]; the tab reads the file again after it.
+//! The viewer's line picks on a working-tree diff of a modified file (docs/research/gitkraken-12.6.1.md, "Staging").
 
 use supraman_core::text::count;
 use gpui::{AnyElement, App, AppContext as _, ClickEvent, Context, Entity, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, Subscription, Window, anchored, deferred, div, point, prelude::*, px};
@@ -116,8 +114,7 @@ impl DiffView {
         .detach();
     }
 
-    /// What a pick does here: stage and discard on the Unstaged diff, unstage on the Staged one, of a modified
-    /// text file shown as a diff; `None` where no lines can be picked.
+    /// What a pick does here: stage and discard on Unstaged, unstage on Staged, for a modified text file's diff; else `None`.
     fn pick_side(&self) -> Option<Of> {
         let text = self.text().filter(|t| t.invisible.is_empty())?;
         let ok = self.picks.is_some() && self.mode == Mode::Diff && self.target.kind() == Some(ChangeKind::Modified) && !text.diff.hunks.is_empty();

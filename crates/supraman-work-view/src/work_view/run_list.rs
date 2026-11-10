@@ -1,5 +1,4 @@
-//! The middle column's run page: breadcrumb, title, how much is done, the prompt chips, one square per item, the
-//! filter, and a row per item: its state's dot, its run-relative ref, its title and its criteria count.
+//! The middle column's run page: breadcrumb, done line, prompt chips, squares, filter and a row per item.
 
 use gpui::{ClickEvent, FontWeight};
 use supraman_ui::clipped::clamped;

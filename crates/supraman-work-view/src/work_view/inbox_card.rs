@@ -1,4 +1,4 @@
-//! The Inbox's Workman cards (workman-ui/inbox-cards): Needs you, then Housekeeping, closed until opened.
+//! The Inbox's Workman cards: Needs you, then Housekeeping, closed until opened.
 
 use std::rc::Rc;
 

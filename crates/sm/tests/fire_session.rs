@@ -1,5 +1,4 @@
-//! The session stage of `sm schedule fire` against a fake `claude` (scripted rows, a clock that moves only when
-//! fire sleeps), `FakeWorkman` with its OAuth, a temp home and a temp git repo.
+//! The session stage of `sm schedule fire` against a fake `claude`, `FakeWorkman`, a temp home and a temp git repo.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -107,7 +106,7 @@ impl Fixture {
         Registry::at(&self.home).load("demo").unwrap()
     }
 
-    /// Adds `s` and stands in for René's Approve in the window (C100: sm itself never approves).
+    /// Adds `s` and stands in for the window's Approve; sm itself never approves (C100).
     fn add_approved(&self, s: Schedule) {
         let id = s.id.clone();
         schedule::edit(&self.home, &self.workspace(), |all| {
@@ -345,9 +344,7 @@ fn report_done_after(after_ms: i64) -> OnSleep {
     })
 }
 
-/// A session-only schedule the earlier release saved with `worktree = true` starts one `fm-<ws>-sched-*`
-/// session in a fresh worktree, with the profile, the prompt and a minted token; DONE ends it, and the end stops
-/// (never rm) and keeps its token.
+/// A session-only schedule with `worktree = true` runs one session in a fresh worktree; DONE stops it (never rm), its token kept.
 #[test]
 fn fire_session_only_starts_one_session_with_the_profile_the_prompt_and_a_mint() {
     let f = fixture(true);
@@ -616,8 +613,7 @@ fn fire_session_of_a_dead_fm_is_stopped_by_the_next_fire_and_keeps_its_token() {
     assert_eq!(ended(&f.records("crash-20261101-090000"))[0].0, Outcome::Interrupted);
 }
 
-/// An `edit` run without a worktree starts in the folder's checkout, needs no git repo, makes no worktree and
-/// may not push.
+/// An `edit` run without a worktree starts in the folder's checkout, needs no git repo and may not push.
 #[test]
 fn fire_session_of_an_edit_schedule_works_in_the_folders_checkout() {
     let f = fixture(true);

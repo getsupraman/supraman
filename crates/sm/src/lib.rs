@@ -142,8 +142,7 @@ fn failure_text(f: Failure) -> String {
     }
 }
 
-/// Hidden: ssh's `SSH_ASKPASS` under a Git tab's fetch, pull or push; the answer the app's bridge gave on stdout,
-/// else exit 1 (supraman_core::askpass).
+/// Hidden: ssh's `SSH_ASKPASS`; the app bridge's answer on stdout, else exit 1 (supraman_core::askpass).
 fn askpass(args: &[String]) -> ExitCode {
     match supraman_core::askpass::ask(&args.join(" ")) {
         Some(answer) => {
@@ -213,9 +212,7 @@ pub fn smw(args: Vec<String>) -> ExitCode {
     }
 }
 
-/// A session's `headersHelper` (not in the usage): one `Authorization` header line on stdout and exit 0 whatever
-/// the arguments or the outcome, since anything else makes claude fall back to its own sign-in
-/// (`supraman_supervisor::header`); before any start-up work of `sm`.
+/// A session's `headersHelper`, before any start-up work: always one header line and exit 0 (`supraman_supervisor::header`).
 fn mcp_header(args: &[String]) -> ExitCode {
     use std::io::Write as _;
     std::panic::set_hook(Box::new(|_| {}));
@@ -510,8 +507,7 @@ pub(crate) fn print_workspace(p: &Workspace, with_created: bool, owned: &HashMap
     }
 }
 
-/// Without `--all`, stopped sessions are hidden; with it, they are shown, and when no
-/// `--workspace` is given an "unassigned" group lists sessions outside every workspace.
+/// `--all` shows stopped sessions and, without `--workspace`, an "unassigned" group of those outside every workspace.
 fn sessions(args: &[&str]) -> Result<(), Failure> {
     let mut workspace = None;
     let mut all = false;

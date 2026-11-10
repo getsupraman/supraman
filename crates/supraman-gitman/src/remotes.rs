@@ -48,8 +48,7 @@ pub enum Link<'a> {
     Commit(&'a str),
 }
 
-/// The web page of `link` on the site `remote_url` lives on (GitHub, GitLab, Bitbucket, Azure DevOps); `None`
-/// for any other host.
+/// The web page of `link` on GitHub, GitLab, Bitbucket or Azure DevOps, where `remote_url` lives.
 pub fn web_link(remote_url: &str, link: Link) -> Option<String> {
     let (host, path) = host_and_path(remote_url)?;
     let path = path.trim_matches('/').trim_end_matches(".git");

@@ -1,5 +1,4 @@
-//! `--selftest` step 7y: the Schedules group and a schedule's Details tab in the window, against the fake Task
-//! Scheduler (C101). `sm` adds and changes the schedule; only the page's Approve approves it (C100).
+//! `--selftest` step 7y: the Schedules group and a schedule's Details tab against the fake Task Scheduler; only the page's Approve approves.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};

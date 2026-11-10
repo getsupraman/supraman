@@ -5,20 +5,13 @@ use crate::{CoreError, Folder, FolderKind, Result};
 
 pub const DEFAULT_DEPTH: usize = 1;
 
-/// The folders under `root`: at `depth` 1 every direct subfolder, git or plain; deeper, the git repos at most
-/// `depth` levels down. Hidden folders, `*.worktrees` folders and linked worktrees are skipped. A `root` that is
-/// itself a repo (a `.git` folder, or the `.git` file of a linked worktree) is one too, listed first named after
-/// its folder ([`root_repo_name`]), its path the root; a plain `root` scanned at depth 1 with no subfolder is its
-/// own one folder.
-///
-/// Read-only: it never runs git and never writes inside a scanned folder.
+/// The folders under `root` (depth 1 every subfolder, deeper the repos), a repo `root` first; read-only, no git.
 pub fn scan(root: &Path, depth: usize) -> Result<Vec<Folder>> {
     if !root.is_dir() {
         return Err(CoreError::NotADirectory(root.to_path_buf()));
     }
     let entries = fs::read_dir(root).map_err(|e| CoreError::io(root, e))?;
     let mut folders = Vec::new();
-    // Only a depth-1 scan lists plain folders; a deeper one stays a search for repos (add-workspace/1).
     let every = depth == 1;
     walk(entries, "", 1, depth, every, &mut folders);
     folders.sort_by(|a, b| a.name.cmp(&b.name));
@@ -48,8 +41,7 @@ fn repo_at(name: String, path: std::path::PathBuf, git_dir: Option<&Path>) -> Fo
     }
 }
 
-/// `path` as a folder named `name`: a git folder when it holds a `.git` (a folder, or a linked worktree's
-/// file), else a plain one. Read-only.
+/// `path` as a folder named `name`: git when it holds a `.git` folder or file, else plain.
 pub(crate) fn folder_at(name: String, path: std::path::PathBuf) -> Folder {
     let git = path.join(".git");
     if git.is_dir() {
@@ -93,8 +85,7 @@ fn walk(entries: fs::ReadDir, prefix: &str, level: usize, depth: usize, every: b
     }
 }
 
-/// The branch checked out at `dir`, from the nearest `.git` at or above it (a folder, or a linked
-/// worktree's file); `None` when HEAD is detached or there is no repo.
+/// The branch checked out at `dir` by the nearest `.git`; `None` when detached or no repo.
 pub fn branch_at(dir: &Path) -> Option<String> {
     let git = crate::paths::git_at(dir)?;
     let git_dir = if git.is_dir() { git } else { crate::paths::linked_git_dir(&git)? };
@@ -123,15 +114,6 @@ mod tests {
         repos.iter().map(|r| r.name.as_str()).collect()
     }
 
-    /// root/
-    ///   Alpha/            repo on main, CLAUDE.md
-    ///   Beta/             repo, detached HEAD, AGENTS.md
-    ///   Gamma/            repo on feature/x, contains a nested repo (must not be descended into)
-    ///   Alpha-wt/         worktree (.git file)
-    ///   Alpha.worktrees/  holds a repo and a worktree
-    ///   .hidden/          holds a repo
-    ///   group/deep/       repo at depth 2
-    ///   plain/            no repo
     fn tree() -> tempfile::TempDir {
         let tmp = tempfile::tempdir().unwrap();
         let r = tmp.path();

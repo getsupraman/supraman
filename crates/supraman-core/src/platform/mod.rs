@@ -1,5 +1,4 @@
-//! The OS boundary: each module holds the Windows code of one concern, and elsewhere a stub that refuses with
-//! [`NOT_HERE`].
+//! The OS boundary: the Windows code of each concern, elsewhere a stub that refuses with [`NOT_HERE`].
 
 pub mod desktop;
 pub mod fs;

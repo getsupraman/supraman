@@ -3,8 +3,7 @@ use std::path::{Path, PathBuf};
 use supraman_gitman::fixture::{Fixture, git_in};
 use supraman_gitman::*;
 
-/// The fixture's `wt` stopped cherry-picking on a conflict in `a.txt`, with a file added, one deleted and one renamed,
-/// tracking `origin/main`; `det` detached at `second` with a file modified and one untracked.
+/// `wt` stopped cherry-picking on a conflict with an add, a delete and a rename; `det` detached with changes.
 fn two_linked_worktrees() -> (Fixture, PathBuf) {
     let f = Fixture::copy();
     f.cherry_pick_conflict();

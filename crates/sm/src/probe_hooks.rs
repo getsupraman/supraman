@@ -13,12 +13,10 @@ use crate::probe::{Fleet, ROW_WITHIN, describe, hex6, mkdir, wait_until_stopped,
 
 const ROLE: &str = "probe";
 const WINDOW: &str = "100000";
-/// The output reserve comes off the window: at the default (128k for this model) a 100k window
-/// compacts on every call, in a loop.
+/// The output reserve (128k by default for this model) comes off the window: a 100k window compacts on every call.
 const MAX_OUTPUT: &str = "8000";
 const PCT: &str = "80";
-/// One big file per turn: more than one lets the next `Read` refill the context right after a
-/// compaction, which loops until "rapid-refill breaker tripped" and the turn ends with no Stop.
+/// One big file per turn: more refills the context right after a compaction until "rapid-refill breaker tripped" ends the turn with no Stop.
 const BIG_FILES: usize = 1;
 const BIG_LINES: usize = 800;
 const ROUNDS: usize = 5;
@@ -28,8 +26,7 @@ const TURN_WITHIN: Duration = Duration::from_secs(480);
 const PROMPT_PARK: &str = "This is an automated probe. Run exactly this one Bash command and nothing else: \
 `echo parked > parked.txt`. Then stop.";
 
-/// Answered in the reply text, read back from the transcript: a file is not a reliable channel, because a
-/// `--bg` session in a main checkout moves into `.claude/worktrees/<name>` before its first write.
+/// Answered in the reply text: a `--bg` session in a main checkout moves into `.claude/worktrees/<name>` before its first write.
 const PROMPT_TAGS: &str = "This is an automated probe. Do not use any tool and do not write any file. Look through \
 everything in your context (hook output, system reminders, the conversation summary) for lines that start with \
 SUPRAMAN-ROLE. Your whole reply must be exactly those lines, as written, one per line, in the order they appear, and \
@@ -44,8 +41,7 @@ one after another, without summarising them: {}. Then reply with the single word
     )
 }
 
-/// `repo`: the checkout whose `target/` holds the scratch cwd (default: this build's cargo workspace). The
-/// plugin always comes from this build's cargo workspace, so nothing is written into `repo` outside `target/`.
+/// `repo`: the checkout whose `target/` holds the scratch cwd; nothing is written into it outside `target/`.
 pub fn run(repo: Option<PathBuf>) -> bool {
     let claude = Claude::default();
     let hex = hex6();
@@ -151,7 +147,6 @@ fn probe(claude: &Claude, fleet: &mut Fleet, root: &Path, hex: &str) -> Result<b
     println!("park ({}): {}", describe(&park), summary(log.of(&park.session_id)));
     fleet.remove(&spec_park.name);
 
-    // rounds of big reads until an auto-compaction has happened; resume between rounds
     let mut stop_seen = false;
     let mut compacted = false;
     for round in 1..=ROUNDS {
@@ -232,8 +227,7 @@ fn probe(claude: &Claude, fleet: &mut Fleet, root: &Path, hex: &str) -> Result<b
     Ok(ok)
 }
 
-/// The documented fallback when auto-compaction cannot be triggered cheaply: `claude --resume <id> -p
-/// /compact`, with the plugin and env passed again because `-p` starts a fresh process.
+/// `claude --resume <id> -p /compact`, plugin and env passed again since `-p` starts a fresh process.
 fn manual_compact(setup: &Setup, cwd: &Path, session_id: &str, claude: &Claude, name: &str) -> Result<(), String> {
     let _ = claude.find_by_name(name, ROW_WITHIN).ok().and_then(|r| r.into_iter().next()).map(|r| claude.stop(&r.id));
     wait_until_stopped(claude, name)?;

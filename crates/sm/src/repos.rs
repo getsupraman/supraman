@@ -1,5 +1,4 @@
-//! The desired state and the session shape are `supraman_supervisor`'s; the supervisor in the app acts on the file
-//! at its next tick.
+//! The desired state and the session shape are `supraman_supervisor`'s; the app's supervisor acts on the file at its next tick.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -80,8 +79,7 @@ fn find_repo<'a>(workspace: &'a Workspace, name: &str) -> Result<&'a Folder, Fai
     })
 }
 
-/// `<home>/roles/repo.md` as the app wrote it (`{sm}`/`{home}` filled), else the template of the plugin
-/// this `sm.exe` belongs to (`<plugin>/bin/sm.exe`, or `<repo>/target/<profile>/sm.exe`).
+/// `<home>/roles/repo.md` as the app wrote it, else the template of the plugin this `sm.exe` belongs to.
 fn repo_template(home: &Path) -> Result<String, Failure> {
     let file = format!("{REPO_ROLE}.md");
     if let Ok(text) = std::fs::read_to_string(home.join("roles").join(&file)) {
@@ -125,8 +123,7 @@ pub fn roster_cmd(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
     Ok(())
 }
 
-/// Rows named `fm-<w>-…` (not those of a registered workspace whose name extends `<w>-`, unless `<w>`
-/// wants them), in desired order first, then the rest by name; then wanted sessions without a row.
+/// Rows named `fm-<w>-…` but a longer-named workspace's, desired order first; then wanted sessions without a row.
 pub fn roster(desired: &DesiredState, rows: &[Session], others: &[String], now: i64) -> Vec<Entry> {
     let w = &desired.workspace;
     let prefix = format!("fm-{w}-");

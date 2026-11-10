@@ -1,5 +1,4 @@
 //! Read only (C21): the token stays inside the hub's [`Client`]; no message here may carry it.
-//! The Work tab is the web UI's three columns: navigator | run list | detail.
 
 mod actions;
 mod activity;

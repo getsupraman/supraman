@@ -1,5 +1,4 @@
-//! A question before an action that cannot be taken back, or a report with only its OK. The owner places it:
-//! as a box ([`Confirm::render`]) or as a band across the top of a view ([`Confirm::render_band`]).
+//! A question before an action that cannot be taken back, or a report with only its OK; a box or a band.
 
 use gpui::{AnyElement, App, ClickEvent, Context, Div, Hsla, KeyDownEvent, Pixels, SharedString, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
@@ -131,9 +130,7 @@ impl<A> Confirm<A> {
             )
     }
 
-    /// [`Confirm::render`] as a [`band`]: the yes on the success or error tint, the alt, then Cancel outlined, under
-    /// the same hit keys; Enter takes [`Confirm::default_answer`] and Esc cancels while the band holds the focus
-    /// the owner tracks on it.
+    /// [`Confirm::render`] as a [`band`]; Enter takes [`Confirm::default_answer`], Esc cancels, while it holds the owner's focus.
     pub fn render_band<V: 'static>(
         &self,
         hits: &HitTargets,
@@ -191,9 +188,7 @@ fn answer_button<V: 'static>(
         .into_any_element()
 }
 
-/// A prompt band, GitKraken's: `message`, then `items` (a form's fields, then its answers) in a row of [`ROW`],
-/// centred as one group and wrapping by row only when the width cannot hold them; full width and square, on the
-/// info colour's tint over the editor's background. Paints under `<key>-band`, the message under `<key>-text`.
+/// A prompt band: `message`, then `items` (fields, then answers) centred in a [`ROW`]; paints `<key>-band` and `<key>-text`.
 pub fn band(hits: &HitTargets, key: &str, message: impl IntoElement, items: impl IntoIterator<Item = AnyElement>, cx: &App) -> Div {
     let colors = cx.theme().colors();
     let text = div().relative().min_w_0().mr_4().py_1().text_sm().text_color(colors.text).child(message).child(hit_target(hits, format!("{key}-text")));

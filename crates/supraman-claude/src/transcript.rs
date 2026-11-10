@@ -1,6 +1,4 @@
-//! Closed sessions from `<claude dir>/projects/<slug>/<sessionId>.jsonl`, read only: `claude agents --json
-//! --all` lists an interactive session only while it runs. The slug is lossy, so it only narrows the project
-//! dirs ([`slug`] prefix); a session's cwd comes from its lines.
+//! Closed sessions from `<claude dir>/projects/<slug>/<sessionId>.jsonl`, read only; the slug is lossy, so a cwd comes from the lines.
 
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
@@ -131,8 +129,7 @@ impl Transcript {
     }
 }
 
-/// The text a person typed, from a user line: not a tool result, a meta line, a compaction summary or
-/// a `<command…>` wrapper.
+/// The text a person typed, from a user line: not a tool result, a meta line, a compaction summary or a `<command…>` wrapper.
 fn prompt_of(v: &Value) -> Option<String> {
     let flag = |k: &str| v.get(k).and_then(Value::as_bool).unwrap_or(false);
     if flag("isMeta") || flag("isCompactSummary") || flag("isSidechain") || v.get("toolUseResult").is_some() {
@@ -210,8 +207,7 @@ pub fn read(path: &Path) -> std::io::Result<Transcript> {
     Ok(t)
 }
 
-/// Feeds every complete line from byte `offset` on; returns the offset after the last one fed (a line
-/// still being written is left for the next read).
+/// Feeds every complete line from byte `offset` on; returns the offset after the last one fed.
 fn feed_from(path: &Path, offset: u64, t: &mut Transcript) -> std::io::Result<u64> {
     feed_lines(path, offset, false, t, |_| false)
 }
@@ -253,10 +249,7 @@ const WHOLE_UNDER: u64 = 256 * 1024;
 /// The first tail read; each next one is four times longer.
 const TAIL_BLOCK: u64 = 64 * 1024;
 
-/// What a whole read of the file gives for [`Transcript::title`], `cwd`, `first_prompt` and
-/// [`Transcript::listable`], reading only its head (to the cwd and first prompt) and its tail: claude appends
-/// the meta lines again near the end, so the tail holds the latest `custom-title`, the name that outranks
-/// the rest. A tail without one grows until it meets the head. Returns the offset after the last line fed.
+/// A whole read's facts from the head and a growing tail: claude appends the meta lines again near the end.
 fn read_head_and_tail(path: &Path, len: u64, t: &mut Transcript) -> std::io::Result<u64> {
     if len <= WHOLE_UNDER {
         return feed_from(path, 0, t);
@@ -339,9 +332,7 @@ pub fn first_prompt(path: &Path) -> std::io::Result<Option<String>> {
 
 const FIRST_PROMPT_WITHIN: u64 = 8 * 1024 * 1024;
 
-/// A session's tokens from its transcript's assistant `usage` lines, read on from where the last
-/// [`Usage::read`] stopped. claude repeats a message's usage on each of its content-block lines, so each
-/// message id counts once, with its last line's numbers.
+/// A session's tokens from its transcript's `usage` lines, read on incrementally; each message id counts once.
 #[derive(Debug, Clone, Default)]
 pub struct Usage {
     offset: u64,
@@ -426,8 +417,7 @@ impl Usage {
 /// How rlarch's nested-claude opens every brief (`header.mjs` `protocolHeader`).
 pub const CONTROLLER_HEADER: &str = "Your controller is the Claude Code session '";
 
-/// Who started a session, read from its first prompt: the controller header, or a pointer to a
-/// brief under `.claude/briefs/` (whose own text holds the header).
+/// Who started a session, read from its first prompt: the controller header, or a pointer to a brief holding it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Launcher {
     /// As the header names it, `name [ref]`.
@@ -528,10 +518,7 @@ struct Listed {
 
 type Job = (PathBuf, u64, SystemTime, Option<Cached>);
 
-/// The transcripts under one `projects` dir, cached: the dir list by its mtime, each project dir's
-/// listing by its mtime (re-read anyway every [`Self::RELIST_EVERY`], or while it holds a recent, kept or
-/// live session), each file by its length (an appended file is read from where the last read stopped).
-/// With [`Self::with_cache`] the file cache outlives the process.
+/// The transcripts under one `projects` dir, cached by dir mtime and file length.
 pub struct Transcripts {
     projects: PathBuf,
     dirs: Option<(Option<SystemTime>, SystemTime, Vec<String>)>,
@@ -579,8 +566,7 @@ impl Transcripts {
         !self.files.is_empty()
     }
 
-    /// What [`Self::scan`] gave when the cache was saved, reading no transcript: the cached ones it would
-    /// list now, whether or not their files changed since.
+    /// What [`Self::scan`] gave when the cache was saved, reading no transcript.
     pub fn cached(&self, roots: &[PathBuf], since_ms: i64, keep: &HashSet<String>) -> Vec<Transcript> {
         let prefixes = prefixes(roots);
         self.files
@@ -596,11 +582,7 @@ impl Transcripts {
         self.scan_with(roots, since_ms, keep, live, &|_, _| {})
     }
 
-    /// The [`Transcript::listable`] transcripts of the project dirs whose name starts with the [`slug`]
-    /// of one of `roots` (case-insensitive), modified since `since_ms` or with an id in `keep`. `live`
-    /// (ids `claude agents` lists running) keeps their dirs re-listed: an old file resumed grows
-    /// without touching its dir's mtime. The files not cached are read in parallel; `progress(read, of)`
-    /// is called as each is done.
+    /// The listable transcripts of `roots`' project dirs; `live` dirs are re-listed, as a resumed file leaves the dir's mtime.
     pub fn scan_with(
         &mut self,
         roots: &[PathBuf],
@@ -991,9 +973,7 @@ mod tests {
         assert_eq!(scanner.listed.keys().collect::<Vec<_>>(), [&gaia], "a removed project dir's listing is dropped");
     }
 
-    /// Transcripts shaped like claude's (type-first meta lines among message lines, long tool results), sized
-    /// by `size(i)`. Their names vary: no custom title, the latest one near the end, or one only early; some
-    /// open with a command before the first prompt, some end in a half-written line.
+    /// Transcripts shaped like claude's, sized by `size(i)`, their names placed variously, some ending half-written.
     fn transcripts(projects: &Path, count: usize, size: impl Fn(usize) -> usize) -> Vec<PathBuf> {
         let dir = projects.join("C--bench-Repo");
         std::fs::create_dir_all(&dir).unwrap();

@@ -1,5 +1,4 @@
-//! The Git tab's lane palette: Supraman's ten colours for a dark or a light theme, a theme's
-//! `gitman.lane.0` … `gitman.lane.9` over them, each held to the lane floors on the theme's editor background.
+//! The Git tab's lane palette: Supraman's ten colours, a theme's `gitman.lane.0`–`9` over them, held to the lane floors.
 
 use std::{collections::HashMap, sync::Mutex};
 

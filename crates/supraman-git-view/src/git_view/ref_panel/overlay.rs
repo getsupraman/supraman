@@ -1,6 +1,4 @@
-//! A section of the collapsed panel floating over the graph beside its strip icon: its header, then its tree with
-//! the open panel's rows and marks. Hit keys: `refpanel-overlay`, and `refpanel-overlay-row-<path>`,
-//! `-mark-<path>` with the path below the section.
+//! A section of the collapsed panel floating over the graph; hit keys `refpanel-overlay`, `refpanel-overlay-row-<path>`, `-mark-<path>`.
 
 use gpui::{AnyElement, Context, FocusHandle, KeyDownEvent, MouseDownEvent, Pixels, Point, Window, deferred, div, prelude::*, px};
 use supraman_ui::hit::hit_target;

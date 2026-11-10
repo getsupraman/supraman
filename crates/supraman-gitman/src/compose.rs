@@ -1,12 +1,8 @@
-//! What the commit area reads besides the status: whether a commit runs hooks, HEAD's message for an amend, and
-//! whether a shown commit's message can be amended or reworded.
-
 use std::path::PathBuf;
 
 use crate::parse::text;
 use crate::{GitError, OperationState, Repo, dirs, operation_state};
 
-/// The hooks a `git commit` runs.
 pub(crate) const COMMIT_HOOKS: [&str; 4] = ["pre-commit", "prepare-commit-msg", "commit-msg", "post-commit"];
 
 /// Whether the hooks folder git uses (`core.hooksPath` or the repo's own) holds one of [`COMMIT_HOOKS`]; blocking.
@@ -30,15 +26,13 @@ pub enum Amendable {
     Detached,
     /// HEAD of `branch`; `pushed` while a remote-tracking branch holds it.
     Branch { name: String, pushed: bool },
-    /// Below HEAD of `branch` on [`rewordable`]'s terms: a reword rebases the `above` commits over it; `pushed`
-    /// while a remote-tracking branch holds it.
+    /// Below HEAD of `branch` on [`rewordable`]'s terms: a reword rebases the `above` commits over it.
     Older { name: String, above: usize, pushed: bool },
     /// Below a HEAD on no branch, on [`rewordable`]'s terms.
     OlderDetached,
 }
 
-/// Whether `sha`'s message can be amended: it is HEAD, or an older commit [`rewordable`], with nothing under
-/// way; blocking.
+/// Whether `sha`'s message can be amended: it is HEAD, or an older commit [`rewordable`], with nothing under way.
 pub fn amendable(repo: &Repo, sha: &str) -> Result<Amendable, GitError> {
     let head = repo.run(&["rev-parse", "-q", "--verify", "HEAD^{commit}"], None)?;
     if !head.success() || operation_state(&dirs(repo)?.git_dir) != OperationState::None {
@@ -73,9 +67,7 @@ pub fn pushed(repo: &Repo, sha: &str) -> Result<bool, GitError> {
     Ok(!text(&remotes).trim().is_empty())
 }
 
-/// How many commits a reword of `sha` rebases: it is below HEAD on HEAD's first-parent chain, and it and every
-/// commit from it up to HEAD has exactly one parent; `None` for HEAD, a merge, the root, anything below a merge or
-/// off the chain; blocking.
+/// How many commits a reword of `sha` rebases; `None` unless every commit from `sha` up HEAD's first-parent chain has one parent.
 pub fn rewordable(repo: &Repo, sha: &str) -> Result<Option<usize>, GitError> {
     let parents = repo.run(&["rev-parse", &format!("{sha}^@")], None)?;
     let parents = text(&parents.stdout);

@@ -503,8 +503,7 @@ fn sha_words(sha: Option<&str>) -> String {
     sha.map_or_else(|| "missing".to_string(), |s| format!("sha256 {}…", &s[..s.len().min(12)]))
 }
 
-/// The Inbox entry of a pending schedule, or of an active one whose slash command changed; `key` changes when
-/// what it covers, or that command file, changes.
+/// The Inbox entry of a pending schedule, or an active one whose slash command changed; `key` follows what it covers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Waiting {
     pub workspace: String,
@@ -574,7 +573,7 @@ pub fn attention(rows: &BTreeMap<String, Vec<ScheduleRow>>) -> Vec<Attention> {
         .collect()
 }
 
-/// The tray's tooltip: Supraman, how many runs need René and how many schedules wait for his approval.
+/// The tray's tooltip: Supraman, how many runs need the user and how many schedules wait for approval.
 pub fn tray_tooltip(attention: usize, waiting: usize) -> String {
     let mut out = "Supraman".to_string();
     match attention {
@@ -590,8 +589,7 @@ pub fn tray_tooltip(attention: usize, waiting: usize) -> String {
     out
 }
 
-/// Task Scheduler's tasks that run claude outside Supraman: under the workspace that holds them
-/// ([`schedule::owner`]), the rest apart. Supraman never changes, runs or deletes them.
+/// Task Scheduler's tasks that run claude outside Supraman, by [`schedule::owner`]; Supraman never touches them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Others {
     pub by_workspace: BTreeMap<String, Vec<ForeignTask>>,

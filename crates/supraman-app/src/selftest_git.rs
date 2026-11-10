@@ -1,6 +1,4 @@
-//! `--selftest` step 7g: the Git tab in the window. A unit test cannot do it: FleetView is not buildable in a gpui
-//! test, so nothing there clicks the sidebar's git-graph icon or lays out real fonts at the window's minimum width.
-//! The fixture repo lives in the selftest home (C151).
+//! `--selftest` step 7g: the Git tab in the window; FleetView is not buildable in a gpui test, nor are real fonts.
 
 use std::path::Path;
 use std::sync::Arc;

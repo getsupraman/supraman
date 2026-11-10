@@ -1,9 +1,4 @@
-//! The tab strip: one header per tab, the active one marked with an accent line, each with its close
-//! button; the owner keeps the tabs themselves and appends its own buttons after the strip's ⌄ list. Tabs share
-//! the width evenly down to [`TAB_MIN`], then the strip scrolls sideways (wheel or touchpad, a fade on a cut
-//! edge); the active tab is scrolled whole into view whenever it changes or is clicked. A tab drags as a
-//! [`DraggedTab`]; dropped on another tab of the strip, the owner moves it there, and a drag near an edge
-//! scrolls the strip. A session row drags as a [`DraggedSession`]. A right click on a tab is the owner's `on_menu`.
+//! The tab strip; the owner keeps the tabs, their order and their menu.
 
 mod fit;
 mod list;
@@ -147,12 +142,7 @@ impl Strip {
     }
 }
 
-/// The strip: its viewport painted under [`STRIP`] (fades under `tab-strip-fade-left`/`-right`), each tab under
-/// `tab-<id>`, its close button under `close-tab-<id>`, the ⌄ under [`LIST_BUTTON`] and its list's rows under
-/// `tab-list-row-<id>`. `close_icon` draws the close glyph; a middle click closes too. A tab dropped on another
-/// gets `on_move(from, to)`, indices into `tabs`; the target shows a bar on the side the tab lands. A right click
-/// on a tab gets `on_menu(id, position)`, the pointer's window position. `active` changing, by whatever means,
-/// scrolls that tab into view.
+/// The strip under [`STRIP`], each tab under `tab-<id>` and its × under `close-tab-<id>`; a drop calls `on_move(from, to)`.
 #[allow(clippy::too_many_arguments)]
 pub fn tab_strip<V: 'static>(
     hits: &HitTargets,
@@ -194,8 +184,7 @@ pub fn tab_strip<V: 'static>(
         .child(list_button(hits, entries, &strip, on_activate, cx))
 }
 
-/// The tabs' row clipped to the room left beside ⌄: it measures that room, fades a cut edge, and scrolls while a tab is
-/// dragged near an edge.
+/// The tabs' row clipped to the room beside ⌄: it measures that room, fades a cut edge, and scrolls under a drag near one.
 fn viewport<V>(hits: &HitTargets, strip: &Entity<Strip>, row: Stateful<Div>, fit: Fit, bg: Hsla, cx: &Context<V>) -> Stateful<Div> {
     let (scroll, measured) = {
         let s = strip.read(cx);
@@ -539,8 +528,7 @@ pub fn sanitize(raw: &str) -> Option<String> {
     (!out.is_empty()).then_some(out)
 }
 
-/// Bidi embeddings, overrides and isolates, zero-width and BOM characters: they would reorder or hide
-/// what the tab shows.
+/// Bidi embeddings, overrides and isolates, zero-width and BOM characters: they would reorder or hide the title.
 fn is_format(c: char) -> bool {
     matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}')
 }

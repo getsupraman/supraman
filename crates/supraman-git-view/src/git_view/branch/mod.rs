@@ -1,7 +1,4 @@
-//! The tab's ref writes (docs/research/gitkraken-12.6.1.md §4 part A, §B): checkout as a double-click or a menu
-//! decides it, branches and tags made, renamed and deleted, fast-forward, merge and rebase from a menu or a drop,
-//! and a worktree's remove, lock and prune; the ref menus ([`menu`]) and the questions before them. Every write
-//! runs through the tab's [`WriteGate`] off the UI thread.
+//! The tab's ref writes (docs/research/gitkraken-12.6.1.md §4 part A, §B), each through the tab's [`WriteGate`].
 
 mod dialog;
 pub(crate) mod menu;
@@ -396,8 +393,7 @@ impl BranchActions {
         cx.notify();
     }
 
-    /// The menu of `subject` at `position`, once its commit's relation to HEAD is read off the UI thread;
-    /// `graph` the ref panel's own items for it.
+    /// The menu of `subject` at `position` once its relation to HEAD is read; `graph` the ref panel's own items.
     pub(crate) fn open_menu(&mut self, subject: Subject, graph: Vec<MenuItem<RefAct>>, position: Point<Pixels>, cx: &mut Context<Self>) {
         let Some(writer) = self.writes.writer(cx) else { return cx.emit(BranchEvent::Why(STILL_OPENING.into())) };
         let head = self.refs.head.sha().map(str::to_string);
@@ -418,8 +414,7 @@ impl BranchActions {
         .detach();
     }
 
-    /// The graph's menu of a commit at `sha` with its branch groups `subjects` (a pill's one, a row's every one),
-    /// once its relation to HEAD and its parents are read off the UI thread; `graph` the ref panel's items.
+    /// The graph's menu of the commit `sha` with its branch groups `subjects`; `graph` the ref panel's items.
     pub(crate) fn open_commit_menu(&mut self, subjects: Vec<Subject>, sha: String, graph: Vec<MenuItem<RefAct>>, position: Point<Pixels>, cx: &mut Context<Self>) {
         let Some(writer) = self.writes.writer(cx) else { return cx.emit(BranchEvent::Why(STILL_OPENING.into())) };
         let head = self.refs.head.sha().map(str::to_string);

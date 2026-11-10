@@ -1,5 +1,4 @@
-//! The commit panel right of the graph: the selected commit's or stash's message, author, parents and files, read
-//! off the UI thread on each selection; a commit's or a stash's message is edited in place ([`reword`]).
+//! The commit panel right of the graph: the selected commit's or stash's message, author, parents and files.
 
 pub(crate) mod files;
 mod load;

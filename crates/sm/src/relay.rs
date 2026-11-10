@@ -1,5 +1,4 @@
-//! `sm inbox` (the relay's watcher, run under its `Monitor`), `sm send`, `sm tell` and `sm messages`. The files
-//! and their shape are `supraman_core::relay`'s.
+//! `sm inbox`, `sm send`, `sm tell` and `sm messages`; the files are `supraman_core::relay`'s.
 
 use std::io::Write;
 use std::path::Path;
@@ -16,8 +15,7 @@ use crate::Failure;
 /// Monitor turns each stdout line into an event; at most 500 ms of latency.
 const POLL: Duration = Duration::from_millis(400);
 
-/// Never returns: Monitor ends it (expiry, or the relay stopping). A pass that cannot read the dir
-/// prints one `{"error"}` line per distinct error and keeps polling.
+/// Never returns: Monitor ends it; an unreadable dir prints one `{"error"}` line per distinct error.
 pub fn inbox(args: &[&str]) -> Result<(), Failure> {
     let dir = match args {
         ["--dir", dir] => *dir,

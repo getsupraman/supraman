@@ -1,5 +1,4 @@
-//! The WIP panel's writes (docs/research/gitkraken-12.6.1.md, "Staging" and "Committing"): stage, unstage, the
-//! discard of the Unstaged list, discard all, commit, a new message for HEAD, and a merge's or rebase's next step.
+//! The WIP panel's writes (docs/research/gitkraken-12.6.1.md, "Staging" and "Committing").
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -30,8 +29,7 @@ fn config_true(s: &Session, key: &str) -> Result<bool, WriteError> {
     Ok(out.success() && text(&out.stdout).trim() == "true")
 }
 
-/// Stages `files` (and a rename's old path) whatever their change, untracked and conflicted ones too; a conflicted
-/// file's `.orig` leftover goes.
+/// Stages `files` (and a rename's old path) whatever their change; a conflicted file's `.orig` leftover goes.
 pub fn stage(s: &Session, files: &[FileChange]) -> Result<(), WriteError> {
     let top = s.writer().dirs().top.clone();
     let index = indexed(s)?;
@@ -112,16 +110,14 @@ pub fn unstage(s: &Session, files: &[FileChange]) -> Result<(), WriteError> {
     Ok(())
 }
 
-/// Discards the Unstaged list's `files`: a modified file goes back to the index's, a deleted or conflicted one to
-/// HEAD's, an untracked one is deleted; a snapshot first and a journal entry after ([`journal::discard_from_index`]).
+/// Discards the Unstaged list's `files`, a snapshot first and a journal entry after ([`journal::discard_from_index`]).
 pub fn discard_unstaged(s: &Session, files: &[FileChange]) -> Result<(), WriteError> {
     let paths = with_old_paths(files);
     let from_index: Vec<String> = files.iter().filter(|f| !matches!(f.kind, ChangeKind::Deleted | ChangeKind::Unmerged | ChangeKind::Untracked)).map(|f| f.path.clone()).collect();
     journal::discard_from_index(s, &paths, &from_index)
 }
 
-/// Throws away every change: staged, unstaged and untracked files (ignored ones stay), kept first in a snapshot
-/// and recorded; how many paths it discarded.
+/// Throws away every change but ignored files, snapshotted and recorded; how many paths it discarded.
 pub fn discard_all(s: &Session) -> Result<usize, WriteError> {
     let status = crate::status(s.writer().repo())?;
     let mut seen = HashSet::new();
@@ -171,15 +167,13 @@ pub fn message(summary: &str, description: &str) -> String {
     if description.trim().is_empty() { format!("{summary}\n") } else { format!("{summary}\n\n{description}\n") }
 }
 
-/// Commits what is staged with `message`, or with `amend` replaces HEAD by it; `no_verify` skips the hooks. A
-/// plain commit or amend is recorded for Undo; a merge's is not.
+/// Commits what is staged, or with `amend` replaces HEAD; recorded for Undo unless it concludes a merge.
 pub fn commit(s: &Session, message: &str, amend: bool, no_verify: bool) -> Result<(), WriteError> {
     let args: &[&str] = if amend { &["--amend"] } else { &[] };
     run_commit(s, message, args, no_verify)
 }
 
-/// Replaces HEAD's message by `message`, its tree, author and date kept and what is staged left staged; recorded
-/// for Undo. HEAD's new sha.
+/// Replaces HEAD's message only, what is staged left staged; HEAD's new sha.
 pub fn reword_head(s: &Session, message: &str, no_verify: bool) -> Result<String, WriteError> {
     run_commit(s, message, &["--amend", "--only"], no_verify)?;
     s.rev("HEAD")
@@ -224,8 +218,7 @@ pub enum Step {
     Abort(Sequence),
 }
 
-/// Runs `step`: a rebase's as [`rebase`](super::rebase) runs them, a merge's abort, a cherry-pick's, revert's or
-/// am's with git's own; the operation's state after.
+/// Runs `step` (a rebase's through [`rebase`](super::rebase), the others with git's own); the operation's state after.
 pub fn step(s: &Session, step: Step) -> Result<Rebased, WriteError> {
     match step {
         Step::ContinueRebase => rebase::continue_rebase(s),

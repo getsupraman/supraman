@@ -1,5 +1,4 @@
-//! The desktop's Windows code: hidden desktops, one instance per home, a window's visibility, the taskbar's
-//! mode, the console and the OS build.
+//! The desktop's Windows code.
 
 mod hidden;
 mod instance;
@@ -9,8 +8,7 @@ pub use hidden::{DesktopChild, HiddenDesktop, input_desktop_name, quote_arg, spa
 pub use instance::{Claimed, Instance, claim};
 pub use window::{drained, hand_activation_away, hide_window, is_window_visible, light_taskbar, show_window, small_icon_size};
 
-/// Frees the console Windows gave this process when it is the console's only process: a Windows that ignores the
-/// manifest's detached `consoleAllocationPolicy` gives the app its own.
+/// Frees a console Windows allocated despite the manifest's detached `consoleAllocationPolicy`.
 #[cfg(windows)]
 pub fn detach_console() {
     use windows::Win32::System::Console::{FreeConsole, GetConsoleProcessList};

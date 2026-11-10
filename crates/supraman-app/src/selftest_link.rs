@@ -30,8 +30,6 @@ fn opened() -> Vec<Link> {
     OPENED.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
-/// Step 6d: a pwsh tab prints an OSC 8 link; it is underlined, its URL shows on hover, Ctrl turns the pointer to
-/// a hand, Ctrl+click opens exactly its URI (through `open_link_with`), and a `ms-settings:` link is refused.
 pub(crate) async fn run(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     OPENED.lock().unwrap_or_else(|e| e.into_inner()).clear();
     let real = view.update(cx, |v, _| std::mem::replace(&mut v.open_link_with, recording_open));

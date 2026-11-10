@@ -1,5 +1,4 @@
-//! An image file's two sides: decoded off the UI thread with gpui's decoders, painted fitted to their pane
-//! (down to fit, up to at most 2×) on a checkerboard of theme colours (C152).
+//! An image file's two sides, decoded off the UI thread and painted fitted (up to 2×) on a checkerboard of theme colours.
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -48,8 +47,7 @@ pub(crate) fn format_of(path: &str) -> Option<ImageFormat> {
     })
 }
 
-/// A raster image's `width × height` from its header alone, without decoding its pixels; `None` for an SVG
-/// or a header that does not read.
+/// A raster image's `width × height` from its header alone; `None` for an SVG or a header that does not read.
 pub(crate) fn dimensions(format: ImageFormat, bytes: &[u8]) -> Option<(u32, u32)> {
     let format = match format {
         ImageFormat::Png => ::image::ImageFormat::Png,

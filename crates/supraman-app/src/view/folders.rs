@@ -1,5 +1,4 @@
-//! Edit folders… and Rescan: a registered workspace's change, asked about when it stops a supervised session,
-//! applied through [`Registry::edit`] off the UI thread, its removed folders' sessions released.
+//! Edit folders… and Rescan: a workspace's change through [`Registry::edit`] off the UI thread.
 
 use std::path::Path;
 
@@ -13,8 +12,7 @@ use super::menu::{Confirm, Confirmed};
 use super::workspace_dialog::Mode;
 use crate::fleet;
 
-/// What the edit's toast says beyond "done": folders claimed by their owner, sessions stopped, and a running
-/// session the new folder holds.
+/// What the edit's toast says beyond "done".
 pub fn edited_note(done: &Edited, stopped: &[String], live_in: &[(String, String, bool)]) -> String {
     let mut out = String::new();
     for (folder, owner) in &done.claimed {
@@ -66,8 +64,7 @@ impl From<String> for Refused {
     }
 }
 
-/// Applies `edits` in turn, stopping at the first refused, and releases the sessions of every folder removed or
-/// disabled on the way (stop, never rm). Returns the edits' sum and the sessions stopped.
+/// Stops at the first refused edit; releases every removed or disabled folder's sessions (stop, never rm).
 pub fn edit_all(home: &Path, w: &str, edits: Vec<Edit>) -> Result<(Edited, Vec<String>), Refused> {
     let registry = Registry::at(home);
     let (mut sum, mut released, mut refused): (Option<Edited>, Vec<String>, Option<String>) = (None, Vec::new(), None);
@@ -126,8 +123,7 @@ pub struct Offer {
     pub gone: Vec<String>,
 }
 
-/// Looks in the workspace's parent folders again and changes nothing: Save adds the new ones it is given and
-/// drops the gone ones ([`Edit::DropGone`]) through [`FleetView::request_edits`].
+/// Changes nothing: Save applies the offer through [`FleetView::request_edits`].
 pub fn rescan_offer(home: &Path, name: &str) -> Result<Offer, String> {
     let workspace = Registry::at(home).load(name).map_err(|e| e.to_string())?;
     if workspace.scans.is_empty() {

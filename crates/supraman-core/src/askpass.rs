@@ -1,7 +1,4 @@
-//! GitMan's answer to ssh's prompts: a remote call's git gets `SSH_ASKPASS` pointing at `sm askpass`, which hands
-//! the prompt to the [`Bridge`] the app started for that call over the loopback, with the call's token. Only ssh's
-//! prompts (a key's passphrase, a password, an unknown host key) are answered; git's own `Username for`/`Password
-//! for` prompts are refused, so the user's credential helper stays the only source of https credentials.
+//! ssh's prompts under a remote call, relayed by `sm askpass` to the call's [`Bridge`]; git's https prompts are refused.
 
 use std::ffi::OsString;
 use std::io::{Read, Write};
@@ -16,7 +13,6 @@ use crate::secret::SecretStore;
 
 /// The bridge of the call a `sm askpass` runs under: `<loopback address> <token>`.
 pub const VAR: &str = "SUPRAMAN_ASKPASS";
-/// How long a prompt waits for the user's answer.
 pub const ANSWER_WAIT: Duration = Duration::from_secs(600);
 const IO_WAIT: Duration = Duration::from_secs(10);
 /// A prompt's text is a line or a few; anything longer is not ssh's.
@@ -90,8 +86,7 @@ pub struct Bridge {
 }
 
 impl Bridge {
-    /// `on_ask` hears each prompt off the UI thread and answers it; a key's passphrase kept in `store` is answered
-    /// from there once per call (a second prompt means it was wrong, and the user is asked).
+    /// `on_ask` hears each prompt off the UI thread; a passphrase kept in `store` is tried once per call.
     pub fn start(store: Option<Arc<dyn SecretStore>>, on_ask: impl Fn(Asked) + Send + Sync + 'static) -> std::io::Result<Bridge> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let addr = listener.local_addr()?;
@@ -195,8 +190,7 @@ fn same(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// `sm askpass`'s side: the answer to `text` from the bridge [`VAR`] names; `None` when the prompt is not ssh's,
-/// no bridge is set, or the user gave no answer.
+/// `sm askpass`'s side: the answer to `text` from the bridge [`VAR`] names, `None` without one.
 pub fn ask(text: &str) -> Option<String> {
     let spec = std::env::var(VAR).ok()?;
     ask_at(&spec, text)

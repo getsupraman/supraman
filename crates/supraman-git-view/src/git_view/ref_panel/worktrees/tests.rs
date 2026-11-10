@@ -1,6 +1,4 @@
-//! The ref panel's WORKTREES rows and the worktree panel's header through the real tab, on a fixture copy whose
-//! linked worktrees are in its temp dir (C196): marks, folder words, the WIP summary, Refresh WIPs, and a read the
-//! repository's locks held off run again once the tab's write ends.
+//! The ref panel's WORKTREES rows and the worktree panel's header through the real tab, on a fixture copy.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -26,8 +24,7 @@ struct Trees {
     gone: PathBuf,
 }
 
-/// The fixture's `wt` (on `side`) locked with a reason and tracking `main`, `extra` on its own branch, and `gone`
-/// whose folder was removed.
+/// The fixture's `wt` locked and tracking `main`, `extra` on its own branch, and `gone` whose folder was removed.
 fn trees() -> Trees {
     let f = Fixture::copy();
     let (extra, gone) = (f.temp.path().join("extra"), f.temp.path().join("gone"));

@@ -1,7 +1,4 @@
-//! The Git tab's left panel: the repository's refs in five sections (local and remote branches, worktrees,
-//! stashes, tags) on [`supraman_ui::tree`], a fuzzy filter over them, the refs hidden from the graph or soloed in
-//! it, and a section's overlay beside the collapsed strip. It reads nothing itself: the tab hands it the refs it
-//! loaded and walks the graph as its [`Walk`] says.
+//! The Git tab's left panel: the refs in five sections on [`supraman_ui::tree`], filtered, hidden or soloed; it reads nothing itself.
 
 mod entries;
 mod marks;
@@ -58,7 +55,6 @@ pub(crate) struct Built {
     worktrees: Vec<Worktree>,
 }
 
-/// The remote whose row `path` is: `remote/<name>`, the folder its branches sit in.
 /// Ahead of and behind an upstream as every ref row says it: `2↑ 1↓`, the zero ones left out.
 pub(crate) fn track(ahead: u32, behind: u32) -> String {
     [(ahead, "↑"), (behind, "↓")].iter().filter(|(n, _)| *n > 0).map(|(n, arrow)| format!("{n}{arrow}")).collect::<Vec<_>>().join(" ")

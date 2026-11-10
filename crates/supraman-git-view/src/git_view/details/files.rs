@@ -1,5 +1,4 @@
-//! A list of changed files, for the commit panel and the WIP panel: Path's flat rows, the Tree, the change
-//! marks and folder badges, and the sort button and Path | Tree toggle above them.
+//! A list of changed files for the commit and WIP panels: Path's flat rows or the Tree, marks, badges, sort and toggle.
 
 use std::rc::Rc;
 
@@ -127,8 +126,7 @@ fn with_tail<V: 'static>(this: &mut V, row: Div, tail: &Option<Tail<V>>, path: &
     }
 }
 
-/// `tree` under `<list>-tree-row-<path>`; a file's or folder's selection goes to `picked`, its right-click to `menu`;
-/// a file row ends with `tail`.
+/// `tree` under `<list>-tree-row-<path>`: a selection goes to `picked`, a right-click to `menu`, a file row ends with `tail`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn tree_list<V: 'static>(
     list: &'static str,
@@ -167,8 +165,7 @@ pub(crate) fn tree_list<V: 'static>(
         .render(cx)
 }
 
-/// `len` files one path a row, `file(ix)` the path and change of a row, under `<list>-files-row-<path>`; each row
-/// ends with `tail` and takes a right-click for `menu`.
+/// `len` files a path a row (`file(ix)`), under `<list>-files-row-<path>`, each ending with `tail` and right-clicked for `menu`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn path_list<V: 'static>(
     list: &'static str,

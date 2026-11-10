@@ -88,7 +88,7 @@ fn each_run_appends_one_line_to_its_log_without_the_token() {
     assert!(printed("log unwritable", &mcp_header(blocked.path(), "hand-alpha-1")).contains(TOKEN), "a failed log write changes nothing");
 }
 
-/// The run as claude makes it, with a deadline well under the 5 s ping a run once made.
+/// The run as claude makes it, with a deadline well under 5 s.
 fn timed(home: &Path, name: &str) -> (Output, Duration) {
     let started = Instant::now();
     let mut cmd = supraman_core::process::command(env!("CARGO_BIN_EXE_sm"));

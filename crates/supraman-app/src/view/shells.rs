@@ -1,5 +1,4 @@
-//! Plain terminal tabs: the `[terminal] shell` default, the ⌄ menu of this machine's shells, and the command
-//! a tab starts. A tab that starts or attaches claude never comes here: it runs PowerShell (C113).
+//! Plain terminal tabs; a tab that starts or attaches claude runs PowerShell instead (see C113).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -55,8 +54,7 @@ fn key(shell: &Shell, slot: &mut usize) -> SharedString {
     }
 }
 
-/// The ⌄ menu: every shell in `shells`' order under its group's caption, `default` marked (and listed last
-/// when it is a custom shell).
+/// `default` is marked, and listed last when it is a custom shell.
 pub(crate) fn menu_items(shells: &Shells, default: &Shell) -> Vec<MenuItem> {
     let custom = (!shells.list.contains(default)).then_some(default);
     let (mut slot, mut last) = (0, None);
@@ -74,9 +72,7 @@ pub(crate) fn menu_items(shells: &Shells, default: &Shell) -> Vec<MenuItem> {
     items
 }
 
-/// This machine's shells once detected, and the `[terminal]` table + and the ⌄ menu start from, read off the UI
-/// thread: at start, by the ⌄ menu, from the Settings window, and from each supervisor tick, whose value counts only
-/// when it changed since the last tick's. The default is resolved again only when either changes.
+/// This machine's shells and the `[terminal]` table, read off the UI thread; the default is resolved again only when either changes.
 #[derive(Debug, Default)]
 pub(crate) struct ShellDefault {
     found: Option<Arc<Shells>>,
@@ -147,7 +143,6 @@ impl FleetView {
         Some(shell)
     }
 
-    /// The default shell's short name and command.
     pub(crate) fn default_shell(&mut self) -> (String, SavedShell) {
         match self.default_of() {
             Some(shell) => (shell.short(), command(&shell, &self.shell_args)),

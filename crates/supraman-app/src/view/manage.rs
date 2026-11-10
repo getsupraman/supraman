@@ -94,8 +94,7 @@ impl FleetView {
         }
     }
 
-    /// Reads the registry off the UI thread after a write of this window; a poll read before it, or a reload started
-    /// before a later one, is not applied (`registry_writes`).
+    /// A poll read before this window's write, or a reload started before a later one, is not applied (`registry_writes`).
     pub(crate) fn reload_workspaces(&mut self, cx: &mut Context<Self>) {
         let generation = self.registry_writes.fetch_add(1, Ordering::SeqCst) + 1;
         let registry = registry(self.home.as_deref());

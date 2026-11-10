@@ -1,4 +1,4 @@
-//! The agent rows through the real tab on a fixture copy in its temp dir and a fake [`Live`] (C196).
+//! The agent rows through the real tab on a fixture copy in its temp dir and a fake [`Live`].
 
 use std::cell::RefCell;
 use std::path::PathBuf;

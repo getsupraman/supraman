@@ -1,7 +1,4 @@
-//! The WORKTREES section's own parts (GitKraken 12.6.2): a locked or prunable worktree's mark, each other
-//! worktree's work in progress at its row's right, and the header's Refresh WIPs. Hit keys: `<list>-mark-<path>`,
-//! `<list>-wip-<path>` (the summary), `<list>-wip-reading-<path>` (its spinner while the first read runs),
-//! `refpanel-worktrees-refresh` (with `-turning` while a read runs).
+//! The WORKTREES section's marks, WIP summaries and Refresh WIPs; hit keys `<list>-mark-<path>`, `<list>-wip[-reading]-<path>`, `refpanel-worktrees-refresh`.
 
 use std::collections::HashMap;
 

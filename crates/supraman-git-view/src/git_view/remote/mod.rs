@@ -1,7 +1,4 @@
-//! The tab's fetch, pull and push (docs/research/gitkraken-12.6.1.md §4 part B, §A): the toolbar's Pull split
-//! button and Push ([`bar`]), the ref menus' remote items ([`menu`]), the questions before a forced push or a
-//! delete on a remote, and the dialogs ([`dialogs`]): a branch's upstream, a remote's URL, ssh's prompts. Every call
-//! runs through the tab's [`WriteGate`] off the UI thread with its progress on the toolbar and a Cancel.
+//! The tab's fetch, pull and push, each through the tab's [`WriteGate`] off the UI thread with progress and Cancel.
 
 mod bar;
 mod dialogs;
@@ -610,8 +607,7 @@ impl RemoteActions {
     }
 }
 
-/// The bridge ssh's prompts reach this tab through, and its git's environment; none without `sm.exe` beside the app.
-/// The call empties `heard` when it ends, so the bridge's threads never hold the channel's last sender.
+/// None without `sm.exe` beside the app; the call empties `heard` at its end, so the bridge never holds the last sender.
 fn askpass(store: Option<Arc<dyn SecretStore>>, heard: Arc<Mutex<Option<UnboundedSender<Heard>>>>) -> Option<(Bridge, Vec<(String, OsString)>)> {
     let program = supraman_core::install::sm_exe().ok().filter(|p| p.is_file())?;
     let bridge = Bridge::start(store, move |asked| {

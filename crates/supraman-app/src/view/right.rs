@@ -81,7 +81,6 @@ impl FleetView {
             .into_any_element()
     }
 
-    /// The active tab's page or terminal, or what stands in for it.
     fn render_tab_content(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let active = self.active.and_then(|id| self.tab(id));

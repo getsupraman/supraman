@@ -1,6 +1,4 @@
-//! GitMan's own rebase (docs/research/gitkraken-12.6.1.md §2 "Interactive rebase"): an older commit's message
-//! reworded by `rebase -i` with a todo and a message Supraman prepared, and a rebase's continue, skip and abort.
-//! A rebase GitMan stops in holds [`REBASE_MARKER`]: where the branch was and the autostash to put back.
+//! GitMan's own rebase (docs/research/gitkraken-12.6.1.md §2 "Interactive rebase").
 
 use std::path::{Path, PathBuf};
 
@@ -63,14 +61,11 @@ pub enum Rebased {
     Conflicted,
 }
 
-/// The autostash's message.
 pub fn autostash_name(sha: &str) -> String {
     format!("GitMan autostash before rewording {}", short_sha(sha))
 }
 
-/// Rewords `sha` ([`crate::rewordable`]) to `message`: `rebase -i <sha>^` of HEAD's branch, the todo `reword
-/// <sha>` and a `pick` of each commit above, the work in progress stashed first and popped after. A conflict
-/// leaves the rebase under way; another failure while it is under way aborts it. Recorded for Undo.
+/// Rewords `sha` ([`crate::rewordable`]) by `rebase -i <sha>^`; a conflict leaves it under way, another failure aborts it.
 pub fn reword(s: &Session, sha: &str, message: &str) -> Result<Rebased, WriteError> {
     if message.trim().is_empty() {
         return Err(WriteError::Refused(EMPTY_MESSAGE));
@@ -93,8 +88,7 @@ pub fn reword(s: &Session, sha: &str, message: &str) -> Result<Rebased, WriteErr
     start(s, &format!("{sha}^"), &branch, Some((&todo, message)), &autostash_name(sha))
 }
 
-/// Rebases the local branch `branch` onto `onto` with git's own todo, the work in progress stashed first and
-/// popped after; kept for Undo when `branch` is HEAD's.
+/// Rebases `branch` onto `onto` with git's own todo; recorded for Undo only when `branch` is HEAD's.
 pub fn onto(s: &Session, branch: &str, onto: &str) -> Result<Rebased, WriteError> {
     if operation_state(&s.writer().dirs().git_dir) != OperationState::None {
         return Err(WriteError::Refused(super::UNDER_WAY));
@@ -102,8 +96,7 @@ pub fn onto(s: &Session, branch: &str, onto: &str) -> Result<Rebased, WriteError
     start(s, onto, branch, None, &format!("GitMan autostash before rebasing {branch}"))
 }
 
-/// `rebase -i <base> <branch>`: with `script` its todo and message copied in by its editors, else git's own
-/// todo; the work in progress stashed as `stash_name` first and popped after.
+/// `rebase -i <base> <branch>`, with `script`'s todo and message copied in by its editors, else git's own todo.
 pub(crate) fn start(s: &Session, base: &str, branch: &str, script: Option<(&str, &str)>, stash_name: &str) -> Result<Rebased, WriteError> {
     let from = s.rev(&format!("refs/heads/{branch}"))?;
     let head = text(&s.run(&Call::new(&["symbolic-ref", "-q", "--short", "HEAD"]))?.stdout).trim().to_string();
@@ -130,8 +123,7 @@ pub(crate) fn start(s: &Session, base: &str, branch: &str, script: Option<(&str,
     Err(failed("rebase -i", &out, put_back(s, &marker)))
 }
 
-/// `rebase --continue` with every commit's message kept: the stopped commit's without git's commented
-/// "Conflicts:" section. Refused while a conflicted file is not staged.
+/// `rebase --continue`, the stopped commit's message without git's `Conflicts:` section; refused while a conflict is unstaged.
 pub fn continue_rebase(s: &Session) -> Result<Rebased, WriteError> {
     let marker = read_marker(s);
     strip_conflicts(&rebase_dir(s).join("message"))?;
@@ -162,8 +154,7 @@ fn step_call(step: &str) -> Call {
     Call::new(&[REBASE_PINS, &["rebase", step]].concat()).editor("true")
 }
 
-/// After a continue or a skip: finished, recorded and the autostash popped when the rebase was GitMan's; stopped
-/// again on a conflict; or git's error.
+/// After a continue or a skip: finished (recorded and popped when GitMan's), stopped on a conflict, or git's error.
 fn stepped(s: &Session, marker: Option<Marker>, what: &str, out: &supraman_core::process::RawOutput) -> Result<Rebased, WriteError> {
     if !under_way(s) {
         if !out.success() {
@@ -180,8 +171,7 @@ fn stepped(s: &Session, marker: Option<Marker>, what: &str, out: &supraman_core:
     Err(failed(what, out, None))
 }
 
-/// A finished rebase of GitMan's: the autostash popped, then recorded with a snapshot of the work in progress
-/// that Undo puts back.
+/// A finished rebase of GitMan's: the autostash popped, then recorded with a snapshot Undo puts back.
 fn done(s: &Session, marker: &Marker) -> Result<Rebased, WriteError> {
     let autostash = pop(s, marker.autostash.as_ref());
     if marker.unrecorded {
@@ -246,8 +236,7 @@ fn read_marker(s: &Session) -> Option<Marker> {
     std::fs::read_to_string(path).ok().and_then(|json| serde_json::from_str(&json).ok())
 }
 
-/// `message` without the commented `Conflicts:` section git adds to a stopped commit's message, whatever the
-/// comment character.
+/// `message` without git's commented `Conflicts:` section, whatever the comment character.
 pub fn without_conflicts(message: &str) -> String {
     let mut kept = Vec::new();
     let mut section = None;

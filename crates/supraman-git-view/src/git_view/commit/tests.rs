@@ -1,4 +1,4 @@
-//! The commit, WIP row and file menus through the real tab, on fixture copies (C196).
+//! The commit, WIP row and file menus through the real tab, on fixture copies.
 
 
 use gpui::{Entity, VisualTestContext, point, px};

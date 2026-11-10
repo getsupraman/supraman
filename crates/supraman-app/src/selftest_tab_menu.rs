@@ -1,9 +1,4 @@
-//! A tab's right-click menu on a shell tab in a fixture repo's subfolder (standing in for a session tab: no claude
-//! session runs there): opened at the pointer, closed by Esc and by a click outside, Open Git opening the
-//! repository's Git tab, Copy folder path, Open folder, Close tabs to the right, Reopen closed tab,
-//! Close other tabs and Close. A unit test cannot: it needs the app's real terminal and Git tabs, gpui's mouse dispatch
-//! through the strip and the menu, and the repository read landing off the UI thread in the open menu; the items per
-//! tab are `view::right::tab_menu`'s tests, one Git tab per folder `view::git_tab`'s.
+//! A tab's right-click menu on a shell tab in a fixture repo's subfolder, each item clicked through the real strip and menu.
 
 use std::{
     path::{Path, PathBuf},

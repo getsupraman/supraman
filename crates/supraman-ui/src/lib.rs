@@ -1,7 +1,4 @@
-//! What every Supraman gpui binary shares: the terminal grid painter, the themes and their terminal palette,
-//! the text input, buttons, banners, fonts, the widgets (menu, confirm, toast, notices, tab strip, hover
-//! card, split pane and height bar, column table, tree list, segmented toggle, matcher, Ctrl+P palette, settings pages, details page), the selftests' hit targets, global init, and the frame / memory probes the
-//! selftests print.
+//! What every Supraman gpui binary shares: the widgets, themes, terminal painter, init and the selftests' probes.
 
 pub mod banner;
 mod builtin_glyphs;
@@ -51,8 +48,7 @@ use gpui::App;
 
 pub use themes::palette;
 
-/// The theme globals with [`themes::DEFAULT_THEME`] and the terminal config with its palette;
-/// `main` then applies the theme `settings.toml` names ([`themes::apply`]).
+/// The theme globals with [`themes::DEFAULT_THEME`] and the terminal config; `main` then applies the user's ([`themes::apply`]).
 pub fn init_globals(cx: &mut App, program_version: &str) {
     theme::init(theme::LoadThemes::JustBase, cx);
     cx.set_global(TerminalConfig {
@@ -63,8 +59,7 @@ pub fn init_globals(cx: &mut App, program_version: &str) {
     table::bind_keys(cx);
 }
 
-/// gpui platform info lines (GPU adapter, D3D feature level) plus warnings and errors: to
-/// `<dir>/`[`LOG_FILE`] when it has a log folder, else to stderr.
+/// gpui's platform info, warnings and errors: to `<dir>/`[`LOG_FILE`] with a log folder, else to stderr.
 pub struct Logger {
     file: Option<PathBuf>,
     /// One writer at a time, so a rotation never races an append.
@@ -104,15 +99,12 @@ impl log::Log for Logger {
     fn flush(&self) {}
 }
 
-/// gpui_windows' VSync thread redraws every window in its list, and a destroyed window leaves that list
-/// only when the message its WM_DESTROY posts is handled; a redraw in between fails on the dead HWND
-/// (0x80070578). Harmless (nothing is drawn) and out of Supraman's reach (LEARNINGS, m5/22).
+/// gpui_windows' VSync redraw of a window between WM_DESTROY and its handling (0x80070578): harmless, not ours to fix.
 pub fn is_vsync_race(target: &str, message: &str) -> bool {
     target == "gpui_windows::platform" && message.starts_with("Invalid window handle") && message.contains("0x80070578")
 }
 
-/// Log lines go to `<dir>/`[`LOG_FILE`] (created here) when `dir` is given, never to a console;
-/// without one, to stderr. Call once.
+/// Log lines to `<dir>/`[`LOG_FILE`] (created here) when `dir` is given, else to stderr. Call once.
 pub fn init_logger(dir: Option<&Path>) {
     let file = dir.and_then(|dir| std::fs::create_dir_all(dir).ok().map(|_| dir.join(LOG_FILE)));
     let logger = Box::leak(Box::new(Logger { file, write: Mutex::new(()) }));
@@ -120,8 +112,7 @@ pub fn init_logger(dir: Option<&Path>) {
     log::set_max_level(log::LevelFilter::Info);
 }
 
-/// Every panic goes to the log (message, location, backtrace) before the hook that was set runs; a panic that
-/// cannot unwind (one in a window procedure) aborts right after the hooks, so this is its only trace.
+/// Every panic to the log before the previous hook: the only trace of one that aborts (in a window procedure).
 pub fn log_panics() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -138,20 +129,12 @@ pub fn mib(bytes: usize) -> String {
 
 static PROCESS_START: OnceLock<Instant> = OnceLock::new();
 
-/// The clock the selftests measure "ms since process start" against: first call wins, so `main`
-/// calls it before anything else.
+/// The selftests' "ms since process start" clock: first call wins, so `main` calls it first.
 pub fn process_start() -> Instant {
     *PROCESS_START.get_or_init(Instant::now)
 }
 
-/// Timestamps of frames the window drew and handed to the platform for presentation, and how long the
-/// window's own work took in each.
-///
-/// A view's `render` runs only inside `Window::draw`, which gpui immediately follows with
-/// `Window::present`, so calling [`FrameProbe::on_render`] from the root view's `render` marks one
-/// frame handed to the swap chain. [`FrameProbe::paint_marker`], the root's last child, paints last:
-/// render → marker is the frame's render, layout, prepaint and paint, without the wait for vsync or for
-/// the CPU, which another process can stretch.
+/// Frames presented and each one's own work: [`FrameProbe::on_render`] in the root's `render`, [`FrameProbe::paint_marker`] its last child.
 #[derive(Default)]
 pub struct FrameProbe {
     pub recording: bool,
@@ -224,8 +207,7 @@ pub struct FrameStats {
     pub over_100: usize,
     /// When the slowest frame was presented, in ms since [`process_start`].
     pub max_at_ms: f64,
-    /// The window's own work per frame ([`FrameProbe::paint_marker`]); NaN without a marker. Another
-    /// process preempting the window stretches some frames' work; the fastest tenth stays near the cost.
+    /// The window's own work per frame ([`FrameProbe::paint_marker`]); NaN without a marker.
     pub work_p10: f64,
     pub work_p50: f64,
     pub work_p95: f64,
