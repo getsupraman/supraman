@@ -23,7 +23,16 @@ pub fn env_home() -> Option<PathBuf> {
 }
 
 pub fn home_from_env() -> Option<PathBuf> {
-    home_from(std::env::var_os(HOME_VAR), std::env::var_os("APPDATA"))
+    home_from(std::env::var_os(HOME_VAR), appdata())
+}
+
+/// `%APPDATA%\Supraman`, whatever `SUPRAMAN_HOME` says.
+pub fn default_home_from_env() -> Option<PathBuf> {
+    default_home(appdata())
+}
+
+fn appdata() -> Option<OsString> {
+    std::env::var_os("APPDATA")
 }
 
 /// For a session's or a script's environment.
@@ -83,5 +92,12 @@ mod tests {
         assert_eq!(home_from(Some(OsString::new()), appdata()), Some(PathBuf::from(r"C:\Users\x\AppData\Roaming\Supraman")), "empty counts as unset");
         assert_eq!(home_from(None, None), None);
         assert_eq!(home_env(Path::new(r"D:\s")), [("SUPRAMAN_HOME", r"D:\s".to_string())]);
+    }
+
+    #[test]
+    fn session_env_vars_leave_out_what_is_unset() {
+        let env = SessionEnv { role: Some("repo".into()), workspace: Some("demo".into()), session: None, repo: Some("api".into()) };
+        assert_eq!(env.vars(), [(ROLE_VAR, "repo".to_string()), (WORKSPACE_VAR, "demo".to_string()), (REPO_VAR, "api".to_string())]);
+        assert!(SessionEnv::default().vars().is_empty());
     }
 }

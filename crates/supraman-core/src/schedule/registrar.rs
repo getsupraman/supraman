@@ -20,7 +20,7 @@ pub fn smw_exe() -> PathBuf {
 
 /// `\Supraman` for the default home (`%APPDATA%\Supraman`), `\Supraman-<hex8>` for any other.
 pub fn task_root(home: &Path) -> String {
-    task_root_for(home, crate::home::default_home(std::env::var_os("APPDATA")).as_deref())
+    task_root_for(home, crate::home::default_home_from_env().as_deref())
 }
 
 pub fn task_root_for(home: &Path, default_home: Option<&Path>) -> String {
