@@ -2,7 +2,7 @@
 
 use std::{
     path::{Path, PathBuf},
-    sync::{OnceLock, atomic::{AtomicBool, Ordering}},
+    sync::{OnceLock, atomic::Ordering},
     time::Duration,
 };
 
@@ -29,14 +29,8 @@ const REMOTE: &str = "https://github.com/demo/shop.git";
 const AS_OF: &str = "2026-11-02T10:00:00+00:00";
 const SELECTED: &str = "de000000-0000-4000-8000-000000000202";
 
-static FIXTURES_ONLY: AtomicBool = AtomicBool::new(false);
 static FAKE: OnceLock<FakeWorkman> = OnceLock::new();
 static OAUTH: OnceLock<std::sync::Arc<supraman_workman::fake::FakeAuth>> = OnceLock::new();
-
-/// The session list holds the injected rows alone.
-pub(crate) fn fixtures_only() -> bool {
-    FIXTURES_ONLY.load(Ordering::SeqCst)
-}
 
 /// `SUPRAMAN_SHOTS`: where a run that takes screenshots writes them.
 pub(crate) fn dir() -> Option<PathBuf> {
@@ -49,7 +43,7 @@ fn out_dir() -> anyhow::Result<PathBuf> {
 
 pub fn prepare() -> anyhow::Result<()> {
     std::fs::create_dir_all(out_dir()?)?;
-    FIXTURES_ONLY.store(true, Ordering::SeqCst);
+    crate::selftest_seams::FIXTURES_ONLY.store(true, Ordering::SeqCst);
     crate::selftest::install_guards(crate::Mode::SelftestShots);
     let home = home();
     remove_dir_retrying(&home).with_context(|| format!("cannot clear {}", home.display()))?;

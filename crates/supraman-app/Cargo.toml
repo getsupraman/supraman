@@ -9,6 +9,11 @@ license.workspace = true
 name = "supraman"
 path = "src/main.rs"
 
+[features]
+default = ["selftest"]
+# `selftest`: the --selftest* modes with their Win32 harness and GitMan's test repos (7g's `Fixture::new_in`).
+selftest = ["dep:windows", "supraman-gitman/test-support"]
+
 [dependencies]
 anyhow = "1.0.86"
 base64 = "0.22"
@@ -19,7 +24,7 @@ sm = { path = "../sm" }
 supraman-claude = { path = "../supraman-claude" }
 supraman-core = { path = "../supraman-core" }
 supraman-editor = { path = "../supraman-editor" }
-supraman-gitman = { path = "../supraman-gitman", features = ["test-support"] }
+supraman-gitman = { path = "../supraman-gitman" }
 supraman-git-view = { path = "../supraman-git-view" }
 supraman-work-view = { path = "../supraman-work-view" }
 supraman-supervisor = { path = "../supraman-supervisor" }
@@ -41,7 +46,7 @@ zip = { version = "9.2.1", default-features = false, features = ["deflate-flate2
 
 [target.'cfg(windows)'.dependencies]
 tray-icon = { version = "0.26.1", default-features = false }
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_Storage_Xps", "Win32_System_Console", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62", optional = true, features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_Storage_Xps", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 
 [build-dependencies]
 embed-resource = "3.0"

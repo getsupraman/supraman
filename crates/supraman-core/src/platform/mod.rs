@@ -1,11 +1,13 @@
 //! The OS boundary: each module holds the Windows code of one concern, and elsewhere a stub that refuses with
 //! [`NOT_HERE`].
 
+pub mod desktop;
 pub mod fs;
 pub mod locale;
 pub mod open;
 pub mod paths;
 pub mod process;
+pub mod shell;
 
 /// What a stub says off Windows, the one platform implemented.
 pub const NOT_HERE: &str = "not on this platform";

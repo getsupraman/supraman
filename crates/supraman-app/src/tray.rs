@@ -6,6 +6,8 @@ use futures::channel::mpsc::UnboundedSender;
 use gpui::{App, Entity, PromptLevel, Window};
 
 use crate::view::FleetView;
+#[cfg(windows)]
+use supraman_core::platform::desktop;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
@@ -69,31 +71,9 @@ fn icon_resource(light_taskbar: bool) -> u16 {
     if light_taskbar { 3 } else { 2 }
 }
 
-/// Windows' "Choose your default Windows mode", which colours the taskbar: true when it is Light.
-#[cfg(windows)]
-pub fn light_taskbar() -> bool {
-    use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
-    use windows::core::w;
-    let mut value = 0u32;
-    let mut size = std::mem::size_of::<u32>() as u32;
-    let read = unsafe {
-        RegGetValueW(
-            HKEY_CURRENT_USER,
-            w!(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"),
-            w!("SystemUsesLightTheme"),
-            RRF_RT_REG_DWORD,
-            None,
-            Some(&mut value as *mut u32 as *mut _),
-            Some(&mut size),
-        )
-    };
-    read.is_ok() && value == 1
-}
-
 #[cfg(windows)]
 fn load_icon(light_taskbar: bool) -> anyhow::Result<tray_icon::Icon> {
-    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSMICON};
-    let size = unsafe { GetSystemMetrics(SM_CXSMICON) }.max(16) as u32;
+    let size = desktop::small_icon_size();
     Ok(tray_icon::Icon::from_resource(icon_resource(light_taskbar), Some((size, size)))?)
 }
 
@@ -104,7 +84,7 @@ pub struct Tray(tray_icon::TrayIcon, std::cell::RefCell<String>, std::cell::Cell
 impl Tray {
     /// The icon for the taskbar's colour, reloaded when it changed.
     pub fn follow_taskbar(&self) {
-        let light = light_taskbar();
+        let light = desktop::light_taskbar();
         if self.2.get() != light {
             match load_icon(light) {
                 Ok(icon) => match self.0.set_icon(Some(icon)) {
@@ -155,7 +135,7 @@ pub fn install(commands: UnboundedSender<Command>) -> anyhow::Result<Tray> {
             commands.unbounded_send(Command::Open).ok();
         }
     }));
-    let light = light_taskbar();
+    let light = desktop::light_taskbar();
     let tray = TrayIconBuilder::new()
         .with_tooltip("Supraman")
         .with_icon(load_icon(light)?)
@@ -180,10 +160,10 @@ pub fn install(_commands: UnboundedSender<Command>) -> anyhow::Result<Tray> {
 }
 
 #[cfg(windows)]
-pub(crate) fn hwnd(window: &Window) -> Option<windows::Win32::Foundation::HWND> {
+pub(crate) fn hwnd(window: &Window) -> Option<isize> {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     match HasWindowHandle::window_handle(window).ok()?.as_raw() {
-        RawWindowHandle::Win32(handle) => Some(windows::Win32::Foundation::HWND(handle.hwnd.get() as *mut _)),
+        RawWindowHandle::Win32(handle) => Some(handle.hwnd.get()),
         _ => None,
     }
 }
@@ -192,10 +172,9 @@ pub(crate) fn hwnd(window: &Window) -> Option<windows::Win32::Foundation::HWND> 
 
 #[cfg(windows)]
 pub fn hide(window: &Window, cx: &mut App) {
-    use windows::Win32::UI::WindowsAndMessaging::{SW_HIDE, ShowWindow};
     if let Some(hwnd) = hwnd(window) {
-        cx.spawn(async move |_| unsafe {
-            let _ = ShowWindow(hwnd, SW_HIDE);
+        cx.spawn(async move |_| {
+            let _ = desktop::hide_window(hwnd);
         })
         .detach();
     }
@@ -203,11 +182,9 @@ pub fn hide(window: &Window, cx: &mut App) {
 
 #[cfg(windows)]
 pub fn show(window: &Window, cx: &mut App) {
-    use windows::Win32::UI::WindowsAndMessaging::{SW_SHOW, SetForegroundWindow, ShowWindow};
     if let Some(hwnd) = hwnd(window) {
-        cx.spawn(async move |_| unsafe {
-            let _ = ShowWindow(hwnd, SW_SHOW);
-            let _ = SetForegroundWindow(hwnd);
+        cx.spawn(async move |_| {
+            let _ = desktop::show_window(hwnd);
         })
         .detach();
     }
@@ -216,8 +193,7 @@ pub fn show(window: &Window, cx: &mut App) {
 
 #[cfg(windows)]
 pub fn is_shown(window: &Window) -> bool {
-    use windows::Win32::UI::WindowsAndMessaging::IsWindowVisible;
-    hwnd(window).is_some_and(|hwnd| unsafe { IsWindowVisible(hwnd) }.as_bool())
+    hwnd(window).is_some_and(desktop::is_window_visible)
 }
 
 /// Every close goes this way, a caption ✕ included, so Windows never destroys the HWND under gpui.
@@ -228,15 +204,12 @@ pub fn close(window: &Window, cx: &mut App) {
     cx.spawn(async move |cx| {
         #[cfg(windows)]
         if let Some(hwnd) = hwnd {
-            use windows::Win32::UI::WindowsAndMessaging::{SW_HIDE, ShowWindow};
-            unsafe {
-                let _ = ShowWindow(hwnd, SW_HIDE);
-            }
-            hand_activation_away(hwnd);
+            let _ = desktop::hide_window(hwnd);
+            desktop::hand_activation_away(hwnd);
             let started = std::time::Instant::now();
             loop {
                 cx.background_executor().timer(DRAIN_EVERY).await;
-                if drained(hwnd) || started.elapsed() > DRAIN_LIMIT {
+                if desktop::drained(hwnd) || started.elapsed() > DRAIN_LIMIT {
                     break;
                 }
             }
@@ -250,48 +223,6 @@ pub fn close(window: &Window, cx: &mut App) {
 const DRAIN_EVERY: std::time::Duration = std::time::Duration::from_millis(10);
 #[cfg(windows)]
 const DRAIN_LIMIT: std::time::Duration = std::time::Duration::from_secs(1);
-
-/// A process that is not in the foreground keeps a hidden window active, and DestroyWindow would then deactivate it after gpui dropped it.
-#[cfg(windows)]
-fn hand_activation_away(hwnd: windows::Win32::Foundation::HWND) {
-    use windows::Win32::Foundation::{HWND, LPARAM};
-    use windows::Win32::System::Threading::GetCurrentThreadId;
-    use windows::Win32::UI::Input::KeyboardAndMouse::{GetActiveWindow, SetActiveWindow};
-    use windows::Win32::UI::WindowsAndMessaging::{EnumThreadWindows, IsWindowVisible};
-    unsafe extern "system" fn first_visible(other: HWND, found: LPARAM) -> windows::core::BOOL {
-        unsafe {
-            let found = &mut *(found.0 as *mut (HWND, Option<HWND>));
-            if other != found.0 && IsWindowVisible(other).as_bool() {
-                found.1 = Some(other);
-                return false.into();
-            }
-        }
-        true.into()
-    }
-    if unsafe { GetActiveWindow() } != hwnd {
-        return;
-    }
-    let mut found: (HWND, Option<HWND>) = (hwnd, None);
-    unsafe {
-        let _ = EnumThreadWindows(GetCurrentThreadId(), Some(first_visible), LPARAM(&mut found as *mut _ as isize));
-        if let Some(other) = found.1 {
-            let _ = SetActiveWindow(other);
-        }
-    }
-}
-
-/// Sent messages are left alone: peeking for them would dispatch them here, inside this task.
-#[cfg(windows)]
-fn drained(hwnd: windows::Win32::Foundation::HWND) -> bool {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        IsWindowVisible, MSG, PM_NOREMOVE, PM_QS_INPUT, PM_QS_PAINT, PM_QS_POSTMESSAGE, PeekMessageW,
-    };
-    let mut msg = MSG::default();
-    unsafe {
-        !IsWindowVisible(hwnd).as_bool()
-            && !PeekMessageW(&mut msg, Some(hwnd), 0, 0, PM_NOREMOVE | PM_QS_POSTMESSAGE | PM_QS_INPUT | PM_QS_PAINT).as_bool()
-    }
-}
 
 #[cfg(not(windows))]
 pub fn hide(window: &Window, _cx: &mut App) {

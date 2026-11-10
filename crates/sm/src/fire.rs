@@ -789,7 +789,7 @@ fn script_command(folder: &Path, script: &str, args: &[String]) -> Command {
     let path = folder.join(script);
     match extension(script).as_str() {
         "ps1" => {
-            let mut cmd = process::command(supraman_core::paths::script_powershell().path);
+            let mut cmd = process::command(supraman_core::platform::shell::script_powershell().path);
             cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"]).arg(&path).args(args);
             cmd
         }

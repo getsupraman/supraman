@@ -38,7 +38,7 @@ pub fn document(path: &Path) -> Result<(), String> {
         return Ok(());
     }
     let name = path.file_name().map_or_else(|| path.to_string_lossy(), |n| n.to_string_lossy());
-    match runs(&name, &supraman_core::paths::pathext()) {
+    match runs(&name, &supraman_core::platform::shell::pathext()) {
         Some(false) => Ok(()),
         Some(true) => Err(refused_file(&name)),
         None => Err(refused_bare(&name)),

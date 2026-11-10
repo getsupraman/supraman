@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use supraman_core::desktop::{self, HiddenDesktop};
+use supraman_core::platform::desktop::{self, HiddenDesktop};
 
 /// Set for the selftest on its hidden desktop (and inherited by its children): the desktop's name.
 pub const DESKTOP_VAR: &str = "SUPRAMAN_SELFTEST_DESKTOP";

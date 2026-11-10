@@ -160,11 +160,16 @@ pub(crate) struct Kept {
     pub(crate) more: bool,
 }
 
+#[cfg(windows)]
+const NO_GIT: &str = "No git on PATH. Install Git for Windows, or set [gitman] git to a git.exe.";
+#[cfg(not(windows))]
+const NO_GIT: &str = "No git on PATH. Install git, or set [gitman] git to a git program.";
+
 pub(crate) fn git_problem(located: &Located) -> Option<String> {
     match located {
         Located::Found(_) => None,
         Located::Missing { at: Some(at) } => Some(format!("No git at {}, the path set in [gitman] git.", at.display())),
-        Located::Missing { at: None } => Some("No git on PATH. Install Git for Windows, or set [gitman] git to a git.exe.".into()),
+        Located::Missing { at: None } => Some(NO_GIT.into()),
         Located::TooOld { path, version, floor } => Some(format!("{} is git {version}; the Git tab needs {floor} or newer.", path.display())),
         Located::Unusable { path, reason } => Some(format!("{} does not run as git: {reason}", path.display())),
         Located::BadSetting(notice) => Some(notice.clone()),

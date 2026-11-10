@@ -188,9 +188,9 @@ fn ole_dates_are_local_epoch_ms_and_never_is_none() {
 #[test]
 fn expand_env_keeps_what_is_not_a_set_variable() {
     let path = std::env::var("PATH").unwrap();
-    assert_eq!(crate::paths::expand_env("%PATH%;x"), format!("{path};x"));
-    assert_eq!(crate::paths::expand_env(r"%NO_SUCH_VAR_SCHED2_7%\x"), r"%NO_SUCH_VAR_SCHED2_7%\x");
-    assert_eq!(crate::paths::expand_env("100% sure %%"), "100% sure %%");
+    assert_eq!(crate::platform::shell::expand_env("%PATH%;x"), format!("{path};x"));
+    assert_eq!(crate::platform::shell::expand_env(r"%NO_SUCH_VAR_SCHED2_7%\x"), r"%NO_SUCH_VAR_SCHED2_7%\x");
+    assert_eq!(crate::platform::shell::expand_env("100% sure %%"), "100% sure %%");
 }
 
 /// The real Task Scheduler, read only: prints what the scan finds. Never in the gate; run it by hand with `--ignored`.

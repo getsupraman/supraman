@@ -38,105 +38,10 @@ fn canonical(home: &Path) -> std::path::PathBuf {
 
 const NAME: &str = "Supraman";
 
-pub enum Acquired {
-    First(Instance),
-    Running,
-}
+pub use supraman_core::platform::desktop::{Claimed as Acquired, Instance};
 
-#[cfg(windows)]
-pub use imp::{Instance, acquire};
-
-#[cfg(windows)]
-mod imp {
-    use std::path::Path;
-
-    use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, WAIT_OBJECT_0};
-    use windows::Win32::System::Threading::{
-        CreateEventW, CreateMutexW, EVENT_MODIFY_STATE, INFINITE, OpenEventW, SYNCHRONIZATION_SYNCHRONIZE, SetEvent,
-        WaitForSingleObject,
-    };
-    use windows::Win32::UI::WindowsAndMessaging::{ASFW_ANY, AllowSetForegroundWindow};
-    use windows::core::HSTRING;
-
-    use super::{Acquired, NAME, key};
-
-    pub struct Instance {
-        mutex: HANDLE,
-        open: HANDLE,
-        open_name: HSTRING,
-    }
-
-    // Kernel handles; usable from any thread.
-    unsafe impl Send for Instance {}
-
-    pub fn acquire(home: &Path) -> anyhow::Result<Acquired> {
-        let key = key(home);
-        let mutex = unsafe { CreateMutexW(None, true, &HSTRING::from(format!("Local\\{NAME}-{key}"))) }?;
-        if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
-            unsafe { CloseHandle(mutex) }.ok();
-            signal(&key);
-            return Ok(Acquired::Running);
-        }
-        let open_name = HSTRING::from(format!("Local\\{NAME}-{key}-open"));
-        let open = match unsafe { CreateEventW(None, false, false, &open_name) } {
-            Ok(open) => open,
-            Err(e) => {
-                unsafe { CloseHandle(mutex) }.ok();
-                return Err(e.into());
-            }
-        };
-        Ok(Acquired::First(Instance { mutex, open, open_name }))
-    }
-
-    /// The running instance may take the foreground: this launch has it (the user just started it).
-    fn signal(key: &str) {
-        let name = HSTRING::from(format!("Local\\{NAME}-{key}-open"));
-        unsafe {
-            let _ = AllowSetForegroundWindow(ASFW_ANY);
-            if let Ok(open) = OpenEventW(EVENT_MODIFY_STATE, false, &name) {
-                let _ = SetEvent(open);
-                let _ = CloseHandle(open);
-            }
-        }
-    }
-
-    impl Instance {
-        pub fn on_open(&self, opened: impl Fn() + Send + 'static) -> anyhow::Result<()> {
-            let open = unsafe { OpenEventW(SYNCHRONIZATION_SYNCHRONIZE, false, &self.open_name) }?;
-            let open = open.0 as isize;
-            std::thread::Builder::new().name("supraman-instance".into()).spawn(move || {
-                let open = HANDLE(open as *mut _);
-                while unsafe { WaitForSingleObject(open, INFINITE) } == WAIT_OBJECT_0 {
-                    opened();
-                }
-            })?;
-            Ok(())
-        }
-    }
-
-    impl Drop for Instance {
-        fn drop(&mut self) {
-            unsafe {
-                let _ = CloseHandle(self.open);
-                let _ = CloseHandle(self.mutex);
-            }
-        }
-    }
-}
-
-#[cfg(not(windows))]
-pub struct Instance;
-
-#[cfg(not(windows))]
-impl Instance {
-    pub fn on_open(&self, _opened: impl Fn() + Send + 'static) -> anyhow::Result<()> {
-        Ok(())
-    }
-}
-
-#[cfg(not(windows))]
-pub fn acquire(_home: &Path) -> anyhow::Result<Acquired> {
-    Ok(Acquired::First(Instance))
+pub fn acquire(home: &Path) -> anyhow::Result<Acquired> {
+    supraman_core::platform::desktop::claim(&format!("{NAME}-{}", key(home))).map_err(anyhow::Error::msg)
 }
 
 #[cfg(all(test, windows))]
