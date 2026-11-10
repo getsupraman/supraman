@@ -1,9 +1,3 @@
-//! The remote items of the ref menus (docs/research/gitkraken-12.6.1.md §B part 1 items 1–3 and 10, B4, B7),
-//! joined to GA7's [`RefMenu`] groups: HEAD's branch's pull, push and set upstream; a remote branch's delete there;
-//! a tag pushed to or deleted from a remote; a remote row's fetch, edit and remove; a pill dropped on a remote branch
-//! pushed there; and links to a branch or a commit on a hosting site. A list GitKraken puts under ▸ is a captioned
-//! section (gitman-actions/menu-gaps).
-
 use supraman_gitman::write::branch::current_branch;
 use supraman_gitman::write::remote::{PullChoice, PullMode};
 use supraman_gitman::{Link, Refs, Remote, web_link};
@@ -76,7 +70,7 @@ pub(crate) fn add(menu: &mut RefMenu<RefAct>, subject: &Subject, f: &RemoteFacts
     }
 }
 
-/// B3 G1 of HEAD's branch: its pull (each mode while the default is a fetch), push and set upstream.
+/// HEAD's branch's pull (each mode while the default is a fetch), push and set upstream.
 fn sync_items(menu: &mut RefMenu<RefAct>, local: &str, f: &RemoteFacts) {
     match f.pull.mode() {
         Some(mode) => menu.add(Group::Sync, remote("remote-pull".into(), "Pull".into(), RemoteAct::Pull(mode))),
@@ -91,7 +85,7 @@ fn sync_items(menu: &mut RefMenu<RefAct>, local: &str, f: &RemoteFacts) {
     menu.add(Group::Sync, remote("remote-set-upstream".into(), "Set upstream".into(), RemoteAct::SetUpstream(local.into())));
 }
 
-/// B4: the tag pushed to each remote (and all at once with several), deleted from each.
+/// The tag pushed to each remote (and all at once with several), deleted from each.
 fn tag_items(menu: &mut RefMenu<RefAct>, tag: &str, f: &RemoteFacts) {
     let names: Vec<String> = f.remotes.iter().map(|r| r.name.clone()).collect();
     for (i, r) in names.iter().enumerate() {
@@ -106,7 +100,7 @@ fn tag_items(menu: &mut RefMenu<RefAct>, tag: &str, f: &RemoteFacts) {
     }
 }
 
-/// B1 G5: a link to the commit on each remote whose host makes one.
+/// A link to the commit on each remote whose host makes one.
 pub(crate) fn commit_links(menu: &mut RefMenu<RefAct>, sha: &str, f: &RemoteFacts) {
     for r in &f.remotes {
         if let Some(url) = web_link(&r.url, Link::Commit(sha)) {
@@ -115,7 +109,7 @@ pub(crate) fn commit_links(menu: &mut RefMenu<RefAct>, sha: &str, f: &RemoteFact
     }
 }
 
-/// B7: a local branch dropped on a remote branch pushed there.
+/// A local branch dropped on a remote branch pushed there.
 pub(crate) fn drop_items(menu: &mut RefMenu<RefAct>, dragged: &Dragged, target: &Dragged, f: &RemoteFacts) {
     if !dragged.local || target.local || dragged.sha == target.sha {
         return;

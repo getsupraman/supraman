@@ -1,5 +1,4 @@
-//! The other worktrees' WIP rows through the real tab on a fixture copy with linked worktrees in its temp dir (C196):
-//! where they show, what they say, and Open Worktree.
+//! The other worktrees' WIP rows through the real tab: where they show, what they say, and Open Worktree.
 
 use std::path::{Path, PathBuf};
 

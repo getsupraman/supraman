@@ -1,5 +1,4 @@
-//! The ref panel's rows as plain values: each ref of [`Refs`] as an [`Entry`] at a tree path in its
-//! [`Section`], the order, the filter's match, the section counts, and the refs the graph walks ([`Walk`]).
+//! The ref panel's rows as plain values: each ref as an [`Entry`] at a tree path in its [`Section`], and the graph's [`Walk`].
 
 use std::collections::BTreeSet;
 use std::ops::Range;
@@ -157,8 +156,7 @@ impl Entry {
         filter.is_empty() || self.matched(&self.text().0, filter).is_some()
     }
 
-    /// The filter's matches inside the label, as byte ranges of [`Entry::label`]: the label's own match when it
-    /// holds the whole filter, else the part of the whole text's match that falls on it.
+    /// The filter's matches inside the label, as byte ranges of [`Entry::label`].
     pub(crate) fn marks(&self, filter: &str) -> Vec<Range<usize>> {
         if filter.is_empty() {
             return Vec::new();
@@ -172,14 +170,12 @@ impl Entry {
     }
 }
 
-/// A–Z ignoring case one name part at a time, so a folder sorts by its own name among the refs beside it: `/` as
-/// the lowest character orders the parts as a list of them would.
+/// A–Z ignoring case one name part at a time: `/` as the lowest character, so a folder sorts by its own name.
 fn by_parts(name: &str) -> (String, String) {
     (name.to_lowercase().replace('/', "\0"), name.to_string())
 }
 
-/// Every ref of `refs` at its tree path, in the panel's order: the sections in turn; a detached HEAD first,
-/// then the branches; remote branches under their remote; the main worktree first; stashes newest first.
+/// Every ref of `refs` at its tree path, in the panel's order.
 pub(crate) fn entries(refs: &Refs) -> Vec<(String, Entry)> {
     let mut out = Vec::new();
     let current = match &refs.head {
@@ -213,8 +209,7 @@ pub(crate) fn entries(refs: &Refs) -> Vec<(String, Entry)> {
     out
 }
 
-/// The refs hidden from the graph and the refs soloed in it: while any is soloed, the walk is the soloed refs
-/// and HEAD alone, the hidden set kept for when the last solo goes.
+/// The refs hidden from the graph and the refs soloed in it; while any is soloed the walk is those and HEAD.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Walk {
     pub(crate) hidden: BTreeSet<String>,
@@ -251,8 +246,7 @@ pub(crate) fn counts(entries: &[(String, Entry)], walk: &Walk, filter: &str) -> 
     counts
 }
 
-/// The refs the graph labels: `refs` without those out of the walk, the current branch always kept; while soloing,
-/// the stashes and the worktrees on no walked branch go too, and the tags only label (see [`tips`]).
+/// The refs the graph labels: `refs` without those out of the walk, the current branch always kept (see [`tips`]).
 pub(crate) fn without(refs: &Refs, walk: &Walk) -> Refs {
     if *walk == Walk::default() {
         return refs.clone();

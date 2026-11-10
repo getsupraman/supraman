@@ -1,6 +1,4 @@
-//! The toolbar's Pull split button (the default, and ▾ for each pull and the default's choice) and Push, each
-//! dimmed with why it cannot act, and the strip of the call under way with its progress and Cancel. Hit keys:
-//! `git-pull`, `git-pull-menu`, `git-push`, `git-remote-cancel`.
+//! The toolbar's Pull split button, Push and the progress strip; hit keys `git-pull`, `git-pull-menu`, `git-push`, `git-remote-cancel`.
 
 use gpui::{AnyElement, App, ClickEvent, Context, Div, Entity, SharedString, div, prelude::*};
 use supraman_gitman::write::remote::PullChoice;

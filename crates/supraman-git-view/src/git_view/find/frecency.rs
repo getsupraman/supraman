@@ -1,5 +1,4 @@
-//! The palette's picks, `<home>/gitman/palette.json`: per item and per query its last picks and a count, which break
-//! ties of an equal fuzzy score in the top list. The one reader and writer of that file; read once off the UI thread.
+//! The palette's picks, `<home>/gitman/palette.json`, which break ties of an equal fuzzy score; its one reader and writer.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

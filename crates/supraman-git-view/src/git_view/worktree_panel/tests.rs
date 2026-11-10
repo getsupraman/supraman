@@ -1,5 +1,4 @@
-//! The panel of another worktree's WIP row through the real tab, on a fixture copy whose linked worktree is in its
-//! temp dir (C196): its header and lists, a file's diff read from that worktree, and nothing that writes.
+//! The panel of another worktree's WIP row through the real tab: its header and lists, a file's diff, nothing that writes.
 
 use std::path::Path;
 

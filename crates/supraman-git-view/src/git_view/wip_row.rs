@@ -1,5 +1,4 @@
-//! The graph's WIP row, where the commit summary has its second field (the conflict node in its place while
-//! files are conflicted), and the tab's staging keys.
+//! The graph's WIP row with the commit summary's second field (the conflict node while files conflict), and the staging keys.
 
 use supraman_core::text::count;
 use std::collections::HashMap;

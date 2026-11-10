@@ -1,4 +1,4 @@
-//! The viewer's hunk buttons, line + and − and line menu writing through the tab, on fixture copies (C196).
+//! The viewer's hunk buttons, line + and − and line menu writing through the tab, on fixture copies.
 
 use gpui::{Entity, Modifiers, MouseButton, Pixels, Point, TestAppContext, VisualTestContext, point, px};
 use supraman_editor::{ZedEditor, rows};

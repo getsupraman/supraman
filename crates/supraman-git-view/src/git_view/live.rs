@@ -1,5 +1,4 @@
-//! The Git tab following its repository: the git dirs and the work dir watched with [`supraman_core::watch`],
-//! each batch sorted into the one refresh it asks for (research §2 "Watching").
+//! The Git tab following its repository: each watched batch sorted into the one refresh it asks for (research §2 "Watching").
 
 use std::collections::HashSet;
 use std::path::{Component, Path};
@@ -45,8 +44,7 @@ impl Live {
     }
 }
 
-/// Watches the repository of `repo`; blocking (it asks git where its dirs are). While GitMan's own writes run on
-/// it the batches are dropped, and one graph refresh follows the last.
+/// Watches the repository of `repo`; blocking (it asks git where its dirs are).
 pub(crate) fn start(repo: &Repo, debounces: Debounces) -> Result<(Live, UnboundedReceiver<Refresh>), String> {
     let dirs = supraman_gitman::dirs(repo).map_err(|e| e.to_string())?;
     let (tx, rx) = unbounded();
@@ -171,8 +169,7 @@ pub(crate) fn work_files(dirs: &Dirs, batch: &Batch) -> Vec<String> {
     batch.paths.iter().filter(|p| !in_git(p)).filter_map(|p| below(&dirs.top, p)).filter(|p| !p.is_empty()).collect()
 }
 
-/// The WIP refresh of the files git does not ignore; ignored-file noise (`target/`) asks for none. Runs git on
-/// the watcher's thread.
+/// The WIP refresh of the files git does not ignore; runs git on the watcher's thread.
 fn work_refresh(top: &Repo, dirs: &Dirs, batch: &Batch) -> Option<Refresh> {
     if batch.rescan {
         return Some(Refresh::Wip { files: None });

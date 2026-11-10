@@ -1,5 +1,4 @@
-//! The Git tab's Undo and Redo: the journal's preview read off the UI thread after every refresh, each undo or
-//! redo run through the tab's [`WriteGate`], and the question before work in progress goes to a stash.
+//! The Git tab's Undo and Redo through its [`WriteGate`], the journal's preview read off the UI thread after each refresh.
 
 use gpui::{AppContext as _, ClickEvent, Context, Entity, EventEmitter, Render, SharedString, Window, div, prelude::*};
 use supraman_gitman::Repo;

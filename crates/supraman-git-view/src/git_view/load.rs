@@ -1,5 +1,4 @@
-//! Everything the Git tab reads, blocking, for `cx.background_spawn`: git located, the refs, the status and the
-//! history page by page, each page laid out with the state the last one left.
+//! Everything the Git tab reads, blocking, for `cx.background_spawn`.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -193,8 +192,7 @@ pub(crate) fn first(home: Option<&Path>, folder: &Path, walk: &Walk) -> Result<F
     Ok(First { settings: Some((settings, notice)), ..first })
 }
 
-/// The refs, the status and the first page of `repo` walked as `walk` says, laid out afresh with the WIP rows of
-/// `worktrees`, and the commits `loaded` below it laid out again after it when the walk below is the same.
+/// The refs, the status and the first page laid out afresh, the commits `loaded` below it again when the walk below is the same.
 pub(crate) fn read(repo: Repo, walk: &Walk, loaded: Option<&Loaded>, worktrees: &[WorktreeRow]) -> Result<First, String> {
     let failed = |e: supraman_gitman::GitError| e.to_string();
     let _index = supraman_gitman::write::refresh_lock(&repo);
@@ -235,8 +233,7 @@ fn lay_out(history: supraman_gitman::Page, mut layout: Layout) -> Page {
     Page { rows, more: history.more, layout }
 }
 
-/// The page after the first `skip` commits, read on from `walker` and laid out after the rows `layout` has seen;
-/// the walker to read the next one from while more follow.
+/// The page after the first `skip` commits, laid out after the rows `layout` has seen; the walker for the next while more follow.
 pub(crate) fn next(repo: &Repo, tips: &[String], skip: usize, layout: Layout, walker: Option<History>) -> Result<(Page, Option<History>), String> {
     let failed = |e: supraman_gitman::GitError| e.to_string();
     // Rows the walker already passed (a dropped tail, rows a refresh kept) cost a new walk from `skip`.

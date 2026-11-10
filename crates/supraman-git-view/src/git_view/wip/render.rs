@@ -1,5 +1,4 @@
-//! The WIP panel's parts: the header with Discard all and the branch (the conflict header while an operation is
-//! under way), the sort and Path | Tree toolbar, the collapsible lists with their buttons, and the commit area.
+//! The WIP panel's parts: the header, the sort and Path | Tree toolbar, the lists with their buttons, and the commit area.
 
 use std::rc::Rc;
 
@@ -57,8 +56,7 @@ impl WipPanel {
         div().flex().flex_none().items_center().py_1p5().px_2().text_color(palette.text).child(self.discard_all_button(cx)).child(words).child(div().w(px(24.)))
     }
 
-    /// A row's buttons on hover: stash, discard and Stage File on an unstaged file, stash and Unstage File (Mark
-    /// Conflicted while an operation is under way) on a staged one; a conflicted file's are the conflict panel's.
+    /// A row's hover buttons per section; a conflicted file's are the conflict panel's.
     fn row_tail(section: Section) -> files::Tail<WipPanel> {
         Rc::new(move |this: &mut WipPanel, path: &str, kind: ChangeKind, group: SharedString, cx: &mut Context<WipPanel>| {
             if section == Section::Conflicted {
@@ -203,8 +201,7 @@ impl Render for WipPanel {
     }
 }
 
-/// Over a commit's panel while the tree is dirty: `N file changes in working directory` and View Change
-/// (`wip-banner-view-change`), which selects the WIP row.
+/// Over a commit's panel while the tree is dirty: `N file changes in working directory` and View Change.
 pub(crate) fn banner(total: usize, hits: &HitTargets, cx: &mut Context<GitView>) -> Div {
     let info = cx.theme().status().info;
     let view = button::outline(hits, "wip-banner-view-change", "View Change", info, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.select_wip(cx)));

@@ -1,5 +1,4 @@
-//! The panel's five trees, one per [`Section`], each under its section's folder with that folder painted as the
-//! pane's header rather than as a row; addressed by the whole path, as one tree would be.
+//! The panel's five trees, one per [`Section`], its folder painted as the pane's header; addressed by the whole path.
 
 use gpui::{App, SharedString};
 use supraman_ui::tree::{Tree, TreeState};

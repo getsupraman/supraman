@@ -1,6 +1,4 @@
-//! The graph's own keys (the shared table moves the selection) and the walk through the panel's files in the
-//! viewer: a key moves the selection at once and the panel loads its commit when the key comes up or the
-//! selection settles.
+//! The graph's own keys and the walk through the panel's files in the viewer; the panel reads a commit once the selection settles.
 
 use std::time::Duration;
 
@@ -70,8 +68,7 @@ impl GitView {
         self.row_of(parent?, cx)
     }
 
-    /// The row of `ix`'s child: the WIP row for HEAD's commit, else the nearest row above whose first parent
-    /// it is, else the nearest that merged it, else the nearest stash made on it.
+    /// The row of `ix`'s child: the WIP row for HEAD, else the nearest child, merge or stash made on it.
     pub(super) fn child(&self, ix: usize, cx: &App) -> Option<usize> {
         let rows = &self.pages.read(cx).rows;
         let row = rows.get(ix).filter(|r| !r.wip())?;

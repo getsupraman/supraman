@@ -1,5 +1,4 @@
-//! The graph's WIP rows of the repository's other worktrees (GitKraken 12.6.2): which the layout places, their cells,
-//! and Open Worktree.
+//! The graph's WIP rows of the repository's other worktrees: which the layout places, their cells, and Open Worktree.
 
 use gpui::{AnyElement, ClickEvent, Context, SharedString, div, prelude::*, px};
 use supraman_core::paths::path_key;
@@ -45,8 +44,7 @@ impl WorktreeView {
 }
 
 impl GitView {
-    /// The other worktrees the graph gives a WIP row: read, with a HEAD, and changed or worked in by a live session;
-    /// none while `[gitman] worktree_wip` is off.
+    /// The other worktrees given a WIP row: read, with a HEAD, changed or worked in; none while `[gitman] worktree_wip` is off.
     pub(super) fn wanted_worktrees(&self, cx: &Context<Self>) -> Vec<WorktreeRow> {
         if !background::worktree_wips(cx) {
             return Vec::new();
@@ -62,8 +60,7 @@ impl GitView {
         rows
     }
 
-    /// A read of the other worktrees landed, or the setting changed: the graph laid out again when its worktree rows
-    /// change, else repainted.
+    /// A read of the other worktrees landed or the setting changed: the graph relaid when its worktree rows change.
     pub(crate) fn worktrees_read(&mut self, cx: &mut Context<Self>) {
         if matches!(self.load, Load::Ready) && self.wanted_worktrees(cx) != self.worktree_rows {
             self.live_refresh(Refresh::Graph, cx);

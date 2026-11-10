@@ -1,6 +1,4 @@
-//! Ctrl+P and Ctrl+Shift+P in the Git tab: the shared palette over GitMan's commands, with modes for the refs, the
-//! files at HEAD (read off the UI thread when it opens), a file's history and the commits loaded in the graph. Its
-//! remote commands run what the toolbar's Pull and Push run, dimmed with their reasons.
+//! Ctrl+P and Ctrl+Shift+P in the Git tab: the shared palette over GitMan's commands, refs, files, history and loaded commits.
 
 pub(crate) mod entries;
 pub(crate) mod frecency;

@@ -1,7 +1,4 @@
-//! The panel painted: the filter bar, the section headers, folders and ref rows of the tree, and the strip the
-//! collapsed panel leaves with its section's overlay. Hit keys: `refpanel-row-<path>`, `refpanel-name-<path>`, `refpanel-mark-<path>`
-//! (a row's mark, [`super::marks`]), `refpanel-filter`, `refpanel-show-all`, `refpanel-collapse`, `refpanel-expand`,
-//! `refpanel-strip-<section>`, `refpanel-sections-divider-<pane>` (the border above a shown section's header).
+//! The panel painted; hit keys `refpanel-{row,name,mark}-<path>`, `-filter`, `-show-all`, `-collapse`, `-expand`, `-strip-<section>`, `-sections-divider-<pane>`.
 
 use gpui::{AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla, IntoElement, Render, Window, div, prelude::*, px};
 use supraman_gitman::short_sha;
@@ -220,8 +217,7 @@ impl RefPanel {
             .into_any_element()
     }
 
-    /// The sections the filter keeps, stacked: a closed one its header, the open ones sharing the rest by their
-    /// kept heights, else by their rows.
+    /// The sections the filter keeps, stacked: a closed one its header, the open ones sharing the rest by kept heights, else rows.
     fn list(&self, cx: &mut Context<Self>) -> AnyElement {
         let shown: Vec<Section> = Section::ALL.into_iter().filter(|s| self.tree.shows(*s)).collect();
         let at = |section: Section| Section::ALL.iter().position(|s| *s == section).unwrap_or(0);

@@ -1,5 +1,4 @@
-//! The toolbar's Pull and Push and the push questions through the real tab, on temp clones of the fixture's bare
-//! remote (C196); `settings.toml` in a temp home.
+//! The toolbar's Pull and Push and the push questions through the real tab, on temp clones of the fixture's bare remote.
 
 use std::path::{Path, PathBuf};
 
@@ -127,7 +126,6 @@ fn palette_remote(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<(St
     rows
 }
 
-/// Picks the palette's row `key` with a click, as a user does.
 fn pick(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
     view.update_in(cx, |v, window, cx| v.open_find(None, window, cx));
     cx.simulate_input("remote");

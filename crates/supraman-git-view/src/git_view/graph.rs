@@ -1,5 +1,4 @@
-//! The Graph column: a row's lanes and edges painted as paths, its node as a circle with the author's initials.
-//! Geometry per docs/research/gitkraken-12.6.1.md §3.
+//! The Graph column's lanes, edges and nodes; geometry per docs/research/gitkraken-12.6.1.md §3.
 
 use gpui::{AnyElement, Bounds, Div, FontWeight, Hsla, SharedString, PathBuilder, Pixels, Window, canvas, div, fill, point, prelude::*, px};
 use supraman_gitman::{Edge, EdgeKind};
@@ -42,13 +41,11 @@ pub(crate) fn width_for(lanes: usize) -> f32 {
     2. * PAD + lanes as f32 * LANE
 }
 
-/// How many lanes `rows` use.
 pub(crate) fn lanes(rows: &[GraphRow]) -> usize {
     rows.iter().map(|r| r.row.max_lane).max().map_or(0, |l| l + 1)
 }
 
-/// A row's band in a graph cell of `bounds`: from the centre of its node's `lane` to the column's right edge, `GAP / 2`
-/// short of the row's top and bottom.
+/// A row's band in a graph cell: from its node's lane centre to the column's right edge, `GAP / 2` short top and bottom.
 pub(crate) fn band(lane: usize, bounds: Bounds<Pixels>) -> Bounds<Pixels> {
     let left = (bounds.left() + px(lane_x(lane))).min(bounds.right());
     let top = bounds.top() + px(GAP / 2.);
@@ -100,8 +97,6 @@ fn line(window: &mut Window, bounds: Bounds<Pixels>, colour: Hsla, dashed: bool,
     }
 }
 
-/// Starting: from the node across to its lane and down; ending: down its lane and across to the node; a
-/// quarter curve where it turns.
 fn paint_edge(window: &mut Window, bounds: Bounds<Pixels>, e: &Edge, colour: Hsla) {
     let x = |lane: usize| bounds.left() + px(lane_x(lane));
     let (top, bottom, r) = (bounds.top(), bounds.bottom(), px(RADIUS));
@@ -135,8 +130,7 @@ fn paint_edge(window: &mut Window, bounds: Bounds<Pixels>, e: &Edge, colour: Hsl
     });
 }
 
-/// A commit's circle with its author's initials, ringed in its lane; a merge's smaller dot; a WIP row's
-/// dashed hollow ring; a stash's dashed square round its glyph; a live session's dashed circle round a bot.
+/// A commit's initials ringed in its lane, a merge's dot, a WIP's dashed ring, a stash's dashed square, a session's bot.
 fn node(row: &GraphRow, palette: &Palette) -> AnyElement {
     let colour = row.row.colour;
     let lane = palette.lane(colour);

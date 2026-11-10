@@ -1,6 +1,4 @@
-//! A ref row's mark at its left edge, its right-click menu and its double-click. The mark is one of: the current
-//! branch's tick; a hidden ref's struck eye and a soloed ref's solo, always shown, a click undoing it; else an eye
-//! on the row's hover that hides it. Hit keys: `<list>-mark-<path>`, and the menu's `menu-ref-solo`, `menu-ref-hide`.
+//! A ref row's mark, right-click menu and double-click; hit keys `<list>-mark-<path>`, `menu-ref-solo`, `menu-ref-hide`.
 
 use gpui::{AnyElement, ClickEvent, Context, MouseButton, MouseDownEvent, Pixels, Point, SharedString, Window, div, prelude::*, px};
 use supraman_ui::button;
@@ -124,8 +122,7 @@ impl RefPanel {
         cx.emit(RefEvent::Checkout(path.to_string()));
     }
 
-    /// The menu of the ref or folder at `path`: a stash's writes ([`stash::menu_items`]), Solo or Stop soloing, then
-    /// Hide or Show; none for a row with neither.
+    /// The menu of the ref or folder at `path`: a stash's writes, Solo or Stop soloing, then Hide or Show.
     pub(crate) fn menu_items(&self, path: &str) -> Vec<MenuItem<RefAction>> {
         let (hide, solo) = match self.entry(path) {
             Some(entry) => (entry.hide_key().into_iter().collect(), entry.solo_key().into_iter().collect()),
@@ -180,8 +177,7 @@ impl RefPanel {
         cx.notify();
     }
 
-    /// A section header's menu (§B part 1 item 7): Hide all or Show all where its refs hide, and Maximize this
-    /// section while it is open, dimmed while it is the only one open.
+    /// A section header's menu: Hide all or Show all, and Maximize this section, dimmed while it is the only one open.
     pub(crate) fn section_items(&self, section: Section) -> Vec<MenuItem<RefAction>> {
         let mut items = Vec::new();
         let hide = self.tree.aggregate(section.key()).map(|k| k.hide).unwrap_or_default();

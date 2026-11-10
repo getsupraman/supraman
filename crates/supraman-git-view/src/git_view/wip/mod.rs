@@ -1,6 +1,4 @@
-//! The WIP panel right of the graph while the WIP row is selected: the working directory's conflicted, unstaged
-//! and staged files, read off the UI thread on each selection, with stage, unstage and discard on them, the
-//! conflict panel's header and writes while an operation is under way, and the commit area under them.
+//! The WIP panel right of the graph while the WIP row is selected: its files, their writes and the commit area.
 
 mod actions;
 pub(crate) mod compose;

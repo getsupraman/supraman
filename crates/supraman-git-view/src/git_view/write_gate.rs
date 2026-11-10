@@ -1,6 +1,4 @@
-//! Every Git tab write passes here: it runs on the background executor through [`Writer::run`], one at a time per
-//! tab; while one runs, [`WriteGate::busy`] says why another cannot start. A live session working in the checkout
-//! shows as the graph's agent row, not as a question.
+//! Every Git tab write passes here, one at a time per tab; a live session working there shows as an agent row, not a question.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -83,8 +81,7 @@ impl WriteGate {
         self.writer.as_ref().map(|w| w.dirs().top.clone())
     }
 
-    /// Runs `job` holding `locks` on the tab's checkout; the ticket its [`Written`] carries, or `None` (nothing run)
-    /// while [`WriteGate::busy`] or before the writer is open.
+    /// Runs `job` holding `locks` on the checkout; its [`Written`]'s ticket, or `None` while busy or before the writer is open.
     pub(crate) fn request(&mut self, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) -> Option<u64> {
         let writer = self.writer.clone().filter(|_| self.busy().is_none())?;
         self.tickets += 1;
@@ -116,8 +113,7 @@ impl WriteGate {
     }
 }
 
-/// What each write actor of the tab holds of the gate: the question `A` it shows, its write `D` under way and what
-/// that write's job left, `O`, for its answer.
+/// What each write actor holds of the gate: its question `A`, its write `D` under way and what that job left, `O`.
 pub(crate) struct Writes<A, D, O = ()> {
     gate: Entity<WriteGate>,
     pub(crate) asking: Option<Confirm<A>>,

@@ -14,8 +14,7 @@ const M_OLD: &str = "fn one() {}\nfn two() {}\nfn three() {}\nfn four() {}\nfn f
 const M_NEW: &str = "fn one() {}\nfn TWO() {}\nfn three() {}\nfn four() {}\nfn five() {}\nfn six() {}\nfn seven() {}\nfn eight() {}\nfn nine() {}\n";
 const MOVED: &str = "first\nsecond\nthird\n";
 
-/// Commits on the fixture's `side` worktree: `base` with the files, `change` modifying, adding, deleting,
-/// renaming and rewriting a binary, and `merge` of a topic whose second parent already had its line.
+/// Commits on the fixture's `side` worktree: `base`, `change` (modify, add, delete, rename, binary) and a `merge`.
 struct Repo {
     f: Fixture,
     base: String,

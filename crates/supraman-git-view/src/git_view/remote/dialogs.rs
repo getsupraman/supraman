@@ -1,8 +1,4 @@
-//! The remote calls' prompts in the tab's band: a branch's upstream (a remote and the branch there), a remote's
-//! URL, and ssh's prompt (a passphrase with Remember, a password, an unknown host key's yes or no). Hit keys:
-//! `git-upstream-<remote>`, `git-upstream-ok`, `git-upstream-cancel`, `git-edit-remote-ok`,
-//! `git-edit-remote-cancel`, `git-askpass-ok`, `git-askpass-remember`, `git-askpass-cancel`, each band
-//! `<key>-band` and its field `<key>-field`.
+//! The remote calls' prompts in the tab's band: a branch's upstream, a remote's URL and ssh's prompt.
 
 use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Div, Entity, Subscription, Window, div, prelude::*, px};
 use supraman_core::askpass::{Asked, Prompt, Reply};
@@ -196,8 +192,7 @@ impl RemoteActions {
         self.upstream.as_ref()
     }
 
-    /// The question, else the upstream, the URL or ssh's prompt, as the tab's band; `true` when a field of it
-    /// holds the keyboard.
+    /// The question, else the upstream, the URL or ssh's prompt, as the tab's band; `true` when its field holds the keyboard.
     pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<(Div, bool)> {
         if let Some(band) = self.writes.band_answer(&self.hits, "git-remote-ask", Self::answer_force, cx) {
             return Some((band, false));

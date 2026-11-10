@@ -1,6 +1,4 @@
-//! The tab's stash writes (docs/research/gitkraken-12.6.1.md, "Stashing"), each through the tab's [`WriteGate`]
-//! off the UI thread: stash all or some files, apply, pop, delete, a new message, and files applied from a stash;
-//! the questions before them, the stash row's menu and the message box. None is undoable.
+//! The tab's stash writes through its [`WriteGate`] (docs/research/gitkraken-12.6.1.md, "Stashing"); none is undoable.
 
 use supraman_core::text::count;
 
@@ -23,7 +21,6 @@ pub(crate) struct StashRef {
     pub(crate) label: String,
 }
 
-/// What a stash row's menu does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StashAct {
     Apply,
@@ -228,7 +225,6 @@ impl StashActions {
         cx.notify();
     }
 
-    /// The row menu of `stash` at `position`.
     pub(crate) fn open_menu(&mut self, stash: StashRef, position: Point<Pixels>, cx: &mut Context<Self>) {
         self.menu = Some(ContextMenu { title: stash.label.clone(), position, items: menu_items(&stash, |a, s| (a, s)) });
         cx.notify();

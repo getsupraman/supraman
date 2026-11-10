@@ -14,8 +14,7 @@ pub(crate) struct Loaded {
     pub(crate) more: bool,
 }
 
-/// Where in `loaded.commits` the commits below `page`, the first page read now from `tips`, carry on: `None`
-/// when the page reaches past them or the walk changed (a commit gone, a tip moved off the page or added below it).
+/// Where in `loaded.commits` the commits below `page` carry on: `None` when the page reaches past them or the walk changed.
 pub(crate) fn kept_from(loaded: &Loaded, tips: &[String], page: &[Commit]) -> Option<usize> {
     let old = &loaded.commits;
     let at: HashMap<&str, usize> = old.iter().enumerate().map(|(i, (sha, _))| (sha.as_ref(), i)).collect();

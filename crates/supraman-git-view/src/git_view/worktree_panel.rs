@@ -1,6 +1,4 @@
-//! The panel right of the graph while another worktree's WIP row is selected: its folder, branch and counts, Open
-//! Worktree, and its conflicted, unstaged and staged files as the WIP panel groups them, read-only; a file opens
-//! in the viewer read from that worktree.
+//! The read-only panel of another worktree's WIP row: its header, Open Worktree, and its files as the WIP panel groups them.
 
 use std::collections::HashMap;
 use std::path::Path;

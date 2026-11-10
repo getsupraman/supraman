@@ -1,5 +1,4 @@
-//! What the WIP panel reads, blocking, for `cx.background_spawn`: the status, split into the conflicted, the
-//! unstaged and the staged files, each as a list and a tree.
+//! What the WIP panel reads, blocking: the status split into conflicted, unstaged and staged files, each a list and a tree.
 
 use supraman_core::text::count;
 use std::collections::HashMap;
@@ -19,7 +18,6 @@ pub(crate) enum Branch {
     Detached(Option<String>),
 }
 
-/// Which of the lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Section {
     Conflicted,
@@ -80,8 +78,7 @@ pub(crate) fn file_changes(n: usize) -> String {
     count(n, "file change", "file changes")
 }
 
-/// Each entry's unstaged side and staged side: a partly staged file is in both, a conflicted or untracked one
-/// only among the unstaged.
+/// Each entry's unstaged and staged side: a partly staged file is in both, a conflicted or untracked one only unstaged.
 pub(crate) fn sections(status: &Status) -> (Vec<FileChange>, Vec<FileChange>) {
     let (mut unstaged, mut staged) = (Vec::new(), Vec::new());
     for e in &status.entries {

@@ -1,5 +1,4 @@
-//! The graph's rows as loaded page by page: the walk the next page reads on, the layout it continues and the page
-//! ends the tail is cut at.
+//! The graph's rows as loaded page by page: the walk the next page reads on and the layout it continues.
 
 use std::rc::Rc;
 use std::sync::Arc;
