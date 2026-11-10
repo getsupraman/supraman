@@ -563,6 +563,17 @@ mod tests {
     }
 
     #[test]
+    fn a_dismissal_made_before_the_file_is_read_is_kept_with_the_files() {
+        let mut read = Dismissed::default();
+        read.dismiss("w", &row("blocked:t1", "s1"));
+        let mut early = Dismissed::default();
+        early.dismiss("w", &row("question:t2", "s2"));
+        assert!(read.absorb(early.clone()));
+        assert!(read.hides("w", &row("blocked:t1", "s1")) && read.hides("w", &row("question:t2", "s2")));
+        assert!(!read.absorb(early), "nothing new the second time");
+    }
+
+    #[test]
     fn dismissals_round_trip_through_the_file() {
         let home = tempfile::tempdir().unwrap();
         let mut d = Dismissed::default();
