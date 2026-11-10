@@ -132,7 +132,7 @@ fn parse_opts<'a>(args: &[&'a str]) -> Result<(Opts, Vec<&'a str>), Failure> {
             "--every" => o.every = Some(parse_every(v(arg)?)?),
             "--command" => {
                 let c = v(arg)?;
-                if let Some(name) = git_bash_rewrite(c, &paths::git_roots(), paths::in_git_bash()) {
+                if let Some(name) = git_bash_rewrite(c, &supraman_core::platform::shell::git_roots(), supraman_core::platform::shell::in_git_bash()) {
                     return Err(Failure::Refused(format!("error: Git Bash rewrote /{name} into {c}; write //{name} (or set MSYS_NO_PATHCONV=1)")));
                 }
                 set_prompt(&mut o, PromptArg::Command(c.to_string()))?

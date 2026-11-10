@@ -7,7 +7,7 @@ use chrono::{Datelike, Local, NaiveDate, TimeZone};
 use roxmltree::{Document, Node};
 
 use super::registrar::{Registrar, TaskState};
-use crate::paths::expand_env;
+use crate::platform::shell::expand_env;
 use crate::{Result, Workspace, holder_of};
 
 /// A script is read this far for the word `claude`.

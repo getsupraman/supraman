@@ -88,7 +88,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     let folder = main_repo_of_gate()?;
     let hand = cx.update(|window, cx| view.update(cx, |v, cx| v.new_claude(folder.clone(), HAND.into(), window, cx)))?;
     let program = until_started(view, hand, cx).await?;
-    let powershell = supraman_core::paths::terminal_powershell().path.clone();
+    let powershell = supraman_core::platform::shell::terminal_powershell().path.clone();
     if is_cmd(&program) || program != powershell {
         bail!("a [+] claude tab under a cmd default started {}, not {}", program.display(), powershell.display());
     }

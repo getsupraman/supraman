@@ -72,7 +72,7 @@ pub fn folders(workspace: &supraman_core::Workspace) -> Vec<(String, PathBuf)> {
 
 /// The prompt file a Send launches with, or why it does not: `claude` resolved on PATH and the file written whole.
 fn prompt_file(claude: &str, home: Option<&Path>, prompt: &str) -> Result<PathBuf, String> {
-    let (path, pathext, _) = supraman_core::paths::process_env();
+    let (path, pathext, _) = supraman_core::platform::shell::process_env();
     if let Some(why) = super::shells::cmd_refusal(super::shells::launched_file(claude, &path, &pathext).as_deref(), prompt) {
         return Err(why);
     }

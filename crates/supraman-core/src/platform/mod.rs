@@ -7,6 +7,7 @@ pub mod locale;
 pub mod open;
 pub mod paths;
 pub mod process;
+pub mod shell;
 
 /// What a stub says off Windows, the one platform implemented.
 pub const NOT_HERE: &str = "not on this platform";

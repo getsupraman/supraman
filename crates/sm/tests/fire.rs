@@ -277,7 +277,8 @@ fn fire_runs_a_ps1_under_the_resolved_powershell() {
     let report = run_now(&f, "ps", &mut TestHost::new(&f));
     assert_eq!(report.outcome, Some(Outcome::Ok), "{report:?}");
     let ran = fs::read_to_string(schedule::state_dir(&f.home, "demo", "ps").unwrap().join("shell.txt")).unwrap();
-    use supraman_core::paths::{path_key, script_powershell};
+    use supraman_core::paths::path_key;
+    use supraman_core::platform::shell::script_powershell;
     assert_eq!(path_key(Path::new(ran.trim())), path_key(&script_powershell().path));
 }
 

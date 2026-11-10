@@ -126,7 +126,7 @@ impl ShellDefault {
 impl FleetView {
     pub(super) fn detect_shells(cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
-            let shells = cx.background_spawn(async { supraman_core::shells::detect() }).await;
+            let shells = cx.background_spawn(async { supraman_core::platform::shell::detect() }).await;
             this.update(cx, |this, cx| {
                 this.shell_default.detected(shells);
                 cx.notify();
@@ -152,7 +152,7 @@ impl FleetView {
         match self.default_of() {
             Some(shell) => (shell.short(), command(&shell, &self.shell_args)),
             None => {
-                let ps = supraman_core::paths::terminal_powershell();
+                let ps = supraman_core::platform::shell::terminal_powershell();
                 (ps.name.to_string(), SavedShell { program: ps.path.clone(), args: powershell_args(self.shell_args.clone()) })
             }
         }
@@ -199,7 +199,7 @@ impl FleetView {
 }
 
 pub(super) fn powershell(args: Vec<String>) -> util::shell::Shell {
-    util::shell::Shell::WithArguments { program: supraman_core::paths::terminal_powershell().path.to_string_lossy().into_owned(), args: powershell_args(args), title_override: None }
+    util::shell::Shell::WithArguments { program: supraman_core::platform::shell::terminal_powershell().path.to_string_lossy().into_owned(), args: powershell_args(args), title_override: None }
 }
 
 /// The policy is the process's own: a `claude.ps1` first on PATH runs under a Restricted machine policy.
