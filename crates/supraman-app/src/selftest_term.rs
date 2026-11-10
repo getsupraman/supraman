@@ -3,12 +3,12 @@ use std::time::{Duration, Instant};
 use anyhow::bail;
 use supraman_term::Terminal;
 use gpui::{
-    AsyncWindowContext, Entity, Modifiers, MouseButton, MouseDownEvent,
-    MouseUpEvent, PlatformInput,
+    AsyncWindowContext, Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollEvent, point,
 };
 
 use crate::{
-    selftest::{CLIPBOARD_TRIES, hex6, key, read_own, select_wheel_line, sleep},
+    selftest::{CLIPBOARD_TRIES, drawn, hex6, key, read_own, select_wheel_line, sleep, until_with},
     selftest_clipboard::put_text,
 };
 
@@ -18,6 +18,24 @@ pub(crate) async fn run(terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext
     let result = steps(terminal, cx).await;
     saved.restore()?;
     result
+}
+
+pub(crate) async fn wheel(terminal: &Entity<Terminal>, position: Point<Pixels>, notches: f32, cx: &mut AsyncWindowContext) -> anyhow::Result<usize> {
+    let before = terminal.read_with(cx, |t, _| t.grid_extent().0);
+    cx.update(|window, cx| {
+        window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: None, modifiers: Modifiers::default() }), cx);
+        // a Windows wheel notch: 3 lines, positive is up (gpui_windows events.rs)
+        let event = ScrollEvent { position, delta: ScrollDelta::Lines(point(0., 3. * notches)), ..Default::default() };
+        window.dispatch_event(PlatformInput::Scroll(event), cx);
+    })?;
+    drawn(cx).await?;
+    let mut seen = (before, before);
+    let moved = until_with(cx, Duration::from_secs(3), "the wheel's scroll", |cx| {
+        seen = terminal.read_with(cx, |t, _| (t.grid_extent().0, t.last_content().display_offset));
+        (seen.0 != before && seen.0 == seen.1).then_some(seen.0)
+    })
+    .await;
+    moved.map_err(|e| anyhow::anyhow!("{notches} notches from display_offset {before}: {e}; the terminal at {}, the last frame painted {}", seen.0, seen.1))
 }
 
 fn last_line(terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> String {

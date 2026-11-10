@@ -638,7 +638,7 @@ async fn inbox_cards(view: &Entity<FleetView>, tab: u64, work: &Entity<WorkView>
     click(view, &format!("{HOUSEKEEPING_KEY}=closed"), cx).await?;
     painted(view, &[&shipped, &format!("{HOUSEKEEPING_KEY}=open")], LIVE_WITHIN, "sw1/1's card under the opened Housekeeping", cx).await?;
     click(view, &format!("inbox-ws-dismiss-done_unverified:{SHIPPED}"), cx).await?;
-    sleep(cx, Duration::from_millis(100)).await;
+    crate::selftest::drawn(cx).await?;
     if is_painted(view, &shipped, cx) {
         bail!("× left {shipped} painted");
     }

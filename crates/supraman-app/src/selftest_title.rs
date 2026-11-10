@@ -137,7 +137,7 @@ async fn hover_card(view: &Entity<FleetView>, id: u64, title: &str, cx: &mut Asy
     let position = point(bounds.left() + px(12.), bounds.center().y);
     // away first, so the hover starts now
     move_to(point(px(1.), px(1.)), cx)?;
-    sleep(cx, Duration::from_millis(100)).await;
+    crate::selftest::drawn(cx).await?;
     LAST_CARD.with(|l| l.borrow_mut().take());
     let started = Instant::now();
     loop {

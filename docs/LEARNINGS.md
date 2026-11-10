@@ -5966,3 +5966,7 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   are `pub`; no `#[cfg(test)]` item is reached from the app, so the crate has no `test-support` feature.
 - **A measure script must not restore with `git checkout --`** after a `git mv`: the index holds the moved file as it
   was before the edits, so the checkout silently reverted them; copy the file aside and back instead.
+
+## 2026-11-10 — refactor4 selftest waits for frames, not times (r4-step6)
+
+- **Frames throttle while the display is off** (overnight, ~260 ms a frame, measured from 7e's 128 edge-drag moves in 33 s), so a fixed sleep before a read of painted state reads a stale frame, and `--selftest` ran past 200 s even with every step waiting on `drawn`; `Mode::Selftest`'s whole-run budget is 300 s to cover it.

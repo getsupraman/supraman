@@ -236,7 +236,7 @@ pub(crate) fn lock() -> MutexGuard<'static, Option<Scratch>> {
 pub(crate) fn install_guards(mode: Mode) {
     let budget = match mode {
         Mode::Selftest if std::env::var_os("SUPRAMAN_SHOTS").is_some() => Duration::from_secs(360),
-        Mode::Selftest => Duration::from_secs(200),
+        Mode::Selftest => Duration::from_secs(300), // slow frames while the display is off: docs/LEARNINGS.md 2026-11-10
         Mode::SelftestDetach(cycles) => Duration::from_secs(90 + 15 * u64::from(cycles)),
         Mode::SelftestSupervise => Duration::from_secs(420),
         Mode::SelftestPerf => Duration::from_secs(300),
@@ -1180,8 +1180,9 @@ pub(crate) async fn select_wheel_line(terminal: &Entity<Terminal>, cx: &mut Asyn
             }
             window.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: to, modifiers: none, click_count: 1 }), cx);
         })?;
-        sleep(cx, Duration::from_millis(200)).await;
-        let (selected, now) = terminal.read_with(cx, |t, _| (t.selection_text(), t.grid_extent()));
+        drawn(cx).await?;
+        let read = |cx: &mut AsyncWindowContext| terminal.read_with(cx, |t, _| (t.selection_text(), t.grid_extent()));
+        let (selected, now) = until_with(cx, Duration::from_secs(2), "the drag's selection", |cx| Some(read(cx)).filter(|(s, n)| s.as_deref() == Some(text.as_str()) || *n != grid)).await.unwrap_or_else(|_| read(cx));
         if selected.as_deref() == Some(text.as_str()) {
             return Ok((row, text));
         }
@@ -1308,17 +1309,7 @@ async fn wheel_scroll(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> 
         if scrollback < 6 {
             bail!("{count} lines in a {lines}-line grid left {scrollback} lines of scrollback; two notches up need 6");
         }
-        let offset = async |notches: f32, cx: &mut AsyncWindowContext| -> anyhow::Result<usize> {
-            let position = grid.center();
-            cx.update(|window, cx| {
-                window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: None, modifiers: Modifiers::default() }), cx);
-                // a Windows wheel notch: 3 lines, positive is up (gpui_windows events.rs)
-                let event = ScrollEvent { position, delta: ScrollDelta::Lines(point(0., 3. * notches)), ..Default::default() };
-                window.dispatch_event(PlatformInput::Scroll(event), cx);
-            })?;
-            sleep(cx, Duration::from_millis(200)).await;
-            Ok(terminal.read_with(cx, |t, _| t.last_content().display_offset))
-        };
+        let offset = async |notches: f32, cx: &mut AsyncWindowContext| crate::selftest_term::wheel(&terminal, grid.center(), notches, cx).await;
         let up = offset(2., cx).await?;
         if up == 0 {
             bail!("two wheel notches up over the grid {grid:?} left display_offset at 0");
