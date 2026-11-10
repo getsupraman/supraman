@@ -137,7 +137,7 @@ async fn wheel(view: &Entity<FleetView>, ids: &[u64], cx: &mut AsyncWindowContex
             }
             scroll(at, dy, cx)?;
             n += 1;
-            drawn(cx).await?;
+            if n % 4 == 0 { drawn(cx).await?; }
         }
         notches.push(n);
     }
