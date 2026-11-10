@@ -27,7 +27,7 @@ pub(crate) async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWin
     let mine: Vec<u64> = view.read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).filter(|id| !before.contains(id)).collect());
     view.update(cx, |v, cx| {
         if let Ok((settings, ())) = &restored {
-            v.shell_default.read(settings.terminal.clone());
+            v.term_look.shell_default.read(settings.terminal.clone());
         }
         v.claude_command = saved;
         v.menu = None;
@@ -48,9 +48,9 @@ fn is_cmd(program: &Path) -> bool {
 }
 
 async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    until(view, cx, WITHIN, "this machine's shells detected", |v| v.shell_default.found().map(drop)).await?;
+    until(view, cx, WITHIN, "this machine's shells detected", |v| v.term_look.shell_default.found().map(drop)).await?;
     let (cmd, ()) = Settings::update(home, |s| s.terminal.set_shell(ShellSetting::Cmd)).context("[terminal] shell = cmd")?;
-    view.update(cx, |v, _| v.shell_default.read(cmd.terminal));
+    view.update(cx, |v, _| v.term_look.shell_default.read(cmd.terminal));
 
     let cwd = view.read_with(cx, |v, _| v.new_shell_cwd()).context("+ has no folder")?;
     click(view, "new-shell-menu", cx).await?;

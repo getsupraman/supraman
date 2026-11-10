@@ -86,10 +86,10 @@ impl FleetView {
         if let Some(width) = self.sidebar.left_saves.read(cx).loaded(loaded.window.left_width) {
             self.sidebar.left_width = width;
         }
-        self.term_font_size = px(loaded.terminal.font_size() as f32);
-        self.term_font_family = SharedString::from(loaded.terminal.font_family(&self.installed_fonts));
-        self.term_ligatures = loaded.terminal.ligatures();
-        self.shell_default.read(loaded.terminal.clone());
+        self.term_look.term_font_size = px(loaded.terminal.font_size() as f32);
+        self.term_look.term_font_family = SharedString::from(loaded.terminal.font_family(&self.term_look.installed_fonts));
+        self.term_look.term_ligatures = loaded.terminal.ligatures();
+        self.term_look.shell_default.read(loaded.terminal.clone());
         let mode = loaded.window.tab_keys();
         self.tab_keys.update(cx, |keys, _| keys.mode = mode);
         cx.notify();

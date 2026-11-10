@@ -124,7 +124,7 @@ impl FleetView {
         cx.spawn(async move |this, cx| {
             let shells = cx.background_spawn(async { supraman_core::platform::shell::detect() }).await;
             this.update(cx, |this, cx| {
-                this.shell_default.detected(shells);
+                this.term_look.shell_default.detected(shells);
                 cx.notify();
             })
             .ok();
@@ -134,7 +134,7 @@ impl FleetView {
 
     /// The `[terminal] shell` default; its notice joins the tab notices. PowerShell while detection runs.
     fn default_of(&mut self) -> Option<Shell> {
-        let (shell, notice) = self.shell_default.resolved()?.clone();
+        let (shell, notice) = self.term_look.shell_default.resolved()?.clone();
         if let Some(notice) = notice
             && !self.saving.tab_notices.contains(&notice)
         {
@@ -173,7 +173,7 @@ impl FleetView {
         cx.spawn(async move |this, cx| {
             let terminal = read.await;
             this.update(cx, |this, cx| {
-                this.shell_default.read(terminal);
+                this.term_look.shell_default.read(terminal);
                 this.show_shell_menu(cx);
             })
             .ok();
@@ -186,7 +186,7 @@ impl FleetView {
             self.pane_toast.show_why("Still finding this machine's shells.".into(), |v: &mut Self| &mut v.pane_toast, cx);
             return;
         };
-        let shells = self.shell_default.found().cloned().expect("default_of found the shells");
+        let shells = self.term_look.shell_default.found().cloned().expect("default_of found the shells");
         let position = self.hits.borrow().get("new-shell-menu").map(|h| h.bounds.bottom_left()).unwrap_or_default();
         self.menu = Some(ContextMenu { title: "New shell".into(), position, items: menu_items(&shells, &default) });
         cx.notify();

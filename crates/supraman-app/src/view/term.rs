@@ -117,7 +117,7 @@ impl FleetView {
                 }
             }
             Chord::Find => self.open_find(tab_id, window, cx),
-            Chord::FontSize(delta) => self.set_term_font_size(step_font_size(self.term_font_size, delta), cx),
+            Chord::FontSize(delta) => self.set_term_font_size(step_font_size(self.term_look.term_font_size, delta), cx),
             Chord::FontReset => self.set_term_font_size(FONT_SIZE, cx),
             Chord::ScrollLines(n) if n > 0 => terminal.update(cx, |t, _| t.scroll_up_by(n as usize)),
             Chord::ScrollLines(n) => terminal.update(cx, |t, _| t.scroll_down_by(n.unsigned_abs() as usize)),
@@ -131,27 +131,27 @@ impl FleetView {
     }
 
     pub(super) fn wheel_font_size(&mut self, delta: ScrollDelta, cx: &mut Context<Self>) {
-        let steps = zoom_steps(delta, &mut self.zoom_carried);
+        let steps = zoom_steps(delta, &mut self.term_look.zoom_carried);
         if steps != 0 {
-            self.set_term_font_size(step_font_size(self.term_font_size, steps), cx);
+            self.set_term_font_size(step_font_size(self.term_look.term_font_size, steps), cx);
         }
     }
 
     pub fn set_term_font_size(&mut self, size: Pixels, cx: &mut Context<Self>) {
         let size = step_font_size(size.round(), 0);
-        if size == self.term_font_size {
+        if size == self.term_look.term_font_size {
             return;
         }
-        self.term_font_size = size;
+        self.term_look.term_font_size = size;
         cx.notify();
         let Some(home) = self.home.clone() else {
             return;
         };
-        self.font_save = Some(cx.spawn(async move |this, cx| {
+        self.term_look.font_save = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(FONT_SAVE_AFTER).await;
             let saved = Settings::update(&home, |settings| settings.terminal.set_font_size(f32::from(size) as u32));
             this.update(cx, |this, cx| {
-                this.font_save = None;
+                this.term_look.font_save = None;
                 if let Err(e) = saved {
                     this.action_error = Some(format!("Cannot save the terminal font size: {e}"));
                     cx.notify();
@@ -163,11 +163,11 @@ impl FleetView {
 
     #[cfg(feature = "selftest")]
     pub fn font_save_pending(&self) -> bool {
-        self.font_save.is_some()
+        self.term_look.font_save.is_some()
     }
 
     pub fn term_font(&self) -> TermFont {
-        TermFont { family: self.term_font_family.clone(), size: self.term_font_size, ligatures: self.term_ligatures }
+        TermFont { family: self.term_look.term_font_family.clone(), size: self.term_look.term_font_size, ligatures: self.term_look.term_ligatures }
     }
 
     pub fn set_term_font(&mut self, family: Option<&str>, ligatures: bool, cx: &mut Context<Self>) -> Result<(), String> {
@@ -183,8 +183,8 @@ impl FleetView {
                 settings
             }
         };
-        self.term_font_family = settings.terminal.font_family(&self.installed_fonts).into();
-        self.term_ligatures = ligatures;
+        self.term_look.term_font_family = settings.terminal.font_family(&self.term_look.installed_fonts).into();
+        self.term_look.term_ligatures = ligatures;
         cx.notify();
         Ok(())
     }
@@ -366,7 +366,7 @@ impl FleetView {
                         cx.notify();
                     }
                     let wait = blink_wait(next);
-                    this.blink.parked = wait.is_none();
+                    this.term_look.blink.parked = wait.is_none();
                     wait
                 });
                 match wait {
@@ -414,9 +414,9 @@ impl FleetView {
     }
 
     pub(super) fn wake_blink(&mut self) {
-        if self.blink.parked && self.active_terminal().is_some() {
-            self.blink.parked = false;
-            self.blink.nudge.wake();
+        if self.term_look.blink.parked && self.active_terminal().is_some() {
+            self.term_look.blink.parked = false;
+            self.term_look.blink.nudge.wake();
         }
     }
 }

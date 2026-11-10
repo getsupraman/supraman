@@ -79,6 +79,7 @@ pub(crate) mod start;
 pub(crate) mod tab_keys;
 mod tab_saving;
 mod term;
+mod term_look;
 mod work_tab;
 mod workman_url;
 pub(crate) mod workspace_dialog;
@@ -256,7 +257,6 @@ pub struct FleetView {
     pub active: Option<u64>,
     next_tab_id: u64,
     pub shell_args: Vec<String>,
-    pub(crate) shell_default: shells::ShellDefault,
     focus: FocusHandle,
     pub probe: FrameProbe,
     pub hits: HitTargets,
@@ -282,12 +282,6 @@ pub struct FleetView {
     pub injected: Arc<Mutex<Vec<Session>>>,
     /// Bumped by every registry write from this window; a poll that read the registry before one is not applied.
     registry_writes: Arc<AtomicU64>,
-    pub term_font_size: Pixels,
-    pub term_font_family: SharedString,
-    pub term_ligatures: bool,
-    pub installed_fonts: Arc<Vec<String>>,
-    font_save: Option<gpui::Task<()>>,
-    zoom_carried: f32,
     pub(crate) settings_window: Option<WindowHandle<SettingsView>>,
     last_alive: StdHashMap<String, i64>,
     pub relays: BTreeMap<String, RelayStatus>,
@@ -339,7 +333,6 @@ pub struct FleetView {
     pub stars: Stars,
     pub claude_command: String,
     pub search: Entity<TextInput>,
-    blink: term::CursorBlink,
     pub toast: ToastSlot,
     pub pane_toast: ToastSlot,
     pub updates: crate::updates::Updates,
@@ -349,6 +342,7 @@ pub struct FleetView {
     painted_sessions: bool,
     pub saving: tab_saving::TabSaving,
     pub sidebar: sidebar::Sidebar,
+    pub term_look: term_look::TermLook,
     pub scheduling: schedule_state::ScheduleState,
     pub(crate) tab_keys: Entity<tab_keys::TabKeyState>,
 }
@@ -523,10 +517,6 @@ impl FleetView {
         });
         let home = Registry::from_env().ok().map(|r| r.home().to_path_buf());
         let defaults = Settings::default();
-        let term_font_size = px(defaults.terminal.font_size() as f32);
-        let installed_fonts: Arc<Vec<String>> = Arc::new(cx.text_system().all_font_names());
-        let term_font_family = SharedString::from(defaults.terminal.font_family(&installed_fonts));
-        let term_ligatures = defaults.terminal.ligatures();
         let retries: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
         let injected: Arc<Mutex<Vec<Session>>> = Arc::default();
         let registry_writes: Arc<AtomicU64> = Arc::default();
@@ -546,7 +536,7 @@ impl FleetView {
         Self::start_polling(poller, woken, cx);
         Self::load_settings(home.clone(), cx);
         Self::load_stores(home.clone(), cx);
-        let blink = term::CursorBlink::start(cx);
+        let term_look = term_look::TermLook::new(&defaults.terminal, cx);
         let (workman_recheck, recheck) = nudge::nudge();
         Self::watch_workman(home.clone(), recheck, cx);
         let work_inbox = WorkInbox::shared(home.clone(), cx);
@@ -583,7 +573,6 @@ impl FleetView {
             active: None,
             next_tab_id: 1,
             shell_args: vec!["-NoLogo".into()],
-            shell_default: shells::ShellDefault::new(defaults.terminal.clone()),
             focus,
             probe: FrameProbe::default(),
             hits: HitTargets::default(),
@@ -607,12 +596,6 @@ impl FleetView {
             #[cfg(feature = "selftest")]
             injected,
             registry_writes,
-            term_font_size,
-            term_font_family,
-            term_ligatures,
-            installed_fonts,
-            font_save: None,
-            zoom_carried: 0.,
             settings_window: None,
             last_alive: StdHashMap::new(),
             relays: BTreeMap::new(),
@@ -664,7 +647,6 @@ impl FleetView {
             stars: Stars::default(),
             claude_command: "claude".into(),
             search,
-            blink,
             toast: ToastSlot::default(),
             pane_toast: ToastSlot::default(),
             updates,
@@ -674,6 +656,7 @@ impl FleetView {
             painted_sessions: false,
             saving: tab_saving::TabSaving::new(tabs_writes),
             sidebar: sidebar::Sidebar::new(cx),
+            term_look,
             scheduling,
             tab_keys: cx.new(|_| tab_keys::TabKeyState::new(defaults.window.tab_keys())),
         }
@@ -957,7 +940,7 @@ impl FleetView {
         if self.writes.max.report_counts() {
             self.max_working = report.max_working;
         }
-        self.shell_default.ticked(report.terminal);
+        self.term_look.shell_default.ticked(report.terminal);
         self.supervise_errors = report.errors;
         supraman_ui::notices::keep_dismissed(&mut self.supervise_dismissed, &self.supervise_errors);
         self.daemon_hold = report.daemon_hold;

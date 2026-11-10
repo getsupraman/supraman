@@ -29,7 +29,7 @@ pub(crate) async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWin
 
 async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     close_all(view, cx);
-    let start = view.read_with(cx, |v, _| v.term_font_size);
+    let start = view.read_with(cx, |v, _| v.term_look.term_font_size);
     if start != term_element::FONT_SIZE {
         bail!("the terminal font size starts at {start:?}, not 14");
     }
@@ -42,7 +42,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     let ctrl = Modifiers::control();
     key(cx, "=", ctrl)?;
     key(cx, "=", ctrl)?;
-    let zoomed = view.read_with(cx, |v, _| v.term_font_size);
+    let zoomed = view.read_with(cx, |v, _| v.term_look.term_font_size);
     if zoomed != start + px(2.) {
         bail!("Ctrl+= twice in tab {second}: {start:?} → {zoomed:?}");
     }
@@ -63,7 +63,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
         })?;
         sleep(cx, Duration::from_millis(60)).await;
     }
-    let spun = view.read_with(cx, |v, _| v.term_font_size);
+    let spun = view.read_with(cx, |v, _| v.term_look.term_font_size);
     if spun != zoomed + px(3.) {
         bail!("3 Ctrl+wheel notches up: {zoomed:?} → {spun:?}");
     }
@@ -74,7 +74,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     let settings = settings_page(view, home, first, &first_term, spun, cx).await.context("Settings → Appearance")?;
 
     key(cx, "0", ctrl)?;
-    let reset = view.read_with(cx, |v, _| v.term_font_size);
+    let reset = view.read_with(cx, |v, _| v.term_look.term_font_size);
     if reset != term_element::FONT_SIZE {
         bail!("Ctrl+0: {spun:?} → {reset:?}, not 14");
     }
@@ -132,7 +132,7 @@ async fn settings_page(
         crate::selftest_manage::shot_window("m5-41-settings-font-size", Some("Supraman Settings"), cx).await;
         handle.update(cx, |s, _, cx| s.set_term_font_size(size + px(1.), cx)).map_err(gone)?;
         let plus = size + px(1.);
-        let now = view.read_with(cx, |v, _| v.term_font_size);
+        let now = view.read_with(cx, |v, _| v.term_look.term_font_size);
         if now != plus {
             bail!("+ on the page: {size:?} → {now:?}");
         }
