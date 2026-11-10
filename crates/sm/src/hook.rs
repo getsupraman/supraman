@@ -1,6 +1,7 @@
 //! Run by `plugins/supraman/hooks/hooks.json`. Never fails: whatever goes wrong, nothing is printed and the exit code is 0.
 
 use std::io::{Read, Write};
+use supraman_core::home::SessionEnv;
 use supraman_core::{Event, ROTATE_AT, append_event, role_injection_for};
 
 /// A UserPromptSubmit payload carries the whole prompt; a larger one is not parsed.
@@ -15,10 +16,10 @@ pub fn run(event: &str) {
     if let Some(e) = Event::from_payload(event, &payload, supraman_core::time::now_ms()) {
         let _ = append_event(&home, &e, ROTATE_AT);
     }
-    let workspace = std::env::var("SUPRAMAN_WORKSPACE").ok();
+    let env = SessionEnv::from_env();
     if event == "SessionStart"
-        && let Some(role) = std::env::var("SUPRAMAN_ROLE").ok()
-        && let Some(text) = role_injection_for(&home, &role, workspace.as_deref(), std::env::var("SUPRAMAN_REPO").ok().as_deref())
+        && let Some(role) = &env.role
+        && let Some(text) = role_injection_for(&home, role, env.workspace.as_deref(), env.repo.as_deref())
     {
         let mut out = std::io::stdout().lock();
         let _ = out.write_all(text.as_bytes());

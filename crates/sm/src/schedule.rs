@@ -8,6 +8,7 @@ use supraman_claude::{LaunchSpec, mcp_config_path};
 use supraman_core::schedule::{
     self, Action, ActionKind, CatchUp, Clock, Day, Overlap, Profile, Prompt, Schedule, Span, Status, Trigger,
 };
+use supraman_core::home::SessionEnv;
 use supraman_core::{CoreError, Registry, Workspace, find_plugin_dir, sm_allowed_tools, paths, slugify};
 use supraman_supervisor::{LaunchConfig, WantedSession};
 
@@ -795,7 +796,7 @@ fn report(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
         _ => return Err(usage()),
     };
     let (all, _) = registry.load_all()?;
-    let preferred = std::env::var("SUPRAMAN_WORKSPACE").ok();
+    let preferred = SessionEnv::from_env().workspace;
     let mut order: Vec<&Workspace> = all.iter().filter(|w| Some(&w.name) == preferred.as_ref()).collect();
     order.extend(all.iter().filter(|w| Some(&w.name) != preferred.as_ref()));
     for w in order {

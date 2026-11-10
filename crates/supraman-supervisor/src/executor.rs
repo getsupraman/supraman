@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use supraman_claude::{Claude, LaunchSpec, Session, SessionIdentity};
 use supraman_core::AGENTS_SERVER;
+use supraman_core::home::SessionEnv;
 
 use crate::mint::{Absent, Bearer, Keeper};
 use crate::{
@@ -131,10 +132,14 @@ impl LaunchConfig {
         let Some(home) = &self.supraman_home else {
             return Vec::new();
         };
-        let mut env: Vec<(String, String)> =
-            [("SUPRAMAN_ROLE", role), ("SUPRAMAN_WORKSPACE", workspace), ("SUPRAMAN_SESSION", name)].map(|(k, v)| (k.to_string(), v.to_string())).into();
+        let session = SessionEnv {
+            role: Some(role.to_string()),
+            workspace: Some(workspace.to_string()),
+            session: Some(name.to_string()),
+            repo: repo.map(str::to_string),
+        };
+        let mut env: Vec<(String, String)> = session.vars().into_iter().map(|(k, v)| (k.to_string(), v)).collect();
         env.extend(supraman_core::home::home_env(home).map(|(k, v)| (k.to_string(), v)));
-        env.extend(repo.map(|r| ("SUPRAMAN_REPO".to_string(), r.to_string())));
         for (k, v) in extra {
             env.retain(|(have, _)| have != k);
             env.push((k.to_string(), v.to_string()));

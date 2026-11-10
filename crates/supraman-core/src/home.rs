@@ -31,6 +31,42 @@ pub fn home_env(home: &Path) -> [(&'static str, String); 1] {
     [(HOME_VAR, home.display().to_string())]
 }
 
+pub const ROLE_VAR: &str = "SUPRAMAN_ROLE";
+pub const WORKSPACE_VAR: &str = "SUPRAMAN_WORKSPACE";
+pub const SESSION_VAR: &str = "SUPRAMAN_SESSION";
+pub const REPO_VAR: &str = "SUPRAMAN_REPO";
+
+/// A Supraman session's `SUPRAMAN_*` env beside its home: the one writer (`vars`) and reader (`from_env`) of these four.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionEnv {
+    pub role: Option<String>,
+    pub workspace: Option<String>,
+    /// The session's name, what `sm tell` signs with.
+    pub session: Option<String>,
+    pub repo: Option<String>,
+}
+
+impl SessionEnv {
+    /// This process's; a var unset or not Unicode is `None`, an empty one kept.
+    pub fn from_env() -> Self {
+        let var = |k| std::env::var(k).ok();
+        Self { role: var(ROLE_VAR), workspace: var(WORKSPACE_VAR), session: var(SESSION_VAR), repo: var(REPO_VAR) }
+    }
+
+    /// This process's `SUPRAMAN_ROLE` as the OS holds it, Unicode or not.
+    pub fn role_os() -> Option<OsString> {
+        std::env::var_os(ROLE_VAR)
+    }
+
+    /// The vars to set for a child, in the order role, workspace, session, repo; a `None` is left out.
+    pub fn vars(&self) -> Vec<(&'static str, String)> {
+        [(ROLE_VAR, &self.role), (WORKSPACE_VAR, &self.workspace), (SESSION_VAR, &self.session), (REPO_VAR, &self.repo)]
+            .into_iter()
+            .filter_map(|(k, v)| v.clone().map(|v| (k, v)))
+            .collect()
+    }
+}
+
 /// Where a Send's prompt file waits for its launch to read it; `prune::prune` takes what is left.
 pub fn prompts_dir(home: &Path) -> PathBuf {
     home.join("prompts")

@@ -86,7 +86,7 @@ impl Setup {
     fn spec(&self, name: String, cwd: &Path, prompt: &str, extra_env: &[(&str, &str)]) -> LaunchSpec {
         let mut env = serde_json::Map::new();
         env.insert(supraman_core::HOME_VAR.into(), self.home.display().to_string().into());
-        env.insert("SUPRAMAN_ROLE".into(), ROLE.into());
+        env.insert(supraman_core::home::ROLE_VAR.into(), ROLE.into());
         for (k, v) in extra_env {
             env.insert((*k).into(), (*v).into());
         }
