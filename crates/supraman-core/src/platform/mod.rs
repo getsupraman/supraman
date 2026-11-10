@@ -1,6 +1,7 @@
 //! The OS boundary: each module holds the Windows code of one concern, and elsewhere a stub that refuses with
 //! [`NOT_HERE`].
 
+pub mod locale;
 pub mod open;
 pub mod process;
 

@@ -115,34 +115,10 @@ impl Default for Locale {
     }
 }
 
-/// The user's locale, read once from Windows.
+/// The user's locale, read once; [`Locale::default`] where the platform gives none.
 pub fn user_locale() -> &'static Locale {
     static LOCALE: std::sync::OnceLock<Locale> = std::sync::OnceLock::new();
-    LOCALE.get_or_init(read_locale)
-}
-
-#[cfg(windows)]
-fn read_locale() -> Locale {
-    use windows::Win32::Globalization::{GetLocaleInfoEx, LOCALE_S1159, LOCALE_S2359, LOCALE_SSHORTDATE, LOCALE_SSHORTTIME};
-    use windows::core::PCWSTR;
-    let read = |kind: u32| {
-        let mut buf = [0u16; 128];
-        let n = unsafe { GetLocaleInfoEx(PCWSTR::null(), kind, Some(&mut buf)) };
-        let n = usize::try_from(n).unwrap_or(0).saturating_sub(1);
-        Some(String::from_utf16_lossy(&buf[..n])).filter(|s| !s.is_empty())
-    };
-    let fallback = Locale::default();
-    Locale {
-        date: read(LOCALE_SSHORTDATE).unwrap_or(fallback.date),
-        time: read(LOCALE_SSHORTTIME).unwrap_or(fallback.time),
-        am: read(LOCALE_S1159).unwrap_or(fallback.am),
-        pm: read(LOCALE_S2359).unwrap_or(fallback.pm),
-    }
-}
-
-#[cfg(not(windows))]
-fn read_locale() -> Locale {
-    Locale::default()
+    LOCALE.get_or_init(|| crate::platform::locale::user().unwrap_or_default())
 }
 
 /// `05/11/2026 @ 17:10` or `11/05/2026 @ 5:10 PM`: the user's date order and clock; empty outside chrono's range.
