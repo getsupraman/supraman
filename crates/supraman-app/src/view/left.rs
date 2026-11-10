@@ -116,7 +116,6 @@ pub fn inbox_key(need: &NeedsYou) -> Option<String> {
     Some(format!("inbox-{verb}-{}", need.name))
 }
 
-/// What one of an Inbox row's buttons does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InboxButton {
     Remedy(Remedy),
@@ -124,8 +123,7 @@ pub enum InboxButton {
     StartFresh,
 }
 
-/// An Inbox row's buttons, in order: hit key, label and what it does. A trust row's Retry follows its
-/// Run in terminal: Supraman never answers the trust prompt, so the human says when it is answered.
+/// A trust row's Retry follows its Run in terminal: Supraman never answers the trust prompt, so the human says when it is.
 pub fn inbox_buttons(need: &NeedsYou) -> Vec<(String, &'static str, InboxButton)> {
     let (Some(action), Some(key)) = (&need.action, inbox_key(need)) else { return Vec::new() };
     let label = match action {
@@ -172,8 +170,7 @@ fn slot() -> AnyElement {
     div().flex_none().size(px(SLOT)).into_any_element()
 }
 
-/// Every tree row, the search results' too: `indent(level)`, a disclosure slot, an icon slot, the label;
-/// a child's icon starts where its parent's label does.
+/// A child's icon starts where its parent's label does.
 pub(crate) mod grid {
     use gpui::{Pixels, px};
 
@@ -182,7 +179,6 @@ pub(crate) mod grid {
     pub const GAP: f32 = 8.;
     const BASE: f32 = 6.;
     pub const STEP: f32 = DISCLOSURE + GAP;
-    /// The label's x from the row's indent.
     pub const LABEL: f32 = DISCLOSURE + GAP + ICON + GAP;
 
     pub fn indent(level: usize) -> Pixels {
@@ -469,7 +465,6 @@ impl FleetView {
         self.reveal_pending = Some((pending, Instant::now()));
     }
 
-    /// Scrolls the sidebar to the row `hit` belongs to; false when no row claims it.
     pub fn reveal_hit(&self, hit: &str) -> bool {
         self.left_list.reveal(hit)
     }
@@ -1365,7 +1360,6 @@ pub(crate) fn home_text(home: Option<&std::path::Path>) -> String {
     home.map(|h| h.display().to_string()).unwrap_or_default()
 }
 
-/// The relay glyph's state for a [`crate::supervise::RelayStatus::label`].
 fn relay_word(label: &str) -> &str {
     match label {
         "relay ready" => "ready",

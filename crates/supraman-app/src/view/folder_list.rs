@@ -128,7 +128,6 @@ impl FolderList {
         self.rows.iter().position(|r| r.home)
     }
 
-    /// The rows not unticked.
     pub fn folders(&self) -> Vec<Folder> {
         self.rows.iter().filter(|r| r.included != Some(false)).map(|r| r.folder.clone()).collect()
     }

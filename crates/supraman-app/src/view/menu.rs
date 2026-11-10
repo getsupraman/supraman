@@ -23,7 +23,6 @@ pub enum MenuAction {
     AddCustom,
     Remove(String),
     OpenFolder(PathBuf),
-    /// A tab of the default shell titled `place · <shell>`.
     OpenTerminal { cwd: PathBuf, place: String },
     NewShell(supraman_core::shells::Shell),
     NewClaude { cwd: PathBuf, title: String },
@@ -86,8 +85,7 @@ pub enum MenuTarget {
     OtherSchedule(String),
 }
 
-/// `own` and `relay` are [`session_items`] of the workspace session and the relay, which have no row of their
-/// own: they follow under a caption each, so nothing on those sessions is out of reach.
+/// `own` and `relay` have no row of their own, so their items follow under a caption each.
 pub fn workspace_items(node: &WorkspaceNode, closed_background: bool, own: Vec<MenuItem>, relay: Vec<MenuItem>) -> Vec<MenuItem> {
     let w = &node.name;
     let mut items = vec![if node.started == Some(true) {
@@ -160,7 +158,6 @@ fn section_key(of: Section, key: &str) -> &str {
     }
 }
 
-/// The prompt tab's two openings, in `folder` when given.
 pub fn new_task_items(workspace: &str, folder: Option<&std::path::Path>) -> [MenuItem; 2] {
     let action = |scheduled| MenuAction::NewTask { workspace: workspace.to_string(), folder: folder.map(std::path::Path::to_path_buf), scheduled };
     [item("new-task", "New task…", action(false)), item("new-scheduled-task", "New scheduled task…", action(true))]

@@ -1,6 +1,4 @@
-//! The prompt tab of New task… and New scheduled task…: one prompt, a folder, a permission mode, Send. Send turns
-//! the tab into a [+] session tab whose claude gets the text as its first prompt; below the form, the workspace's
-//! schedules and recent sessions.
+//! The prompt tab of New task… and New scheduled task…; Send turns it into a [+] session tab.
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -24,7 +22,6 @@ pub const MODES: [&str; 4] = ["default", "acceptEdits", "auto", "plan"];
 
 pub const DEFAULT_MODE: &str = "auto";
 
-/// The line a scheduled task's text follows.
 pub const SCHEDULE_ASK: &str = "Set this up as a Supraman schedule (supraman-scheduler skill); ask me what is open, then add it and show the dry run:";
 
 const RECENT: usize = 8;
@@ -47,11 +44,9 @@ pub struct StartPage {
 pub struct AsksSchedule {
     pub workspace: String,
     pub since: i64,
-    /// Its id and its name.
     pub found: Option<(String, String)>,
 }
 
-/// What claude's first prompt is: the text, after [`SCHEDULE_ASK`] for a scheduled task.
 pub fn first_prompt(text: &str, scheduled: bool) -> String {
     if scheduled { format!("{SCHEDULE_ASK}\n{text}") } else { text.to_string() }
 }

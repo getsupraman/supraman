@@ -82,7 +82,6 @@ pub struct Tray(tray_icon::TrayIcon, std::cell::RefCell<String>, std::cell::Cell
 
 #[cfg(windows)]
 impl Tray {
-    /// The icon for the taskbar's colour, reloaded when it changed.
     pub fn follow_taskbar(&self) {
         let light = desktop::light_taskbar();
         if self.2.get() != light {
@@ -96,7 +95,6 @@ impl Tray {
         }
     }
 
-    /// The icon's tooltip: the scheduled runs that need René (`FleetView::tray_tooltip`).
     pub fn set_tooltip(&self, text: &str) {
         if *self.1.borrow() != text {
             if let Err(e) = self.0.set_tooltip(Some(text)) {
@@ -168,7 +166,7 @@ pub(crate) fn hwnd(window: &Window) -> Option<isize> {
     }
 }
 
-// `ShowWindow` from inside a gpui update finds "window not found" (LEARNINGS m5/22): these run as a task of their own.
+// `ShowWindow` from inside a gpui update finds "window not found": these run as a task of their own.
 
 #[cfg(windows)]
 pub fn hide(window: &Window, cx: &mut App) {

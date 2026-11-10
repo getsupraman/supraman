@@ -2,8 +2,7 @@
 
 use futures::FutureExt as _;
 
-/// The human's sends, and the busy-session limit's writes in the order set; a poll's report gives way to them
-/// ([`MaxWrites`]).
+/// A poll's report gives way to these ([`MaxWrites`]).
 #[derive(Default)]
 pub(super) struct Writes {
     pub(super) sends: Serial,
@@ -24,8 +23,7 @@ impl Serial {
     }
 }
 
-/// The busy-session limit's writes behind the shown value. A tick reads `settings.toml`; its report's limit counts only
-/// when no write is pending and the tick started after the last one landed, so a stale read never undoes a click.
+/// A tick's limit counts only when no write is pending and the tick started after the last one landed, so a stale read never undoes a click.
 #[derive(Default)]
 pub(super) struct MaxWrites {
     pub(super) serial: Serial,

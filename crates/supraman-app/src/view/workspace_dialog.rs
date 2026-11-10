@@ -1,5 +1,4 @@
-//! Add workspace and Edit folders…: a name and a [`FolderList`], from a parent folder's subfolders, built by hand, or
-//! a registered workspace's folders.
+//! Add workspace and Edit folders…: a name and a [`FolderList`].
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -101,8 +100,7 @@ pub fn supervised_elsewhere(taken: &[(String, String)]) -> String {
         .collect()
 }
 
-/// What Save registers: a parent's ticked folders with a scan of it that excludes the rest, or the custom rows
-/// with home `None` while it is the first.
+/// A parent's ticked folders with a scan that excludes the rest, or the custom rows with home `None` while it is the first.
 fn workspace_of(name: String, mode: &Mode, list: &FolderList) -> Workspace {
     let marked = list.home_index().map(|i| list.rows[i].folder.path.clone());
     match mode {
@@ -122,8 +120,7 @@ fn workspace_of(name: String, mode: &Mode, list: &FolderList) -> Workspace {
     }
 }
 
-/// What Save changes in a registered workspace: its folders taken out (a gone one dropped, not skipped), the rows
-/// new to it (an unticked one is neither added nor skipped) and its home.
+/// A gone folder is dropped, not skipped; an unticked new row is neither added nor skipped.
 pub fn edits_of(original: &Workspace, list: &FolderList) -> Vec<Edit> {
     let listed = |f: &Folder| list.rows.iter().any(|r| path_key(&r.folder.path) == path_key(&f.path));
     let (gone, taken): (Vec<&Folder>, Vec<&Folder>) = original.folders.iter().filter(|f| !listed(f)).partition(|f| list.gone.contains(&f.name));

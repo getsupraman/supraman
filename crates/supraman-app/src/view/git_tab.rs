@@ -25,7 +25,6 @@ pub(crate) fn open_or_focus(tabs: &mut Vec<Tab>, next_id: &mut u64, folder: &Pat
 }
 
 impl FleetView {
-    /// Tells each Git tab whether it is the one shown.
     pub(super) fn show_git_tabs(&self, cx: &mut Context<Self>) {
         for tab in &self.tabs {
             if let TabKind::Git(view) = &tab.kind {
@@ -70,7 +69,6 @@ impl FleetView {
 #[path = "git_tab_tests.rs"]
 mod tests;
 
-/// `Git · <folder name>`, or the whole path when it has no name.
 pub(crate) fn title(folder: &std::path::Path) -> String {
     let name = folder.file_name().map_or_else(|| folder.display().to_string(), |n| n.to_string_lossy().into_owned());
     format!("Git · {name}")
