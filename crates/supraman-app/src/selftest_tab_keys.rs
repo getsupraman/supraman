@@ -72,7 +72,7 @@ async fn open(view: &Entity<FleetView>, script: &std::path::Path, cx: &mut Async
         })
     })?;
     let work = view.update(cx, |v, cx| v.open_work(WORKSPACE, cx));
-    let git = view.update(cx, |v, cx| v.open_git(home(), "Git · tab keys".into(), &Default::default(), cx));
+    let git = view.update(cx, |v, cx| v.open_git(home(), "Git · tab keys".into(), cx));
     if order(view, cx).0 != [shell, work, git] {
         bail!("expected tabs [{shell}, {work}, {git}], found {:?}", order(view, cx).0);
     }

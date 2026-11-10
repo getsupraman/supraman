@@ -201,7 +201,7 @@ impl FleetView {
         match action {
             MenuAction::OpenGit(top) => {
                 let title = crate::view::git_tab::title(&top);
-                self.open_git(top, title, &Default::default(), cx);
+                self.open_git(top, title, cx);
             }
             MenuAction::OpenWorkman { workspace, project } => {
                 let id = self.open_work(&workspace, cx);

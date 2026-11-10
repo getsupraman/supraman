@@ -1,6 +1,5 @@
 use gpui::TestAppContext;
-use supraman_git_view::git_view::test_support::sizes;
-use supraman_git_view::git_view::{GitSizes, GitView};
+use supraman_git_view::git_view::GitView;
 use supraman_gitman::fixture::Fixture;
 use supraman_ui::hit::HitTargets;
 
@@ -17,17 +16,17 @@ fn git_tab_opens_once_per_folder_and_saves_its_title_and_folder(cx: &mut TestApp
         let (id, _) = cx.update(|cx| {
             open_or_focus(&mut tabs, &mut next, &f.dir, "Git · repo".into(), cx, |cx| {
                 made.set(made.get() + 1);
-                GitView::open(f.dir.clone(), None, HitTargets::default(), &sizes(), cx)
+                GitView::open(f.dir.clone(), None, HitTargets::default(), cx)
             })
         });
         assert_eq!(id, 1, "a second open focuses the first tab");
     }
     assert_eq!((tabs.len(), made.get()), (1, 1), "one tab and one view for the folder");
     let other = f.temp.path().join("wt");
-    let (id, new) = cx.update(|cx| open_or_focus(&mut tabs, &mut next, &other, "Git · wt".into(), cx, |cx| GitView::open(other.clone(), None, HitTargets::default(), &GitSizes::default(), cx)));
+    let (id, new) = cx.update(|cx| open_or_focus(&mut tabs, &mut next, &other, "Git · wt".into(), cx, |cx| GitView::open(other.clone(), None, HitTargets::default(), cx)));
     assert_eq!((id, new, tabs.len()), (2, true, 2), "another folder, another tab");
 
     let TabKind::Git(view) = &tabs[0].kind else { panic!("a Git tab") };
-    let saved = cx.update(|cx| SavedTab::git(tabs[0].title.clone(), view.read(cx).folder.clone()));
-    assert_eq!(saved, SavedTab::git("Git · repo".into(), f.dir.clone()), "a Git tab saves its title and folder");
+    let saved = cx.update(|cx| SavedTab::Git { title: tabs[0].title.clone(), folder: view.read(cx).folder.clone() });
+    assert_eq!(saved, SavedTab::Git { title: "Git · repo".into(), folder: f.dir.clone() }, "a Git tab saves its title and folder");
 }

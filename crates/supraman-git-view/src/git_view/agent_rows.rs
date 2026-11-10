@@ -16,7 +16,7 @@ use supraman_ui::{button, placeholder};
 use super::colours::Palette;
 use super::load::{self, GraphRow};
 use super::write_gate::capitalised;
-use super::{GitSizes, GitView, Selected, background, cells, graph};
+use super::{GitView, Selected, background, cells, graph};
 use crate::occupancy::{Live, LiveSession};
 
 /// Attach asked for this session, in a terminal tab of the fleet's.
@@ -59,8 +59,8 @@ impl EventEmitter<AttachAgent> for GitView {}
 
 impl GitView {
     /// [`GitView::open_with`] of `live`, whose sessions working in the worktree the graph shows as agent rows.
-    pub fn open_following(folder: PathBuf, home: Option<PathBuf>, hits: HitTargets, saved: &GitSizes, live: Live, cx: &mut App) -> Entity<GitView> {
-        let view = GitView::open_with(folder, home, hits, saved, Arc::new(live.clone()), cx);
+    pub fn open_following(folder: PathBuf, home: Option<PathBuf>, hits: HitTargets, live: Live, cx: &mut App) -> Entity<GitView> {
+        let view = GitView::open_with(folder, home, hits, Arc::new(live.clone()), cx);
         view.update(cx, |v, cx| v.follow_live(live, cx));
         view
     }

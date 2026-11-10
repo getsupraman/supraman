@@ -8,7 +8,7 @@ use supraman_gitman::BackgroundSettings;
 use supraman_ui::hit::HitTargets;
 
 use crate::git_view::branch::OpenGit;
-use crate::git_view::{GitSizes, GitView, Load, background, bind_keys};
+use crate::git_view::{GitView, Load, background, bind_keys};
 use crate::occupancy;
 
 /// The repo's background work on, with no fetch and no maintenance.
@@ -93,11 +93,11 @@ pub(crate) fn open_unchecked<'a>(folder: &Path, opts: Opts, cx: &'a mut TestAppC
     let Opts { home, live, following, size, .. } = opts;
     let folder = folder.to_path_buf();
     let (holder, cx) = cx.add_window_view(|_, cx| {
-        let (hits, sizes) = (HitTargets::default(), GitSizes::default());
+        let hits = HitTargets::default();
         let view = match live {
-            Some(live) if following => GitView::open_following(folder, home, hits, &sizes, live, cx),
-            Some(live) => GitView::open_with(folder, home, hits, &sizes, Arc::new(live), cx),
-            None => GitView::open(folder, home, hits, &sizes, cx),
+            Some(live) if following => GitView::open_following(folder, home, hits, live, cx),
+            Some(live) => GitView::open_with(folder, home, hits, Arc::new(live), cx),
+            None => GitView::open(folder, home, hits, cx),
         };
         Holder { view, size }
     });

@@ -8,7 +8,7 @@ use supraman_core::paths::path_key;
 use super::{FleetView, Tab, TabKind};
 use crate::fleet;
 use crate::git_view::branch::OpenGit;
-use crate::git_view::{AttachAgent, GitSizes, GitView};
+use crate::git_view::{AttachAgent, GitView};
 use crate::tab_card;
 
 /// The open Git tab of `folder`, else a new one from `make`, pushed last; true when it is new.
@@ -34,14 +34,14 @@ impl FleetView {
         }
     }
 
-    /// `Git · <repo>` for `folder`, at its repo's layout; `sizes` a tab saved before the layout file kept them.
-    pub fn open_git(&mut self, folder: PathBuf, title: String, sizes: &GitSizes, cx: &mut Context<Self>) -> u64 {
+    /// `Git · <repo>` for `folder`, at its repo's layout.
+    pub fn open_git(&mut self, folder: PathBuf, title: String, cx: &mut Context<Self>) -> u64 {
         let (home, hits, live) = (self.home.clone(), self.hits.clone(), self.occupancy.clone());
-        let make = |cx: &mut App| GitView::open_following(folder.clone(), home, hits, sizes, live, cx);
+        let make = |cx: &mut App| GitView::open_following(folder.clone(), home, hits, live, cx);
         let (id, new) = open_or_focus(&mut self.tabs, &mut self.next_tab_id, &folder, title, cx, make);
         if new && let Some(TabKind::Git(view)) = self.tabs.iter().find(|t| t.id == id).map(|t| &t.kind) {
             cx.subscribe(view, |this, _, e: &OpenGit, cx| {
-                this.open_git(e.0.clone(), self::title(&e.0), &GitSizes::default(), cx);
+                this.open_git(e.0.clone(), self::title(&e.0), cx);
             })
             .detach();
             cx.subscribe(view, |this, _, e: &AttachAgent, cx| this.attach_agent(e.0.attach.as_deref(), cx)).detach();

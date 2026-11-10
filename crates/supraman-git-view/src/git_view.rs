@@ -33,8 +33,8 @@ mod wip_row;
 mod worktree_panel;
 mod worktree_rows;
 pub(crate) mod write_gate;
-#[cfg(any(test, feature = "test-support"))]
-pub mod test_support;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 #[cfg(test)]
 mod tests;
@@ -217,12 +217,12 @@ impl EventEmitter<OpenGit> for GitView {}
 
 impl GitView {
     #[cfg(any(test, feature = "test-support"))]
-    pub fn open(folder: PathBuf, home: Option<PathBuf>, hits: HitTargets, saved: &GitSizes, cx: &mut App) -> Entity<GitView> {
-        GitView::open_with(folder, home, hits, saved, Arc::new(|_: &std::path::Path| Vec::new()), cx)
+    pub fn open(folder: PathBuf, home: Option<PathBuf>, hits: HitTargets, cx: &mut App) -> Entity<GitView> {
+        GitView::open_with(folder, home, hits, Arc::new(|_: &std::path::Path| Vec::new()), cx)
     }
 
-    /// `saved` are the sizes used while the repo has no layout entry; `occupancy`, the live sessions working in it.
-    pub fn open_with(folder: PathBuf, home: Option<PathBuf>, hits: HitTargets, saved: &GitSizes, occupancy: Arc<dyn Occupancy>, cx: &mut App) -> Entity<GitView> {
+    /// `occupancy`: the live sessions working in it.
+    pub fn open_with(folder: PathBuf, home: Option<PathBuf>, hits: HitTargets, occupancy: Arc<dyn Occupancy>, cx: &mut App) -> Entity<GitView> {
         cx.new(|cx| {
             let gate = cx.new(|_| WriteGate::new(occupancy));
             let panel = cx.new(|cx| CommitPanel::new(hits.clone(), gate.clone(), None, cx));
@@ -291,13 +291,13 @@ impl GitView {
                 focus_summary: false,
                 focus,
             };
-            view.start(saved.clone(), cx);
+            view.start(cx);
             view
         })
     }
 
     /// Reads the repo's key and the layout file off the UI thread, then opens at the repo's layout.
-    fn start(&mut self, saved: GitSizes, cx: &mut Context<Self>) {
+    fn start(&mut self, cx: &mut Context<Self>) {
         find::frecency::start(self.home.clone(), cx);
         let ready = layout::ready(self.home.clone(), cx);
         let folder = self.folder.clone();
@@ -305,18 +305,17 @@ impl GitView {
         cx.spawn(async move |this, cx| {
             ready.await;
             let key = key.await;
-            this.update(cx, |this, cx| this.open_at(key, &saved, cx)).ok();
+            this.update(cx, |this, cx| this.open_at(key, cx)).ok();
         })
         .detach();
     }
 
-    fn open_at(&mut self, key: String, saved: &GitSizes, cx: &mut Context<Self>) {
-        let (opening, save) = layout::opening(&key, saved, cx);
+    fn open_at(&mut self, key: String, cx: &mut Context<Self>) {
+        let opening = layout::opening(&key, cx);
         self.hidden_columns = layout::hidden_columns(cx);
         self.apply(&opening.sizes, cx);
         self.own_graph = opening.own_graph;
         self.key = Some(key);
-        save_off_thread(save, cx, Self::kept);
         self.reload(cx);
     }
 

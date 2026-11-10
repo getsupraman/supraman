@@ -267,7 +267,7 @@ async fn git_palette(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowC
     std::fs::create_dir_all(&parent)?;
     let fixture = cx.background_executor().spawn(async move { supraman_gitman::fixture::Fixture::new_in(&parent) }).await;
     let dir = fixture.dir.clone();
-    view.update(cx, |v, cx| v.open_git(dir.clone(), "Git · shop".into(), &Default::default(), cx));
+    view.update(cx, |v, cx| v.open_git(dir.clone(), "Git · shop".into(), cx));
     let git = crate::selftest::until_app(view, cx, Duration::from_secs(20), "the Git tab", |v, cx| crate::selftest_git::git_tabs(v, cx, &dir).first().map(|(_, g)| g.clone())).await?;
     crate::selftest::until(view, cx, Duration::from_secs(20), "the graph's rows", |v| v.hits.borrow().contains_key("git-row-0").then_some(())).await?;
     cx.update(|window, cx| git.update(cx, |g, cx| g.open_find(None, window, cx)))?;

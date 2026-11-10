@@ -9,7 +9,7 @@ use supraman_ui::themes::{NAME_FLOOR, SECONDARY_FLOOR};
 
 use super::*;
 use super::load::{GraphRow, initials};
-use super::test_support::{Opts, open, open_unchecked, redraw, sizes};
+use super::test_support::{Opts, open, open_unchecked, redraw};
 
 fn graph_row<'a>(view: &GitView, sha: &str, cx: &'a App) -> (usize, &'a GraphRow) {
     view.pages.read(cx).rows.iter().enumerate().find(|(_, r)| r.sha.as_ref() == sha).unwrap_or_else(|| panic!("no row of {sha}"))
@@ -20,13 +20,16 @@ fn names(groups: &[supraman_gitman::RefGroup]) -> Vec<&str> {
 }
 
 #[gpui::test]
-fn git_tab_holds_saved_widths_at_the_columns_mins(cx: &mut TestAppContext) {
+fn git_tab_holds_kept_widths_at_the_columns_mins(cx: &mut TestAppContext) {
     let f = Fixture::shared();
-    let narrow = GitSizes { widths: vec![1, 1, 1, 1, 1], ..sizes() };
-    let view = cx.update(|cx| GitView::open(f.dir.clone(), None, HitTargets::default(), &narrow, cx));
+    let narrow = GitSizes { widths: vec![1; 5], ..GitSizes::default() };
+    let view = cx.update(|cx| GitView::open(f.dir.clone(), None, HitTargets::default(), cx));
     cx.run_until_parked();
-    let clamped = cx.update(|cx| view.read(cx).sizes(cx).widths);
-    assert_eq!(clamped, vec![32, graph::MIN_WIDTH as u32, 50, 50, 50], "saved widths are held at the columns' mins on load");
+    let clamped = cx.update(|cx| {
+        view.update(cx, |v, cx| v.apply(&narrow, cx));
+        view.read(cx).sizes(cx).widths
+    });
+    assert_eq!(clamped, vec![32, graph::MIN_WIDTH as u32, 50, 50, 50], "kept widths are held at the columns' mins");
 }
 
 #[gpui::test]
@@ -178,7 +181,7 @@ fn git_tab_puts_the_wip_row_on_top_of_a_dirty_tree_and_none_on_a_clean_one(cx: &
 fn git_tab_paints_a_long_history_without_a_stall_and_pages_at_the_end(cx: &mut TestAppContext) {
     let g = Generated::shared(20_000);
     let loading = cx.update(|cx| {
-        let view = GitView::open(g.dir.clone(), None, HitTargets::default(), &GitSizes::default(), cx);
+        let view = GitView::open(g.dir.clone(), None, HitTargets::default(), cx);
         matches!(view.read(cx).load, Load::Loading) && view.read(cx).pages.read(cx).rows.is_empty()
     });
     assert!(loading, "the first page is read off the UI thread");
