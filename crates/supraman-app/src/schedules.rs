@@ -573,7 +573,7 @@ pub fn attention(rows: &BTreeMap<String, Vec<ScheduleRow>>) -> Vec<Attention> {
         .collect()
 }
 
-/// The tray's tooltip: Supraman, how many runs need René and how many schedules wait for his approval.
+/// The tray's tooltip: Supraman, how many runs need the user and how many schedules wait for approval.
 pub fn tray_tooltip(attention: usize, waiting: usize) -> String {
     let mut out = "Supraman".to_string();
     match attention {
