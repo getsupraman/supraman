@@ -5970,3 +5970,48 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 ## 2026-11-10 — refactor4 selftest waits for frames, not times (r4-step6)
 
 - **Frames throttle while the display is off** (overnight, ~260 ms a frame, measured from 7e's 128 edge-drag moves in 33 s), so a fixed sleep before a read of painted state reads a stale frame, and `--selftest` ran past 200 s even with every step waiting on `drawn`; `Mode::Selftest`'s whole-run budget is 300 s to cover it.
+
+## 2026-11-10 — refactor4 closing: the suite's numbers, what went, what is open (refactor4/2)
+
+- **The suite before and after** (the unit profile, at BelowNormal through heavy-lock):
+
+  | | before (`bfa588a`) | after (`b51d8f4`) |
+  |---|---|---|
+  | `cargo test --profile unit --workspace` | 1,607 passed, 0 failed, 6 ignored | 1,617 passed, 0 failed, 6 ignored |
+  | its wall time, nothing to compile | 4 m 31 s (16 s of it compile) | 2 m 35 s (1.5 s compile; 148 s of `finished in`) |
+  | its wall time after master moved | 7 m 47 s (compile 3 m 45 s) | not on record |
+  | `--selftest` | 221 s | 154 s |
+  | GitMan's integration tests | 17 binaries: 124.8 s summed, 150 s wall | one binary, `tests/it`: 55.2 s, 61 s wall; 38.4 s inside the workspace run |
+
+  Sources: before, the refactor4 audit's Measurements (the suite), the r4-tests merge `8c7293a` (GitMan's, `cargo test
+  --profile unit -p supraman-gitman --tests`; the audit's own first run summed 104.4 s) and the r4-selftest merge
+  `6a4a23e` (`--selftest` on master before its cuts; at `bfa588a` it was not timed). After, this unit's run
+  (`target\tmp\r4-docs-workspace.txt`, `--no-fail-fast`) and the controller's gate on `e5d9c19` (`--selftest`). A
+  first run without `--no-fail-fast` stopped in supraman-git-view's lib on two failures of the file system under a
+  temp folder (git's `cannot change to … Invalid argument` with the folder present; `Permission denied` copying a hook
+  sample into a fresh clone) and passed in the second.
+- **Removed:** `supraman-gitman/src/patch.rs` and `parse::unquote` with the tests that only exercised them;
+  `text_bounds`, `Diff::new_point`, `session_settings`, `Live::set`, `Wips::error`, `open_release_page`, the branch
+  menu's `act`, details' `short`, the non-Windows `put_test_image`; the forwarders `api_base`, `url_origin`, workman's
+  `secret` and claude's `claude_dir`/`Output` re-exports; five unused `windows` features; test-only items gated
+  (`history`, `History::pid`, `Scheduler::await_waiting`, `select_rows`, `cursor_row`, `read_only_buffer`,
+  `scroll_rows`, `set_entries_given`). 64 files, 447 lines out and 145 in.
+- **Merged into one:** GitMan's ~15 rev-parse helpers (`Session::{verify, rev, line}`), five `UNDER_WAY`s, ten
+  `WriteError::Io` and five `GitError::Failed` builders, ten plural helpers (`text::count`), three `settings.toml`
+  reads per Git tab (`read_settings`); seven "open a Writer" copies (`WriteGate`) and six write actors' ask, busy and
+  written handling (`write_gate::Writes`; `GitView` 59 → 48 fields); the live sessions' two projections
+  (`occupancy::Live`); the Toolhelp32 walks and `CREATE_NO_WINDOW` flags (`platform::process`); every `windows::` call
+  outside the vendored term and `selftest/win.rs` but the ones refactor4/14 holds (`platform`); `reconcile` 157 → 21
+  lines; `view.rs` 2,657 → 2,204 and `selftest.rs` 1,617 → 1,360 lines; the comments of the files changed since
+  refactor3 5,250 → 4,179 lines, blocks of three or more lines 147 → 2.
+- **Tests merged or cut:** GitMan's 17 integration binaries are one; git-view's tests in one layout (`<module>/tests.rs`,
+  `<parent>/tests/<topic>.rs`) on `git_view::test_support`, the helper copies of 15 files gone; three git-view tests
+  removed or merged into the test that keeps their asserts (ARCHITECTURE.md "Testing" has the layout); 18 deadline
+  loops on `supraman_core::testing`; the executor's tests in `executor/tests.rs`. Selftest steps cut, each with its
+  covering test in the r4-selftest commit: 7g's one-tab check, live commit and reopen (`selftest_git_reopen.rs`), the
+  tab menu's Open Git activation, 7's every-kind cards, inbox reload, filters and closed rows, and 7n's notice and
+  message state.
+- **Still open:** refactor4/11 (U9, one text-or-binary rule) and refactor4/14 (U12, the protected leftovers and the
+  questions), both waiting on René; refactor4/14 holds the one warning of ours left (`Hands::launch_for` is never used,
+  A-23). Followups: `fleetview-new-split`, `fleet-build-split`, `app-c144-leftovers`, `gitman-wt-reset-flake`,
+  `selftest-feature-tidy`.
