@@ -586,7 +586,7 @@ pub(crate) async fn press_painted(view: &Entity<FleetView>, key: &str, button: M
         e.context(format!("painted rows {keys:?}; workspaces {rows:?}"))
     })?;
     // a menu closed just now still occludes the row in the last frame's hitboxes
-    sleep(cx, Duration::from_millis(100)).await;
+    crate::selftest::drawn(cx).await?;
     press(view, key, button, cx).await
 }
 
