@@ -1,5 +1,4 @@
-//! A fake Workman read API on 127.0.0.1 for tests, with its OAuth server behind [`FakeWorkman::enable_oauth`] and
-//! its agent-session mints behind [`FakeWorkman::enable_sessions`] and a journal behind [`FakeWorkman::enable_journal`].
+//! A fake Workman on 127.0.0.1 for tests: the read API, plus OAuth, agent sessions and a journal once enabled.
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -130,8 +129,7 @@ type Log = Arc<(Mutex<Vec<Seen>>, Condvar)>;
 /// Every kind of row Workman's inbox serves.
 pub const INBOX_KINDS: [&str; 7] = ["question", "blocked", "blocker_finding", "done_unverified", "stale_in_progress", "expired_claim", "assumption_due"];
 
-/// One inbox row per [`INBOX_KINDS`] as Workman 3.0.3 serves it, in workspace `ws` and run `r1`: the task `<kind>`
-/// titled `Title of <kind>`, its resolving call as `what` and `call`, the blocker finding's target `r1/9`.
+/// One inbox row per [`INBOX_KINDS`] as Workman 3.0.3 serves it, in workspace `ws` and run `r1`, titled `Title of <kind>`.
 pub fn inbox_rows(ws: &str) -> Vec<serde_json::Value> {
     let call = |kind: &str| format!("work_status(ref:\"{ws}/r1/{kind}\", to:\"in_progress\")");
     let task = |id: &str, ref_: &str, title: &str| serde_json::json!({ "id": id, "ref": ref_, "qualifiedRef": format!("r1/{ref_}"), "kind": "task", "title": title, "status": "open" });
@@ -191,9 +189,7 @@ fn read_seen(stream: &TcpStream) -> Option<Seen> {
 }
 
 impl FakeWorkman {
-    /// `routes`: `<METHOD> <target>` or, for any method, the exact target (path and query) → answer.
-    /// Anything else is a v1 404, except
-    /// `/api/stream`, which stays open until [`Self::push`] fails on it or [`Self::drop_streams`].
+    /// `routes`: `<METHOD> <target>` or the exact target → answer; else a v1 404, but `/api/stream` stays open.
     pub fn start(routes: Vec<(String, Answer)>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind a fake Workman");
         let base = format!("http://{}", listener.local_addr().unwrap());
@@ -265,24 +261,21 @@ impl FakeWorkman {
         Self { base, seen, routes, queued, streams, oauth, sessions, journal }
     }
 
-    /// From now on the fake mints and revokes agent sessions (`POST /api/agent-sessions`,
-    /// `DELETE /api/agent-sessions/{id}`) as Workman 2.3.0 does; queued answers for them are not used.
-    /// From now on the fake serves `GET /api/v1/journal` from [`FakeJournal`]'s events (`since=`, `before=`,
-    /// neither for the newest page; `scope=`, `kinds=`, `limit=`); queued answers for it are not used.
+    /// Serves `GET /api/v1/journal` from [`FakeJournal`]'s events; queued answers for it are not used.
     pub fn enable_journal(&self) -> Arc<FakeJournal> {
         let journal = Arc::new(FakeJournal::default());
         *self.journal.lock().unwrap() = Some(journal.clone());
         journal
     }
 
+    /// Mints and revokes agent sessions as Workman 2.3.0 does; queued answers for them are not used.
     pub fn enable_sessions(&self) -> Arc<FakeSessions> {
         let sessions = Arc::new(FakeSessions::default());
         *self.sessions.lock().unwrap() = Some(sessions.clone());
         sessions
     }
 
-    /// From now on the fake is also the OAuth authorization server of its origin, and `/api/*`
-    /// takes only its live access tokens (else 401 with `WWW-Authenticate`).
+    /// Also the OAuth server of its origin: `/api/*` then takes only its live access tokens (else 401).
     pub fn enable_oauth(&self) -> Arc<FakeAuth> {
         let auth = Arc::new(FakeAuth::new(&self.base));
         *self.oauth.lock().unwrap() = Some(auth.clone());
@@ -711,11 +704,7 @@ struct Row {
     expires: Option<i64>,
 }
 
-/// Agent-session rows, one per name, by Workman 2.3.0's rules (`SessionStore.Tokens.cs`): a name whose token
-/// still works is refused (409) without `replace`; a revoked or lapsed one is taken over in its row; another
-/// launcher's name is refused even with `replace`. A `takeoverFrom` on an existing row (Workman 3.0.2) must name its
-/// launcher and come from the user that made it, or the mint is refused; a mint that passes moves the row. Under an idle window a mint answers its `expiresAt`, and each
-/// use of a token slides it, on a clock the test sets.
+/// Agent-session rows, one per name, by Workman's rules: see `SessionStore.Tokens.cs` (2.3.0) and `takeoverFrom` (3.0.2).
 #[derive(Default)]
 pub struct FakeSessions {
     rows: Mutex<BTreeMap<String, Row>>,

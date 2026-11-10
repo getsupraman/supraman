@@ -1,5 +1,4 @@
-//! A repository's identity as Workman keys it (doc 02 `project_repo`, `RepoKeys` in `Workman.Core/Domain/Repos.cs`):
-//! a remote and a main-checkout root, each normalised; either one matching binds the repo to a project.
+//! A repo's identity as Workman keys it (`RepoKeys` in `Workman.Core/Domain/Repos.cs`): a normalised remote or root binds it.
 
 use crate::model::ProjectRepo;
 

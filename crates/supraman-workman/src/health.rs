@@ -11,8 +11,7 @@ pub fn health(mcp_url: &str, timeout: Duration) -> Result<(), String> {
     if (200..300).contains(&status) { Ok(()) } else { Err(format!("HTTP {status}")) }
 }
 
-/// Whether Workman's MCP endpoint at `mcp_url` refuses `token` (401 or 403) to one JSON-RPC `ping` without a
-/// session; unreachable or any other answer is no refusal.
+/// Whether the MCP endpoint at `mcp_url` refuses `token` (401 or 403) to a sessionless `ping`; any other outcome is no.
 pub fn refuses(mcp_url: &str, token: &str, timeout: Duration) -> bool {
     let res = crate::http::agent(timeout)
         .post(mcp_url)

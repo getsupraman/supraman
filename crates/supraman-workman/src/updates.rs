@@ -1,6 +1,4 @@
-//! Whether a newer signed release than this build is published: `GET <api>/repos/<repo>/releases/latest`,
-//! its `supraman-update.json` verified against the release keys (docs/RELEASE.md, "Signing"), and what
-//! the last check found, kept in `<home>/updates/`.
+//! Whether a newer signed release is published, verified per docs/RELEASE.md "Signing", kept in `<home>/updates/`.
 
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
@@ -128,8 +126,7 @@ pub fn shows(available: &Available, dismissed: Option<&Version>) -> bool {
     dismissed.is_none_or(|d| available.manifest.semver() > *d)
 }
 
-/// The version an install runs: `version <semver>` from the `VERSION` file in `exe_dir`, else `crate_version`.
-/// A local build's `<crate>-<yyyymmdd>-<sha>` counts as its crate version.
+/// The version an install runs: `VERSION` in `exe_dir`, else `crate_version` (a local build's counts as its crate's).
 pub fn running_version(crate_version: &str, exe_dir: Option<&Path>) -> Version {
     let from_file = exe_dir
         .and_then(|d| std::fs::read_to_string(d.join("VERSION")).ok())
@@ -279,9 +276,7 @@ pub struct Downloaded {
     pub release: PathBuf,
 }
 
-/// The release's zip into [`version_dir`] (a verified one already there is kept), `progress(done, total)`
-/// after each read; then its size and sha256 against the signed manifest and unpacked. A mismatch deletes the
-/// download; `cancel` stops it and deletes the part.
+/// The release's zip into [`version_dir`], checked against the signed manifest and unpacked; a mismatch or `cancel` deletes it.
 pub fn download(
     home: &Path,
     available: &Available,
