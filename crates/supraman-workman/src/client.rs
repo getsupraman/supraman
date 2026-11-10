@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde::de::DeserializeOwned;
 
 use crate::http::{Reply, pct_encode, read, server_reason};
-use crate::model::{Backlog, Board, Inbox, ItemPage, Journal, Overview, Prompts, Resolved, SearchHits, Sessions};
+use crate::model::{Board, Inbox, ItemPage, Journal, Overview, Prompts, Resolved, SearchHits, Sessions};
 
 pub const API_HEADER: &str = "X-Workman-Api";
 pub const API_VERSION: &str = "1";
@@ -150,10 +150,6 @@ impl Client {
             "/api/v1/journal",
             &[("scope", q.scope), ("since", since.as_deref()), ("before", before.as_deref()), ("limit", limit.as_deref()), ("kinds", kinds.as_deref())],
         ))
-    }
-
-    pub fn backlog(&self, project_id: &str) -> Result<Backlog> {
-        self.json(&with_query("/api/v1/backlog", &[("project", Some(project_id))]))
     }
 
     pub fn sessions(&self, q: &SessionsQuery<'_>) -> Result<Sessions> {

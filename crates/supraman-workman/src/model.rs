@@ -474,23 +474,6 @@ pub struct Journal {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
-pub struct Backlog {
-    pub as_of: String,
-    pub seq: i64,
-    pub run: Option<ItemRef>,
-    pub groups: Vec<BacklogGroup>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
-#[serde(default)]
-pub struct BacklogGroup {
-    pub origin: Option<ItemRef>,
-    pub items: Vec<ItemRef>,
-}
-
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
 pub struct Sessions {
     pub as_of: String,
     pub seq: i64,

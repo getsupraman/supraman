@@ -97,13 +97,12 @@ fn client_item_and_brief_go_by_item_id() {
 }
 
 #[test]
-fn client_inbox_journal_backlog_sessions_take_ids_in_the_query() {
+fn client_inbox_journal_sessions_take_ids_in_the_query() {
     let (fake, c) = server(vec![
         route("/api/v1/inbox", "inbox.json"),
         route(format!("/api/v1/inbox?project={PROJECT}"), "inbox.json"),
         route(format!("/api/v1/journal?scope={RUN}&since=1200&limit=50&kinds=transition%2Cnote"), "journal.json"),
         route("/api/v1/journal", "journal.json"),
-        route(format!("/api/v1/backlog?project={PROJECT}"), "backlog.json"),
         route("/api/v1/sessions?active=true&name=aw-m4-1", "sessions.json"),
         route("/api/v1/sessions?claudeSessionId=aaaa%2F1", "sessions.json"),
     ]);
@@ -118,17 +117,12 @@ fn client_inbox_journal_backlog_sessions_take_ids_in_the_query() {
     assert_eq!((j.events[1].item.as_ref(), j.events[1].session.as_ref()), (None, None));
     c.journal(&JournalQuery::default()).unwrap();
 
-    let b = c.backlog(PROJECT).unwrap();
-    assert_eq!(b.run.unwrap().qualified_ref, "autowork/backlog");
-    assert_eq!((b.groups[0].origin.as_ref().unwrap().ref_.as_str(), b.groups[0].items[0].kind.as_str()), ("m3", "followup"));
-    assert_eq!(b.groups[1].origin, None);
-
     let s = c.sessions(&SessionsQuery { active: true, name: Some("aw-m4-1"), claude_session_id: None }).unwrap();
     assert_eq!((s.sessions[0].session.external_role.as_deref(), s.sessions[0].claims.len()), (Some("repo"), 1));
     c.sessions(&SessionsQuery { claude_session_id: Some("aaaa/1"), ..Default::default() }).unwrap();
 
     let targets: Vec<String> = fake.seen().into_iter().map(|s| s.target).collect();
-    assert_eq!(targets.len(), 7, "{targets:?}");
+    assert_eq!(targets.len(), 6, "{targets:?}");
     assert_read_only_with_bearer(&fake);
 }
 
@@ -176,7 +170,7 @@ fn client_maps_errors_and_never_says_the_token() {
         ("/api/v1/overview".into(), Answer::status(401, r#"{"error":"bad token fake-reader-token"}"#)),
         ("/api/v1/inbox".into(), Answer::json(fixture("inbox.json")).api(None).header("X-WorkState-Api", "1")),
         ("/api/v1/journal".into(), Answer::json(fixture("journal.json")).api(Some("2"))),
-        ("/api/v1/backlog?project=x".into(), Answer::json("not json")),
+        ("/api/v1/resolve?ref=x".into(), Answer::json("not json")),
         ("/api/v1/sessions".into(), Answer::status(500, "").api(None)),
     ]);
     let e = c.overview().unwrap_err();
@@ -185,7 +179,7 @@ fn client_maps_errors_and_never_says_the_token() {
     assert_eq!(e404, Error::Http { status: 404, reason: "no route /api/v1/items/no-such-id".into() });
     assert!(matches!(c.inbox(None).unwrap_err(), Error::Api(m) if m.contains("without X-Workman-Api")), "Workman 1.x's header alone");
     assert!(matches!(c.journal(&JournalQuery::default()).unwrap_err(), Error::Api(m) if m.contains("speaks read API 2")));
-    assert!(matches!(c.backlog("x").unwrap_err(), Error::Decode(_)));
+    assert!(matches!(c.resolve("x").unwrap_err(), Error::Decode(_)));
     assert_eq!(c.sessions(&SessionsQuery::default()).unwrap_err(), Error::Http { status: 500, reason: String::new() });
     assert_eq!(e.to_string(), "Workman answered HTTP 401: bad token <redacted>");
 
