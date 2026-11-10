@@ -12,6 +12,8 @@ use tempfile::TempDir;
 use crate::{Git, Located, Repo};
 
 mod media;
+#[cfg(test)]
+mod tests;
 
 pub use media::{MEDIA_FILES, png};
 
@@ -35,8 +37,28 @@ pub fn git_in(git: &Git, dir: &Path, args: &[&str], env: &[(&str, String)], inpu
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-/// [`git_in`] whatever its exit code.
+/// [`git_in`] whatever its exit code; a refusal of a scanner's hold is tried again for up to 2 s.
 pub fn run_git(git: &Git, dir: &Path, args: &[&str], env: &[(&str, String)], input: Option<Vec<u8>>) -> process::RawOutput {
+    let mut out = None;
+    wait_until(HELD_FOR, polled(Duration::from_millis(250)), || {
+        let once = run_once(git, dir, args, env, input.clone());
+        let held = scanner_held(&String::from_utf8_lossy(&once.stderr));
+        out = Some(once);
+        !held
+    });
+    out.expect("git ran once")
+}
+
+const HELD_FOR: Duration = Duration::from_secs(2);
+
+/// git's refusals while a virus scanner holds a file or folder just made in the temp dir; they pass by themselves.
+fn scanner_held(stderr: &str) -> bool {
+    (stderr.contains("cannot change to '") && stderr.contains("Invalid argument"))
+        || (stderr.contains("cannot copy '") && stderr.contains("Permission denied"))
+        || stderr.contains("must be run in a work tree")
+}
+
+fn run_once(git: &Git, dir: &Path, args: &[&str], env: &[(&str, String)], input: Option<Vec<u8>>) -> process::RawOutput {
     let mut cmd = crate::repo::git_command(git, dir);
     cmd.args(["-c", "maintenance.auto=false", "-c", "gc.auto=0"]).args(args);
     process::without_user_config(&mut cmd);

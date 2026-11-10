@@ -42,6 +42,7 @@ fn fixture() -> Fixture {
     let home = tmp.path().join("home");
     let alpha = tmp.path().join("ws").join("Alpha");
     fs::create_dir_all(alpha.join("scripts")).unwrap();
+    assert_eq!(supraman_core::paths::git_at(&alpha), None, "the temp dir must be in no repo, or sm fire writes to that repo");
     fs::create_dir_all(&home).unwrap();
     for (name, body) in SCRIPTS {
         fs::write(alpha.join("scripts").join(name), body).unwrap();
