@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use supraman_claude::{Claude, Health, LaunchSpec, Session};
 use supraman_core::EventReader;
-use supraman_core::schedule::{self, LiveSession, Outcome, Reported, RunEvent, Stage, Tokens};
+use supraman_core::schedule::{self, Caps, LiveSession, Outcome, Reported, RunEvent, Stage, Tokens};
 use supraman_supervisor::{Bearer, Keeper, Launcher, MintRequest, MintedSession, MintedSessions, Minter, TokenProvider};
 
 use crate::fire::RunCtx;
@@ -318,7 +318,6 @@ fn find_row(host: &mut dyn SessionHost, name: &str) -> Option<Session> {
 fn watch(ctx: &RunCtx, spec: &LaunchSpec, row: &Session, report: &Path, host: &mut dyn SessionHost, log: &mut dyn RunLog) -> SessionEnd {
     let s = ctx.schedule;
     let started = host.now_ms();
-    let max_runtime = s.caps.max_runtime.duration().as_millis() as i64;
     let restart = report.with_extension("restart");
     let mut usage = supraman_claude::Usage::default();
     let mut transcript: Option<PathBuf> = None;
@@ -327,13 +326,7 @@ fn watch(ctx: &RunCtx, spec: &LaunchSpec, row: &Session, report: &Path, host: &m
     let mut parked: Option<String> = None;
     loop {
         let now = host.now_ms();
-        if transcript.is_none() {
-            transcript = host.claude_dir().and_then(|dir| supraman_claude::find_transcript(&dir, &row.session_id, Some(&spec.cwd)));
-        }
-        if let Some(path) = &transcript {
-            let _ = usage.read(path);
-        }
-        let tokens = tokens_of(&usage);
+        let tokens = read_tokens(host, row, spec, &mut transcript, &mut usage);
         let end = |outcome, why: String| SessionEnd { outcome, why, tokens: Some(tokens), recorded: false };
 
         if let Some(r) = reported(report, ctx.run) {
@@ -350,18 +343,8 @@ fn watch(ctx: &RunCtx, spec: &LaunchSpec, row: &Session, report: &Path, host: &m
         if parked.is_none() && restart.exists() {
             return end(Outcome::Interrupted, "restarted".into());
         }
-        if tokens.capped() > s.caps.max_tokens {
-            let why = format!("{} tokens used, over max_tokens {}", tokens.capped(), s.caps.max_tokens);
-            return match parked.take() {
-                Some(why_parked) => SessionEnd { outcome: Outcome::NeedsYou, why: why_parked, tokens: Some(tokens), recorded: true },
-                None => end(Outcome::CappedTokens, why),
-            };
-        }
-        if now - started >= max_runtime {
-            return match parked.take() {
-                Some(why_parked) => SessionEnd { outcome: Outcome::NeedsYou, why: why_parked, tokens: Some(tokens), recorded: true },
-                None => end(Outcome::CappedRuntime, format!("still running after max_runtime {}", s.caps.max_runtime)),
-            };
+        if let Some((outcome, why)) = over_cap(&s.caps, tokens, now - started) {
+            return parked_or(&mut parked, tokens, outcome, why);
         }
         if events.poll_session(&row.session_id).iter().any(|e| e.event == "Stop") {
             worked = true;
@@ -373,20 +356,14 @@ fn watch(ctx: &RunCtx, spec: &LaunchSpec, row: &Session, report: &Path, host: &m
             None => {
                 gone += 1;
                 if gone >= GONE_POLLS {
-                    return match parked.take() {
-                        Some(why_parked) => SessionEnd { outcome: Outcome::NeedsYou, why: why_parked, tokens: Some(tokens), recorded: true },
-                        None => end(Outcome::Failed, "the session ended without a report".into()),
-                    };
+                    return parked_or(&mut parked, tokens, Outcome::Failed, "the session ended without a report".into());
                 }
             }
             Some((health, r)) => {
                 gone = 0;
                 match health {
                     Health::Blocked { waiting_for } if parked.is_none() => {
-                        let why = match waiting_for {
-                            Some(w) => format!("the session waits for {w}; attach to {} to answer", r.name),
-                            None => format!("the session is blocked; attach to {} to answer", r.name),
-                        };
+                        let why = blocked_why(waiting_for, &r.name);
                         log.event(now, ended(Outcome::NeedsYou, &why, tokens, now - started));
                         parked = Some(why);
                     }
@@ -405,6 +382,41 @@ fn watch(ctx: &RunCtx, spec: &LaunchSpec, row: &Session, report: &Path, host: &m
             }
         }
         host.sleep(POLL);
+    }
+}
+
+fn read_tokens(host: &mut dyn SessionHost, row: &Session, spec: &LaunchSpec, transcript: &mut Option<PathBuf>, usage: &mut supraman_claude::Usage) -> Tokens {
+    if transcript.is_none() {
+        *transcript = host.claude_dir().and_then(|dir| supraman_claude::find_transcript(&dir, &row.session_id, Some(&spec.cwd)));
+    }
+    if let Some(path) = transcript {
+        let _ = usage.read(path);
+    }
+    tokens_of(usage)
+}
+
+fn blocked_why(waiting_for: Option<String>, name: &str) -> String {
+    match waiting_for {
+        Some(w) => format!("the session waits for {w}; attach to {name} to answer"),
+        None => format!("the session is blocked; attach to {name} to answer"),
+    }
+}
+
+fn over_cap(caps: &Caps, tokens: Tokens, ran_ms: i64) -> Option<(Outcome, String)> {
+    if tokens.capped() > caps.max_tokens {
+        return Some((Outcome::CappedTokens, format!("{} tokens used, over max_tokens {}", tokens.capped(), caps.max_tokens)));
+    }
+    if ran_ms >= caps.max_runtime.duration().as_millis() as i64 {
+        return Some((Outcome::CappedRuntime, format!("still running after max_runtime {}", caps.max_runtime)));
+    }
+    None
+}
+
+// a parked run ends as the NeedsYou it already recorded
+fn parked_or(parked: &mut Option<String>, tokens: Tokens, outcome: Outcome, why: String) -> SessionEnd {
+    match parked.take() {
+        Some(why_parked) => SessionEnd { outcome: Outcome::NeedsYou, why: why_parked, tokens: Some(tokens), recorded: true },
+        None => SessionEnd { outcome, why, tokens: Some(tokens), recorded: false },
     }
 }
 

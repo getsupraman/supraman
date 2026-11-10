@@ -5,46 +5,9 @@
 use std::collections::{HashSet, VecDeque};
 use std::path::Path;
 
+use supraman_core::process::Proc;
+
 use crate::peer::{Liveness, RegistryEntry, entry_of};
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Proc {
-    pub pid: u32,
-    pub parent: u32,
-    /// The executable's file name, e.g. `claude.exe`.
-    pub exe: String,
-}
-
-#[cfg(windows)]
-pub fn snapshot() -> Vec<Proc> {
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS};
-    let mut out = Vec::new();
-    // SAFETY: a snapshot handle this function opens, walks and closes.
-    unsafe {
-        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
-            return out;
-        };
-        let mut entry = PROCESSENTRY32W { dwSize: size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
-        let mut more = Process32FirstW(snap, &mut entry).is_ok();
-        while more {
-            let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
-            out.push(Proc {
-                pid: entry.th32ProcessID,
-                parent: entry.th32ParentProcessID,
-                exe: String::from_utf16_lossy(&entry.szExeFile[..len]),
-            });
-            more = Process32NextW(snap, &mut entry).is_ok();
-        }
-        let _ = CloseHandle(snap);
-    }
-    out
-}
-
-#[cfg(not(windows))]
-pub fn snapshot() -> Vec<Proc> {
-    Vec::new()
-}
 
 fn is_claude(exe: &str) -> bool {
     exe.eq_ignore_ascii_case("claude.exe") || exe.eq_ignore_ascii_case("claude")
@@ -80,6 +43,7 @@ pub fn session_under(procs: &[Proc], root: u32, root_start: Option<u64>, dir: &P
 #[cfg(test)]
 mod tests {
     use super::*;
+    use supraman_core::process::snapshot;
 
     fn p(pid: u32, parent: u32, exe: &str) -> Proc {
         Proc { pid, parent, exe: exe.into() }

@@ -42,13 +42,15 @@ pub enum Kill {
     Child,
 }
 
+#[cfg(windows)]
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 /// A child of the app gets no console window of its own: Supraman has no console to share when started
 /// from Explorer, and every `claude`, `git` and `icacls` would flash one.
 pub fn no_window(command: &mut Command) -> &mut Command {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
     command
@@ -185,7 +187,6 @@ fn spawn(cmd: &mut Command, kill: Kill) -> std::io::Result<(Child, Option<Job>)>
 #[cfg(windows)]
 fn suspended(command: &mut Command) -> &mut Command {
     use std::os::windows::process::CommandExt as _;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     command.creation_flags(CREATE_NO_WINDOW | windows::Win32::System::Threading::CREATE_SUSPENDED.0)
 }
 
@@ -613,6 +614,47 @@ pub fn wait_any_exit(pids: &[u32], timeout: Duration) -> bool {
     false
 }
 
+/// A process as a [`snapshot`] lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Proc {
+    pub pid: u32,
+    pub parent: u32,
+    /// The executable's file name, e.g. `claude.exe`.
+    pub exe: String,
+}
+
+/// Every process now, from one Toolhelp32 snapshot; empty when the snapshot fails.
+#[cfg(windows)]
+pub fn snapshot() -> Vec<Proc> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS};
+    let mut out = Vec::new();
+    // SAFETY: a snapshot handle this function opens, walks and closes.
+    unsafe {
+        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
+            return out;
+        };
+        let mut entry = PROCESSENTRY32W { dwSize: size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
+        let mut more = Process32FirstW(snap, &mut entry).is_ok();
+        while more {
+            let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
+            out.push(Proc {
+                pid: entry.th32ProcessID,
+                parent: entry.th32ParentProcessID,
+                exe: String::from_utf16_lossy(&entry.szExeFile[..len]),
+            });
+            more = Process32NextW(snap, &mut entry).is_ok();
+        }
+        let _ = CloseHandle(snap);
+    }
+    out
+}
+
+#[cfg(not(windows))]
+pub fn snapshot() -> Vec<Proc> {
+    Vec::new()
+}
+
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
@@ -797,21 +839,7 @@ mod tests {
 
     /// Every process now: pid, parent pid, exe name.
     fn processes() -> Vec<(u32, u32, String)> {
-        use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS};
-        let mut found = Vec::new();
-        // SAFETY: a snapshot this function opens and closes, and an entry of the size it says.
-        unsafe {
-            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).unwrap();
-            let mut entry = PROCESSENTRY32W { dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
-            let mut more = Process32FirstW(snapshot, &mut entry).is_ok();
-            while more {
-                let name = &entry.szExeFile[..entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len())];
-                found.push((entry.th32ProcessID, entry.th32ParentProcessID, String::from_utf16_lossy(name)));
-                more = Process32NextW(snapshot, &mut entry).is_ok();
-            }
-            let _ = windows::Win32::Foundation::CloseHandle(snapshot);
-        }
-        found
+        snapshot().into_iter().map(|p| (p.pid, p.parent, p.exe)).collect()
     }
 
     #[test]

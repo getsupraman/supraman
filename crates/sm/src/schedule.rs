@@ -8,6 +8,7 @@ use supraman_claude::{LaunchSpec, mcp_config_path};
 use supraman_core::schedule::{
     self, Action, ActionKind, CatchUp, Clock, Day, Overlap, Profile, Prompt, Schedule, Span, Status, Trigger,
 };
+use supraman_core::home::SessionEnv;
 use supraman_core::{CoreError, Registry, Workspace, find_plugin_dir, sm_allowed_tools, paths, slugify};
 use supraman_supervisor::{LaunchConfig, WantedSession};
 
@@ -131,7 +132,7 @@ fn parse_opts<'a>(args: &[&'a str]) -> Result<(Opts, Vec<&'a str>), Failure> {
             "--every" => o.every = Some(parse_every(v(arg)?)?),
             "--command" => {
                 let c = v(arg)?;
-                if let Some(name) = git_bash_rewrite(c, &git_roots(), std::env::var_os("MSYSTEM").is_some()) {
+                if let Some(name) = git_bash_rewrite(c, &paths::git_roots(), paths::in_git_bash()) {
                     return Err(Failure::Refused(format!("error: Git Bash rewrote /{name} into {c}; write //{name} (or set MSYS_NO_PATHCONV=1)")));
                 }
                 set_prompt(&mut o, PromptArg::Command(c.to_string()))?
@@ -202,24 +203,6 @@ fn git_bash_rewrite<'a>(value: &'a str, roots: &[PathBuf], msystem: bool) -> Opt
     let ours = roots.iter().any(|r| paths::path_key(r).trim_end_matches('/') == key.trim_end_matches('/'));
     let git_like = msystem && parent.rsplit('/').next().is_some_and(|last| last.eq_ignore_ascii_case("git"));
     (ours || git_like).then(|| &value[value.len() - name.len()..])
-}
-
-/// Where Git for Windows may be installed: the usual folders and the one holding `git.exe` on PATH.
-fn git_roots() -> Vec<PathBuf> {
-    let mut roots: Vec<PathBuf> = ["ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"]
-        .into_iter()
-        .filter_map(|var| std::env::var_os(var).map(|d| PathBuf::from(d).join("Git")))
-        .collect();
-    roots.extend(std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("Programs").join("Git")));
-    roots.extend(std::env::var_os("EXEPATH").map(PathBuf::from));
-    if let Some(path) = std::env::var_os("PATH") {
-        for dir in paths::folders_holding("git.exe", &path) {
-            let up = dir.parent().map(Path::to_path_buf);
-            let mingw = up.as_deref().filter(|u| u.file_name().is_some_and(|n| n.to_string_lossy().to_ascii_lowercase().starts_with("mingw")));
-            roots.extend(mingw.and_then(Path::parent).map(Path::to_path_buf).or(up));
-        }
-    }
-    roots
 }
 
 fn set_prompt(o: &mut Opts, p: PromptArg) -> Result<(), Failure> {
@@ -795,7 +778,7 @@ fn report(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
         _ => return Err(usage()),
     };
     let (all, _) = registry.load_all()?;
-    let preferred = std::env::var("SUPRAMAN_WORKSPACE").ok();
+    let preferred = SessionEnv::from_env().workspace;
     let mut order: Vec<&Workspace> = all.iter().filter(|w| Some(&w.name) == preferred.as_ref()).collect();
     order.extend(all.iter().filter(|w| Some(&w.name) != preferred.as_ref()));
     for w in order {

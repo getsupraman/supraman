@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use chrono::DateTime;
 use supraman_claude::{Route, Sender};
+use supraman_core::home::SessionEnv;
 use supraman_core::{InboxWatcher, Registry, read_outbox, relay_ready, tell};
 use supraman_supervisor::DesiredState;
 
@@ -55,7 +56,7 @@ pub fn inbox(args: &[&str]) -> Result<(), Failure> {
 
 /// `sm send` speaks as the human; every Supraman-launched session carries `SUPRAMAN_ROLE` (`supraman_supervisor::LaunchConfig::launch_spec`).
 pub fn refuse_inside_supraman() -> Result<(), Failure> {
-    match std::env::var_os("SUPRAMAN_ROLE") {
+    match SessionEnv::role_os() {
         Some(role) if !role.is_empty() => Err(Failure::Refused(format!(
             "sm send speaks as the human through the relay and is refused inside a Supraman session (SUPRAMAN_ROLE={}); use SendMessage to reach a session, sm tell to reach the human",
             role.to_string_lossy()
@@ -100,13 +101,14 @@ pub fn send_cmd(home: &Path, args: &[&str]) -> Result<(), Failure> {
 /// Run by a Supraman session to reach the human: an outbox message in its workspace (its home, `SUPRAMAN_WORKSPACE`).
 pub fn tell_cmd(args: &[&str]) -> Result<(), Failure> {
     let body = body_arg(args).ok_or_else(|| Failure::Usage("tell needs <body> or --file <path>".into()))??;
-    let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
-    let (Some(home), Some(workspace)) = (supraman_core::env_home(), var("SUPRAMAN_WORKSPACE")) else {
+    let env = SessionEnv::from_env();
+    let set = |v: Option<String>| v.filter(|v| !v.is_empty());
+    let (Some(home), Some(workspace)) = (supraman_core::env_home(), set(env.workspace)) else {
         return Err(Failure::Refused(
             "sm tell runs inside a Supraman session (SUPRAMAN_HOME and SUPRAMAN_WORKSPACE are not set); the human reads Supraman's Messages".into(),
         ));
     };
-    let from = var("SUPRAMAN_SESSION")
+    let from = set(env.session)
         .ok_or_else(|| Failure::Refused("sm tell cannot tell which session this is: SUPRAMAN_SESSION is not set".into()))?;
     let path = tell(&home, &workspace, &from, &body)?;
     println!("told the human ({workspace}): {}", path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default());
