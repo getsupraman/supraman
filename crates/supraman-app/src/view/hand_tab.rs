@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap as StdHashMap,
+    collections::{HashMap as StdHashMap, HashSet},
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -9,7 +9,7 @@ use std::{
 };
 
 use futures::StreamExt as _;
-use gpui::{Context, Window};
+use gpui::{AsyncApp, Context, WeakEntity, Window};
 use supraman_claude::{Session, Transcripts, main_repo, now_ms};
 use supraman_ui::nudge::{self, Nudged};
 use supraman_ui::timeline;
@@ -81,141 +81,52 @@ impl FleetView {
         cx.spawn(async move |this, cx| {
             let executor = cx.background_executor().clone();
             let mut scanner: Option<Transcripts> = None;
-            let mut repos: StdHashMap<PathBuf, Option<PathBuf>> = StdHashMap::new();
+            let mut repos: Repos = StdHashMap::new();
             let mut from_cache = false;
             loop {
                 if scanner.is_none() {
-                    let (claude_dir, cache) = (claude_dir.clone(), cache.clone());
-                    let opened = executor
-                        .spawn(async move {
-                            let s = Transcripts::in_claude_dir(&claude_dir);
-                            match cache {
-                                Some(cache) => s.with_cache(cache),
-                                None => s,
-                            }
-                        })
-                        .await;
-                    let has_cache = opened.has_cache();
-                    scanner = Some(opened);
-                    let Ok(cached_first) = this.update(cx, |this, cx| {
-                        let cached_first = this.transcripts.opened(has_cache);
-                        this.check_loaded(cx);
-                        cx.notify();
-                        cached_first
-                    }) else {
+                    let Some((opened, cached_first)) = open_transcripts(&this, claude_dir.clone(), cache.clone(), cx).await else {
                         return;
                     };
+                    scanner = Some(opened);
                     from_cache = cached_first;
                 }
                 // the first scan waits for the first poll's apply, which wakes it with the workspaces and sessions
                 nudged.wait(&executor, TRANSCRIPTS_EVERY).await;
-                let Ok(asked) = this.update(cx, |this, _| {
-                    this.sessions_read.then(|| {
-                        let roots: Vec<PathBuf> = this
-                            .workspaces
-                            .iter()
-                            .flat_map(|w| w.folders.iter().filter(|r| r.enabled).map(|r| r.path.clone()))
-                            .collect();
-                        let keep: std::collections::HashSet<String> = this.stars.ids().iter().cloned().collect();
-                        let live: std::collections::HashSet<String> = this.sessions.iter().map(|s| s.session_id.clone()).collect();
-                        (roots, keep, live, this.refresh_asks)
-                    })
-                }) else {
+                let Ok(asked) = this.update(cx, |this, _| this.transcripts_ask()) else {
                     return;
                 };
-                let Some((roots, keep, live, asks)) = asked else { continue };
+                let Some(ask) = asked else { continue };
                 let since = now_ms() - fleet::CLOSED_WINDOW_MS;
                 let scanning = Instant::now();
                 if std::mem::take(&mut from_cache)
                     && let Some(s) = scanner.take()
                 {
-                    let (roots, keep) = (roots.clone(), keep.clone());
-                    let (back, known, (closed, continued)) = executor
-                        .spawn(async move {
-                            let mut repos = StdHashMap::new();
-                            let found = s.cached(&roots, since, &keep);
-                            for t in &found {
-                                if let Some(cwd) = &t.cwd {
-                                    repos.entry(cwd.clone()).or_insert_with(|| main_repo(cwd));
-                                }
-                            }
-                            (s, repos, (found.iter().map(|t| t.to_session()).collect::<Vec<Session>>(), supraman_claude::chains(&found)))
-                        })
-                        .await;
-                    scanner = Some(back);
-                    repos = known.clone();
-                    if this
-                        .update(cx, |this, cx| {
-                            timeline(&format!("transcripts from the cache done ({} listed)", closed.len()), scanning.elapsed());
-                            this.main_repos.extend(known.clone());
-                            this.closed_repos = known;
-                            this.set_closed(closed, continued, cx);
-                            this.transcripts.listed_cached();
-                            this.check_loaded(cx);
-                            cx.notify();
-                        })
-                        .is_err()
-                    {
+                    let Some((back, known)) = list_cached(&this, s, &ask, since, scanning, cx).await else {
                         return;
-                    }
+                    };
+                    scanner = Some(back);
+                    repos = known;
                 }
-                let (progress, mut progressed) = futures::channel::mpsc::unbounded::<(usize, usize)>();
-                let shown = this.clone();
-                let showing = cx.spawn(async move |cx| {
-                    while let Some(at) = progressed.next().await {
-                        if shown
-                            .update(cx, |this, cx| {
-                                this.transcripts.reading(at);
-                                cx.notify();
-                            })
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                });
-                let Some(mut s) = scanner.take() else { continue };
-                let (back, known, (closed, continued), read) = executor
-                    .spawn(async move {
-                        let read = AtomicUsize::new(0);
-                        let found = s.scan_with(&roots, since, &keep, &live, &|done, of| {
-                            read.store(of, Ordering::Relaxed);
-                            if done == of || done % (of / 100).max(1) == 0 {
-                                progress.unbounded_send((done, of)).ok();
-                            }
-                        });
-                        drop(progress);
-                        for t in &found {
-                            if let Some(cwd) = &t.cwd {
-                                repos.entry(cwd.clone()).or_insert_with(|| main_repo(cwd));
-                            }
-                        }
-                        let closed: Vec<Session> = found.iter().map(|t| t.to_session()).collect();
-                        (s, repos, (closed, supraman_claude::chains(&found)), read.into_inner())
-                    })
-                    .await;
-                showing.await;
-                scanner = Some(back);
-                repos = known.clone();
-                if this
-                    .update(cx, |this, cx| {
-                        this.main_repos.extend(known.clone());
-                        this.closed_repos = known;
-                        if this.transcripts.scanned() {
-                            timeline(&format!("transcripts done ({read} files read, {} listed)", closed.len()), scanning.elapsed());
-                        }
-                        this.set_closed(closed, continued, cx);
-                        this.transcripts_answered = asks;
-                        this.check_loaded(cx);
-                        cx.notify();
-                    })
-                    .is_err()
-                {
+                let Some(s) = scanner.take() else { continue };
+                let Some((back, known)) = scan_transcripts(&this, s, repos, ask, since, scanning, cx).await else {
                     return;
-                }
+                };
+                scanner = Some(back);
+                repos = known;
             }
         })
         .detach();
+    }
+
+    /// The roots, kept and live ids a transcript scan reads, once the first poll is applied.
+    fn transcripts_ask(&self) -> Option<TranscriptsAsk> {
+        self.sessions_read.then(|| TranscriptsAsk {
+            roots: self.workspaces.iter().flat_map(|w| w.folders.iter().filter(|r| r.enabled).map(|r| r.path.clone())).collect(),
+            keep: self.stars.ids().iter().cloned().collect(),
+            live: self.sessions.iter().map(|s| s.session_id.clone()).collect(),
+            asks: self.refresh_asks,
+        })
     }
 
     pub fn new_claude(&mut self, cwd: PathBuf, title: String, _window: &mut Window, cx: &mut Context<Self>) -> u64 {
@@ -348,4 +259,127 @@ impl FleetView {
         };
         powershell(self.shell_args.iter().cloned().chain(launch_args).collect())
     }
+}
+
+struct TranscriptsAsk {
+    roots: Vec<PathBuf>,
+    keep: HashSet<String>,
+    live: HashSet<String>,
+    asks: u64,
+}
+
+type Repos = StdHashMap<PathBuf, Option<PathBuf>>;
+
+async fn open_transcripts(this: &WeakEntity<FleetView>, claude_dir: PathBuf, cache: Option<PathBuf>, cx: &mut AsyncApp) -> Option<(Transcripts, bool)> {
+    let opened = cx
+        .background_executor()
+        .spawn(async move {
+            let s = Transcripts::in_claude_dir(&claude_dir);
+            match cache {
+                Some(cache) => s.with_cache(cache),
+                None => s,
+            }
+        })
+        .await;
+    let has_cache = opened.has_cache();
+    let cached_first = this
+        .update(cx, |this, cx| {
+            let cached_first = this.transcripts.opened(has_cache);
+            this.check_loaded(cx);
+            cx.notify();
+            cached_first
+        })
+        .ok()?;
+    Some((opened, cached_first))
+}
+
+async fn list_cached(this: &WeakEntity<FleetView>, s: Transcripts, ask: &TranscriptsAsk, since: i64, scanning: Instant, cx: &mut AsyncApp) -> Option<(Transcripts, Repos)> {
+    let (roots, keep) = (ask.roots.clone(), ask.keep.clone());
+    let (back, known, (closed, continued)) = cx
+        .background_executor()
+        .spawn(async move {
+            let mut repos = StdHashMap::new();
+            let found = s.cached(&roots, since, &keep);
+            for t in &found {
+                if let Some(cwd) = &t.cwd {
+                    repos.entry(cwd.clone()).or_insert_with(|| main_repo(cwd));
+                }
+            }
+            (s, repos, (found.iter().map(|t| t.to_session()).collect::<Vec<Session>>(), supraman_claude::chains(&found)))
+        })
+        .await;
+    let repos = known.clone();
+    this.update(cx, |this, cx| {
+        timeline(&format!("transcripts from the cache done ({} listed)", closed.len()), scanning.elapsed());
+        this.main_repos.extend(known.clone());
+        this.closed_repos = known;
+        this.set_closed(closed, continued, cx);
+        this.transcripts.listed_cached();
+        this.check_loaded(cx);
+        cx.notify();
+    })
+    .ok()?;
+    Some((back, repos))
+}
+
+async fn scan_transcripts(
+    this: &WeakEntity<FleetView>,
+    mut s: Transcripts,
+    mut repos: Repos,
+    ask: TranscriptsAsk,
+    since: i64,
+    scanning: Instant,
+    cx: &mut AsyncApp,
+) -> Option<(Transcripts, Repos)> {
+    let (progress, mut progressed) = futures::channel::mpsc::unbounded::<(usize, usize)>();
+    let shown = this.clone();
+    let showing = cx.spawn(async move |cx| {
+        while let Some(at) = progressed.next().await {
+            if shown
+                .update(cx, |this, cx| {
+                    this.transcripts.reading(at);
+                    cx.notify();
+                })
+                .is_err()
+            {
+                return;
+            }
+        }
+    });
+    let TranscriptsAsk { roots, keep, live, asks } = ask;
+    let (back, known, (closed, continued), read) = cx
+        .background_executor()
+        .spawn(async move {
+            let read = AtomicUsize::new(0);
+            let found = s.scan_with(&roots, since, &keep, &live, &|done, of| {
+                read.store(of, Ordering::Relaxed);
+                if done == of || done % (of / 100).max(1) == 0 {
+                    progress.unbounded_send((done, of)).ok();
+                }
+            });
+            drop(progress);
+            for t in &found {
+                if let Some(cwd) = &t.cwd {
+                    repos.entry(cwd.clone()).or_insert_with(|| main_repo(cwd));
+                }
+            }
+            let closed: Vec<Session> = found.iter().map(|t| t.to_session()).collect();
+            (s, repos, (closed, supraman_claude::chains(&found)), read.into_inner())
+        })
+        .await;
+    showing.await;
+    let repos = known.clone();
+    this.update(cx, |this, cx| {
+        this.main_repos.extend(known.clone());
+        this.closed_repos = known;
+        if this.transcripts.scanned() {
+            timeline(&format!("transcripts done ({read} files read, {} listed)", closed.len()), scanning.elapsed());
+        }
+        this.set_closed(closed, continued, cx);
+        this.transcripts_answered = asks;
+        this.check_loaded(cx);
+        cx.notify();
+    })
+    .ok()?;
+    Some((back, repos))
 }
