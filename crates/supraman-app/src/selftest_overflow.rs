@@ -230,7 +230,7 @@ async fn drag(view: &Entity<FleetView>, ids: &[u64], cx: &mut AsyncWindowContext
         }
         moved(point(edge.x + px((moves % 2) as f32), edge.y), cx)?;
         moves += 1;
-        drawn(cx).await?;
+        if moves % 8 == 0 { drawn(cx).await?; }
     }
     let onto = hit(view, &format!("tab-{first}"), cx).map(|h| h.bounds.center());
     let reached = visible(view, first, cx);
