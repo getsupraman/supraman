@@ -22,6 +22,7 @@ use crate::settings_window::page;
 use crate::updates::Stage;
 use crate::fleet::{self, Open, RepoNode, SessionRow, WorkspaceNode};
 
+mod action_bar;
 mod work_cards;
 mod messages;
 
@@ -224,114 +225,6 @@ fn glyph_button(hits: &HitTargets, key: String, icon: Icon, tip: impl Into<Share
 }
 
 impl FleetView {
-    fn render_action_bar(&self, hidden_stopped: usize, cx: &mut Context<Self>) -> Stateful<Div> {
-        let colors = cx.theme().colors().clone();
-        let status = cx.theme().status().clone();
-        let hits = &self.hits;
-        let separator = || div().w(px(1.)).h(px(16.)).mx_1().bg(colors.border_variant);
-        let stopped_tip: SharedString = if self.show_stopped {
-            "Hide stopped sessions".into()
-        } else {
-            format!("Show stopped sessions ({hidden_stopped} hidden)").into()
-        };
-        let n = self.max_working;
-        let busy_tip: SharedString = format!(
-            "At most {n} session(s) of this Supraman working at once, across its workspaces; launches wait while it is reached. 0 pauses them all. Another Supraman's sessions are not counted."
-        )
-        .into();
-        let warning = match &self.cli {
-            Cli::Supported(version) => version.untested(),
-            _ => None,
-        };
-        div()
-            .id("action-bar")
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(2.))
-            .px_2()
-            .py(px(3.))
-            .border_b_1()
-            .border_color(colors.border)
-            .child(
-                icon_button(hits, "add-workspace", Icon::FolderAdd, "Add workspace…", false, cx)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_add_menu(cx))),
-            )
-            .child(separator())
-            .child(
-                icon_button(hits, "expand-all", Icon::ExpandAll, "Expand all", false, cx)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.collapse_all(false, cx))),
-            )
-            .child(
-                icon_button(hits, "collapse-all", Icon::CollapseAll, "Collapse all", false, cx)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.collapse_all(true, cx))),
-            )
-            .child(
-                icon_button(
-                    hits,
-                    "toggle-stopped",
-                    if self.show_stopped { Icon::Eye } else { Icon::EyeOff },
-                    stopped_tip,
-                    self.show_stopped,
-                    cx,
-                )
-                .when(!self.show_stopped && hidden_stopped > 0, |d| d.child(SharedString::from(hidden_stopped.to_string())))
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.show_stopped = !this.show_stopped;
-                    cx.notify();
-                })),
-            )
-            .child(
-                button::toolbar_turning(hits, "refresh", Icon::Refresh.svg(16., colors.text_muted), false, self.refreshing(), colors.text_muted, cx)
-                    .tooltip(Tooltip::text("Refresh: read the running sessions and the closed ones' transcripts now (F5 outside a terminal)"))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.refresh_now(cx))),
-            )
-            .child(div().flex_1())
-            .children(warning.map(|w| {
-                tinted_button(hits, "cli-warning", Icon::Warning, w, false, status.warning, cx)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_settings_at(Some(page::ABOUT), cx)))
-            }))
-            .child(
-                div()
-                    .id("busy-limit")
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .h(px(26.))
-                    .rounded_md()
-                    .border_1()
-                    .border_color(colors.border_variant)
-                    .child(
-                        icon_button(hits, "busy-dec", Icon::Minus, "One fewer busy session", false, cx)
-                            .h(px(24.))
-                            .min_w(px(22.))
-                            .px(px(3.))
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.set_max_working(this.max_working.saturating_sub(1), cx))),
-                    )
-                    .child(
-                        div()
-                            .id("busy-value")
-                            .px_1()
-                            .text_xs()
-                            .text_color(colors.text_muted)
-                            .child(SharedString::from(format!("busy ≤ {n}")))
-                            .tooltip(Tooltip::text(busy_tip)),
-                    )
-                    .child(
-                        icon_button(hits, "busy-inc", Icon::Plus, "One more busy session", false, cx)
-                            .h(px(24.))
-                            .min_w(px(22.))
-                            .px(px(3.))
-                            .when(n >= MAX_WORKING_LIMIT, |d| d.opacity(0.4))
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.set_max_working(this.max_working + 1, cx))),
-                    ),
-            )
-            .child(
-                icon_button(hits, "bar-settings", Icon::Settings, "Settings (Ctrl+,)", false, cx)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_settings(cx))),
-            )
-    }
-
     fn pointer_on_left(&mut self, cx: &mut Context<Self>) {
         if let Some(hold) = &mut self.left_hold {
             hold.moved = Instant::now();
@@ -388,11 +281,60 @@ impl FleetView {
     pub(super) fn render_left(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let _stall = supraman_ui::stall::section("render: left");
         let colors = cx.theme().colors().clone();
-        let status = cx.theme().status().clone();
         let tree = self.tree();
 
         let header = self.render_action_bar(tree.hidden_stopped, cx);
 
+        let notices = self.left_notices(&tree, cx);
+
+        let body = self.left_body(&tree, cx);
+
+        let toast = self.toast.render(&self.hits, "toast", cx);
+
+        div()
+            .id("left-panel")
+            .relative()
+            .flex()
+            .flex_col()
+            .w(self.left_width)
+            .flex_none()
+            .h_full()
+            .bg(colors.panel_background)
+            .on_mouse_move(cx.listener(|this, _: &MouseMoveEvent, _, cx| this.pointer_on_left(cx)))
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if !*hovered {
+                    this.release_left(cx);
+                }
+            }))
+            .child(header)
+            .children(self.render_loading(cx))
+            .children(self.render_inbox(cx))
+            .children(self.render_messages(cx))
+            .when(!notices.is_empty(), |d| {
+                d.child(
+                    div()
+                        .id("notices")
+                        .relative()
+                        .child(hit_target(&self.hits, "notices-area".into()))
+                        .flex()
+                        .flex_col()
+                        .flex_shrink(NOTICES_SHRINK)
+                        .min_h_0()
+                        .mb(px(SEAM_GAP))
+                        .border_b_1()
+                        .border_color(seam_color(cx))
+                        .overflow_y_scroll()
+                        .children(notices),
+                )
+            })
+            .child(self.render_search_box())
+            .child(body)
+            .children(toast)
+            .into_any_element()
+    }
+
+    fn left_notices(&self, tree: &fleet::Tree, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let status = cx.theme().status().clone();
         let mut notices: Vec<AnyElement> = Vec::new();
         let notice = |text: String, banner: Div| banner.mx_3().my_2().child(SharedString::from(text)).into_any_element();
         if let Cli::Failed(error) = &self.cli {
@@ -453,11 +395,14 @@ impl FleetView {
                 banner::plain(cx),
             ));
         }
+        notices
+    }
 
+    fn left_body(&mut self, tree: &Rc<fleet::Tree>, cx: &mut Context<Self>) -> Stateful<Div> {
         let query = self.search_query(cx);
         self.search_marks.clear();
-        let body = if query.is_empty() {
-            self.set_left_rows(&tree);
+        if query.is_empty() {
+            self.set_left_rows(tree);
             let list = gpui::list(self.left_list.state(), cx.processor(|this: &mut Self, ix: usize, _, cx| div().w_full().child(this.render_left_row(ix, cx)).into_any_element())).size_full().pb_4();
             div().id("fleet").relative().child(hit_target(&self.hits, "tree-area".into())).flex().flex_col().flex_1().min_h(relative(TREE_MIN_SHARE)).child(list)
         } else {
@@ -472,50 +417,7 @@ impl FleetView {
                 .overflow_y_scroll()
                 .pb_4();
             self.render_results(body, &query, cx)
-        };
-
-        let toast = self.toast.render(&self.hits, "toast", cx);
-
-        div()
-            .id("left-panel")
-            .relative()
-            .flex()
-            .flex_col()
-            .w(self.left_width)
-            .flex_none()
-            .h_full()
-            .bg(colors.panel_background)
-            .on_mouse_move(cx.listener(|this, _: &MouseMoveEvent, _, cx| this.pointer_on_left(cx)))
-            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                if !*hovered {
-                    this.release_left(cx);
-                }
-            }))
-            .child(header)
-            .children(self.render_loading(cx))
-            .children(self.render_inbox(cx))
-            .children(self.render_messages(cx))
-            .when(!notices.is_empty(), |d| {
-                d.child(
-                    div()
-                        .id("notices")
-                        .relative()
-                        .child(hit_target(&self.hits, "notices-area".into()))
-                        .flex()
-                        .flex_col()
-                        .flex_shrink(NOTICES_SHRINK)
-                        .min_h_0()
-                        .mb(px(SEAM_GAP))
-                        .border_b_1()
-                        .border_color(seam_color(cx))
-                        .overflow_y_scroll()
-                        .children(notices),
-                )
-            })
-            .child(self.render_search_box())
-            .child(body)
-            .children(toast)
-            .into_any_element()
+        }
     }
 
     /// The sidebar's rows in order: a key each and the tokens its hit keys contain (supraman_ui::keyed_list).
@@ -714,65 +616,73 @@ impl FleetView {
                     })),
             );
         for need in needs {
-            let color = needs_color(need.kind, cx);
-            let buttons = inbox_buttons(need);
-            let remedy = (!buttons.is_empty()).then(|| {
-                div().flex().flex_none().gap_1().children(buttons.into_iter().map(|(key, label, does)| {
-                    let (workspace, name) = (need.workspace.clone(), need.name.clone());
-                    button::bordered(&self.hits, key, label, cx).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| match &does {
-                        InboxButton::Remedy(Remedy::Attach { id }) => {
-                            this.attach_by_id(&workspace, id, window, cx);
-                        }
-                        InboxButton::Remedy(Remedy::Retry | Remedy::Remint { .. } | Remedy::Adopt { .. }) | InboxButton::Retry => {
-                            this.retry(&workspace, &name, cx)
-                        }
-                        InboxButton::Remedy(Remedy::RunInTerminal { cwd, command }) => {
-                            this.run_in_terminal(cwd.clone(), command.clone(), window, cx);
-                        }
-                        InboxButton::Remedy(Remedy::RestartElevated) => this.restart_elevated(window, cx),
-                        InboxButton::StartFresh => this.start_fresh(&workspace, &name, cx),
-                    }))
-                }))
-            });
-            inbox = inbox.child(
-                div()
-                    .flex()
-                    .items_start()
-                    .gap_2()
-                    .p_2()
-                    .rounded_md()
-                    .border_l_2()
-                    .border_color(color)
-                    .bg(color.opacity(0.10))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .min_w_0()
-                            .gap(px(2.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap_2()
-                                    .text_sm()
-                                    .child(div().font_weight(FontWeight::BOLD).text_color(color).child(needs_label(need.kind)))
-                                    .child(SharedString::from(format!("{} · {}", need.workspace, need.name)))
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(colors.text_muted)
-                                            .child(SharedString::from(supraman_core::time::ago(now - need.since))),
-                                    ),
-                            )
-                            .child(div().text_xs().text_color(colors.text).child(SharedString::from(need.detail.clone()))),
-                    )
-                    .children(remedy),
-            );
+            inbox = inbox.child(self.render_need(need, now, cx));
         }
         let (work_needs, housekeeping) = self.render_work_cards(&work_rows, cx);
         inbox = inbox.children(work_needs).children(scheduled).children(housekeeping);
         Some(inbox.into_any_element())
+    }
+
+    fn need_remedy(&self, need: &NeedsYou, cx: &mut Context<Self>) -> Option<Div> {
+        let buttons = inbox_buttons(need);
+        (!buttons.is_empty()).then(|| {
+            div().flex().flex_none().gap_1().children(buttons.into_iter().map(|(key, label, does)| {
+                let (workspace, name) = (need.workspace.clone(), need.name.clone());
+                button::bordered(&self.hits, key, label, cx).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| match &does {
+                    InboxButton::Remedy(Remedy::Attach { id }) => {
+                        this.attach_by_id(&workspace, id, window, cx);
+                    }
+                    InboxButton::Remedy(Remedy::Retry | Remedy::Remint { .. } | Remedy::Adopt { .. }) | InboxButton::Retry => {
+                        this.retry(&workspace, &name, cx)
+                    }
+                    InboxButton::Remedy(Remedy::RunInTerminal { cwd, command }) => {
+                        this.run_in_terminal(cwd.clone(), command.clone(), window, cx);
+                    }
+                    InboxButton::Remedy(Remedy::RestartElevated) => this.restart_elevated(window, cx),
+                    InboxButton::StartFresh => this.start_fresh(&workspace, &name, cx),
+                }))
+            }))
+        })
+    }
+
+    fn render_need(&self, need: &NeedsYou, now: i64, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors().clone();
+        let color = needs_color(need.kind, cx);
+        let remedy = self.need_remedy(need, cx);
+        div()
+            .flex()
+            .items_start()
+            .gap_2()
+            .p_2()
+            .rounded_md()
+            .border_l_2()
+            .border_color(color)
+            .bg(color.opacity(0.10))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .text_sm()
+                            .child(div().font_weight(FontWeight::BOLD).text_color(color).child(needs_label(need.kind)))
+                            .child(SharedString::from(format!("{} · {}", need.workspace, need.name)))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(colors.text_muted)
+                                    .child(SharedString::from(supraman_core::time::ago(now - need.since))),
+                            ),
+                    )
+                    .child(div().text_xs().text_color(colors.text).child(SharedString::from(need.detail.clone()))),
+            )
+            .children(remedy)
+            .into_any_element()
     }
 
     fn render_workman_notice(&self, problem: String, cx: &mut Context<Self>) -> AnyElement {
