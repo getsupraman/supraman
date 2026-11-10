@@ -2,6 +2,7 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use gpui::{App, Task};
+use supraman_core::platform::open::runs;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Link {
@@ -28,26 +29,6 @@ pub fn allowed(url: &str, schemes: &[&str]) -> Result<(), String> {
 /// Why a link of `scheme` was not opened.
 pub fn refused(scheme: &str) -> String {
     format!("Not opened: a {scheme}: link. Only http, https, mailto and file links open.")
-}
-
-/// Extensions of a file that runs, scripts, installs, links or registers something; `PATHEXT`'s are added to them.
-const RUNS: [&str; 50] = [
-    "exe", "com", "bat", "cmd", "ps1", "psm1", "psd1", "ps1xml", "psc1", "vb", "vbs", "vbe", "js", "jse", "ws", "wsf", "wsh",
-    "hta", "msi", "msp", "mst", "msc", "msix", "msixbundle", "appx", "appxbundle", "appinstaller", "cpl", "scr", "pif",
-    "lnk", "url", "website", "scf", "reg", "inf", "application", "appref-ms", "settingcontent-ms", "library-ms",
-    "searchconnector-ms", "diagcab", "chm", "gadget", "jar", "py", "pyw", "pyz", "sh", "xll",
-];
-
-/// The name Windows opens for `name`: an alternate stream's `:` part and trailing dots and spaces dropped.
-fn effective_name(name: &str) -> &str {
-    name.split(':').next().unwrap_or(name).trim_end_matches(['.', ' '])
-}
-
-/// `Some(true)` when `name`'s extension runs something, `Some(false)` when it is a document's, `None` without one.
-fn runs(name: &str, pathext: &str) -> Option<bool> {
-    let (_, ext) = effective_name(name).rsplit_once('.')?;
-    let pathext = supraman_core::paths::pathext_list(pathext).map(|e| e.trim_start_matches('.'));
-    Some(RUNS.into_iter().chain(pathext).any(|known| known.eq_ignore_ascii_case(ext)))
 }
 
 /// `Ok` for a folder or a document; else why the file `path` is not opened, since its handler would run it.
@@ -86,7 +67,7 @@ pub fn file_url_path(url: &str) -> Result<PathBuf, String> {
 /// Opens `target`, an [`allowed`] URL or a path [`document`] passes, with its handler; blocking, so never on the UI thread: ShellExecuteW
 /// pumps its thread's messages, and there gpui re-enters inside the click's borrow (m5/68).
 pub fn open(target: &OsStr) -> Result<(), String> {
-    supraman_core::process::shell_execute("open", target, None, None).map_err(|code| format!("ShellExecuteW returned {code}"))
+    supraman_core::platform::open::open(target)
 }
 
 /// [`open`] on the background executor.

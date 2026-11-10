@@ -20,6 +20,7 @@ pub enum Ignore {
 
 /// `path` with gitignore's special characters taken literally.
 fn escaped(path: &str) -> String {
+    #[cfg(windows)]
     let path = path.replace('\\', "/");
     let mut out = String::with_capacity(path.len());
     for (i, c) in path.chars().enumerate() {

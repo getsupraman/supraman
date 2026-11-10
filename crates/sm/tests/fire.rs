@@ -554,7 +554,7 @@ fn a_run_whose_sm_is_gone_is_recovered_as_interrupted_and_a_live_one_is_left() {
     assert_eq!((outcome, why.as_str()), (Outcome::Interrupted, format!("sm (pid {pid}) ended without finishing the run").as_str()), "by the next fire");
 
     let me = std::process::id();
-    let mine = format!(r#"{{"run":"gate-20261101-080000","fm_pid":{me},"fm_started":{},"started_at":1,"stage":"script"}}"#, supraman_core::process::started(me).unwrap());
+    let mine = format!(r#"{{"run":"gate-20261101-080000","fm_pid":{me},"fm_started":{},"started_at":1,"stage":"script"}}"#, supraman_core::platform::process::started(me).unwrap());
     fs::write(f.live().join("gate.json"), &mine).unwrap();
     assert_eq!(fire::recover_if_dead(&f.home, "demo", "gate"), None, "its sm runs");
 

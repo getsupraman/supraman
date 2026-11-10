@@ -423,7 +423,7 @@ pub struct Keeper {
 
 impl Keeper {
     pub fn new(home: &Path, mcp_dir: &Path, store: Arc<dyn SecretStore>) -> Self {
-        let sm = supraman_core::install::sm_exe().unwrap_or_else(|_| PathBuf::from(supraman_core::HOOK_EXE));
+        let sm = supraman_core::install::sm_exe().unwrap_or_else(|_| PathBuf::from(supraman_core::hook_exe()));
         Self { home: home.to_path_buf(), mcp_dir: mcp_dir.to_path_buf(), sm, store, claude_dir: None }
     }
 

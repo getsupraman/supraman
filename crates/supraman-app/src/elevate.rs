@@ -52,19 +52,11 @@ pub fn toggle(home: &Path) -> bool {
     Settings::load(home).is_ok_and(|s| s.sessions.run_as_admin)
 }
 
-#[cfg(windows)]
 pub fn relaunch(home: &Path, after: Option<u32>) -> anyhow::Result<()> {
     let exe = std::env::current_exe()?;
     let cwd = std::env::current_dir().unwrap_or_else(|_| home.to_path_buf());
     let args = arguments(home, after);
-    supraman_core::process::shell_execute("runas", exe.as_os_str(), Some(args.as_ref()), Some(&cwd)).map_err(|code| {
-        anyhow::anyhow!("the elevated start was refused (ShellExecuteW runas returned {code}; 5 is a declined UAC prompt)")
-    })
-}
-
-#[cfg(not(windows))]
-pub fn relaunch(_home: &Path, _after: Option<u32>) -> anyhow::Result<()> {
-    anyhow::bail!("only Windows elevates")
+    supraman_core::platform::open::runas(&exe, args.as_ref(), &cwd).map_err(anyhow::Error::msg)
 }
 
 pub fn wait_for_exit(pid: u32, within: Duration) {

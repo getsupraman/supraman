@@ -208,7 +208,7 @@ fn a_transfer_shows_its_progress_and_cancel_kills_its_tree() {
     cancel.store(true, Ordering::SeqCst);
     let ended = fetching.join().unwrap();
     assert!(matches!(ended, Err(WriteError::Cancelled)), "{ended:?}");
-    assert!(supraman_core::process::wait_any_exit(&[pid], Duration::from_secs(10)), "Cancel killed the ssh under git");
+    assert!(supraman_core::platform::process::wait_any_exit(&[pid], Duration::from_secs(10)), "Cancel killed the ssh under git");
 }
 
 #[test]

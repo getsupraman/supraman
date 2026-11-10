@@ -10,7 +10,8 @@ use anyhow::{Context as _, anyhow, bail};
 use supraman_claude::{Claude, Removal, Session, WRITE_TIMEOUT, check_supported, list_sessions, main_repo, main_repo_walks, now_ms};
 use supraman_core::{DEFAULT_DEPTH, Workspace, Registry, process, scan};
 use supraman_term::Terminal;
-use supraman_ui::{memory, mib};
+use supraman_core::platform::process::memory;
+use supraman_ui::mib;
 use gpui::{
     App, AsyncWindowContext, Bounds, Entity, KeyDownEvent, Keystroke, Modifiers, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, ScrollDelta, ScrollEvent, Window,
@@ -356,7 +357,7 @@ fn run_cleanup(guard: &mut Option<Scratch>) {
     };
     let mut ok = true;
     for &(pid, start) in &scratch.kill {
-        process::terminate_started(pid, start);
+        supraman_core::platform::process::terminate_started(pid, start);
     }
     let mut transcripts = scratch.transcripts.clone();
     if let Some(prefix) = &scratch.name_prefix {

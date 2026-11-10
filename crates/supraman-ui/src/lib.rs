@@ -132,35 +132,6 @@ pub fn log_panics() {
     }));
 }
 
-/// (private bytes, working set) of this process.
-#[cfg(windows)]
-pub fn memory() -> (usize, usize) {
-    use windows::Win32::System::ProcessStatus::{
-        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
-    };
-    use windows::Win32::System::Threading::GetCurrentProcess;
-    let mut counters = PROCESS_MEMORY_COUNTERS_EX {
-        cb: size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32,
-        ..Default::default()
-    };
-    let ok = unsafe {
-        GetProcessMemoryInfo(
-            GetCurrentProcess(),
-            &mut counters as *mut PROCESS_MEMORY_COUNTERS_EX as *mut PROCESS_MEMORY_COUNTERS,
-            counters.cb,
-        )
-    };
-    if ok.is_err() {
-        return (0, 0);
-    }
-    (counters.PrivateUsage, counters.WorkingSetSize)
-}
-
-#[cfg(not(windows))]
-pub fn memory() -> (usize, usize) {
-    (0, 0)
-}
-
 pub fn mib(bytes: usize) -> String {
     format!("{:.1} MiB ({bytes} B)", bytes as f64 / (1024.0 * 1024.0))
 }

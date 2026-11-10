@@ -12,7 +12,7 @@ use crate::git_view::GitView;
 
 /// Waits up to 10 s for `pid` to end.
 fn gone(pid: u32) -> bool {
-    process::wait_any_exit(&[pid], Duration::from_secs(10)) || !process::alive(pid)
+    supraman_core::platform::process::wait_any_exit(&[pid], Duration::from_secs(10)) || !process::alive(pid)
 }
 
 fn git_pid(view: &Entity<GitView>, cx: &mut VisualTestContext) -> u32 {

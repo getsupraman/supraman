@@ -194,7 +194,7 @@ mod imp {
                     None,
                     None,
                     true,
-                    PROCESS_CREATION_FLAGS(crate::process::CREATE_NO_WINDOW) | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT,
+                    PROCESS_CREATION_FLAGS(crate::platform::process::CREATE_NO_WINDOW) | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT,
                     Some(env.as_ptr().cast()),
                     PCWSTR::null(),
                     &si.StartupInfo,

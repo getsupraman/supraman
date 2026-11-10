@@ -74,7 +74,7 @@ fn walk(entries: fs::ReadDir, prefix: &str, level: usize, depth: usize, every: b
         let Ok(folder) = entry.file_name().into_string() else {
             continue;
         };
-        if folder.starts_with('.') || folder.ends_with(".worktrees") || hidden(&entry) {
+        if folder.starts_with('.') || folder.ends_with(".worktrees") || crate::platform::fs::hidden(&entry) {
             continue;
         }
         let path = entry.path();
@@ -91,18 +91,6 @@ fn walk(entries: fs::ReadDir, prefix: &str, level: usize, depth: usize, every: b
             walk(children, &format!("{name}/"), level + 1, depth, every, found);
         }
     }
-}
-
-#[cfg(windows)]
-fn hidden(entry: &fs::DirEntry) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_HIDDEN;
-    entry.metadata().is_ok_and(|m| m.file_attributes() & FILE_ATTRIBUTE_HIDDEN.0 != 0)
-}
-
-#[cfg(not(windows))]
-fn hidden(_: &fs::DirEntry) -> bool {
-    false
 }
 
 /// The branch checked out at `dir`, from the nearest `.git` at or above it (a folder, or a linked

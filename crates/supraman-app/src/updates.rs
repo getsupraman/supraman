@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use futures::StreamExt as _;
 use gpui::{AppContext as _, Context};
 use supraman_core::install;
+use supraman_core::platform::fs::exe_name;
 use supraman_core::update::Version;
 use supraman_ui::nudge::{self, Nudge};
 use supraman_workman::updates::{self, Available, Checked, Downloaded, Outcome, Source};
@@ -354,8 +355,9 @@ impl FleetView {
 }
 
 fn start_apply(dir: &Path, release: &Path, target: &Target) -> Result<u32, String> {
-    let helper = dir.join("sm-update.exe");
-    std::fs::copy(release.join("sm.exe"), &helper).map_err(|e| format!("cannot copy the new sm.exe to {}: {e}", helper.display()))?;
+    let helper = dir.join(exe_name("sm-update"));
+    let sm = supraman_core::hook_exe();
+    std::fs::copy(release.join(&sm), &helper).map_err(|e| format!("cannot copy the new {sm} to {}: {e}", helper.display()))?;
     let mut cmd = supraman_core::process::command(&helper);
     cmd.args(["update", "apply", "--from"])
         .arg(release)
@@ -364,7 +366,7 @@ fn start_apply(dir: &Path, release: &Path, target: &Target) -> Result<u32, Strin
         .arg("--log")
         .arg(dir.join(updates::APPLY_LOG))
         .arg("--restart")
-        .arg(target.install.join("supraman.exe"));
+        .arg(target.install.join(exe_name("supraman")));
     if let Some(pid) = target.wait_pid {
         cmd.arg("--wait-pid").arg(pid.to_string());
     }

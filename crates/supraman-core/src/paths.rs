@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 /// `USERPROFILE`, else `HOME`; an empty value counts as unset.
 pub fn user_home() -> Option<PathBuf> {
-    home_of(std::env::var_os("USERPROFILE"), std::env::var_os("HOME"))
+    home_of(crate::platform::paths::user_profile(), std::env::var_os("HOME"))
 }
 
 fn home_of(userprofile: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
@@ -148,8 +148,7 @@ pub fn normalize(path: &Path) -> String {
 
 /// [`normalize`], lowercased on Windows: equal keys name the same path.
 pub fn path_key(path: &Path) -> String {
-    let normal = normalize(path);
-    if cfg!(windows) { normal.to_lowercase() } else { normal }
+    crate::platform::paths::compared_case(normalize(path))
 }
 
 /// `dir` is `root` or below it, compared by [`path_key`]; a sibling sharing a prefix is not.
@@ -427,7 +426,7 @@ pub fn windows_powershell(system_root: Option<&std::ffi::OsStr>) -> PowerShell {
 /// The first `PATH` folder's `pwsh` with a `PATHEXT` extension, else [`windows_powershell`]; never a bare name.
 pub fn powershell(path: &std::ffi::OsStr, pathext: &str, system_root: Option<&std::ffi::OsStr>) -> PowerShell {
     match executable("pwsh", path, pathext) {
-        Some(path) => PowerShell { alias: is_app_alias(&path), path, name: "pwsh" },
+        Some(path) => PowerShell { alias: crate::platform::fs::is_app_alias(&path), path, name: "pwsh" },
         None => windows_powershell(system_root),
     }
 }
@@ -436,18 +435,6 @@ pub fn powershell(path: &std::ffi::OsStr, pathext: &str, system_root: Option<&st
 pub fn job_powershell(path: &std::ffi::OsStr, pathext: &str, system_root: Option<&std::ffi::OsStr>) -> PowerShell {
     let found = powershell(path, pathext, system_root);
     if found.alias { windows_powershell(system_root) } else { found }
-}
-
-#[cfg(windows)]
-fn is_app_alias(file: &Path) -> bool {
-    use std::os::windows::fs::MetadataExt as _;
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-    fs::symlink_metadata(file).is_ok_and(|m| m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 && !m.file_type().is_symlink())
-}
-
-#[cfg(not(windows))]
-fn is_app_alias(_: &Path) -> bool {
-    false
 }
 
 /// This process's `PATH`, empty when unset.
@@ -471,7 +458,7 @@ pub fn git_roots() -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = program_files.into_iter().flatten().map(|d| PathBuf::from(d).join("Git")).collect();
     roots.extend(std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("Programs").join("Git")));
     roots.extend(std::env::var_os("EXEPATH").map(PathBuf::from));
-    for dir in folders_holding("git.exe", &process_path()) {
+    for dir in folders_holding(&crate::platform::fs::exe_name("git"), &process_path()) {
         let up = dir.parent().map(Path::to_path_buf);
         let mingw = up.as_deref().filter(|u| u.file_name().is_some_and(|n| n.to_string_lossy().to_ascii_lowercase().starts_with("mingw")));
         roots.extend(mingw.and_then(Path::parent).map(Path::to_path_buf).or(up));

@@ -2008,7 +2008,7 @@ impl FleetView {
 }
 
 fn any_exit(executor: &gpui::BackgroundExecutor, pids: Vec<u32>, timeout: Duration) -> impl Future<Output = ()> + use<> {
-    let exited = (!pids.is_empty()).then(|| executor.spawn(async move { supraman_core::process::wait_any_exit(&pids, timeout) }));
+    let exited = (!pids.is_empty()).then(|| executor.spawn(async move { supraman_core::platform::process::wait_any_exit(&pids, timeout) }));
     async move {
         let exited = match exited {
             Some(task) => task.await,
@@ -2128,7 +2128,7 @@ fn tab_sessions(shells: &[(u64, u32)]) -> StdHashMap<u64, String> {
     let Some(dir) = peer::sessions_dir().filter(|_| !shells.is_empty()) else {
         return StdHashMap::new();
     };
-    let procs = supraman_core::process::snapshot();
+    let procs = supraman_core::platform::process::snapshot();
     shells
         .iter()
         .filter_map(|&(tab, pid)| {

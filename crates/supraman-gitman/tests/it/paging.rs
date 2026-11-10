@@ -66,5 +66,5 @@ fn a_dropped_walk_kills_its_git() {
     let pid = walk.pid().expect("git waits to write the rest");
     assert!(process::alive(pid));
     drop(walk);
-    assert!(process::wait_any_exit(&[pid], Duration::from_secs(10)), "git is gone with its walk");
+    assert!(supraman_core::platform::process::wait_any_exit(&[pid], Duration::from_secs(10)), "git is gone with its walk");
 }

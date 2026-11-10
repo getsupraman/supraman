@@ -31,7 +31,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     saved.restore().ok();
     let killed = lock().as_mut().map(|s| std::mem::take(&mut s.kill)).unwrap_or_default();
     for (pid, start) in killed {
-        supraman_core::process::terminate_started(pid, start);
+        supraman_core::platform::process::terminate_started(pid, start);
     }
     let mine: Vec<u64> = view.read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).collect());
     view.update(cx, |v, cx| mine.into_iter().for_each(|id| v.close_tab(id, cx)));

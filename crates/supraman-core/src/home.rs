@@ -23,16 +23,12 @@ pub fn env_home() -> Option<PathBuf> {
 }
 
 pub fn home_from_env() -> Option<PathBuf> {
-    home_from(std::env::var_os(HOME_VAR), appdata())
+    home_from(std::env::var_os(HOME_VAR), crate::platform::paths::data_dir())
 }
 
 /// `%APPDATA%\Supraman`, whatever `SUPRAMAN_HOME` says.
 pub fn default_home_from_env() -> Option<PathBuf> {
-    default_home(appdata())
-}
-
-fn appdata() -> Option<OsString> {
-    std::env::var_os("APPDATA")
+    default_home(crate::platform::paths::data_dir())
 }
 
 /// For a session's or a script's environment.

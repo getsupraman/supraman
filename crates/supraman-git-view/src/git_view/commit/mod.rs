@@ -11,7 +11,7 @@ mod view;
 mod tests;
 
 use supraman_core::text::count;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gpui::{AppContext as _, ClipboardItem, Context, Entity, EventEmitter, Render, Window, div, prelude::*};
 use supraman_gitman::write::commit::{self, Picked, ResetMode};
@@ -240,7 +240,7 @@ impl CommitActions {
                 self.open(file.parent().map_or(top, PathBuf::from), cx);
             }
             FileAct::CopyPath(path) => {
-                cx.write_to_clipboard(ClipboardItem::new_string(top.join(&path).display().to_string()));
+                cx.write_to_clipboard(ClipboardItem::new_string(copied_path(&top, &path)));
                 cx.emit(CommitEvent::Said("Copied the path".into()));
             }
             _ => {}
@@ -333,6 +333,11 @@ fn said(doing: Doing, outcome: Option<Outcome>) -> (Option<String>, Option<Strin
         (Doing::Plain(words), _) => (Some(words), None),
         _ => (None, None),
     }
+}
+
+/// `rel`, a repo-relative `/` path, under `top` (git's `C:/…`), in the platform's own separators.
+fn copied_path(top: &Path, rel: &str) -> String {
+    top.join(rel).components().collect::<PathBuf>().display().to_string()
 }
 
 impl Render for CommitActions {

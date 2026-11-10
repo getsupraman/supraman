@@ -67,12 +67,12 @@ pub fn exe_dir() -> io::Result<PathBuf> {
 
 /// `sm.exe` beside the running exe.
 pub fn sm_exe() -> io::Result<PathBuf> {
-    Ok(exe_dir()?.join(crate::HOOK_EXE))
+    Ok(exe_dir()?.join(crate::hook_exe()))
 }
 
 /// [`exe_dir`] when `sm.exe` is in it: the folder a [+] tab puts first on its `PATH`.
 pub fn sm_dir() -> Option<PathBuf> {
-    exe_dir().ok().filter(|d| d.join(crate::HOOK_EXE).is_file())
+    exe_dir().ok().filter(|d| d.join(crate::hook_exe()).is_file())
 }
 
 /// A child's `PATH`: [`exe_dir`] first, then this process's, so the `sm` it runs is this build's.
@@ -335,7 +335,7 @@ impl<'a> Run<'a> {
         let (from, to) = (&self.job.from, &self.job.to);
         if let Some(pid) = self.job.wait_pid
             && crate::process::alive(pid)
-            && !crate::process::wait_any_exit(&[pid], self.job.wait)
+            && !crate::platform::process::wait_any_exit(&[pid], self.job.wait)
             && crate::process::alive(pid)
         {
             return refused(format!("Supraman (pid {pid}) did not exit within {} s: nothing changed", self.job.wait.as_secs()));
