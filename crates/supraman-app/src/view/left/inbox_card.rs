@@ -136,7 +136,7 @@ impl FleetView {
 
     /// Needs you, then the Housekeeping header and, while open, its groups.
     pub(super) fn render_work_cards(&self, rows: &[(String, InboxRow)], cx: &mut Context<Self>) -> (Vec<AnyElement>, Option<AnyElement>) {
-        let live: Vec<String> = self.work_live.borrow().iter().map(|s| s.name.clone()).collect();
+        let live: Vec<String> = crate::view::work_tab::attachable(&self.occupancy).into_iter().map(|s| s.name).collect();
         let refs: Vec<(&str, &InboxRow)> = rows.iter().map(|(w, r)| (w.as_str(), r)).collect();
         let now = now_ms();
         let sections = cards::sections(&refs, &live, now);

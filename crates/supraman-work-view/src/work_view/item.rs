@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use supraman_workman::{Claim, ItemPage};
 
@@ -13,7 +13,7 @@ pub struct LiveSession {
 
 #[derive(Clone)]
 pub struct FleetLink {
-    pub live: Rc<RefCell<Vec<LiveSession>>>,
+    pub live: Rc<dyn Fn() -> Vec<LiveSession>>,
     pub attach: Rc<dyn Fn(&str, &mut Window, &mut App)>,
 }
 

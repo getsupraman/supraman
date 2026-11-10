@@ -5,8 +5,8 @@ use std::rc::Rc;
 
 use gpui::Context;
 
-use super::{FleetView, Tab, TabKind};
-use crate::work_view::{self, FleetLink, WorkView};
+use super::{FleetView, Tab, TabKind, occupancy};
+use crate::work_view::{self, FleetLink, LiveSession, WorkView};
 
 impl FleetView {
     pub fn open_work(&mut self, workspace: &str, cx: &mut Context<Self>) -> u64 {
@@ -21,7 +21,10 @@ impl FleetView {
         let fleet = cx.weak_entity();
         let name = workspace.to_string();
         let link = FleetLink {
-            live: self.work_live.clone(),
+            live: {
+                let live = self.occupancy.clone();
+                Rc::new(move || attachable(&live))
+            },
             attach: Rc::new(move |id, window, cx| {
                 fleet.update(cx, |fleet, cx| fleet.attach_by_id(&name, id, window, cx)).ok();
             }),
@@ -29,7 +32,7 @@ impl FleetView {
         let found = self.workspaces.iter().find(|w| w.name == workspace);
         let folders = found.map(|w| w.folders.iter().map(|f| f.path.clone()).collect()).unwrap_or_default();
         let cwd = found.and_then(|w| w.home()).map(Path::to_path_buf);
-        let opening = work_view::Opening { workspace: workspace.to_string(), folders, home: self.home.clone(), hits: self.hits.clone(), link, open_link_with: self.open_link_with, repo_of: self.work_repo_of };
+        let opening = work_view::Opening { workspace: workspace.to_string(), folders, home: self.home.clone(), hits: self.hits.clone(), link, open_link_with: self.open_link_with, repo_of: self.work_inbox.read(cx).repo_of() };
         let view = WorkView::open(opening, cx);
         cx.subscribe(&view, |this, _, event: &work_view::WorkEvent, cx| {
             if let work_view::WorkEvent::ShowInbox = event {
@@ -61,4 +64,11 @@ impl FleetView {
         }
         id
     }
+}
+
+pub(crate) fn attachable(live: &occupancy::Live) -> Vec<LiveSession> {
+    live.sessions()
+        .into_iter()
+        .filter_map(|s| Some(LiveSession { claude_session_id: s.claude_session_id, id: s.attach?, name: s.name }))
+        .collect()
 }

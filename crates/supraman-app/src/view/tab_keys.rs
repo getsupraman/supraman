@@ -83,11 +83,15 @@ impl TabKeyState {
         }
         self.closed.push(saved);
     }
+
+    pub(super) fn pop(&mut self) -> Option<SavedTab> {
+        self.closed.pop()
+    }
 }
 
 impl FleetView {
     pub(super) fn on_tab_chord(&mut self, chord: &TabChord, window: &mut Window, cx: &mut Context<Self>) {
-        if passes(chord.0, self.tab_keys.mode, self.active_terminal().is_some()) {
+        if passes(chord.0, self.tab_keys.read(cx).mode, self.active_terminal().is_some()) {
             cx.propagate();
             return;
         }
@@ -116,24 +120,12 @@ impl FleetView {
         }
     }
 
-    pub fn set_tab_keys(&mut self, mode: TabKeys) {
-        self.tab_keys.mode = mode;
-    }
-
-    pub fn tab_keys(&self) -> &TabKeyState {
-        &self.tab_keys
-    }
-
     /// Called before a tab closes, by its × or a chord; a tab already detaching was remembered by the close that began it.
-    pub(super) fn remember_closed(&mut self, id: u64, cx: &gpui::App) {
+    pub(super) fn remember_closed(&mut self, id: u64, cx: &mut gpui::App) {
         let closing = self.tab(id).filter(|tab| !matches!(tab.detach, Detach::Detaching | Detach::Pending));
         if let Some(saved) = closing.and_then(|tab| self.saved_tab(tab, cx)) {
-            self.tab_keys.push(saved);
+            self.tab_keys.update(cx, |keys, _| keys.push(saved));
         }
-    }
-
-    pub(super) fn pop_closed(&mut self) -> Option<SavedTab> {
-        self.tab_keys.closed.pop()
     }
 
     /// A Start page in the active tab's workspace and folder, else in the first workspace.

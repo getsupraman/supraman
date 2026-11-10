@@ -958,7 +958,7 @@ impl SettingsView {
             move |s| s.window.set_tab_keys(mode),
             |this, cx| {
                 let mode = this.settings.window.tab_keys();
-                this.fleet.update(cx, |fleet, _| fleet.set_tab_keys(mode)).ok();
+                this.fleet.update(cx, |fleet, cx| fleet.tab_keys.update(cx, |keys, _| keys.mode = mode)).ok();
             },
             cx,
         );

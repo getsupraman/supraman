@@ -49,7 +49,7 @@ use crate::stars::Stars;
 use crate::supervise::{self, RelayStatus, Report, Supervision};
 use crate::tab_card;
 use crate::transcripts_load::TranscriptsLoad;
-use crate::work_view::{LiveSession, WorkHub, WorkInbox, WorkView};
+use crate::work_view::{WorkHub, WorkInbox, WorkView};
 use crate::workman_setup;
 use supraman_workman::status::WorkmanStatus;
 
@@ -294,7 +294,6 @@ pub struct FleetView {
     pub answered_route: BTreeMap<String, String>,
     pub compose: Option<Compose>,
     writes: writes::Writes,
-    work_live: Rc<RefCell<Vec<LiveSession>>>,
     occupancy: occupancy::Live,
     pub work_inbox: Entity<WorkInbox>,
     pub menu: Option<ContextMenu>,
@@ -304,8 +303,6 @@ pub struct FleetView {
     pub pick_folder: Option<PathBuf>,
     pub open_with: fn(&Path) -> Result<(), String>,
     pub open_link_with: fn(&Link, &mut App),
-    /// What a Work tab binds its folders by; `--selftest-shots` gives fixture folders a repo.
-    pub work_repo_of: crate::work_view::RepoOf,
     pub workman: WorkmanStatus,
     workman_dismissed: Option<String>,
     workman_recheck: Nudge,
@@ -378,7 +375,7 @@ pub struct FleetView {
     pub runs_dismissed: DismissedMessages,
     /// [`schedules::Waiting::key`]s whose Inbox entry René dismissed.
     pub waiting_dismissed: DismissedMessages,
-    tab_keys: tab_keys::TabKeyState,
+    pub(crate) tab_keys: Entity<tab_keys::TabKeyState>,
 }
 
 /// The dismissed run notices beside the dismissed messages.
@@ -677,7 +674,7 @@ impl FleetView {
                         this.finish_removals(cx);
                     }
                     let named = this.workspaces.iter().map(|w| (w.name.clone(), w.folders.iter().map(|f| f.path.clone()).collect())).collect();
-                    this.work_inbox.update(cx, |inbox, cx| inbox.set_workspaces(named, this.work_repo_of, cx));
+                    this.work_inbox.update(cx, |inbox, cx| inbox.set_workspaces(named, cx));
                     cx.notify();
                     pids
                 });
@@ -777,7 +774,6 @@ impl FleetView {
             answered_route: BTreeMap::new(),
             compose: None,
             writes: writes::Writes::default(),
-            work_live: Rc::default(),
             occupancy: occupancy::Live::default(),
             work_inbox,
             menu: None,
@@ -786,7 +782,6 @@ impl FleetView {
             removing: BTreeMap::new(),
             pick_folder: None,
             open_with: |path| open::open(path.as_os_str()),
-            work_repo_of: supraman_supervisor::git_repo,
             open_link_with: |link, cx| match link {
                 Link::Url(url) => open::open_off_thread(url.clone(), cx).detach(),
                 Link::Path(path) => open::open_off_thread(path.clone(), cx).detach(),
@@ -855,7 +850,7 @@ impl FleetView {
             schedule_edit: None,
             runs_dismissed,
             waiting_dismissed,
-            tab_keys: tab_keys::TabKeyState::new(loaded.window.tab_keys()),
+            tab_keys: cx.new(|_| tab_keys::TabKeyState::new(loaded.window.tab_keys())),
         }
     }
 
@@ -1091,11 +1086,6 @@ impl FleetView {
                         self.last_alive.insert(s.session_id.clone(), now);
                     }
                 }
-                *self.work_live.borrow_mut() = sessions
-                    .iter()
-                    .filter(|s| fleet::attachable(s, &s.health(now)))
-                    .map(|s| LiveSession { claude_session_id: s.session_id.clone(), id: s.id.clone(), name: s.name.clone() })
-                    .collect();
                 self.occupancy.set_sessions(fleet::live_sessions(&sessions, now));
                 self.sessions = sessions;
                 self.drop_deleted();

@@ -12,6 +12,7 @@ use supraman_ui::nudge::{Nudge, Nudged, nudge};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveSession {
     pub name: String,
+    pub claude_session_id: String,
     pub cwd: PathBuf,
     pub activity: Activity,
     /// The id `claude attach` takes, while the session can be attached (`fleet::attachable`).
@@ -39,6 +40,10 @@ impl Live {
         for w in &shared.watchers {
             w.wake();
         }
+    }
+
+    pub fn sessions(&self) -> Vec<LiveSession> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).sessions.clone()
     }
 
     /// The sessions whose cwd is `worktree` or below, by name.

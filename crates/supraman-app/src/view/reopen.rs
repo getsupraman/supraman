@@ -165,7 +165,7 @@ impl FleetView {
 
     /// Ctrl+Alt+T: the last tab closed in this run, planned as a start reopens its tabs.
     pub(super) fn reopen_closed(&mut self, cx: &mut Context<Self>) {
-        let Some(saved) = self.pop_closed() else {
+        let Some(saved) = self.tab_keys.update(cx, |keys, _| keys.pop()) else {
             self.pane_toast.show_why("No closed tab to reopen.".into(), |v: &mut Self| &mut v.pane_toast, cx);
             return;
         };

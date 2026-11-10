@@ -181,7 +181,7 @@ impl WorkView {
 
     fn render_over(&self, page: &ItemPage, key: StateKey, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
-        let live = self.link.live.borrow();
+        let live = (self.link.live)();
         let attach = page.claim.as_ref().and_then(|c| attach_target(c, &live)).map(|session| {
             let name = if session.name.is_empty() { session.id.clone() } else { session.name.clone() };
             let id = session.id.clone();

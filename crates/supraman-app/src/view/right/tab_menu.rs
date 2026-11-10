@@ -172,7 +172,7 @@ impl FleetView {
 
     fn tab_menu_items(&self, id: u64, folder: Option<&Path>, repo: &Repo, cx: &Context<Self>) -> Vec<MenuItem> {
         let at = self.tabs.iter().position(|t| t.id == id).unwrap_or_default();
-        let facts = TabFacts { id, folder, repo, others: self.tabs.len() > 1, right: at + 1 < self.tabs.len(), reopenable: self.tab_keys().has_closed() };
+        let facts = TabFacts { id, folder, repo, others: self.tabs.len() > 1, right: at + 1 < self.tabs.len(), reopenable: self.tab_keys.read(cx).has_closed() };
         tab_items(facts, self.tab(id).and_then(|tab| self.tab_session_items(tab, cx)))
     }
 

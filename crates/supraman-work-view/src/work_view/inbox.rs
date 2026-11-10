@@ -159,6 +159,7 @@ pub struct WorkInbox {
     folders: HashMap<String, Vec<PathBuf>>,
     keys: HashMap<String, Keys>,
     repo_of: RepoOf,
+    rebind: bool,
     projects: HashMap<String, Vec<ItemRef>>,
     inboxes: HashMap<String, Inbox>,
     /// Run id → project id, from the last overview.
@@ -214,6 +215,7 @@ impl WorkInbox {
             folders: HashMap::new(),
             keys: HashMap::new(),
             repo_of: supraman_supervisor::git_repo,
+            rebind: false,
             projects: HashMap::new(),
             inboxes: HashMap::new(),
             run_project: HashMap::new(),
@@ -230,15 +232,24 @@ impl WorkInbox {
         }
     }
 
+    pub fn use_repo_of(&mut self, repo_of: RepoOf) {
+        self.rebind |= repo_of as usize != self.repo_of as usize;
+        self.repo_of = repo_of;
+    }
+
+    pub fn repo_of(&self) -> RepoOf {
+        self.repo_of
+    }
+
     /// Each workspace with its folders; a workspace whose folders changed is bound again.
-    pub fn set_workspaces(&mut self, workspaces: Vec<(String, Vec<PathBuf>)>, repo_of: RepoOf, cx: &mut Context<Self>) {
+    pub fn set_workspaces(&mut self, workspaces: Vec<(String, Vec<PathBuf>)>, cx: &mut Context<Self>) {
         let names: Vec<String> = workspaces.iter().map(|(w, _)| w.clone()).collect();
-        let rebind = repo_of as usize != self.repo_of as usize;
+        let rebind = self.rebind;
         let changed: Vec<String> = workspaces.iter().filter(|(w, f)| rebind || self.folders.get(w) != Some(f)).map(|(w, _)| w.clone()).collect();
         if changed.is_empty() && names == self.workspaces {
             return;
         }
-        self.repo_of = repo_of;
+        self.rebind = false;
         self.folders = workspaces.into_iter().collect();
         for w in &changed {
             self.keys.remove(w);

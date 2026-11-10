@@ -9,7 +9,7 @@ use gpui::{AsyncWindowContext, Entity, Modifiers};
 use supraman_core::{Settings, TabKeys};
 
 use crate::{
-    selftest::{click, hex6, home, until},
+    selftest::{click, hex6, home, until, until_app},
     selftest_tabs::{READER, keys, press, reader},
     selftest_work::WORKSPACE,
     settings_window::{SettingsView, page},
@@ -205,7 +205,7 @@ async fn set_mode(view: &Entity<FleetView>, mode: TabKeys, cx: &mut AsyncWindowC
     })
     .await?;
     handle.update(cx, |s, _, cx| s.set_tab_keys(mode, cx)).map_err(|e| anyhow::anyhow!("settings window: {e}"))?;
-    until(view, cx, WITHIN, &format!("{mode:?} applied to the main window"), |v| (v.tab_keys().mode == mode).then_some(())).await?;
+    until_app(view, cx, WITHIN, &format!("{mode:?} applied to the main window"), |v, cx| (v.tab_keys.read(cx).mode == mode).then_some(())).await?;
     let saved = Settings::load(&home())?.window.tab_keys();
     if saved != mode {
         bail!("settings.toml holds {saved:?}, the window {mode:?}");

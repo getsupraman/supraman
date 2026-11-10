@@ -199,14 +199,17 @@ fn open(cx: &mut TestAppContext) -> Opened<'_> {
     let (holder, cx) = cx.add_window_view(|_, cx| {
         let hub = WorkHub::ready(client, cx);
         let inbox = WorkInbox::for_test(hub.clone(), cx);
-        inbox.update(cx, |i, cx| i.set_workspaces(vec![("w".into(), folders())], repo_of, cx));
+        inbox.update(cx, |i, cx| {
+            i.use_repo_of(repo_of);
+            i.set_workspaces(vec![("w".into(), folders())], cx)
+        });
         let live = vec![LiveSession { claude_session_id: "uuid-live".into(), id: "live0001".into(), name: "fm-w-ra".into() }];
         let opening = Opening {
             workspace: "w".into(),
             folders: folders(),
             home: None,
             hits: HitTargets::default(),
-            link: FleetLink { live: Rc::new(RefCell::new(live)), attach: Rc::new(|id, _, _| ATTACHED.with(|a| a.borrow_mut().push(id.to_string()))) },
+            link: FleetLink { live: Rc::new(move || live.clone()), attach: Rc::new(|id, _, _| ATTACHED.with(|a| a.borrow_mut().push(id.to_string()))) },
             open_link_with: record,
             repo_of,
         };
@@ -674,7 +677,7 @@ fn show_project_lands_on_its_first_active_run_else_the_overview(cx: &mut TestApp
         folders: folders(),
         home: None,
         hits: HitTargets::default(),
-        link: FleetLink { live: Rc::new(RefCell::new(Vec::new())), attach: Rc::new(|_, _, _| {}) },
+        link: FleetLink { live: Rc::new(Vec::new), attach: Rc::new(|_, _, _| {}) },
         open_link_with: record,
         repo_of,
     };

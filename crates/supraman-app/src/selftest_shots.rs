@@ -201,7 +201,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let out = out_dir()?;
     let fixtures = rows()?;
     let count = fixtures.len();
-    view.update(cx, |v, _| v.work_repo_of = fixture_repo);
+    view.update(cx, |v, cx| v.work_inbox.update(cx, |inbox, _| inbox.use_repo_of(fixture_repo)));
     view.read_with(cx, |v, _| v.injected.lock().unwrap_or_else(|e| e.into_inner()).extend(fixtures));
     crate::selftest::until(view, cx, Duration::from_secs(20), "the fixture sessions in the tree", |v| {
         let tree = v.tree();
