@@ -46,6 +46,17 @@ impl Dismissed {
         changed
     }
 
+    fn absorb(&mut self, other: Dismissed) -> bool {
+        let mut changed = false;
+        for (workspace, keys) in other.0 {
+            let mine = self.0.entry(workspace).or_default();
+            for (key, since) in keys {
+                changed |= mine.insert(key, since.clone()).as_ref() != Some(&since);
+            }
+        }
+        changed
+    }
+
     pub(crate) fn retain_workspaces(&mut self, workspaces: &[String]) -> bool {
         let before = self.0.len();
         self.0.retain(|w, _| workspaces.contains(w));
@@ -159,12 +170,14 @@ pub struct WorkInbox {
     folders: HashMap<String, Vec<PathBuf>>,
     keys: HashMap<String, Keys>,
     repo_of: RepoOf,
+    rebind: bool,
     projects: HashMap<String, Vec<ItemRef>>,
     inboxes: HashMap<String, Inbox>,
     /// Run id → project id, from the last overview.
     run_project: HashMap<String, String>,
     overview: Option<Arc<Overview>>,
     pub(crate) dismissed: JsonStore<Dismissed>,
+    workspaces_set: bool,
     pending: Option<Plan>,
     pub(crate) failures: HashMap<String, String>,
     pub notice: Option<String>,
@@ -207,21 +220,29 @@ impl WorkInbox {
 
     fn new(hub: Entity<WorkHub>, home: Option<&Path>, cx: &mut Context<Self>) -> Self {
         cx.subscribe(&hub, Self::on_hub).detach();
-        let (dismissed, notice) = Dismissed::load(home);
+        if let Some(home) = home.map(Path::to_path_buf) {
+            cx.spawn(async move |this, cx| {
+                let loaded = cx.background_spawn(async move { Dismissed::load(Some(&home)) }).await;
+                this.update(cx, |this, cx| this.dismissed_loaded(loaded, cx)).ok();
+            })
+            .detach();
+        }
         WorkInbox {
             hub,
             workspaces: Vec::new(),
             folders: HashMap::new(),
             keys: HashMap::new(),
             repo_of: supraman_supervisor::git_repo,
+            rebind: false,
             projects: HashMap::new(),
             inboxes: HashMap::new(),
             run_project: HashMap::new(),
             overview: None,
-            dismissed,
+            dismissed: JsonStore::default(),
+            workspaces_set: false,
             pending: None,
             failures: HashMap::new(),
-            notice,
+            notice: None,
             reads: 0,
             applied: 0,
             housekeeping_open: false,
@@ -230,15 +251,24 @@ impl WorkInbox {
         }
     }
 
+    pub fn use_repo_of(&mut self, repo_of: RepoOf) {
+        self.rebind |= repo_of as usize != self.repo_of as usize;
+        self.repo_of = repo_of;
+    }
+
+    pub fn repo_of(&self) -> RepoOf {
+        self.repo_of
+    }
+
     /// Each workspace with its folders; a workspace whose folders changed is bound again.
-    pub fn set_workspaces(&mut self, workspaces: Vec<(String, Vec<PathBuf>)>, repo_of: RepoOf, cx: &mut Context<Self>) {
+    pub fn set_workspaces(&mut self, workspaces: Vec<(String, Vec<PathBuf>)>, cx: &mut Context<Self>) {
         let names: Vec<String> = workspaces.iter().map(|(w, _)| w.clone()).collect();
-        let rebind = repo_of as usize != self.repo_of as usize;
+        let rebind = self.rebind;
         let changed: Vec<String> = workspaces.iter().filter(|(w, f)| rebind || self.folders.get(w) != Some(f)).map(|(w, _)| w.clone()).collect();
         if changed.is_empty() && names == self.workspaces {
             return;
         }
-        self.repo_of = repo_of;
+        self.rebind = false;
         self.folders = workspaces.into_iter().collect();
         for w in &changed {
             self.keys.remove(w);
@@ -249,10 +279,20 @@ impl WorkInbox {
         self.inboxes.retain(|w, _| names.contains(w));
         self.failures.retain(|w, _| names.contains(w));
         self.workspaces = names;
+        self.workspaces_set = true;
         let save = self.dismissed.edit(|d| d.retain_workspaces(&self.workspaces));
         Self::save(save, cx);
         let asks = changed.into_iter().map(|w| self.ask(w)).collect();
         self.read(asks, true, cx);
+        cx.notify();
+    }
+
+    fn dismissed_loaded(&mut self, (store, notice): (JsonStore<Dismissed>, Option<String>), cx: &mut Context<Self>) {
+        let early = std::mem::replace(&mut self.dismissed, store).get().clone();
+        let workspaces = self.workspaces_set.then_some(&self.workspaces);
+        let save = self.dismissed.edit(|d| d.absorb(early) | workspaces.is_some_and(|w| d.retain_workspaces(w)));
+        Self::save(save, cx);
+        self.notice = notice.or(self.notice.take());
         cx.notify();
     }
 
@@ -520,6 +560,17 @@ mod tests {
         assert_eq!(d, Dismissed::default(), "an emptied workspace leaves nothing behind");
         d.dismiss("w", &blocked);
         assert!(d.prune("w", &[row("blocked:t1", "s9")]), "started over");
+    }
+
+    #[test]
+    fn a_dismissal_made_before_the_file_is_read_is_kept_with_the_files() {
+        let mut read = Dismissed::default();
+        read.dismiss("w", &row("blocked:t1", "s1"));
+        let mut early = Dismissed::default();
+        early.dismiss("w", &row("question:t2", "s2"));
+        assert!(read.absorb(early.clone()));
+        assert!(read.hides("w", &row("blocked:t1", "s1")) && read.hides("w", &row("question:t2", "s2")));
+        assert!(!read.absorb(early), "nothing new the second time");
     }
 
     #[test]

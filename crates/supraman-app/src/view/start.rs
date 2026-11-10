@@ -70,34 +70,10 @@ pub fn folders(workspace: &supraman_core::Workspace) -> Vec<(String, PathBuf)> {
     out
 }
 
-/// The file the launch's pwsh runs for `command`: the path of `& '<path>' …`, else a bare name looked up as pwsh does.
-pub fn launched_file(command: &str, path: &std::ffi::OsStr, pathext: &str) -> Option<PathBuf> {
-    let command = command.trim();
-    if let Some(quoted) = command.strip_prefix("& '") {
-        return quoted.split_once('\'').map(|(p, _)| PathBuf::from(p));
-    }
-    let bare = !command.is_empty() && command.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c));
-    bare.then(|| supraman_core::paths::pwsh_command(command, path, pathext)).flatten()
-}
-
-/// Why `prompt` cannot go to claude as `file`: cmd.exe ends a `.cmd`'s command line at a new line and re-reads its quotes.
-pub fn cmd_refusal(file: Option<&Path>, prompt: &str) -> Option<String> {
-    let file = file?;
-    let ext = file.extension()?.to_string_lossy().to_ascii_lowercase();
-    if !matches!(ext.as_str(), "cmd" | "bat") || !prompt.contains(['\n', '"']) {
-        return None;
-    }
-    Some(format!(
-        "Not sent: claude here is {}, which runs through cmd.exe and cuts the text at a new line and mangles double quotes. \
-         Install the native claude.exe (claude.ai/install), which carries any text, or write the prompt on one line without \".",
-        file.display()
-    ))
-}
-
 /// The prompt file a Send launches with, or why it does not: `claude` resolved on PATH and the file written whole.
 fn prompt_file(claude: &str, home: Option<&Path>, prompt: &str) -> Result<PathBuf, String> {
     let (path, pathext, _) = supraman_core::paths::process_env();
-    if let Some(why) = cmd_refusal(launched_file(claude, &path, &pathext).as_deref(), prompt) {
+    if let Some(why) = super::shells::cmd_refusal(super::shells::launched_file(claude, &path, &pathext).as_deref(), prompt) {
         return Err(why);
     }
     write_prompt(home, prompt).map_err(|e| format!("Not sent: cannot write the prompt to the home ({e})."))
@@ -202,7 +178,7 @@ impl FleetView {
                 page.sending = false;
                 match ready {
                     Ok(file) => {
-                        let first = super::FirstPrompt { file, mode };
+                        let first = super::hand_tab::FirstPrompt { file, mode };
                         this.hand_claude_in(Some(tab), folder, crate::compose::first_line(&text), claude, None, None, Some(first), cx);
                         if scheduled && let Some(t) = this.tab_mut(tab) {
                             t.asks_schedule = Some(AsksSchedule { workspace, since, found: None });
@@ -382,28 +358,6 @@ mod tests {
         let names: Vec<String> = folders(&ws).into_iter().map(|(n, _)| n).collect();
         assert_eq!(names, ["demo (home)", "Alpha"]);
         assert!(!MODES.contains(&"bypassPermissions"));
-    }
-
-    #[test]
-    fn a_claude_cmd_refuses_a_new_line_or_a_double_quote_and_names_claude_exe() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (npm, native) = (tmp.path().join("npm"), tmp.path().join("native"));
-        std::fs::create_dir_all(&npm).unwrap();
-        std::fs::create_dir_all(&native).unwrap();
-        std::fs::write(npm.join("claude.cmd"), "").unwrap();
-        std::fs::write(native.join("claude.exe"), "").unwrap();
-        let ext = ".COM;.EXE;.BAT;.CMD";
-        let only_cmd = std::env::join_paths([&npm]).unwrap();
-        let cmd = launched_file("claude", &only_cmd, ext);
-        assert_eq!(cmd, Some(npm.join("claude.cmd")));
-        let why = cmd_refusal(cmd.as_deref(), "two\nlines").unwrap();
-        assert!(why.contains("claude.cmd") && why.contains("the native claude.exe") && why.contains("carries any text"), "{why}");
-        assert!(cmd_refusal(cmd.as_deref(), "say \"hi\"").is_some());
-        assert_eq!(cmd_refusal(cmd.as_deref(), "one line, no quotes"), None);
-        let exe = launched_file("claude", &std::env::join_paths([&native, &npm]).unwrap(), ext);
-        assert_eq!(cmd_refusal(exe.as_deref(), "two\n\"lines\""), None);
-        assert_eq!(cmd_refusal(launched_file("claude", &std::ffi::OsString::new(), ext).as_deref(), "a\nb"), None, "no claude: the launch says so");
-        assert_eq!(launched_file(r"& 'C:\x\claude.cmd' --selftest-argv 'out'", &only_cmd, ext), Some(PathBuf::from(r"C:\x\claude.cmd")));
     }
 
     #[test]

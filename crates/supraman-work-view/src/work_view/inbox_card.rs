@@ -1,12 +1,19 @@
 //! The Inbox's Workman cards (workman-ui/inbox-cards): Needs you, then Housekeeping, closed until opened.
 
-use gpui::{App, ClipboardItem, Window};
-use supraman_ui::clipped::clamped;
-use supraman_workman::InboxRow;
+use std::rc::Rc;
 
-use super::*;
-use crate::work_view::HOUSEKEEPING_KEY;
+use gpui::{AnyElement, App, ClickEvent, ClipboardItem, Div, Entity, FontWeight, Hsla, SharedString, Stateful, Window, div, prelude::*, px};
+use supraman_core::time::now_ms;
+use supraman_ui::button;
+use supraman_ui::clipped::{clamped, clipped};
+use supraman_ui::hit::{HitTargets, hit_target};
+use supraman_ui::icon::Icon;
+use supraman_ui::tooltip::Tooltip;
+use supraman_workman::InboxRow;
+use theme::ActiveTheme as _;
+
 use crate::work_view::cards::{self, Card};
+use crate::work_view::{self, HOUSEKEEPING_KEY, WorkInbox};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CardAction {
@@ -18,6 +25,8 @@ pub enum CardAction {
 }
 
 pub type OnCard = Rc<dyn Fn(CardAction, &mut Window, &mut App)>;
+
+pub type Mark = fn(Hsla) -> AnyElement;
 
 pub fn kind_color(kind: &str, cx: &App) -> Hsla {
     let status = cx.theme().status();
@@ -48,7 +57,7 @@ fn action_button(hits: &HitTargets, card: &Card, part: &str, icon: Icon, tip: &'
 }
 
 /// Paints [`Card::texts`] and nothing else; the call only reaches the clipboard, through Copy.
-pub fn render(card: &Card, hits: &HitTargets, now: i64, on: OnCard, cx: &App) -> AnyElement {
+pub fn render(card: &Card, hits: &HitTargets, now: i64, mark: Mark, on: OnCard, cx: &App) -> AnyElement {
     let colors = cx.theme().colors();
     let color = kind_color(&card.kind, cx);
     let muted = supraman_ui::themes::secondary(colors);
@@ -67,7 +76,7 @@ pub fn render(card: &Card, hits: &HitTargets, now: i64, on: OnCard, cx: &App) ->
         .items_center()
         .gap_2()
         .text_xs()
-        .child(crate::brand::workman(rems(0.875), color))
+        .child(mark(color))
         .child(clipped(part_key("workspace", card), card.workspace.clone(), false).flex_shrink(1.).text_color(muted))
         .when(!when.is_empty(), |d| {
             let full = card.since.map(supraman_core::time::date_words).unwrap_or_default();
@@ -108,65 +117,45 @@ fn caption(text: String, cx: &App) -> Div {
     div().pt_1().text_xs().font_weight(FontWeight::BOLD).text_color(cx.theme().colors().text_muted).child(SharedString::from(text))
 }
 
-impl FleetView {
-    fn on_card(&self, card: &Card, cx: &mut Context<Self>) -> OnCard {
-        let (this, card) = (cx.entity().downgrade(), card.clone());
-        Rc::new(move |action, window, cx| {
-            this.update(cx, |this, cx| this.card_action(&card, action, window, cx)).ok();
-        })
+/// Needs you's cards, then the Housekeeping header and, while `inbox` keeps it open, its groups; `live` names the live sessions.
+pub fn render_sections(
+    rows: &[(String, InboxRow)],
+    live: &[String],
+    inbox: &Entity<WorkInbox>,
+    hits: &HitTargets,
+    mark: Mark,
+    on_card: &dyn Fn(&Card) -> OnCard,
+    cx: &App,
+) -> (Vec<AnyElement>, Option<AnyElement>) {
+    let refs: Vec<(&str, &InboxRow)> = rows.iter().map(|(w, r)| (w.as_str(), r)).collect();
+    let now = now_ms();
+    let sections = cards::sections(&refs, live, now);
+    let needs = sections.needs_you.iter().map(|card| render(card, hits, now, mark, on_card(card), cx)).collect();
+    if sections.housekeeping.is_empty() {
+        return (needs, None);
     }
-
-    fn card_action(&mut self, card: &Card, action: CardAction, _: &mut Window, cx: &mut Context<Self>) {
-        match action {
-            CardAction::Open => {
-                self.open_work_item(&card.workspace, &card.item_id, cx);
-            }
-            CardAction::Web => match card.url.as_deref().map(|url| supraman_ui::open::allowed(url, &supraman_ui::open::WEB_SCHEMES).map(|()| url)) {
-                Some(Ok(url)) => supraman_ui::open::open_off_thread(url.to_string(), cx).detach(),
-                Some(Err(scheme)) => self.toast.show_why(supraman_ui::open::refused(&scheme), |this: &mut Self| &mut this.toast, cx),
-                None => {}
-            },
-            CardAction::Copied => self.toast.show("Copied".into(), |this: &mut Self| &mut this.toast, cx),
-            CardAction::Dismiss => {
-                let (workspace, key) = (card.workspace.clone(), card.key.clone());
-                self.work_inbox.update(cx, |inbox, cx| inbox.dismiss(&workspace, &key, cx));
-            }
+    let open = inbox.read(cx).housekeeping_open;
+    let inbox = inbox.clone();
+    let chevron = if open { Icon::ChevronDown } else { Icon::ChevronRight };
+    let header = div()
+        .id(HOUSEKEEPING_KEY)
+        .relative()
+        .flex()
+        .items_center()
+        .gap_1()
+        .cursor_pointer()
+        .child(chevron.svg(12., cx.theme().colors().text_muted))
+        .child(caption(format!("HOUSEKEEPING · {}", sections.housekeeping_count()), cx).pt_0())
+        .child(hit_target(hits, format!("{HOUSEKEEPING_KEY}={}", if open { "open" } else { "closed" })))
+        .on_click(move |_: &ClickEvent, _, cx| inbox.update(cx, |inbox, cx| inbox.toggle_housekeeping(cx)));
+    let mut section = div().flex().flex_col().gap_1().pt_1().child(header);
+    if open {
+        for group in &sections.housekeeping {
+            section = section.child(caption(group.caption.clone(), cx).font_weight(FontWeight::NORMAL));
+            section = section.children(group.cards.iter().map(|card| render(card, hits, now, mark, on_card(card), cx)));
         }
     }
-
-    /// Needs you, then the Housekeeping header and, while open, its groups.
-    pub(super) fn render_work_cards(&self, rows: &[(String, InboxRow)], cx: &mut Context<Self>) -> (Vec<AnyElement>, Option<AnyElement>) {
-        let live: Vec<String> = self.work_live.borrow().iter().map(|s| s.name.clone()).collect();
-        let refs: Vec<(&str, &InboxRow)> = rows.iter().map(|(w, r)| (w.as_str(), r)).collect();
-        let now = now_ms();
-        let sections = cards::sections(&refs, &live, now);
-        let needs = sections.needs_you.iter().map(|card| render(card, &self.hits, now, self.on_card(card, cx), cx)).collect();
-        if sections.housekeeping.is_empty() {
-            return (needs, None);
-        }
-        let open = self.work_inbox.read(cx).housekeeping_open;
-        let inbox = self.work_inbox.clone();
-        let chevron = if open { Icon::ChevronDown } else { Icon::ChevronRight };
-        let header = div()
-            .id(HOUSEKEEPING_KEY)
-            .relative()
-            .flex()
-            .items_center()
-            .gap_1()
-            .cursor_pointer()
-            .child(chevron.svg(12., cx.theme().colors().text_muted))
-            .child(caption(format!("HOUSEKEEPING · {}", sections.housekeeping_count()), cx).pt_0())
-            .child(hit_target(&self.hits, format!("{HOUSEKEEPING_KEY}={}", if open { "open" } else { "closed" })))
-            .on_click(move |_: &ClickEvent, _, cx| inbox.update(cx, |inbox, cx| inbox.toggle_housekeeping(cx)));
-        let mut section = div().flex().flex_col().gap_1().pt_1().child(header);
-        if open {
-            for group in &sections.housekeeping {
-                section = section.child(caption(group.caption.clone(), cx).font_weight(FontWeight::NORMAL));
-                section = section.children(group.cards.iter().map(|card| render(card, &self.hits, now, self.on_card(card, cx), cx)));
-            }
-        }
-        (needs, Some(section.into_any_element()))
-    }
+    (needs, Some(section.into_any_element()))
 }
 
 #[cfg(test)]

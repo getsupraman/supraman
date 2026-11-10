@@ -42,8 +42,7 @@ impl FleetView {
         let (id, new) = open_or_focus(&mut self.tabs, &mut self.next_tab_id, &folder, title, cx, make);
         if new && let Some(TabKind::Git(view)) = self.tabs.iter().find(|t| t.id == id).map(|t| &t.kind) {
             cx.subscribe(view, |this, _, e: &OpenGit, cx| {
-                let name = e.0.file_name().map_or_else(|| e.0.display().to_string(), |n| n.to_string_lossy().into_owned());
-                this.open_git(e.0.clone(), format!("Git · {name}"), &GitSizes::default(), cx);
+                this.open_git(e.0.clone(), self::title(&e.0), &GitSizes::default(), cx);
             })
             .detach();
             cx.subscribe(view, |this, _, e: &AttachAgent, cx| this.attach_agent(e.0.attach.as_deref(), cx)).detach();
@@ -70,3 +69,9 @@ impl FleetView {
 #[cfg(test)]
 #[path = "git_tab_tests.rs"]
 mod tests;
+
+/// `Git · <folder name>`, or the whole path when it has no name.
+pub(crate) fn title(folder: &std::path::Path) -> String {
+    let name = folder.file_name().map_or_else(|| folder.display().to_string(), |n| n.to_string_lossy().into_owned());
+    format!("Git · {name}")
+}

@@ -5,13 +5,13 @@ use std::{
     rc::Rc,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
 
-use futures::{FutureExt as _, StreamExt as _};
-use supraman_claude::{ClaudeVersion, Sent, Session, Transcripts, check_supported, list_sessions, main_repo, now_ms, send_from_human};
+use futures::FutureExt as _;
+use supraman_claude::{ClaudeVersion, Sent, Session, list_sessions, now_ms, send_from_human};
 use supraman_core::{
     DEFAULT_MAX_WORKING, Event, EventReader, FM_PREFIX, OutboxMessage, Workspace, Registry, Settings, mark_answered,
 };
@@ -42,14 +42,14 @@ use util::paths::PathStyle;
 
 use crate::compose::{self, Compose};
 use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
-use crate::hand::{Extras, ExtrasFrom, Hands, Launch};
+use crate::hand::{Extras, Hands};
 use crate::settings_window::{self, SettingsView};
 use crate::dismissed_messages::DismissedMessages;
 use crate::stars::Stars;
 use crate::supervise::{self, RelayStatus, Report, Supervision};
 use crate::tab_card;
 use crate::transcripts_load::TranscriptsLoad;
-use crate::work_view::{LiveSession, WorkHub, WorkInbox, WorkView};
+use crate::work_view::{WorkHub, WorkInbox, WorkView};
 use crate::workman_setup;
 use supraman_workman::status::WorkmanStatus;
 
@@ -59,6 +59,7 @@ mod drop;
 mod folder_list;
 mod folders;
 pub(crate) mod git_tab;
+mod hand_tab;
 mod left;
 mod links;
 mod manage;
@@ -68,8 +69,9 @@ pub(crate) mod notices;
 mod reopen;
 mod results;
 mod right;
-mod shells;
+pub(crate) mod shells;
 pub(crate) mod schedules;
+mod startup;
 pub(crate) mod start;
 pub(crate) mod tab_keys;
 mod term;
@@ -95,7 +97,6 @@ pub fn bind_keys(cx: &mut gpui::App) {
 }
 
 pub const REFRESH_EVERY: Duration = Duration::from_secs(2);
-pub const TRANSCRIPTS_EVERY: Duration = Duration::from_secs(10);
 const TRANSCRIPTS_CACHE: &str = "cache/transcripts.json";
 static CLAUDE_DIR_OVERRIDE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
@@ -112,10 +113,6 @@ pub const DETACH_INPUT: &[u8] = b"\x1a";
 pub const DETACH_WITHIN: Duration = Duration::from_secs(5);
 const SHELL_SETTLED: Duration = Duration::from_millis(500);
 const SHELL_SETTLE_LIMIT: Duration = Duration::from_secs(15);
-const NO_PLUGIN: &str = "No plugins/supraman found for this build: [+] sessions start plain claude, without the Supraman skills, hooks and sm.";
-/// Claude draws a frame per wakeup; a hand tab looks at its token file at most this often.
-const HAND_CHECK_GAP: Duration = Duration::from_millis(250);
-const HAND_EXIT_FALLBACK: Duration = Duration::from_secs(30);
 /// Zed's `terminal.scroll_multiplier` default; one Windows wheel notch is already 3 lines.
 const SCROLL_MULTIPLIER: f32 = 1.0;
 const DEFAULT_LEFT_WIDTH: Pixels = px(460.);
@@ -185,23 +182,6 @@ pub struct Tab {
     /// The program and arguments its terminal was started with.
     pub started: Option<crate::saved_tabs::SavedShell>,
     watchers: Vec<Nudge>,
-}
-
-/// claude's first prompt, in a file the launch script reads, and its `--permission-mode`.
-#[derive(Debug, Clone)]
-pub struct FirstPrompt {
-    pub file: PathBuf,
-    pub mode: &'static str,
-}
-
-impl FirstPrompt {
-    fn apply(first: Option<&Self>, mut extras: Extras) -> Extras {
-        if let Some(first) = first {
-            extras.args.extend(["--permission-mode".to_string(), first.mode.to_string()]);
-            extras.prompt = Some(first.file.clone());
-        }
-        extras
-    }
 }
 
 impl Tab {
@@ -315,7 +295,6 @@ pub struct FleetView {
     pub answered_route: BTreeMap<String, String>,
     pub compose: Option<Compose>,
     writes: writes::Writes,
-    work_live: Rc<RefCell<Vec<LiveSession>>>,
     occupancy: occupancy::Live,
     pub work_inbox: Entity<WorkInbox>,
     pub menu: Option<ContextMenu>,
@@ -325,8 +304,6 @@ pub struct FleetView {
     pub pick_folder: Option<PathBuf>,
     pub open_with: fn(&Path) -> Result<(), String>,
     pub open_link_with: fn(&Link, &mut App),
-    /// What a Work tab binds its folders by; `--selftest-shots` gives fixture folders a repo.
-    pub work_repo_of: crate::work_view::RepoOf,
     pub workman: WorkmanStatus,
     workman_dismissed: Option<String>,
     workman_recheck: Nudge,
@@ -399,7 +376,7 @@ pub struct FleetView {
     pub runs_dismissed: DismissedMessages,
     /// [`schedules::Waiting::key`]s whose Inbox entry René dismissed.
     pub waiting_dismissed: DismissedMessages,
-    tab_keys: tab_keys::TabKeyState,
+    pub(crate) tab_keys: Entity<tab_keys::TabKeyState>,
 }
 
 /// The dismissed run notices beside the dismissed messages.
@@ -575,21 +552,16 @@ impl FleetView {
             false
         });
         let home = Registry::from_env().ok().map(|r| r.home().to_path_buf());
-        let loaded = home.as_deref().and_then(|h| Settings::load(h).ok());
-        let left_width = loaded
-            .as_ref()
-            .and_then(|s| s.window.left_width)
-            .map_or(DEFAULT_LEFT_WIDTH, |w| px(w as f32).max(MIN_LEFT_WIDTH));
-        let loaded = loaded.unwrap_or_default();
-        let term_font_size = px(loaded.terminal.font_size() as f32);
+        let defaults = Settings::default();
+        let term_font_size = px(defaults.terminal.font_size() as f32);
         let installed_fonts: Arc<Vec<String>> = Arc::new(cx.text_system().all_font_names());
-        let term_font_family = SharedString::from(loaded.terminal.font_family(&installed_fonts));
-        let term_ligatures = loaded.terminal.ligatures();
+        let term_font_family = SharedString::from(defaults.terminal.font_family(&installed_fonts));
+        let term_ligatures = defaults.terminal.ligatures();
         let retries: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
         let injected: Arc<Mutex<Vec<Session>>> = Arc::default();
         let registry_writes: Arc<AtomicU64> = Arc::default();
-        let (poll_nudge, mut woken) = nudge::nudge();
-        let mut poller = Poller {
+        let (poll_nudge, woken) = nudge::nudge();
+        let poller = Poller {
             home: home.clone(),
             events: None,
             supervision: None,
@@ -601,115 +573,8 @@ impl FleetView {
             store: None,
         };
         timeline("window", Duration::ZERO);
-        cx.spawn(async move |this, cx| {
-            let executor = cx.background_executor().clone();
-            let checking = Instant::now();
-            let checked = executor.spawn(async move {
-                let checked = check_supported();
-                timeline("version check done", checking.elapsed());
-                checked
-            });
-            let first = executor.spawn(async move {
-                let setting_up = Instant::now();
-                let setup = poller.setup();
-                timeline("setup done", setting_up.elapsed());
-                let refresh = poller.read(true);
-                (poller, setup, refresh)
-            });
-            let (checked, (ready, setup, mut refresh)) = futures::join!(checked, first);
-            poller = ready;
-            let supported = checked.is_ok();
-            if !supported {
-                refresh.sessions = None;
-                poller.snapshot = None;
-            }
-            let mut first = Some(refresh);
-            if this
-                .update(cx, |this, cx| {
-                    this.cli = match checked {
-                        Ok(version) => Cli::Supported(version),
-                        Err(error) => Cli::Failed(error.to_string()),
-                    };
-                    this.plugin_dir = setup.plugin_dir;
-                    this.setup_notices = setup.notices;
-                    cx.notify();
-                })
-                .is_err()
-            {
-                return;
-            }
-            loop {
-                let Ok(asks) = this.read_with(cx, |this, _| this.refresh_asks) else {
-                    return;
-                };
-                let refresh = match first.take() {
-                    Some(refresh) => refresh,
-                    None => {
-                        let (done, refresh) = executor
-                            .spawn(async move {
-                                let refresh = poller.read(supported);
-                                (poller, refresh)
-                            })
-                            .await;
-                        poller = done;
-                        refresh
-                    }
-                };
-                if this
-                    .update(cx, |this, cx| {
-                        this.writes.max.tick_starts();
-                        this.apply(refresh, cx);
-                        this.refresh_details(cx);
-                        this.read_tab_branches(cx);
-                        if this.other_scans == 0 {
-                            this.scan_other_schedules(cx);
-                        }
-                        cx.notify();
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-                let (done, report) = executor
-                    .spawn(async move {
-                        let report = poller.tick();
-                        (poller, report)
-                    })
-                    .await;
-                poller = done;
-                let alive = this.update(cx, |this, cx| {
-                    if let Some(report) = report {
-                        this.apply_report(report, cx);
-                    }
-                    this.refreshes += 1;
-                    this.refreshes_answered = asks;
-                    this.check_loaded(cx);
-                    let left = std::mem::take(&mut this.left_pending);
-                    this.leave_servers(left, cx);
-                    this.resolve_tabs(cx);
-                    this.reopen_tabs(cx);
-                    let pids: Vec<u32> = this
-                        .sessions
-                        .iter()
-                        .filter(|s| s.kind == supraman_claude::Kind::Interactive)
-                        .filter_map(|s| s.pid)
-                        .collect();
-                    if !this.removing.is_empty() {
-                        this.finish_removals(cx);
-                    }
-                    let named = this.workspaces.iter().map(|w| (w.name.clone(), w.folders.iter().map(|f| f.path.clone()).collect())).collect();
-                    this.work_inbox.update(cx, |inbox, cx| inbox.set_workspaces(named, this.work_repo_of, cx));
-                    cx.notify();
-                    pids
-                });
-                let Ok(pids) = alive else {
-                    return;
-                };
-                let exited = std::pin::pin!(any_exit(&executor, pids, REFRESH_EVERY));
-                futures::future::select(std::pin::pin!(woken.wait(&executor, REFRESH_EVERY)), exited).await;
-            }
-        })
-        .detach();
+        Self::start_polling(poller, woken, cx);
+        Self::load_settings(home.clone(), cx);
         let blink = term::CursorBlink::start(cx);
         let (workman_recheck, recheck) = nudge::nudge();
         Self::watch_workman(home.clone(), recheck, cx);
@@ -755,7 +620,7 @@ impl FleetView {
             active: None,
             next_tab_id: 1,
             shell_args: vec!["-NoLogo".into()],
-            shell_default: shells::ShellDefault::new(loaded.terminal.clone()),
+            shell_default: shells::ShellDefault::new(defaults.terminal.clone()),
             focus,
             probe: FrameProbe::default(),
             hits: HitTargets::default(),
@@ -778,7 +643,7 @@ impl FleetView {
             retries,
             injected,
             registry_writes,
-            left_width,
+            left_width: DEFAULT_LEFT_WIDTH,
             term_font_size,
             term_font_family,
             term_ligatures,
@@ -798,7 +663,6 @@ impl FleetView {
             answered_route: BTreeMap::new(),
             compose: None,
             writes: writes::Writes::default(),
-            work_live: Rc::default(),
             occupancy: occupancy::Live::default(),
             work_inbox,
             menu: None,
@@ -807,7 +671,6 @@ impl FleetView {
             removing: BTreeMap::new(),
             pick_folder: None,
             open_with: |path| open::open(path.as_os_str()),
-            work_repo_of: supraman_supervisor::git_repo,
             open_link_with: |link, cx| match link {
                 Link::Url(url) => open::open_off_thread(url.clone(), cx).detach(),
                 Link::Path(path) => open::open_off_thread(path.clone(), cx).detach(),
@@ -876,152 +739,8 @@ impl FleetView {
             schedule_edit: None,
             runs_dismissed,
             waiting_dismissed,
-            tab_keys: tab_keys::TabKeyState::new(loaded.window.tab_keys()),
+            tab_keys: cx.new(|_| tab_keys::TabKeyState::new(defaults.window.tab_keys())),
         }
-    }
-
-    fn watch_transcripts(claude_dir: Option<PathBuf>, cache: Option<PathBuf>, mut nudged: Nudged, cx: &mut Context<Self>) {
-        let Some(claude_dir) = claude_dir else {
-            return;
-        };
-        cx.spawn(async move |this, cx| {
-            let executor = cx.background_executor().clone();
-            let mut scanner: Option<Transcripts> = None;
-            let mut repos: StdHashMap<PathBuf, Option<PathBuf>> = StdHashMap::new();
-            let mut from_cache = false;
-            loop {
-                if scanner.is_none() {
-                    let (claude_dir, cache) = (claude_dir.clone(), cache.clone());
-                    let opened = executor
-                        .spawn(async move {
-                            let s = Transcripts::in_claude_dir(&claude_dir);
-                            match cache {
-                                Some(cache) => s.with_cache(cache),
-                                None => s,
-                            }
-                        })
-                        .await;
-                    let has_cache = opened.has_cache();
-                    scanner = Some(opened);
-                    let Ok(cached_first) = this.update(cx, |this, cx| {
-                        let cached_first = this.transcripts.opened(has_cache);
-                        this.check_loaded(cx);
-                        cx.notify();
-                        cached_first
-                    }) else {
-                        return;
-                    };
-                    from_cache = cached_first;
-                }
-                // the first scan waits for the first poll's apply, which wakes it with the workspaces and sessions
-                nudged.wait(&executor, TRANSCRIPTS_EVERY).await;
-                let Ok(asked) = this.update(cx, |this, _| {
-                    this.sessions_read.then(|| {
-                        let roots: Vec<PathBuf> = this
-                            .workspaces
-                            .iter()
-                            .flat_map(|w| w.folders.iter().filter(|r| r.enabled).map(|r| r.path.clone()))
-                            .collect();
-                        let keep: std::collections::HashSet<String> = this.stars.ids().iter().cloned().collect();
-                        let live: std::collections::HashSet<String> = this.sessions.iter().map(|s| s.session_id.clone()).collect();
-                        (roots, keep, live, this.refresh_asks)
-                    })
-                }) else {
-                    return;
-                };
-                let Some((roots, keep, live, asks)) = asked else { continue };
-                let since = now_ms() - fleet::CLOSED_WINDOW_MS;
-                let scanning = Instant::now();
-                if std::mem::take(&mut from_cache)
-                    && let Some(s) = scanner.take()
-                {
-                    let (roots, keep) = (roots.clone(), keep.clone());
-                    let (back, known, (closed, continued)) = executor
-                        .spawn(async move {
-                            let mut repos = StdHashMap::new();
-                            let found = s.cached(&roots, since, &keep);
-                            for t in &found {
-                                if let Some(cwd) = &t.cwd {
-                                    repos.entry(cwd.clone()).or_insert_with(|| main_repo(cwd));
-                                }
-                            }
-                            (s, repos, (found.iter().map(|t| t.to_session()).collect::<Vec<Session>>(), supraman_claude::chains(&found)))
-                        })
-                        .await;
-                    scanner = Some(back);
-                    repos = known.clone();
-                    if this
-                        .update(cx, |this, cx| {
-                            timeline(&format!("transcripts from the cache done ({} listed)", closed.len()), scanning.elapsed());
-                            this.main_repos.extend(known.clone());
-                            this.closed_repos = known;
-                            this.set_closed(closed, continued, cx);
-                            this.transcripts.listed_cached();
-                            this.check_loaded(cx);
-                            cx.notify();
-                        })
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
-                let (progress, mut progressed) = futures::channel::mpsc::unbounded::<(usize, usize)>();
-                let shown = this.clone();
-                let showing = cx.spawn(async move |cx| {
-                    while let Some(at) = progressed.next().await {
-                        if shown
-                            .update(cx, |this, cx| {
-                                this.transcripts.reading(at);
-                                cx.notify();
-                            })
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                });
-                let Some(mut s) = scanner.take() else { continue };
-                let (back, known, (closed, continued), read) = executor
-                    .spawn(async move {
-                        let read = AtomicUsize::new(0);
-                        let found = s.scan_with(&roots, since, &keep, &live, &|done, of| {
-                            read.store(of, Ordering::Relaxed);
-                            if done == of || done % (of / 100).max(1) == 0 {
-                                progress.unbounded_send((done, of)).ok();
-                            }
-                        });
-                        drop(progress);
-                        for t in &found {
-                            if let Some(cwd) = &t.cwd {
-                                repos.entry(cwd.clone()).or_insert_with(|| main_repo(cwd));
-                            }
-                        }
-                        let closed: Vec<Session> = found.iter().map(|t| t.to_session()).collect();
-                        (s, repos, (closed, supraman_claude::chains(&found)), read.into_inner())
-                    })
-                    .await;
-                showing.await;
-                scanner = Some(back);
-                repos = known.clone();
-                if this
-                    .update(cx, |this, cx| {
-                        this.main_repos.extend(known.clone());
-                        this.closed_repos = known;
-                        if this.transcripts.scanned() {
-                            timeline(&format!("transcripts done ({read} files read, {} listed)", closed.len()), scanning.elapsed());
-                        }
-                        this.set_closed(closed, continued, cx);
-                        this.transcripts_answered = asks;
-                        this.check_loaded(cx);
-                        cx.notify();
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-        })
-        .detach();
     }
 
     /// The closed sessions a transcript scan found, without the ones a known session continues; their stars move on.
@@ -1101,37 +820,6 @@ impl FleetView {
                 cx.notify();
             }
         });
-    }
-
-    fn open_hands(home: &std::path::Path, cx: &mut Context<Self>) -> Arc<Mutex<Hands>> {
-        let (hands, notice) = Hands::open(home);
-        let hands = Arc::new(Mutex::new(hands));
-        let stale = hands.clone();
-        cx.spawn(async move |this, cx| {
-            let mut notices = cx
-                .background_executor()
-                .spawn(async move { stale.lock().unwrap_or_else(|e| e.into_inner()).release_last_run() })
-                .await;
-            notices.extend(notice);
-            this.update(cx, |this, cx| {
-                this.hand_notices.extend(notices);
-                this.hands_ready = true;
-                this.reopen_tabs(cx);
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-        let live = hands.clone();
-        cx.on_app_quit(move |_, cx| {
-            let live = live.clone();
-            let release = cx.background_executor().spawn(async move { crate::hand::release_all_within(live, QUIT_RELEASE_WITHIN) });
-            async move {
-                release.await;
-            }
-        })
-        .detach();
-        hands
     }
 
     fn watch_workman(home: Option<PathBuf>, mut recheck: Nudged, cx: &mut Context<Self>) {
@@ -1287,11 +975,6 @@ impl FleetView {
                         self.last_alive.insert(s.session_id.clone(), now);
                     }
                 }
-                *self.work_live.borrow_mut() = sessions
-                    .iter()
-                    .filter(|s| fleet::attachable(s, &s.health(now)))
-                    .map(|s| LiveSession { claude_session_id: s.session_id.clone(), id: s.id.clone(), name: s.name.clone() })
-                    .collect();
                 self.occupancy.set_sessions(fleet::live_sessions(&sessions, now));
                 self.sessions = sessions;
                 self.drop_deleted();
@@ -1669,7 +1352,7 @@ impl FleetView {
     }
 
     fn type_in_shell_when(&mut self, cwd: PathBuf, title: String, command: gpui::Task<String>, window: &mut Window, cx: &mut Context<Self>) -> u64 {
-        let id = self.open_tab(title, TabKind::Shell, powershell(self.shell_args.clone()), Some(cwd), window, cx);
+        let id = self.open_tab(title, TabKind::Shell, shells::powershell(self.shell_args.clone()), Some(cwd), window, cx);
         let (watch, mut output) = nudge::nudge();
         if let Some(tab) = self.tab_mut(id) {
             tab.watchers.push(watch);
@@ -1770,7 +1453,7 @@ impl FleetView {
                     session.id, session.id
                 ),
             };
-            let shell = powershell(vec!["-NoLogo".into(), "-NoProfile".into(), "-Command".into(), script]);
+            let shell = shells::powershell(vec!["-NoLogo".into(), "-NoProfile".into(), "-Command".into(), script]);
             let kind = TabKind::Attach { session_id: session.id.clone() };
             let id = self.push_tab(title, kind, Some(session.cwd.clone()), cx);
             self.start_terminal(id, shell, Some(session.cwd.clone()), cx);
@@ -1788,137 +1471,6 @@ impl FleetView {
             }
             id
         }
-    }
-
-    pub fn new_claude(&mut self, cwd: PathBuf, title: String, _window: &mut Window, cx: &mut Context<Self>) -> u64 {
-        let claude = self.claude_command.clone();
-        self.hand_claude_in(None, cwd, title, claude, None, None, None, cx)
-    }
-
-    /// `into` is a prompt tab that becomes this session's tab.
-    #[allow(clippy::too_many_arguments)]
-    fn hand_claude_in(
-        &mut self,
-        into: Option<u64>,
-        cwd: PathBuf,
-        title: String,
-        claude: String,
-        own: Option<String>,
-        resumes: Option<String>,
-        first: Option<FirstPrompt>,
-        cx: &mut Context<Self>,
-    ) -> u64 {
-        let id = match into.and_then(|id| self.tab_mut(id)) {
-            Some(tab) => {
-                tab.kind = TabKind::Shell;
-                tab.title = title;
-                tab.cwd = Some(cwd.clone());
-                let id = tab.id;
-                self.active = Some(id);
-                cx.notify();
-                id
-            }
-            None => self.push_tab(title, TabKind::Shell, Some(cwd.clone()), cx),
-        };
-        self.reveal_new(left::PendingReveal::TabSession(id));
-        let (watch, changed) = nudge::nudge();
-        if let Some(tab) = self.tab_mut(id) {
-            tab.hand = true;
-            tab.watchers.push(watch);
-            tab.launched_session = resumes.clone();
-            tab.session_name = own.clone();
-        }
-        let (from, hands, at) = (self.extras_from(), self.hands.clone(), cwd.clone());
-        let mint = hands.clone();
-        let ready = cx.background_executor().spawn(async move {
-            let launch = mint.map_or(Launch::Plain, |m| crate::hand::launch_locked(&m, &at, own.as_deref(), resumes.as_deref()));
-            let extras = from.map(|from| from.extras(&at, own.as_deref(), &launch)).unwrap_or_default();
-            (FirstPrompt::apply(first.as_ref(), extras), launch)
-        });
-        cx.spawn(async move |this, cx| {
-            let (extras, launch) = ready.await;
-            this.update(cx, |this, cx| {
-                if let Launch::Minted { name, session, notice, new_session, .. } = &launch {
-                    if let Some(tab) = this.tab_mut(id) {
-                        tab.workman = Some(format!("Supraman token · {} · {session}", crate::hand::ROLE));
-                        tab.hand_key = Some(name.clone());
-                        if new_session.is_some() {
-                            tab.launched_session = new_session.clone();
-                        }
-                    }
-                    this.hand_notices.extend(notice.clone());
-                }
-                if this.tab(id).is_some() {
-                    let shell = this.claude_shell(&launch, &claude, &extras);
-                    this.start_terminal_env(id, shell, Some(cwd), &extras, cx);
-                }
-            })
-            .ok();
-            let Some(hands) = hands else { return };
-            let name = match launch {
-                Launch::Minted { name, .. } => name,
-                Launch::Unminted(notice) | Launch::Helped { notice: Some(notice), .. } => {
-                    this.update(cx, |this, cx| {
-                        this.hand_notices.push(notice);
-                        cx.notify();
-                    })
-                    .ok();
-                    return;
-                }
-                Launch::Plain | Launch::Helped { .. } => return,
-            };
-            Self::release_on_exit(this, id, hands, name, changed, cx).await;
-        })
-        .detach();
-        id
-    }
-
-    /// The hand's token goes once its claude has exited or its tab is closed.
-    async fn release_on_exit(this: gpui::WeakEntity<Self>, id: u64, hands: Arc<Mutex<Hands>>, name: String, mut changed: Nudged, cx: &mut gpui::AsyncApp) {
-        let executor = cx.background_executor().clone();
-        // claude's exit deletes the token file, then the shell prints its prompt: a wakeup
-        loop {
-            changed.wait(&executor, HAND_EXIT_FALLBACK).await;
-            let open = this.read_with(cx, |this, _| this.tab(id).is_some_and(|t| !t.exited)).unwrap_or(false);
-            if open {
-                let (hands, name) = (hands.clone(), name.clone());
-                if !executor.spawn(async move { hands.lock().unwrap_or_else(|e| e.into_inner()).ended(&name) }).await {
-                    executor.timer(HAND_CHECK_GAP).await;
-                    continue;
-                }
-            }
-            let notice = executor.spawn(async move { hands.lock().unwrap_or_else(|e| e.into_inner()).release(&name) }).await;
-            if let Some(notice) = notice {
-                this.update(cx, |this, cx| {
-                    this.hand_notices.push(notice);
-                    cx.notify();
-                })
-                .ok();
-            }
-            return;
-        }
-    }
-
-    /// A missing plugin starts plain claude and says so once.
-    fn extras_from(&mut self) -> Option<ExtrasFrom> {
-        let Some(plugin_dir) = self.plugin_dir.clone() else {
-            if !self.hand_notices.iter().any(|n| n == NO_PLUGIN) {
-                self.hand_notices.push(NO_PLUGIN.into());
-            }
-            return None;
-        };
-        Some(ExtrasFrom { home: self.home.clone(), plugin_dir, workspaces: self.workspaces.clone() })
-    }
-
-    fn claude_shell(&self, launch: &Launch, claude: &str, extras: &Extras) -> util::shell::Shell {
-        let launch_args = match &self.daemon_hold {
-            Some(why) => {
-                let script = format!("{}; {}", held_line(why), launch.script_with(claude, extras));
-                ["-NoExit".into(), "-EncodedCommand".into(), crate::hand::encoded_command(&script)]
-            }
-            None => launch.shell_args_with(claude, extras),
-        };
-        powershell(self.shell_args.iter().cloned().chain(launch_args).collect())
     }
 
     fn active_terminal(&self) -> Option<Entity<Terminal>> {
@@ -2222,7 +1774,11 @@ impl FleetView {
                 let exited = this
                     .read_with(cx, |this, _| this.tab(id).is_none_or(|t| t.exited))
                     .unwrap_or(true);
-                if exited || !pid.is_some_and(supraman_core::process::alive) {
+                let alive = match pid {
+                    Some(pid) if !exited => executor.spawn(async move { supraman_core::process::alive(pid) }).await,
+                    _ => false,
+                };
+                if !alive {
                     this.update(cx, |this, cx| this.remove_tab(id, cx)).ok();
                     return;
                 }
@@ -2462,15 +2018,6 @@ fn any_exit(executor: &gpui::BackgroundExecutor, pids: Vec<u32>, timeout: Durati
             futures::future::pending::<()>().await;
         }
     }
-}
-
-fn powershell(args: Vec<String>) -> util::shell::Shell {
-    util::shell::Shell::WithArguments { program: supraman_core::paths::terminal_powershell().path.to_string_lossy().into_owned(), args: powershell_args(args), title_override: None }
-}
-
-/// The policy is the process's own: a `claude.ps1` first on PATH runs under a Restricted machine policy.
-pub(crate) fn powershell_args(args: Vec<String>) -> Vec<String> {
-    ["-ExecutionPolicy".to_string(), "Bypass".into()].into_iter().chain(args).collect()
 }
 
 fn stale_tabs(tabs: &[Tab], elsewhere: &[(String, Option<String>)]) -> Vec<u64> {

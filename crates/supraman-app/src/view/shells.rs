@@ -10,7 +10,7 @@ use supraman_core::{Settings, TerminalSettings};
 use supraman_ui::menu::item;
 
 use super::menu::{ContextMenu, MenuAction, MenuItem};
-use super::{FleetView, TabKind, powershell_args};
+use super::{FleetView, TabKind};
 use crate::saved_tabs::SavedShell;
 
 /// What a tab of `shell` starts; a plain PowerShell takes `powershell` (the view's `shell_args`).
@@ -198,6 +198,39 @@ impl FleetView {
     }
 }
 
+pub(super) fn powershell(args: Vec<String>) -> util::shell::Shell {
+    util::shell::Shell::WithArguments { program: supraman_core::paths::terminal_powershell().path.to_string_lossy().into_owned(), args: powershell_args(args), title_override: None }
+}
+
+/// The policy is the process's own: a `claude.ps1` first on PATH runs under a Restricted machine policy.
+pub(crate) fn powershell_args(args: Vec<String>) -> Vec<String> {
+    ["-ExecutionPolicy".to_string(), "Bypass".into()].into_iter().chain(args).collect()
+}
+
+/// The file the launch's pwsh runs for `command`: the path of `& '<path>' …`, else a bare name looked up as pwsh does.
+pub(super) fn launched_file(command: &str, path: &std::ffi::OsStr, pathext: &str) -> Option<PathBuf> {
+    let command = command.trim();
+    if let Some(quoted) = command.strip_prefix("& '") {
+        return quoted.split_once('\'').map(|(p, _)| PathBuf::from(p));
+    }
+    let bare = !command.is_empty() && command.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c));
+    bare.then(|| supraman_core::paths::pwsh_command(command, path, pathext)).flatten()
+}
+
+/// Why `prompt` cannot go to claude as `file`: cmd.exe ends a `.cmd`'s command line at a new line and re-reads its quotes.
+pub(super) fn cmd_refusal(file: Option<&Path>, prompt: &str) -> Option<String> {
+    let file = file?;
+    let ext = file.extension()?.to_string_lossy().to_ascii_lowercase();
+    if !matches!(ext.as_str(), "cmd" | "bat") || !prompt.contains(['\n', '"']) {
+        return None;
+    }
+    Some(format!(
+        "Not sent: claude here is {}, which runs through cmd.exe and cuts the text at a new line and mangles double quotes. \
+         Install the native claude.exe (claude.ai/install), which carries any text, or write the prompt on one line without \".",
+        file.display()
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,5 +320,27 @@ mod tests {
         child.raw_arg(started.args.join(" "));
         let out = supraman_core::process::run(&mut child, std::time::Duration::from_secs(20), supraman_core::process::Kill::Tree).unwrap();
         assert!(out.stdout.contains("fm-devcmd-ran"), "stdout {:?} stderr {:?}", out.stdout, out.stderr);
+    }
+
+    #[test]
+    fn a_claude_cmd_refuses_a_new_line_or_a_double_quote_and_names_claude_exe() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (npm, native) = (tmp.path().join("npm"), tmp.path().join("native"));
+        std::fs::create_dir_all(&npm).unwrap();
+        std::fs::create_dir_all(&native).unwrap();
+        std::fs::write(npm.join("claude.cmd"), "").unwrap();
+        std::fs::write(native.join("claude.exe"), "").unwrap();
+        let ext = ".COM;.EXE;.BAT;.CMD";
+        let only_cmd = std::env::join_paths([&npm]).unwrap();
+        let cmd = launched_file("claude", &only_cmd, ext);
+        assert_eq!(cmd, Some(npm.join("claude.cmd")));
+        let why = cmd_refusal(cmd.as_deref(), "two\nlines").unwrap();
+        assert!(why.contains("claude.cmd") && why.contains("the native claude.exe") && why.contains("carries any text"), "{why}");
+        assert!(cmd_refusal(cmd.as_deref(), "say \"hi\"").is_some());
+        assert_eq!(cmd_refusal(cmd.as_deref(), "one line, no quotes"), None);
+        let exe = launched_file("claude", &std::env::join_paths([&native, &npm]).unwrap(), ext);
+        assert_eq!(cmd_refusal(exe.as_deref(), "two\n\"lines\""), None);
+        assert_eq!(cmd_refusal(launched_file("claude", &std::ffi::OsString::new(), ext).as_deref(), "a\nb"), None, "no claude: the launch says so");
+        assert_eq!(launched_file(r"& 'C:\x\claude.cmd' --selftest-argv 'out'", &only_cmd, ext), Some(PathBuf::from(r"C:\x\claude.cmd")));
     }
 }

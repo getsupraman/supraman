@@ -86,7 +86,7 @@ impl WorkView {
     pub(crate) fn needs_cards(&self, cx: &App) -> Vec<Card> {
         let Some(inbox) = &self.inbox else { return Vec::new() };
         let rows: Vec<(&str, &InboxRow)> = inbox.read(cx).rows().into_iter().filter(|(w, _)| *w == self.workspace).collect();
-        let live: Vec<String> = self.link.live.borrow().iter().map(|s| s.name.clone()).collect();
+        let live: Vec<String> = (self.link.live)().into_iter().map(|s| s.name).collect();
         cards::sections(&rows, &live, (self.now)()).needs_you
     }
 
@@ -195,7 +195,7 @@ impl WorkView {
         let colors = cx.theme().colors().clone();
         let info = cx.theme().status().info;
         let claims: Vec<Claim> = self.overview.as_ref().map(|o| working_now(o, &self.projects).into_iter().cloned().collect()).unwrap_or_default();
-        let live = self.link.live.borrow().clone();
+        let live = (self.link.live)();
         let mut card = self.card("Working now", Some(claims.len()), cx);
         if claims.is_empty() {
             card = card.child(div().px_3().pb_3().text_sm().text_color(colors.text_muted).child("No one holds a claim."));

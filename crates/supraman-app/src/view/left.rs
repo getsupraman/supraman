@@ -21,9 +21,9 @@ use supraman_ui::clipped::clipped;
 use crate::settings_window::page;
 use crate::updates::Stage;
 use crate::fleet::{self, Open, RepoNode, SessionRow, WorkspaceNode};
-use crate::work_view;
 
-mod inbox_card;
+mod action_bar;
+mod work_cards;
 mod messages;
 
 const REVEAL_WITHIN: Duration = Duration::from_secs(60);
@@ -225,114 +225,6 @@ fn glyph_button(hits: &HitTargets, key: String, icon: Icon, tip: impl Into<Share
 }
 
 impl FleetView {
-    fn render_action_bar(&self, hidden_stopped: usize, cx: &mut Context<Self>) -> Stateful<Div> {
-        let colors = cx.theme().colors().clone();
-        let status = cx.theme().status().clone();
-        let hits = &self.hits;
-        let separator = || div().w(px(1.)).h(px(16.)).mx_1().bg(colors.border_variant);
-        let stopped_tip: SharedString = if self.show_stopped {
-            "Hide stopped sessions".into()
-        } else {
-            format!("Show stopped sessions ({hidden_stopped} hidden)").into()
-        };
-        let n = self.max_working;
-        let busy_tip: SharedString = format!(
-            "At most {n} session(s) of this Supraman working at once, across its workspaces; launches wait while it is reached. 0 pauses them all. Another Supraman's sessions are not counted."
-        )
-        .into();
-        let warning = match &self.cli {
-            Cli::Supported(version) => version.untested(),
-            _ => None,
-        };
-        div()
-            .id("action-bar")
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(2.))
-            .px_2()
-            .py(px(3.))
-            .border_b_1()
-            .border_color(colors.border)
-            .child(
-                icon_button(hits, "add-workspace", Icon::FolderAdd, "Add workspace…", false, cx)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_add_menu(cx))),
-            )
-            .child(separator())
-            .child(
-                icon_button(hits, "expand-all", Icon::ExpandAll, "Expand all", false, cx)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.collapse_all(false, cx))),
-            )
-            .child(
-                icon_button(hits, "collapse-all", Icon::CollapseAll, "Collapse all", false, cx)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.collapse_all(true, cx))),
-            )
-            .child(
-                icon_button(
-                    hits,
-                    "toggle-stopped",
-                    if self.show_stopped { Icon::Eye } else { Icon::EyeOff },
-                    stopped_tip,
-                    self.show_stopped,
-                    cx,
-                )
-                .when(!self.show_stopped && hidden_stopped > 0, |d| d.child(SharedString::from(hidden_stopped.to_string())))
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.show_stopped = !this.show_stopped;
-                    cx.notify();
-                })),
-            )
-            .child(
-                button::toolbar_turning(hits, "refresh", Icon::Refresh.svg(16., colors.text_muted), false, self.refreshing(), colors.text_muted, cx)
-                    .tooltip(Tooltip::text("Refresh: read the running sessions and the closed ones' transcripts now (F5 outside a terminal)"))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.refresh_now(cx))),
-            )
-            .child(div().flex_1())
-            .children(warning.map(|w| {
-                tinted_button(hits, "cli-warning", Icon::Warning, w, false, status.warning, cx)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_settings_at(Some(page::ABOUT), cx)))
-            }))
-            .child(
-                div()
-                    .id("busy-limit")
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .h(px(26.))
-                    .rounded_md()
-                    .border_1()
-                    .border_color(colors.border_variant)
-                    .child(
-                        icon_button(hits, "busy-dec", Icon::Minus, "One fewer busy session", false, cx)
-                            .h(px(24.))
-                            .min_w(px(22.))
-                            .px(px(3.))
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.set_max_working(this.max_working.saturating_sub(1), cx))),
-                    )
-                    .child(
-                        div()
-                            .id("busy-value")
-                            .px_1()
-                            .text_xs()
-                            .text_color(colors.text_muted)
-                            .child(SharedString::from(format!("busy ≤ {n}")))
-                            .tooltip(Tooltip::text(busy_tip)),
-                    )
-                    .child(
-                        icon_button(hits, "busy-inc", Icon::Plus, "One more busy session", false, cx)
-                            .h(px(24.))
-                            .min_w(px(22.))
-                            .px(px(3.))
-                            .when(n >= MAX_WORKING_LIMIT, |d| d.opacity(0.4))
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.set_max_working(this.max_working + 1, cx))),
-                    ),
-            )
-            .child(
-                icon_button(hits, "bar-settings", Icon::Settings, "Settings (Ctrl+,)", false, cx)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_settings(cx))),
-            )
-    }
-
     fn pointer_on_left(&mut self, cx: &mut Context<Self>) {
         if let Some(hold) = &mut self.left_hold {
             hold.moved = Instant::now();
@@ -389,11 +281,60 @@ impl FleetView {
     pub(super) fn render_left(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let _stall = supraman_ui::stall::section("render: left");
         let colors = cx.theme().colors().clone();
-        let status = cx.theme().status().clone();
         let tree = self.tree();
 
         let header = self.render_action_bar(tree.hidden_stopped, cx);
 
+        let notices = self.left_notices(&tree, cx);
+
+        let body = self.left_body(&tree, cx);
+
+        let toast = self.toast.render(&self.hits, "toast", cx);
+
+        div()
+            .id("left-panel")
+            .relative()
+            .flex()
+            .flex_col()
+            .w(self.left_width)
+            .flex_none()
+            .h_full()
+            .bg(colors.panel_background)
+            .on_mouse_move(cx.listener(|this, _: &MouseMoveEvent, _, cx| this.pointer_on_left(cx)))
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if !*hovered {
+                    this.release_left(cx);
+                }
+            }))
+            .child(header)
+            .children(self.render_loading(cx))
+            .children(self.render_inbox(cx))
+            .children(self.render_messages(cx))
+            .when(!notices.is_empty(), |d| {
+                d.child(
+                    div()
+                        .id("notices")
+                        .relative()
+                        .child(hit_target(&self.hits, "notices-area".into()))
+                        .flex()
+                        .flex_col()
+                        .flex_shrink(NOTICES_SHRINK)
+                        .min_h_0()
+                        .mb(px(SEAM_GAP))
+                        .border_b_1()
+                        .border_color(seam_color(cx))
+                        .overflow_y_scroll()
+                        .children(notices),
+                )
+            })
+            .child(self.render_search_box())
+            .child(body)
+            .children(toast)
+            .into_any_element()
+    }
+
+    fn left_notices(&self, tree: &fleet::Tree, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let status = cx.theme().status().clone();
         let mut notices: Vec<AnyElement> = Vec::new();
         let notice = |text: String, banner: Div| banner.mx_3().my_2().child(SharedString::from(text)).into_any_element();
         if let Cli::Failed(error) = &self.cli {
@@ -454,11 +395,14 @@ impl FleetView {
                 banner::plain(cx),
             ));
         }
+        notices
+    }
 
+    fn left_body(&mut self, tree: &Rc<fleet::Tree>, cx: &mut Context<Self>) -> Stateful<Div> {
         let query = self.search_query(cx);
         self.search_marks.clear();
-        let body = if query.is_empty() {
-            self.set_left_rows(&tree);
+        if query.is_empty() {
+            self.set_left_rows(tree);
             let list = gpui::list(self.left_list.state(), cx.processor(|this: &mut Self, ix: usize, _, cx| div().w_full().child(this.render_left_row(ix, cx)).into_any_element())).size_full().pb_4();
             div().id("fleet").relative().child(hit_target(&self.hits, "tree-area".into())).flex().flex_col().flex_1().min_h(relative(TREE_MIN_SHARE)).child(list)
         } else {
@@ -473,50 +417,7 @@ impl FleetView {
                 .overflow_y_scroll()
                 .pb_4();
             self.render_results(body, &query, cx)
-        };
-
-        let toast = self.toast.render(&self.hits, "toast", cx);
-
-        div()
-            .id("left-panel")
-            .relative()
-            .flex()
-            .flex_col()
-            .w(self.left_width)
-            .flex_none()
-            .h_full()
-            .bg(colors.panel_background)
-            .on_mouse_move(cx.listener(|this, _: &MouseMoveEvent, _, cx| this.pointer_on_left(cx)))
-            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                if !*hovered {
-                    this.release_left(cx);
-                }
-            }))
-            .child(header)
-            .children(self.render_loading(cx))
-            .children(self.render_inbox(cx))
-            .children(self.render_messages(cx))
-            .when(!notices.is_empty(), |d| {
-                d.child(
-                    div()
-                        .id("notices")
-                        .relative()
-                        .child(hit_target(&self.hits, "notices-area".into()))
-                        .flex()
-                        .flex_col()
-                        .flex_shrink(NOTICES_SHRINK)
-                        .min_h_0()
-                        .mb(px(SEAM_GAP))
-                        .border_b_1()
-                        .border_color(seam_color(cx))
-                        .overflow_y_scroll()
-                        .children(notices),
-                )
-            })
-            .child(self.render_search_box())
-            .child(body)
-            .children(toast)
-            .into_any_element()
+        }
     }
 
     /// The sidebar's rows in order: a key each and the tokens its hit keys contain (supraman_ui::keyed_list).
@@ -715,65 +616,73 @@ impl FleetView {
                     })),
             );
         for need in needs {
-            let color = needs_color(need.kind, cx);
-            let buttons = inbox_buttons(need);
-            let remedy = (!buttons.is_empty()).then(|| {
-                div().flex().flex_none().gap_1().children(buttons.into_iter().map(|(key, label, does)| {
-                    let (workspace, name) = (need.workspace.clone(), need.name.clone());
-                    button::bordered(&self.hits, key, label, cx).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| match &does {
-                        InboxButton::Remedy(Remedy::Attach { id }) => {
-                            this.attach_by_id(&workspace, id, window, cx);
-                        }
-                        InboxButton::Remedy(Remedy::Retry | Remedy::Remint { .. } | Remedy::Adopt { .. }) | InboxButton::Retry => {
-                            this.retry(&workspace, &name, cx)
-                        }
-                        InboxButton::Remedy(Remedy::RunInTerminal { cwd, command }) => {
-                            this.run_in_terminal(cwd.clone(), command.clone(), window, cx);
-                        }
-                        InboxButton::Remedy(Remedy::RestartElevated) => this.restart_elevated(window, cx),
-                        InboxButton::StartFresh => this.start_fresh(&workspace, &name, cx),
-                    }))
-                }))
-            });
-            inbox = inbox.child(
-                div()
-                    .flex()
-                    .items_start()
-                    .gap_2()
-                    .p_2()
-                    .rounded_md()
-                    .border_l_2()
-                    .border_color(color)
-                    .bg(color.opacity(0.10))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .min_w_0()
-                            .gap(px(2.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap_2()
-                                    .text_sm()
-                                    .child(div().font_weight(FontWeight::BOLD).text_color(color).child(needs_label(need.kind)))
-                                    .child(SharedString::from(format!("{} · {}", need.workspace, need.name)))
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(colors.text_muted)
-                                            .child(SharedString::from(supraman_core::time::ago(now - need.since))),
-                                    ),
-                            )
-                            .child(div().text_xs().text_color(colors.text).child(SharedString::from(need.detail.clone()))),
-                    )
-                    .children(remedy),
-            );
+            inbox = inbox.child(self.render_need(need, now, cx));
         }
         let (work_needs, housekeeping) = self.render_work_cards(&work_rows, cx);
         inbox = inbox.children(work_needs).children(scheduled).children(housekeeping);
         Some(inbox.into_any_element())
+    }
+
+    fn need_remedy(&self, need: &NeedsYou, cx: &mut Context<Self>) -> Option<Div> {
+        let buttons = inbox_buttons(need);
+        (!buttons.is_empty()).then(|| {
+            div().flex().flex_none().gap_1().children(buttons.into_iter().map(|(key, label, does)| {
+                let (workspace, name) = (need.workspace.clone(), need.name.clone());
+                button::bordered(&self.hits, key, label, cx).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| match &does {
+                    InboxButton::Remedy(Remedy::Attach { id }) => {
+                        this.attach_by_id(&workspace, id, window, cx);
+                    }
+                    InboxButton::Remedy(Remedy::Retry | Remedy::Remint { .. } | Remedy::Adopt { .. }) | InboxButton::Retry => {
+                        this.retry(&workspace, &name, cx)
+                    }
+                    InboxButton::Remedy(Remedy::RunInTerminal { cwd, command }) => {
+                        this.run_in_terminal(cwd.clone(), command.clone(), window, cx);
+                    }
+                    InboxButton::Remedy(Remedy::RestartElevated) => this.restart_elevated(window, cx),
+                    InboxButton::StartFresh => this.start_fresh(&workspace, &name, cx),
+                }))
+            }))
+        })
+    }
+
+    fn render_need(&self, need: &NeedsYou, now: i64, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors().clone();
+        let color = needs_color(need.kind, cx);
+        let remedy = self.need_remedy(need, cx);
+        div()
+            .flex()
+            .items_start()
+            .gap_2()
+            .p_2()
+            .rounded_md()
+            .border_l_2()
+            .border_color(color)
+            .bg(color.opacity(0.10))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .text_sm()
+                            .child(div().font_weight(FontWeight::BOLD).text_color(color).child(needs_label(need.kind)))
+                            .child(SharedString::from(format!("{} · {}", need.workspace, need.name)))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(colors.text_muted)
+                                    .child(SharedString::from(supraman_core::time::ago(now - need.since))),
+                            ),
+                    )
+                    .child(div().text_xs().text_color(colors.text).child(SharedString::from(need.detail.clone()))),
+            )
+            .children(remedy)
+            .into_any_element()
     }
 
     fn render_workman_notice(&self, problem: String, cx: &mut Context<Self>) -> AnyElement {
@@ -934,7 +843,6 @@ impl FleetView {
         let pkey = format!("workspace:{w}");
         let group = SharedString::from(format!("ws-group-{w}"));
         let shown = self.workspace_selected(workspace, cx);
-        let started = workspace.started == Some(true);
         let own = workspace.own.as_ref();
         let live = own.filter(|r| fleet::is_alive(&r.health));
         let blocked = live.is_some_and(|r| matches!(r.health, Health::Blocked { .. }));
@@ -946,83 +854,9 @@ impl FleetView {
             Some(r) => div().size(px(8.)).rounded_full().bg(health_color(&r.health, cx)),
             None => div().size(px(8.)).rounded_full().border_1().border_color(colors.text_disabled),
         };
-        let relay = self.relays.get(&w).and_then(|r| r.label(now_ms()));
-        let relay_glyph = relay.and_then(|(text, _)| {
-            let (icon, color) = match relay_word(&text) {
-                "direct" => return None,
-                "ready" => (Icon::RelayReady, status.success),
-                "starting" => (Icon::RelayStarting, status.warning),
-                _ => (Icon::Warning, status.warning),
-            };
-            let key = format!("relay-{w}");
-            Some(
-                div()
-                    .id(SharedString::from(key.clone()))
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size_full()
-                    .child(icon.svg(14., color))
-                    .child(hit_target(&self.hits, key))
-                    .tooltip(Tooltip::text(text)),
-            )
-        });
+        let relay_glyph = self.relay_glyph(&w, cx);
 
-        let work = {
-            let w = w.clone();
-            self.hover_icon(format!("work-{w}"), Icon::Work, "Work: the workspace's Workman board", &group, shown, cx).on_click(cx.listener(
-                move |this, _: &ClickEvent, _, cx| {
-                    cx.stop_propagation();
-                    this.open_work(&w, cx);
-                },
-            ))
-        };
-        let task = {
-            let w = w.clone();
-            self.hover_icon(format!("task-{w}"), Icon::Task, "New task…: start a session with a first prompt", &group, shown, cx).on_click(cx.listener(
-                move |this, _: &ClickEvent, window, cx| {
-                    cx.stop_propagation();
-                    this.open_start(&w, None, false, window, cx);
-                },
-            ))
-        };
-        let session = own.and_then(|row| {
-            let (w, session) = (w.clone(), row.session.clone());
-            if row.attachable {
-                Some(self.hover_icon(format!("attach-ws-{w}"), Icon::Attach, "Attach the workspace session", &group, shown, cx).on_click(cx.listener(
-                    move |this, _: &ClickEvent, window, cx| {
-                        cx.stop_propagation();
-                        this.attach(&w, "workspace", &session, window, cx);
-                    },
-                )))
-            } else if self.resumable(row) {
-                Some(self.hover_icon(format!("resume-ws-{w}"), Icon::Resume, "Resume the workspace session", &group, shown, cx).on_click(cx.listener(
-                    move |this, _: &ClickEvent, window, cx| {
-                        cx.stop_propagation();
-                        this.resume(&w, "workspace", &session, window, cx);
-                    },
-                )))
-            } else {
-                None
-            }
-        });
-        let start_stop = {
-            let w = w.clone();
-            let (key, icon, tip) = if started {
-                (format!("stop-{w}"), Icon::Square, "Stop: its supervised sessions stop (stop, never rm)")
-            } else {
-                (format!("start-{w}"), Icon::Play, "Start: supervise the workspace, its session first")
-            };
-            self.hover_icon(key, icon, tip, &group, shown, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                cx.stop_propagation();
-                if started {
-                    this.stop_workspace(&w, cx);
-                } else {
-                    this.start_workspace(&w, cx);
-                }
-            }))
-        };
+        let buttons = self.workspace_buttons(workspace, &group, shown, cx);
 
         let line = div()
             .flex()
@@ -1042,17 +876,7 @@ impl FleetView {
                     .child(SharedString::from(workspace.session_count().to_string())),
             )
             .child(div().flex_none().size(px(16.)).children(relay_glyph))
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(2.))
-                    .child(work)
-                    .child(task)
-                    .child(session.map_or_else(slot, IntoElement::into_any_element))
-                    .child(start_stop),
-            );
+            .child(buttons);
         div()
             .id(SharedString::from(pkey.clone()))
             .group(group)
@@ -1081,6 +905,101 @@ impl FleetView {
             })
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(pkey.clone(), cx)))
             .into_any_element()
+    }
+
+    fn relay_glyph(&self, w: &str, cx: &gpui::App) -> Option<Stateful<Div>> {
+        let status = cx.theme().status();
+        let relay = self.relays.get(w).and_then(|r| r.label(now_ms()));
+        relay.and_then(|(text, _)| {
+            let (icon, color) = match relay_word(&text) {
+                "direct" => return None,
+                "ready" => (Icon::RelayReady, status.success),
+                "starting" => (Icon::RelayStarting, status.warning),
+                _ => (Icon::Warning, status.warning),
+            };
+            let key = format!("relay-{w}");
+            Some(
+                div()
+                    .id(SharedString::from(key.clone()))
+                    .relative()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size_full()
+                    .child(icon.svg(14., color))
+                    .child(hit_target(&self.hits, key))
+                    .tooltip(Tooltip::text(text)),
+            )
+        })
+    }
+
+    fn workspace_buttons(&self, workspace: &WorkspaceNode, group: &SharedString, shown: bool, cx: &mut Context<Self>) -> Div {
+        let w = workspace.name.clone();
+        let started = workspace.started == Some(true);
+        let own = workspace.own.as_ref();
+        let work = {
+            let w = w.clone();
+            self.hover_icon(format!("work-{w}"), Icon::Work, "Work: the workspace's Workman board", group, shown, cx).on_click(cx.listener(
+                move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.open_work(&w, cx);
+                },
+            ))
+        };
+        let task = {
+            let w = w.clone();
+            self.hover_icon(format!("task-{w}"), Icon::Task, "New task…: start a session with a first prompt", group, shown, cx).on_click(cx.listener(
+                move |this, _: &ClickEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.open_start(&w, None, false, window, cx);
+                },
+            ))
+        };
+        let session = own.and_then(|row| {
+            let (w, session) = (w.clone(), row.session.clone());
+            if row.attachable {
+                Some(self.hover_icon(format!("attach-ws-{w}"), Icon::Attach, "Attach the workspace session", group, shown, cx).on_click(cx.listener(
+                    move |this, _: &ClickEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.attach(&w, "workspace", &session, window, cx);
+                    },
+                )))
+            } else if self.resumable(row) {
+                Some(self.hover_icon(format!("resume-ws-{w}"), Icon::Resume, "Resume the workspace session", group, shown, cx).on_click(cx.listener(
+                    move |this, _: &ClickEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.resume(&w, "workspace", &session, window, cx);
+                    },
+                )))
+            } else {
+                None
+            }
+        });
+        let start_stop = {
+            let w = w.clone();
+            let (key, icon, tip) = if started {
+                (format!("stop-{w}"), Icon::Square, "Stop: its supervised sessions stop (stop, never rm)")
+            } else {
+                (format!("start-{w}"), Icon::Play, "Start: supervise the workspace, its session first")
+            };
+            self.hover_icon(key, icon, tip, group, shown, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                if started {
+                    this.stop_workspace(&w, cx);
+                } else {
+                    this.start_workspace(&w, cx);
+                }
+            }))
+        };
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(2.))
+            .child(work)
+            .child(task)
+            .child(session.map_or_else(slot, IntoElement::into_any_element))
+            .child(start_stop)
     }
 
     fn render_folder_row(&self, workspace: &WorkspaceNode, repo: &RepoNode, open: bool, cx: &mut Context<Self>) -> AnyElement {
@@ -1174,16 +1093,12 @@ impl FleetView {
         let s = &row.session;
         let at = row.scope(workspace);
         let foreign = row.foreign;
-        let dot = if foreign { colors.text_muted } else { health_color(&row.health, cx) };
-        let state = if foreign || matches!(row.health, Health::Stopped | Health::Orphaned { .. }) { secondary(cx) } else { dot };
         let blocked = !foreign && matches!(row.health, Health::Blocked { .. });
         let dimmed = foreign || matches!(row.health, Health::Orphaned { .. } | Health::Stopped);
         let waiting_for = match &row.health {
             Health::Blocked { waiting_for: Some(w) } => Some(format!("waiting for: {w}")),
             _ => None,
         };
-        let name = if s.name.is_empty() { "(unnamed)".to_string() } else { s.name.clone() };
-        let marks = self.search_marks.get(&s.session_id);
         let hook = row
             .hook
             .as_ref()
@@ -1191,118 +1106,7 @@ impl FleetView {
             .map(|h| format!("hook: {}", h.label(now_ms())));
         let shown = self.is_marked(s);
         let group = SharedString::from(format!("session-group-{}{at}", s.session_id));
-        let tree_key = format!("session-{}{at}", s.session_id);
-
-        let star = {
-            let session_id = s.session_id.clone();
-            let (icon, fg, tip) = if row.starred {
-                (Icon::StarFilled, status.warning, "Unstar: shown only while it runs or stopped sessions are shown")
-            } else {
-                (Icon::Star, colors.text_muted, "Star: always shown, stopped or closed, however old")
-            };
-            button::revealed(&self.hits, format!("star-{}{at}", s.session_id), icon.svg(13., fg), px(SLOT), group.clone(), shown || row.starred, cx)
-                .tooltip(Tooltip::text(tip))
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    cx.stop_propagation();
-                    this.toggle_star(&session_id, cx);
-                }))
-        };
-        let open = self.open_of(row);
-        let action = {
-            let (workspace, repo, session) = (workspace.to_string(), repo.to_string(), s.clone());
-            let tip = open.hint().unwrap_or_default();
-            match open {
-                // open in a tab not shown now: a state, so it shows without a hover
-                Open::Tab(tab) => Some(self.hover_icon(format!("tab-link-{}{at}", s.id), Icon::Tab, tip, &group, true, cx).on_click(cx.listener(
-                    move |this, _: &ClickEvent, _, cx| {
-                        cx.stop_propagation();
-                        this.activate_tab(tab, cx);
-                    },
-                ))),
-                Open::Attach => Some(self.hover_icon(format!("attach-{}{at}", s.id), Icon::Attach, tip, &group, shown, cx).on_click(cx.listener(
-                    move |this, _: &ClickEvent, window, cx| {
-                        cx.stop_propagation();
-                        this.attach(&workspace, &repo, &session, window, cx);
-                    },
-                ))),
-                Open::Resume => Some(self.hover_icon(format!("resume-{}{at}", s.id), Icon::Resume, tip, &group, shown, cx).on_click(cx.listener(
-                    move |this, _: &ClickEvent, window, cx| {
-                        cx.stop_propagation();
-                        this.resume(&workspace, &repo, &session, window, cx);
-                    },
-                ))),
-                _ => None,
-            }
-        };
-        let state_word = if row.closed { "closed".to_string() } else { fleet::health_label(&row.health) };
-        let name_el = match marks {
-            Some(m) if !s.name.is_empty() => supraman_ui::matcher::highlighted(format!("session-name-{}{at}", s.id), name, &m.name, cx),
-            _ => clipped(format!("session-name-{}{at}", s.id), name, false),
-        };
-        let name_el = if foreign {
-            let key = format!("foreign-{}{at}", s.session_id);
-            div()
-                .id(SharedString::from(key.clone()))
-                .relative()
-                .flex()
-                .flex_1()
-                .min_w_0()
-                .child(name_el)
-                .child(hit_target(&self.hits, key))
-                .tooltip(Tooltip::text("another Supraman session"))
-        } else {
-            name_el.flex_1()
-        };
-
-        let line = div()
-            .flex()
-            .items_center()
-            .gap(grid::gap())
-            .h(px(SESSION_LINE))
-            .child(disclosure(None, dot))
-            .child(icon_slot(&self.hits, &tree_key, Some(Icon::Claude.slotted(grid::ICON, dot).into_any_element())))
-            .child(tree_label(&self.hits, &tree_key, name_el))
-            .when_some(marks.and_then(|m| m.id.clone()), |d, id| {
-                let key = format!("session-id-{}{at}", s.id);
-                d.child(
-                    supraman_ui::matcher::highlighted(key.clone(), fleet::short_id(s).to_string(), &[id], cx)
-                        .relative()
-                        .flex_none()
-                        .text_xs()
-                        .text_color(secondary(cx))
-                        .child(hit_target(&self.hits, key)),
-                )
-            })
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .whitespace_nowrap()
-                    .text_xs()
-                    .text_color(secondary(cx))
-                    .child(SharedString::from(format!("{} · ", s.kind.as_str())))
-                    .child(div().text_color(state).child(SharedString::from(state_word))),
-            )
-            .when_some(row.also_in.clone(), |d, owner| {
-                d.child(
-                    div()
-                        .id(SharedString::from(format!("also-in-{}{at}", s.session_id)))
-                        .flex_none()
-                        .whitespace_nowrap()
-                        .text_xs()
-                        .text_color(quiet(cx))
-                        .child(SharedString::from(format!("also in {owner}"))),
-                )
-            })
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(2.))
-                    .child(star)
-                    .child(action.map_or_else(slot, IntoElement::into_any_element)),
-            );
+        let line = self.session_line(workspace, repo, row, cx);
 
         let (w, r, clicked) = (workspace.to_string(), repo.to_string(), row.clone());
         let target = MenuTarget::Session { workspace: workspace.to_string(), repo: repo.to_string(), session_id: s.session_id.clone() };
@@ -1351,6 +1155,141 @@ impl FleetView {
                 }),
             )
             .into_any_element()
+    }
+
+    fn session_line(&self, workspace: &str, repo: &str, row: &SessionRow, cx: &mut Context<Self>) -> Div {
+        let colors = cx.theme().colors().clone();
+        let s = &row.session;
+        let at = row.scope(workspace);
+        let dot = if row.foreign { colors.text_muted } else { health_color(&row.health, cx) };
+        let state = if row.foreign || matches!(row.health, Health::Stopped | Health::Orphaned { .. }) { secondary(cx) } else { dot };
+        let marks = self.search_marks.get(&s.session_id);
+        let tree_key = format!("session-{}{at}", s.session_id);
+        let star = self.session_star(row, &at, cx);
+        let action = self.session_open(workspace, repo, row, cx);
+        let state_word = if row.closed { "closed".to_string() } else { fleet::health_label(&row.health) };
+        div()
+            .flex()
+            .items_center()
+            .gap(grid::gap())
+            .h(px(SESSION_LINE))
+            .child(disclosure(None, dot))
+            .child(icon_slot(&self.hits, &tree_key, Some(Icon::Claude.slotted(grid::ICON, dot).into_any_element())))
+            .child(tree_label(&self.hits, &tree_key, self.session_name(row, &at, marks, cx)))
+            .when_some(marks.and_then(|m| m.id.clone()), |d, id| {
+                let key = format!("session-id-{}{at}", s.id);
+                d.child(
+                    supraman_ui::matcher::highlighted(key.clone(), fleet::short_id(s).to_string(), &[id], cx)
+                        .relative()
+                        .flex_none()
+                        .text_xs()
+                        .text_color(secondary(cx))
+                        .child(hit_target(&self.hits, key)),
+                )
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .text_xs()
+                    .text_color(secondary(cx))
+                    .child(SharedString::from(format!("{} · ", s.kind.as_str())))
+                    .child(div().text_color(state).child(SharedString::from(state_word))),
+            )
+            .when_some(row.also_in.clone(), |d, owner| {
+                d.child(
+                    div()
+                        .id(SharedString::from(format!("also-in-{}{at}", s.session_id)))
+                        .flex_none()
+                        .whitespace_nowrap()
+                        .text_xs()
+                        .text_color(quiet(cx))
+                        .child(SharedString::from(format!("also in {owner}"))),
+                )
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap(px(2.))
+                    .child(star)
+                    .child(action.map_or_else(slot, IntoElement::into_any_element)),
+            )
+    }
+
+    fn session_name(&self, row: &SessionRow, at: &str, marks: Option<&crate::search::Marks>, cx: &mut Context<Self>) -> Stateful<Div> {
+        let s = &row.session;
+        let name = if s.name.is_empty() { "(unnamed)".to_string() } else { s.name.clone() };
+        let name_el = match marks {
+            Some(m) if !s.name.is_empty() => supraman_ui::matcher::highlighted(format!("session-name-{}{at}", s.id), name, &m.name, cx),
+            _ => clipped(format!("session-name-{}{at}", s.id), name, false),
+        };
+        if row.foreign {
+            let key = format!("foreign-{}{at}", s.session_id);
+            div()
+                .id(SharedString::from(key.clone()))
+                .relative()
+                .flex()
+                .flex_1()
+                .min_w_0()
+                .child(name_el)
+                .child(hit_target(&self.hits, key))
+                .tooltip(Tooltip::text("another Supraman session"))
+        } else {
+            name_el.flex_1()
+        }
+    }
+
+    fn session_star(&self, row: &SessionRow, at: &str, cx: &mut Context<Self>) -> Stateful<Div> {
+        let (colors, status) = (cx.theme().colors().clone(), cx.theme().status().clone());
+        let s = &row.session;
+        let group = SharedString::from(format!("session-group-{}{at}", s.session_id));
+        let session_id = s.session_id.clone();
+        let (icon, fg, tip) = if row.starred {
+            (Icon::StarFilled, status.warning, "Unstar: shown only while it runs or stopped sessions are shown")
+        } else {
+            (Icon::Star, colors.text_muted, "Star: always shown, stopped or closed, however old")
+        };
+        button::revealed(&self.hits, format!("star-{}{at}", s.session_id), icon.svg(13., fg), px(SLOT), group, self.is_marked(s) || row.starred, cx)
+            .tooltip(Tooltip::text(tip))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                this.toggle_star(&session_id, cx);
+            }))
+    }
+
+    fn session_open(&self, workspace: &str, repo: &str, row: &SessionRow, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let s = &row.session;
+        let at = row.scope(workspace);
+        let group = SharedString::from(format!("session-group-{}{at}", s.session_id));
+        let shown = self.is_marked(s);
+        let open = self.open_of(row);
+        let (workspace, repo, session) = (workspace.to_string(), repo.to_string(), s.clone());
+        let tip = open.hint().unwrap_or_default();
+        match open {
+            // open in a tab not shown now: a state, so it shows without a hover
+            Open::Tab(tab) => Some(self.hover_icon(format!("tab-link-{}{at}", s.id), Icon::Tab, tip, &group, true, cx).on_click(cx.listener(
+                move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.activate_tab(tab, cx);
+                },
+            ))),
+            Open::Attach => Some(self.hover_icon(format!("attach-{}{at}", s.id), Icon::Attach, tip, &group, shown, cx).on_click(cx.listener(
+                move |this, _: &ClickEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.attach(&workspace, &repo, &session, window, cx);
+                },
+            ))),
+            Open::Resume => Some(self.hover_icon(format!("resume-{}{at}", s.id), Icon::Resume, tip, &group, shown, cx).on_click(cx.listener(
+                move |this, _: &ClickEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.resume(&workspace, &repo, &session, window, cx);
+                },
+            ))),
+            _ => None,
+        }
     }
 
     /// `supervised in <ws>` (a click reveals it there), `also in <ws>, …`.

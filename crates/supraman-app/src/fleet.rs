@@ -231,7 +231,7 @@ pub fn live_sessions(sessions: &[Session], now_ms: i64) -> Vec<LiveSession> {
         .filter_map(|s| {
             let health = s.health(now_ms);
             let activity = activity(&health)?;
-            Some(LiveSession { name: s.name.clone(), cwd: s.cwd.clone(), activity, attach: attachable(s, &health).then(|| s.id.clone()) })
+            Some(LiveSession { name: s.name.clone(), claude_session_id: s.session_id.clone(), cwd: s.cwd.clone(), activity, attach: attachable(s, &health).then(|| s.id.clone()) })
         })
         .collect()
 }

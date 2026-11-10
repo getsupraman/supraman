@@ -19,7 +19,7 @@ fn open<'a>(folder: PathBuf, live: Live, cx: &'a mut TestAppContext) -> (Entity<
 }
 
 fn session(name: &str, cwd: PathBuf, activity: Activity, attach: Option<&str>) -> LiveSession {
-    LiveSession { name: name.into(), cwd, activity, attach: attach.map(str::to_string) }
+    LiveSession { name: name.into(), claude_session_id: String::new(), cwd, activity, attach: attach.map(str::to_string) }
 }
 
 fn set(live: &Live, sessions: Vec<LiveSession>, view: &Entity<GitView>, cx: &mut VisualTestContext) {

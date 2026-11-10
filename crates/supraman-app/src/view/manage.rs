@@ -254,17 +254,7 @@ impl FleetView {
             MenuAction::EditFolders(w) => self.edit_folders(&w, window, cx),
             MenuAction::AddFromFolder => self.add_workspace(window, cx),
             MenuAction::AddCustom => self.open_add(Mode::Custom, window, cx),
-            MenuAction::Remove(w) => {
-                let started = self.desired.get(&w).is_some_and(|d| d.0);
-                let stop = if started { "Its supervision stops first (Stop), then " } else { "" };
-                self.confirm = Some(Confirm::ask(
-                    format!(
-                        "Remove workspace {w} from Supraman? {stop}its registry entry and desired state go. No files are deleted, and no session is stopped beyond what Stop does."
-                    ),
-                    "Remove",
-                    Confirmed::Remove(w),
-                ));
-            }
+            MenuAction::Remove(w) => self.ask_remove(w),
             MenuAction::OpenFolder(path) => self.open_folder(path, cx),
             MenuAction::OpenTerminal { cwd, place } => {
                 self.open_terminal_here(cwd, &place, cx);
@@ -283,30 +273,8 @@ impl FleetView {
                 self.resume(&workspace, &repo, &session, window, cx);
             }
             MenuAction::StopSession(session) if is_foremans(&session) => self.stop_session(session, cx),
-            MenuAction::StopSession(session) => {
-                self.confirm = Some(Confirm::ask(
-                    format!(
-                        "{} ({}) was not launched by Supraman. Stop it? Its transcript stays and it can be resumed.",
-                        if session.name.is_empty() { "This session" } else { &session.name },
-                        session.id
-                    ),
-                    "Stop",
-                    Confirmed::StopSession(session),
-                ));
-            }
-            MenuAction::Adopt { workspace, folder, session, name } => {
-                let label = if session.name.is_empty() { format!("session {}", session.id) } else { format!("{} ({})", session.name, session.id) };
-                let stop = if fleet::is_alive(&session.health(now_ms())) { "It is stopped (stop, never rm), then its" } else { "Its" };
-                let started = self.desired.get(&workspace).is_some_and(|d| d.0);
-                let later = if started { String::new() } else { format!(" Workspace {workspace} is not started: the copy starts when you Start it.") };
-                self.confirm = Some(Confirm::ask(
-                    format!(
-                        "Adopt {label} into {workspace}? {stop} conversation continues as {name}, supervised: a copy under a new id with a fresh Workman token. The original stays stopped and listed.{later}"
-                    ),
-                    "Adopt",
-                    Confirmed::Adopt { workspace, folder, session, name },
-                ));
-            }
+            MenuAction::StopSession(session) => self.ask_stop_foreign(session),
+            MenuAction::Adopt { workspace, folder, session, name } => self.ask_adopt(workspace, folder, session, name),
             MenuAction::ToggleStar(session_id) => self.toggle_star(&session_id, cx),
             MenuAction::Copy(text) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
@@ -323,6 +291,22 @@ impl FleetView {
             MenuAction::Details(target) => {
                 self.open_details(target, cx);
             }
+            schedule @ (MenuAction::Approve { .. }
+            | MenuAction::RunNow { .. }
+            | MenuAction::EditSchedule { .. }
+            | MenuAction::DryRun { .. }
+            | MenuAction::SetPaused { .. }
+            | MenuAction::History { .. }
+            | MenuAction::RemoveSchedule { .. }) => self.run_schedule_action(schedule, window, cx),
+            tab @ (MenuAction::OpenGit(_) | MenuAction::OpenWorkman { .. } | MenuAction::CloseTab(_) | MenuAction::CloseOtherTabs(_) | MenuAction::CloseTabsRight(_) | MenuAction::ReopenClosed) => {
+                self.run_tab_action(tab, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    fn run_schedule_action(&mut self, action: MenuAction, window: &mut Window, cx: &mut Context<Self>) {
+        match action {
             MenuAction::Approve { workspace, id } => {
                 self.open_schedule(&workspace, &id, super::schedules::At::Approve, cx);
             }
@@ -332,11 +316,46 @@ impl FleetView {
             MenuAction::SetPaused { workspace, id, paused } => self.set_schedule_paused(workspace, id, paused, cx),
             MenuAction::History { workspace, id } => self.schedule_history(&workspace, &id, cx),
             MenuAction::RemoveSchedule { workspace, id } => self.ask_remove_schedule(&workspace, &id, cx),
-            tab @ (MenuAction::OpenGit(_) | MenuAction::OpenWorkman { .. } | MenuAction::CloseTab(_) | MenuAction::CloseOtherTabs(_) | MenuAction::CloseTabsRight(_) | MenuAction::ReopenClosed) => {
-                self.run_tab_action(tab, cx);
-            }
+            _ => {}
         }
-        cx.notify();
+    }
+
+    fn ask_remove(&mut self, w: String) {
+        let started = self.desired.get(&w).is_some_and(|d| d.0);
+        let stop = if started { "Its supervision stops first (Stop), then " } else { "" };
+        self.confirm = Some(Confirm::ask(
+            format!(
+                "Remove workspace {w} from Supraman? {stop}its registry entry and desired state go. No files are deleted, and no session is stopped beyond what Stop does."
+            ),
+            "Remove",
+            Confirmed::Remove(w),
+        ));
+    }
+
+    fn ask_stop_foreign(&mut self, session: Session) {
+        self.confirm = Some(Confirm::ask(
+            format!(
+                "{} ({}) was not launched by Supraman. Stop it? Its transcript stays and it can be resumed.",
+                if session.name.is_empty() { "This session" } else { &session.name },
+                session.id
+            ),
+            "Stop",
+            Confirmed::StopSession(session),
+        ));
+    }
+
+    fn ask_adopt(&mut self, workspace: String, folder: String, session: Session, name: String) {
+        let label = if session.name.is_empty() { format!("session {}", session.id) } else { format!("{} ({})", session.name, session.id) };
+        let stop = if fleet::is_alive(&session.health(now_ms())) { "It is stopped (stop, never rm), then its" } else { "Its" };
+        let started = self.desired.get(&workspace).is_some_and(|d| d.0);
+        let later = if started { String::new() } else { format!(" Workspace {workspace} is not started: the copy starts when you Start it.") };
+        self.confirm = Some(Confirm::ask(
+            format!(
+                "Adopt {label} into {workspace}? {stop} conversation continues as {name}, supervised: a copy under a new id with a fresh Workman token. The original stays stopped and listed.{later}"
+            ),
+            "Adopt",
+            Confirmed::Adopt { workspace, folder, session, name },
+        ));
     }
 
     pub fn answer_confirm(&mut self, yes: bool, cx: &mut Context<Self>) {

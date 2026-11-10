@@ -331,6 +331,23 @@ impl Supervision {
 
     pub fn tick(&mut self, workspaces: &[Workspace], observed: &[Session], retries: Vec<(String, String)>, now: Millis) -> Report {
         let mut report = Report::default();
+        let settings = self.read_settings(&mut report, now);
+        self.read_desired(workspaces, &settings, &mut report, now);
+        self.follow_server(&mut report);
+        self.run_supervisors(workspaces, observed, retries, &settings, &mut report, now);
+        let ended = self.end_deleted_runs(observed);
+        self.notices.extend(ended);
+        for s in self.supervisors.values_mut() {
+            self.notices.extend(s.take_notices());
+        }
+        self.notices.drain(..self.notices.len().saturating_sub(NOTICES_KEPT));
+        report.errors.extend(self.notices.iter().cloned());
+        self.report_desired(observed, &mut report, now);
+        self.read_messages(workspaces, &mut report);
+        report
+    }
+
+    fn read_settings(&mut self, report: &mut Report, now: Millis) -> Settings {
         let settings = Settings::load(&self.home).unwrap_or_else(|e| {
             report.errors.push(format!("Cannot read the settings, using the defaults: {e}"));
             Settings::default()
@@ -342,6 +359,10 @@ impl Supervision {
             report.errors.extend(supraman_core::prune::prune(&self.home, supraman_core::time::now_ms(), supraman_core::prune::KEEP_MS));
         }
         self.config.plugin_dirs = plugin_dirs(self.plugin_dir.as_deref(), &settings);
+        settings
+    }
+
+    fn read_desired(&mut self, workspaces: &[Workspace], settings: &Settings, report: &mut Report, now: Millis) {
         self.supervisors.retain(|name, _| workspaces.iter().any(|p| &p.name == name));
         for p in workspaces {
             match DesiredState::load(&self.home, &p.name) {
@@ -372,6 +393,9 @@ impl Supervision {
                 }
             }
         }
+    }
+
+    fn follow_server(&mut self, report: &mut Report) {
         let signed_out = self.end_signed_out();
         self.notices.extend(signed_out);
         let server = signed_in_server(&crate::signin::auth(&self.home));
@@ -387,6 +411,9 @@ impl Supervision {
                 }
             }
         }
+    }
+
+    fn run_supervisors(&mut self, workspaces: &[Workspace], observed: &[Session], retries: Vec<(String, String)>, settings: &Settings, report: &mut Report, now: Millis) {
         let retried = !retries.is_empty();
         for (workspace, name) in retries {
             if let Some(s) = self.supervisors.get_mut(&workspace) {
@@ -415,13 +442,9 @@ impl Supervision {
             self.daemon_logged = self.daemon.why.clone();
         }
         report.daemon_hold = self.daemon.why.clone();
-        let ended = self.end_deleted_runs(observed);
-        self.notices.extend(ended);
-        for s in self.supervisors.values_mut() {
-            self.notices.extend(s.take_notices());
-        }
-        self.notices.drain(..self.notices.len().saturating_sub(NOTICES_KEPT));
-        report.errors.extend(self.notices.iter().cloned());
+    }
+
+    fn report_desired(&self, observed: &[Session], report: &mut Report, now: Millis) {
         for (workspace, s) in &self.supervisors {
             let names: Vec<String> = s.desired.sessions.iter().map(|w| w.name.clone()).collect();
             for name in &names {
@@ -439,6 +462,9 @@ impl Supervision {
             report.relays.insert(workspace.clone(), RelayStatus { started: s.desired.started, wanted, live, ready_at });
             report.desired.insert(workspace.clone(), (s.desired.started, names));
         }
+    }
+
+    fn read_messages(&self, workspaces: &[Workspace], report: &mut Report) {
         for p in workspaces {
             match read_outbox(&self.home, &p.name) {
                 Ok(mut msgs) if !msgs.is_empty() => {
@@ -455,7 +481,6 @@ impl Supervision {
                 Err(e) => report.errors.push(format!("Cannot read the messages of {}: {e}", p.name)),
             }
         }
-        report
     }
 }
 

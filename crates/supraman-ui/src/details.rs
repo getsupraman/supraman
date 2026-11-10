@@ -3,8 +3,8 @@
 
 use std::rc::Rc;
 
-use gpui::{AnyElement, ClickEvent, ClipboardItem, Context, FontWeight, Hsla, ScrollHandle, SharedString, Window, div, prelude::*, px};
-use theme::ActiveTheme as _;
+use gpui::{AnyElement, ClickEvent, ClipboardItem, Context, Div, FontWeight, Hsla, ScrollHandle, SharedString, Window, div, prelude::*, px};
+use theme::{ActiveTheme as _, ThemeColors};
 
 use crate::banner;
 use crate::button;
@@ -163,79 +163,84 @@ fn render_section<V: 'static>(page: &str, section: &Section, on_link: Option<OnL
         .child(div().text_xs().font_weight(FontWeight::BOLD).text_color(colors.text_muted).child(SharedString::from(section.caption.to_uppercase())));
     for (i, line) in section.lines.iter().enumerate() {
         out = out.child(match line {
-            Line::Row(label, value) => div()
-                .flex()
-                .items_start()
-                .gap_3()
-                .text_sm()
-                .child(div().flex_none().w(px(LABEL)).text_color(colors.text_muted).child(SharedString::from(label.clone())))
-                .child(div().flex_1().min_w_0().child(SharedString::from(value.clone())))
-                .into_any_element(),
-            Line::Link { label, value, target } => {
-                let link_key = format!("{key}-link-{i}");
-                let (on_link, target) = (on_link.clone(), target.clone());
-                div()
-                    .flex()
-                    .items_start()
-                    .gap_3()
-                    .text_sm()
-                    .child(div().flex_none().w(px(LABEL)).text_color(colors.text_muted).child(SharedString::from(label.clone())))
-                    .child(
-                        div()
-                            .id(SharedString::from(link_key.clone()))
-                            .relative()
-                            .min_w_0()
-                            .text_color(colors.text_accent)
-                            .underline()
-                            .cursor_pointer()
-                            .child(SharedString::from(value.clone()))
-                            .child(hit_target(hits, link_key))
-                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                                if let Some(f) = &on_link {
-                                    f(this, &target, window, cx);
-                                }
-                            })),
-                    )
-                    .into_any_element()
-            }
+            Line::Row(label, value) => labelled(label, &colors).child(div().flex_1().min_w_0().child(SharedString::from(value.clone()))).into_any_element(),
+            Line::Link { label, value, target } => link_line(label, value, target, format!("{key}-link-{i}"), on_link.clone(), hits, cx),
             Line::Text(t) => div().text_sm().whitespace_normal().child(SharedString::from(t.clone())).into_any_element(),
-            Line::Check { done, text, note } => div()
-                .relative()
-                .flex()
-                .items_start()
-                .gap_2()
-                .text_sm()
-                .child(div().flex_none().h(px(20.)).flex().items_center().child(button::tick(*done, cx.theme().status().success, cx)))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .child(SharedString::from(text.clone()))
-                        .children(note.as_ref().map(|n| div().text_xs().text_color(colors.text_muted).child(SharedString::from(n.clone())))),
-                )
-                .child(hit_target(hits, format!("{key}-check-{i}={}", if *done { "done" } else { "open" })))
-                .into_any_element(),
-            Line::Long(t) => {
-                let copy_key = format!("{key}-copy-{i}");
-                let copied = t.clone();
-                div()
-                    .flex()
-                    .items_start()
-                    .gap_2()
-                    .p_2()
-                    .rounded_md()
-                    .bg(colors.element_background)
-                    .child(div().flex_1().min_w_0().font_family(crate::fonts::MONO).text_sm().child(SharedString::from(t.clone())))
-                    .child(button::bordered(hits, copy_key, "Copy", cx).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()));
-                    })))
-                    .into_any_element()
-            }
+            Line::Check { done, text, note } => check_line(*done, text, note.as_deref(), format!("{key}-check-{i}"), hits, cx),
+            Line::Long(t) => long_line(t, format!("{key}-copy-{i}"), hits, cx),
         });
     }
     out.into_any_element()
+}
+
+fn labelled(label: &str, colors: &ThemeColors) -> Div {
+    div()
+        .flex()
+        .items_start()
+        .gap_3()
+        .text_sm()
+        .child(div().flex_none().w(px(LABEL)).text_color(colors.text_muted).child(SharedString::from(label.to_string())))
+}
+
+fn link_line<V: 'static>(label: &str, value: &str, target: &str, link_key: String, on_link: Option<OnLink<V>>, hits: &HitTargets, cx: &mut Context<V>) -> AnyElement {
+    let colors = cx.theme().colors().clone();
+    let target = target.to_string();
+    labelled(label, &colors)
+        .child(
+            div()
+                .id(SharedString::from(link_key.clone()))
+                .relative()
+                .min_w_0()
+                .text_color(colors.text_accent)
+                .underline()
+                .cursor_pointer()
+                .child(SharedString::from(value.to_string()))
+                .child(hit_target(hits, link_key))
+                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    if let Some(f) = &on_link {
+                        f(this, &target, window, cx);
+                    }
+                })),
+        )
+        .into_any_element()
+}
+
+fn check_line<V: 'static>(done: bool, text: &str, note: Option<&str>, key: String, hits: &HitTargets, cx: &mut Context<V>) -> AnyElement {
+    let colors = cx.theme().colors().clone();
+    div()
+        .relative()
+        .flex()
+        .items_start()
+        .gap_2()
+        .text_sm()
+        .child(div().flex_none().h(px(20.)).flex().items_center().child(button::tick(done, cx.theme().status().success, cx)))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .child(SharedString::from(text.to_string()))
+                .children(note.map(|n| div().text_xs().text_color(colors.text_muted).child(SharedString::from(n.to_string())))),
+        )
+        .child(hit_target(hits, format!("{key}={}", if done { "done" } else { "open" })))
+        .into_any_element()
+}
+
+fn long_line<V: 'static>(text: &str, copy_key: String, hits: &HitTargets, cx: &mut Context<V>) -> AnyElement {
+    let copied = text.to_string();
+    div()
+        .flex()
+        .items_start()
+        .gap_2()
+        .p_2()
+        .rounded_md()
+        .bg(cx.theme().colors().element_background)
+        .child(div().flex_1().min_w_0().font_family(crate::fonts::MONO).text_sm().child(SharedString::from(text.to_string())))
+        .child(button::bordered(hits, copy_key, "Copy", cx).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()));
+        })))
+        .into_any_element()
 }
 
 #[cfg(test)]

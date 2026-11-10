@@ -172,7 +172,7 @@ impl FleetView {
 
     fn tab_menu_items(&self, id: u64, folder: Option<&Path>, repo: &Repo, cx: &Context<Self>) -> Vec<MenuItem> {
         let at = self.tabs.iter().position(|t| t.id == id).unwrap_or_default();
-        let facts = TabFacts { id, folder, repo, others: self.tabs.len() > 1, right: at + 1 < self.tabs.len(), reopenable: self.tab_keys().has_closed() };
+        let facts = TabFacts { id, folder, repo, others: self.tabs.len() > 1, right: at + 1 < self.tabs.len(), reopenable: self.tab_keys.read(cx).has_closed() };
         tab_items(facts, self.tab(id).and_then(|tab| self.tab_session_items(tab, cx)))
     }
 
@@ -200,8 +200,8 @@ impl FleetView {
         let ids = |this: &Self, keep: &dyn Fn(usize, u64) -> bool| -> Vec<u64> { this.tabs.iter().enumerate().filter(|(i, t)| keep(*i, t.id)).map(|(_, t)| t.id).collect() };
         match action {
             MenuAction::OpenGit(top) => {
-                let name = top.file_name().map_or_else(|| top.display().to_string(), |n| n.to_string_lossy().into_owned());
-                self.open_git(top, format!("Git · {name}"), &Default::default(), cx);
+                let title = crate::view::git_tab::title(&top);
+                self.open_git(top, title, &Default::default(), cx);
             }
             MenuAction::OpenWorkman { workspace, project } => {
                 let id = self.open_work(&workspace, cx);

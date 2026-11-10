@@ -61,11 +61,13 @@ mod view;
 mod workman_setup;
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicI32, Ordering};
 
 use supraman_ui::text_input;
 use futures::StreamExt as _;
-use gpui::{AnyWindowHandle, App, AppContext as _, Bounds, SharedString, TitlebarOptions, WindowBounds, WindowOptions, px, size};
+use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
+use gpui::{AnyWindowHandle, App, AppContext as _, Bounds, Entity, SharedString, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, px, size};
 
 use crate::instance::Acquired;
 use crate::tray::{Command, Tray};
@@ -212,16 +214,7 @@ fn main() {
     if mode == Mode::App {
         release_own_console();
     }
-    let _machine = match mode {
-        Mode::Selftest | Mode::SelftestSupervise | Mode::SelftestDetachShutdown | Mode::SelftestShots => match selftest_clipboard::hold_machine() {
-            Ok(held) => Some(held),
-            Err(error) => {
-                println!("FAIL setup: {error:#}");
-                std::process::exit(1);
-            }
-        },
-        _ => None,
-    };
+    let _machine = hold_machine(mode);
     let home = match mode {
         Mode::App => supraman_core::home_from_env(),
         _ => Some(selftest::home()),
@@ -230,6 +223,52 @@ fn main() {
     if let Some(pid) = relaunched.as_ref().and_then(|r| r.after) {
         elevate::wait_for_exit(pid, elevate::AFTER_WITHIN);
     }
+    let instance = single_instance(mode, home, relaunched.is_some());
+    if mode != Mode::App
+        && let Err(error) = selftest::prepare(mode)
+    {
+        println!("FAIL setup: {error:#}");
+        selftest::cleanup();
+        std::process::exit(1);
+    }
+    // After `prepare` cleared the selftest's home.
+    if mode != Mode::App {
+        supraman_ui::init_logger(Some(&selftest::log_dir()));
+        supraman_ui::log_panics();
+    }
+    let (commands, received) = futures::channel::mpsc::unbounded::<Command>();
+    if let Some(instance) = &instance {
+        let commands = commands.clone();
+        if let Err(error) = instance.on_open(move || {
+            log::info!("a second launch asked for the window");
+            commands.unbounded_send(Command::Open).ok();
+        }) {
+            eprintln!("a second launch cannot bring this window forward: {error:#}");
+        }
+    }
+    gpui_platform::application().run(move |cx: &mut App| run(mode, commands, received, cx));
+    TRAY.with(|t| t.borrow_mut().take());
+    if mode != Mode::App {
+        selftest::finish(mode);
+        selftest::cleanup();
+    }
+    std::process::exit(EXIT_CODE.load(Ordering::SeqCst));
+}
+
+fn hold_machine(mode: Mode) -> Option<selftest_clipboard::Held> {
+    match mode {
+        Mode::Selftest | Mode::SelftestSupervise | Mode::SelftestDetachShutdown | Mode::SelftestShots => match selftest_clipboard::hold_machine() {
+            Ok(held) => Some(held),
+            Err(error) => {
+                println!("FAIL setup: {error:#}");
+                std::process::exit(1);
+            }
+        },
+        _ => None,
+    }
+}
+
+fn single_instance(mode: Mode, home: Option<PathBuf>, relaunched: bool) -> Option<instance::Instance> {
     // Before `prepare`, which clears a home a running selftest may use, and before any UAC prompt.
     let mut acquired = home.as_deref().map(instance::acquire);
     if mode == Mode::App {
@@ -241,7 +280,7 @@ fn main() {
     {
         let toggle = mode == Mode::App && elevate::toggle(home);
         let elevated = supraman_claude::is_elevated();
-        let start = elevate::start(mode == Mode::App, toggle, elevated, relaunched.is_some(), || {
+        let start = elevate::start(mode == Mode::App, toggle, elevated, relaunched, || {
             // the copy takes the lock
             acquired = None;
             elevate::relaunch(home, None)
@@ -258,7 +297,7 @@ fn main() {
             }
         }
     }
-    let instance = match acquired {
+    match acquired {
         Some(Ok(Acquired::First(instance))) => Some(instance),
         Some(Ok(Acquired::Running)) => {
             let home = home.unwrap_or_default();
@@ -274,115 +313,94 @@ fn main() {
             None
         }
         None => None,
-    };
-    if mode != Mode::App
-        && let Err(error) = selftest::prepare(mode)
-    {
-        println!("FAIL setup: {error:#}");
-        selftest::cleanup();
-        std::process::exit(1);
     }
-    // After `prepare` cleared the selftest's home.
-    if mode != Mode::App {
-        supraman_ui::init_logger(Some(&selftest::log_dir()));
-        supraman_ui::log_panics();
-    }
+}
 
-    let (commands, mut received) = futures::channel::mpsc::unbounded::<Command>();
-    if let Some(instance) = &instance {
-        let commands = commands.clone();
-        if let Err(error) = instance.on_open(move || {
-            log::info!("a second launch asked for the window");
-            commands.unbounded_send(Command::Open).ok();
-        }) {
-            eprintln!("a second launch cannot bring this window forward: {error:#}");
-        }
+fn run(mode: Mode, commands: UnboundedSender<Command>, mut received: UnboundedReceiver<Command>, cx: &mut App) {
+    supraman_editor::init(supraman_ui::fonts::MONO, 13., cx);
+    supraman_ui::init_globals(cx, env!("CARGO_PKG_VERSION"));
+    supraman_ui::stall::watch(cx);
+    let home = supraman_core::home_from_env();
+    if let Some(home) = home.clone() {
+        keeping::start(home, cx.background_executor());
     }
-
-    gpui_platform::application().run(move |cx: &mut App| {
-        supraman_editor::init(supraman_ui::fonts::MONO, 13., cx);
-        supraman_ui::init_globals(cx, env!("CARGO_PKG_VERSION"));
-        supraman_ui::stall::watch(cx);
-        let home = supraman_core::home_from_env();
-        if let Some(home) = home.clone() {
-            keeping::start(home, cx.background_executor());
+    if let Some(problem) = settings_window::apply_theme(home.as_deref(), cx) {
+        log::warn!("{problem}");
+    }
+    view::bind_keys(cx);
+    text_input::bind_keys(cx);
+    git_view::bind_keys(cx);
+    cx.on_window_closed(|cx, _| {
+        if cx.windows().is_empty() {
+            cx.quit();
         }
-        if let Some(problem) = settings_window::apply_theme(home.as_deref(), cx) {
-            log::warn!("{problem}");
-        }
-        view::bind_keys(cx);
-        text_input::bind_keys(cx);
-        git_view::bind_keys(cx);
-        cx.on_window_closed(|cx, _| {
-            if cx.windows().is_empty() {
-                cx.quit();
+    })
+    .detach();
+    let handle = open_main_window(mode, cx);
+    cx.activate(true);
+    match tray::install(commands) {
+        Ok(tray) => TRAY.with(|t| *t.borrow_mut() = Some(tray)),
+        Err(error) => eprintln!("no tray icon: {error:#}"),
+    }
+    let fleet = handle.update(cx, |_, _, cx| cx.entity()).expect("the window just opened");
+    follow_tray(&fleet, cx);
+    let window = AnyWindowHandle::from(handle);
+    cx.spawn(async move |cx| {
+        while let Some(command) = received.next().await {
+            if window.update(cx, |_, window, cx| tray::apply(command, &fleet, window, cx)).is_err() {
+                return;
             }
-        })
-        .detach();
-        let bounds = Bounds::centered(None, size(px(1400.), px(820.)), cx);
-        let handle = cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some(SharedString::from("Supraman")),
-                    appears_transparent: true,
-                    traffic_light_position: None,
-                }),
-                ..Default::default()
-            },
-            move |window, cx| {
-                let view = cx.new(|cx| FleetView::new(window, cx));
-                if mode != Mode::App {
-                    selftest::start(mode, view.clone(), window, cx);
-                }
-                view
-            },
-        )
-        .expect("failed to open window");
-        cx.activate(true);
-        match tray::install(commands) {
-            Ok(tray) => TRAY.with(|t| *t.borrow_mut() = Some(tray)),
-            Err(error) => eprintln!("no tray icon: {error:#}"),
         }
-        let fleet = handle.update(cx, |_, _, cx| cx.entity()).expect("the window just opened");
-        cx.observe(&fleet, |fleet, cx| {
-            let tip = fleet.read(cx).tray_tooltip();
-            TRAY.with(|t| {
-                if let Some(t) = t.borrow().as_ref() {
-                    t.set_tooltip(&tip);
-                }
+    })
+    .detach();
+}
+
+fn open_main_window(mode: Mode, cx: &mut App) -> WindowHandle<FleetView> {
+    let bounds = Bounds::centered(None, size(px(1400.), px(820.)), cx);
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: Some(SharedString::from("Supraman")),
+                appears_transparent: true,
+                traffic_light_position: None,
+            }),
+            ..Default::default()
+        },
+        move |window, cx| {
+            let view = cx.new(|cx| FleetView::new(window, cx));
+            if mode != Mode::App {
+                selftest::start(mode, view.clone(), window, cx);
+            }
+            view
+        },
+    )
+    .expect("failed to open window")
+}
+
+fn follow_tray(fleet: &Entity<FleetView>, cx: &mut App) {
+    cx.observe(fleet, |fleet, cx| {
+        let tip = fleet.read(cx).tray_tooltip();
+        TRAY.with(|t| {
+            if let Some(t) = t.borrow().as_ref() {
+                t.set_tooltip(&tip);
+            }
+        });
+    })
+    .detach();
+    cx.spawn(async move |cx| {
+        loop {
+            cx.background_executor().timer(tray::FOLLOW_TASKBAR_EVERY).await;
+            cx.update(|_| {
+                TRAY.with(|t| {
+                    if let Some(t) = t.borrow().as_ref() {
+                        t.follow_taskbar();
+                    }
+                })
             });
-        })
-        .detach();
-        cx.spawn(async move |cx| {
-            loop {
-                cx.background_executor().timer(tray::FOLLOW_TASKBAR_EVERY).await;
-                cx.update(|_| {
-                    TRAY.with(|t| {
-                        if let Some(t) = t.borrow().as_ref() {
-                            t.follow_taskbar();
-                        }
-                    })
-                });
-            }
-        })
-        .detach();
-        let window = AnyWindowHandle::from(handle);
-        cx.spawn(async move |cx| {
-            while let Some(command) = received.next().await {
-                if window.update(cx, |_, window, cx| tray::apply(command, &fleet, window, cx)).is_err() {
-                    return;
-                }
-            }
-        })
-        .detach();
-    });
-    TRAY.with(|t| t.borrow_mut().take());
-    if mode != Mode::App {
-        selftest::finish(mode);
-        selftest::cleanup();
-    }
-    std::process::exit(EXIT_CODE.load(Ordering::SeqCst));
+        }
+    })
+    .detach();
 }
 
 #[cfg(test)]

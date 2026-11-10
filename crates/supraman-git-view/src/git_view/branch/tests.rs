@@ -245,7 +245,7 @@ fn a_branch_in_a_linked_worktree_shows_the_tree_and_every_menu_of_it_offers_the_
 fn removing_a_worktree_a_live_session_works_in_names_the_session_in_its_question(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let live = occupancy::Live::default();
-    live.set_sessions(vec![occupancy::LiveSession { name: "fm-agent".into(), cwd: f.worktree.join("src"), activity: supraman_ui::marks::Activity::Working, attach: None }]);
+    live.set_sessions(vec![occupancy::LiveSession { name: "fm-agent".into(), claude_session_id: String::new(), cwd: f.worktree.join("src"), activity: supraman_ui::marks::Activity::Working, attach: None }]);
     let (view, cx) = test_support::open(&f.dir, Opts::default().live(live).size(1400., 900.), cx);
     press(&view, "refpanel-name-local/side", MouseButton::Right, 1, cx);
     click(&view, "menu-worktree-remove", cx);

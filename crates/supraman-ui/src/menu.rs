@@ -1,8 +1,8 @@
 //! A right-click menu of items carrying the owner's action type. One menu at a time; a click outside it or
 //! choosing an item closes it.
 
-use gpui::{AnyElement, ClickEvent, Context, MouseDownEvent, Pixels, Point, SharedString, Window, anchored, deferred, div, prelude::*, px};
-use theme::ActiveTheme as _;
+use gpui::{AnyElement, ClickEvent, Context, Div, MouseDownEvent, Pixels, Point, SharedString, Window, anchored, deferred, div, prelude::*, px};
+use theme::{ActiveTheme as _, ThemeColors};
 
 use crate::hit::{HitTargets, hit_target};
 
@@ -82,72 +82,30 @@ impl<A: Clone + 'static> ContextMenu<A> {
             .occlude()
             .on_mouse_down_out(cx.listener(move |this, _: &MouseDownEvent, _, cx| on_dismiss(this, cx)))
             .child(hit_target(hits, "menu".into()))
-            .child(
-                div()
-                    .px_3()
-                    .pb_1()
-                    .text_size(px(10.))
-                    .text_color(colors.text_placeholder)
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .child(SharedString::from(self.title.clone())),
-            );
+            .child(caption(&self.title, &colors));
         for entry in &self.items {
             let key = format!("menu-{}", entry.key);
-            let action = entry.action.clone();
-            let on_pick = on_pick.clone();
-            if let Some(caption) = &entry.section {
-                list = list.child(div().my_1().h(px(1.)).bg(colors.border_variant)).when(!caption.is_empty(), |list| list.child(
-                    div()
-                        .px_3()
-                        .pb_1()
-                        .text_size(px(10.))
-                        .text_color(colors.text_placeholder)
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .child(SharedString::from(caption.clone())),
-                ));
+            if let Some(section) = &entry.section {
+                list = list.child(div().my_1().h(px(1.)).bg(colors.border_variant)).when(!section.is_empty(), |list| list.child(caption(section, &colors)));
             }
             let tick = entry.ticked.map(|on| crate::button::tick(on, colors.text_accent, cx));
-            if let Some(why) = &entry.dimmed {
-                list = list.child(
-                    div()
-                        .id(SharedString::from(key.clone()))
-                        .relative()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .px_3()
-                        .py(px(3.))
-                        .text_color(colors.text_disabled)
-                        .children(tick)
-                        .child(SharedString::from(entry.label.clone()))
-                        .child(hit_target(hits, key))
-                        .tooltip(crate::tooltip::Tooltip::text(why.clone()))
-                        .on_click(|_, _, cx| cx.stop_propagation()),
-                );
-                continue;
-            }
-            list = list.child(
-                div()
-                    .id(SharedString::from(key.clone()))
-                    .relative()
-                    .px_3()
-                    .py(px(3.))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(colors.element_hover))
-                    .children(tick)
-                    .child(SharedString::from(entry.label.clone()))
-                    .child(hit_target(hits, key))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            let row = div().id(SharedString::from(key.clone())).relative().flex().items_center().gap_2().px_3().py(px(3.)).children(tick);
+            let row = row.child(SharedString::from(entry.label.clone())).child(hit_target(hits, key));
+            list = list.child(match &entry.dimmed {
+                Some(why) => row.text_color(colors.text_disabled).tooltip(crate::tooltip::Tooltip::text(why.clone())).on_click(|_, _, cx| cx.stop_propagation()),
+                None => {
+                    let (action, on_pick) = (entry.action.clone(), on_pick.clone());
+                    row.cursor_pointer().hover(|s| s.bg(colors.element_hover)).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         cx.stop_propagation();
                         on_pick(this, action.clone(), window, cx);
-                    })),
-            );
+                    }))
+                }
+            });
         }
         deferred(anchored().position(self.position).snap_to_window_with_margin(px(8.)).child(list)).with_priority(PRIORITY).into_any_element()
     }
+}
+
+fn caption(text: &str, colors: &ThemeColors) -> Div {
+    div().px_3().pb_1().text_size(px(10.)).text_color(colors.text_placeholder).overflow_hidden().whitespace_nowrap().child(SharedString::from(text.to_string()))
 }
