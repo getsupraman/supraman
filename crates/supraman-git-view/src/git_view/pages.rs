@@ -9,7 +9,6 @@ use supraman_gitman::{History, Layout};
 use super::cap::Marks;
 use super::load::{GraphRow, Page};
 
-/// What the next page is read from.
 pub(crate) struct Next {
     pub(crate) tips: Arc<[String]>,
     pub(crate) skip: usize,

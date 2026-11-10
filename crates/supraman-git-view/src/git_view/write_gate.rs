@@ -75,12 +75,10 @@ impl WriteGate {
         opening
     }
 
-    /// The tab's writer, once open.
     pub(crate) fn writer(&self) -> Option<&Writer> {
         self.writer.as_ref()
     }
 
-    /// The tab's checkout folder, once the writer is open.
     pub(crate) fn top(&self) -> Option<PathBuf> {
         self.writer.as_ref().map(|w| w.dirs().top.clone())
     }
