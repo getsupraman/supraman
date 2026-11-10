@@ -439,21 +439,29 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             }
         }
         self.record_stops(stops, now);
+        self.settle_minted(observed, now);
+        self.track_activity(observed, now);
+        self.inbox(observed, &reminting, budget.free, now)
+    }
+
+    fn settle_minted(&mut self, observed: &[Session], now: Millis) {
         self.mint_unminted(observed, now);
         self.settle_forks(observed);
         self.bind_claude_sessions(observed, now);
         self.revoke_deleted(observed);
         self.end_unwanted_unbound(observed);
-        self.track_activity(observed, now);
-        let mut needs: Vec<NeedsYou> = reconcile(&self.desired, observed, &self.memory, &self.policy, budget.free, now)
+    }
+
+    fn inbox(&mut self, observed: &[Session], reminting: &[String], free: usize, now: Millis) -> Vec<NeedsYou> {
+        let mut needs: Vec<NeedsYou> = reconcile(&self.desired, observed, &self.memory, &self.policy, free, now)
             .into_iter()
             .filter_map(|a| match a {
                 Action::NeedsYou(n) => Some(n),
                 _ => None,
             })
             .collect();
-        needs.extend(self.expired_tokens(observed, &reminting, now));
-        needs.extend(self.other_server_tokens(observed, &reminting, now));
+        needs.extend(self.expired_tokens(observed, reminting, now));
+        needs.extend(self.other_server_tokens(observed, reminting, now));
         needs.extend(self.failed_stops());
         if let Some(need) = self.held_need(observed, now) {
             needs.retain(|n| !matches!(n.kind, NeedsKind::LaunchFailed | NeedsKind::GaveUp));
