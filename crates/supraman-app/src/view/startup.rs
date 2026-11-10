@@ -1,18 +1,77 @@
-//! What the window starts with: `settings.toml` read off the UI thread and applied after, and the poll's loop.
+//! What the window starts with: `settings.toml`, the stars and the dismissals read off the UI thread and applied after, and the poll's loop.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use gpui::{AsyncApp, Context, SharedString, WeakEntity, px};
 use supraman_claude::check_supported;
 use supraman_core::Settings;
+use supraman_core::store::Save;
 use supraman_ui::nudge::Nudged;
 use supraman_ui::timeline;
 
 use super::{Cli, FleetView, Poller, REFRESH_EVERY, Refresh, any_exit};
+use crate::dismissed_messages::DismissedMessages;
+use crate::stars::Stars;
 use crate::supervise::Report;
 
+const RUNS_DISMISSED: &str = "schedules/dismissed.json";
+const WAITING_DISMISSED: &str = "schedules/waiting-dismissed.json";
+
+struct Stores {
+    stars: (Stars, Option<String>),
+    messages: (DismissedMessages, Option<String>),
+    runs: (DismissedMessages, Option<String>),
+    waiting: (DismissedMessages, Option<String>),
+}
+
+impl Stores {
+    fn load(home: &Path) -> Self {
+        Self {
+            stars: Stars::load(Some(home)),
+            messages: DismissedMessages::load(Some(home)),
+            runs: DismissedMessages::load_at(Some(home.join(RUNS_DISMISSED)), "every failed scheduled run shows"),
+            waiting: DismissedMessages::load_at(Some(home.join(WAITING_DISMISSED)), "every schedule that waits for approval shows"),
+        }
+    }
+}
+
+fn absorbed(mine: &mut DismissedMessages, loaded: DismissedMessages) -> Option<Save> {
+    let early = std::mem::replace(mine, loaded);
+    mine.absorb(&early)
+}
+
 impl FleetView {
+    // until they land nothing is starred or dismissed; a star or dismissal made meanwhile joins them
+    pub(super) fn load_stores(home: Option<PathBuf>, cx: &mut Context<Self>) {
+        let Some(home) = home else { return };
+        cx.spawn(async move |this, cx| {
+            let loaded = cx.background_executor().spawn(async move { Stores::load(&home) }).await;
+            this.update(cx, |this, cx| this.stores_loaded(loaded, cx)).ok();
+        })
+        .detach();
+    }
+
+    fn stores_loaded(&mut self, loaded: Stores, cx: &mut Context<Self>) {
+        let Stores { stars, messages, runs, waiting } = loaded;
+        let early = std::mem::replace(&mut self.stars, stars.0);
+        let absorbed_stars = self.stars.absorb(&early);
+        let save = self.stars.follow(&self.transcripts.continued).or(absorbed_stars);
+        self.save_off_thread(save, "Cannot save the starred sessions", cx);
+        let save = absorbed(&mut self.dismissed_messages, messages.0);
+        self.save_off_thread(save, "Cannot save the dismissed messages", cx);
+        let save = absorbed(&mut self.runs_dismissed, runs.0);
+        self.save_off_thread(save, "Cannot save the dismissed runs", cx);
+        let save = absorbed(&mut self.waiting_dismissed, waiting.0);
+        self.save_off_thread(save, "Cannot save the dismissed approvals", cx);
+        self.action_error = stars.1.or(messages.1).or(runs.1).or(waiting.1).or(self.action_error.take());
+        if !self.stars.ids().is_empty() {
+            self.transcripts_nudge.wake();
+        }
+        self.invalidate_tree();
+        cx.notify();
+    }
+
     // until it lands the window shows what an unreadable settings.toml gives: the defaults
     pub(super) fn load_settings(home: Option<PathBuf>, cx: &mut Context<Self>) {
         let Some(home) = home else { return };

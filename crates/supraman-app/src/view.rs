@@ -382,8 +382,6 @@ pub struct FleetView {
     pub(crate) tab_keys: Entity<tab_keys::TabKeyState>,
 }
 
-const RUNS_DISMISSED: &str = "schedules/dismissed.json";
-const WAITING_DISMISSED: &str = "schedules/waiting-dismissed.json";
 
 const QUIT_RELEASE_WITHIN: Duration = Duration::from_secs(5);
 
@@ -576,6 +574,7 @@ impl FleetView {
         timeline("window", Duration::ZERO);
         Self::start_polling(poller, woken, cx);
         Self::load_settings(home.clone(), cx);
+        Self::load_stores(home.clone(), cx);
         let blink = term::CursorBlink::start(cx);
         let (workman_recheck, recheck) = nudge::nudge();
         Self::watch_workman(home.clone(), recheck, cx);
@@ -586,10 +585,6 @@ impl FleetView {
         })
         .detach();
         let hands = home.as_deref().map(|home| Self::open_hands(home, cx));
-        let (stars, stars_notice) = Stars::load(home.as_deref());
-        let (dismissed_messages, dismissed_notice) = DismissedMessages::load(home.as_deref());
-        let (runs_dismissed, runs_notice) = DismissedMessages::load_at(home.as_deref().map(|h| h.join(RUNS_DISMISSED)), "every failed scheduled run shows");
-        let (waiting_dismissed, waiting_notice) = DismissedMessages::load_at(home.as_deref().map(|h| h.join(WAITING_DISMISSED)), "every schedule that waits for approval shows");
         let schedule_store: Arc<dyn supraman_core::secret::SecretStore> = match home.as_deref() {
             Some(h) => supraman_core::secret::default_store(h),
             None => Arc::new(supraman_core::secret::MemoryStore::default()),
@@ -658,7 +653,7 @@ impl FleetView {
             relays: BTreeMap::new(),
             messages: BTreeMap::new(),
             expanded: HashSet::new(),
-            dismissed_messages,
+            dismissed_messages: DismissedMessages::default(),
             left_hold: None,
             left_hold_timer: None,
             left_holds: 0,
@@ -708,8 +703,8 @@ impl FleetView {
             transcripts: TranscriptsLoad::new(claude_dir.is_some()),
             transcripts_answered: 0,
             loaded: false,
-            action_error: stars_notice.or(dismissed_notice).or(runs_notice).or(waiting_notice),
-            stars,
+            action_error: None,
+            stars: Stars::default(),
             closed_expanded: HashSet::new(),
             claude_command: "claude".into(),
             search,
@@ -740,8 +735,8 @@ impl FleetView {
             other_scans: 0,
             schedule_store,
             schedule_edit: None,
-            runs_dismissed,
-            waiting_dismissed,
+            runs_dismissed: DismissedMessages::default(),
+            waiting_dismissed: DismissedMessages::default(),
             tab_keys: cx.new(|_| tab_keys::TabKeyState::new(defaults.window.tab_keys())),
         }
     }
