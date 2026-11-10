@@ -217,9 +217,12 @@ pub fn release_all_within(hands: Arc<Mutex<Hands>>, within: Duration) -> Option<
     rx.recv_timeout(within).ok()
 }
 
-/// [`Hands::launch_for`] with the lock held only to pick the name and to record the mint, never across a mint.
+/// A launch with the lock held only to pick the name and to record the mint, never across a mint; `claude_session` is its full uuid, anything else is not sent.
 pub fn launch_locked(hands: &Mutex<Hands>, cwd: &Path, own: Option<&str>, claude_session: Option<&str>) -> Launch {
-    let lock = || hands.lock().unwrap_or_else(|e| e.into_inner());
+    launch_with(|| hands.lock().unwrap_or_else(|e| e.into_inner()), cwd, own, claude_session)
+}
+
+fn launch_with<G: std::ops::DerefMut<Target = Hands>>(lock: impl Fn() -> G, cwd: &Path, own: Option<&str>, claude_session: Option<&str>) -> Launch {
     let mut pending = match lock().pick(cwd, own, claude_session) {
         Ok(p) => p,
         Err(launch) => return launch,
@@ -429,21 +432,6 @@ impl Hands {
         moved.then(|| self.save()).flatten()
     }
 
-    #[cfg(test)]
-    pub fn launch(&mut self, cwd: &Path, own: Option<&str>) -> Launch {
-        self.launch_for(cwd, own, None)
-    }
-
-    /// `claude_session` is its full uuid; anything else is not sent.
-    pub fn launch_for(&mut self, cwd: &Path, own: Option<&str>, claude_session: Option<&str>) -> Launch {
-        let mut pending = match self.pick(cwd, own, claude_session) {
-            Ok(p) => p,
-            Err(launch) => return launch,
-        };
-        let minted = pending.mint(|wanted, tried, held| self.next_fresh(cwd, wanted, tried, held));
-        self.finish(pending, minted)
-    }
-
     /// The name of a launch, held for it until [`Self::finish`], and the mint to make.
     fn pick(&mut self, cwd: &Path, own: Option<&str>, claude_session: Option<&str>) -> Result<Pending, Launch> {
         let dir = self.mcp_dir();
@@ -614,6 +602,17 @@ mod tests {
     use supraman_workman::fake::{Answer, FakeAuth, FakeSessions, FakeWorkman};
 
     use super::*;
+
+    impl Hands {
+        fn launch(&mut self, cwd: &Path, own: Option<&str>) -> Launch {
+            self.launch_for(cwd, own, None)
+        }
+
+        fn launch_for(&mut self, cwd: &Path, own: Option<&str>, claude_session: Option<&str>) -> Launch {
+            let hands = std::cell::RefCell::new(self);
+            launch_with(|| std::cell::RefMut::map(hands.borrow_mut(), |h| &mut **h), cwd, own, claude_session)
+        }
+    }
 
     const WAIT: std::time::Duration = std::time::Duration::from_secs(10);
     const MINTS: usize = 12;

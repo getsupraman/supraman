@@ -15,6 +15,7 @@ impl FleetView {
             .collect()
     }
 
+    #[cfg(feature = "selftest")]
     pub fn messages_count(&self) -> usize {
         self.listed_messages().len()
     }

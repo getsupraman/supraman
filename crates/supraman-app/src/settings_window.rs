@@ -200,10 +200,12 @@ impl SettingsView {
         .detach();
     }
 
+    #[cfg(feature = "selftest")]
     pub fn page(&self) -> &'static str {
         self.page
     }
 
+    #[cfg(feature = "selftest")]
     pub fn loaded(&self) -> bool {
         self.loaded
     }

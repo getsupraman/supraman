@@ -83,9 +83,12 @@ pub(crate) mod writes;
 #[cfg(test)]
 use {links::{link_target, missing}, supraman_term::MaybeNavigationTarget};
 
+#[cfg(feature = "selftest")]
 pub(crate) use left::grid;
 pub use manage::Removing;
-pub use menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuTarget};
+#[cfg(feature = "selftest")]
+pub use menu::MenuAction;
+pub use menu::{Confirm, Confirmed, ContextMenu, MenuTarget};
 
 gpui::actions!(supraman, [FocusSearch]);
 
@@ -101,6 +104,7 @@ const TRANSCRIPTS_CACHE: &str = "cache/transcripts.json";
 static CLAUDE_DIR_OVERRIDE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
 /// A selftest's fake claude dir, read and confined to by Delete in place of [`supraman_core::paths::claude_dir`].
+#[cfg(feature = "selftest")]
 pub fn use_claude_dir(dir: PathBuf) {
     CLAUDE_DIR_OVERRIDE.set(dir).ok();
 }
@@ -271,6 +275,7 @@ pub struct FleetView {
     pub polled_at: i64,
     pub ticks: u64,
     retries: Arc<Mutex<Vec<(String, String)>>>,
+    #[cfg(feature = "selftest")]
     pub injected: Arc<Mutex<Vec<Session>>>,
     /// Bumped by every registry write from this window; a poll that read the registry before one is not applied.
     registry_writes: Arc<AtomicU64>,
@@ -635,6 +640,7 @@ impl FleetView {
             polled_at: 0,
             ticks: 0,
             retries,
+            #[cfg(feature = "selftest")]
             injected,
             registry_writes,
             left_width: DEFAULT_LEFT_WIDTH,
@@ -1552,6 +1558,7 @@ impl FleetView {
         }
     }
 
+    #[cfg(feature = "selftest")]
     pub fn has_keys(&self, window: &Window) -> bool {
         self.focus.is_focused(window)
     }
@@ -2147,10 +2154,12 @@ pub mod tree_check {
     pub(super) static BUILDS: AtomicUsize = AtomicUsize::new(0);
     pub(super) static RENDERS: AtomicUsize = AtomicUsize::new(0);
 
+    #[cfg(feature = "selftest")]
     pub fn counts() -> (usize, usize) {
         (BUILDS.load(Ordering::Relaxed), RENDERS.load(Ordering::Relaxed))
     }
 
+    #[cfg(feature = "selftest")]
     pub fn set(on: bool) -> bool {
         ON.swap(on, Ordering::SeqCst)
     }
@@ -2172,6 +2181,7 @@ pub mod tree_check {
         }
     }
 
+    #[cfg(feature = "selftest")]
     pub fn take() -> (Vec<String>, usize) {
         (std::mem::take(&mut *MISMATCHES.lock().unwrap_or_else(|e| e.into_inner())), COMPARED.swap(0, Ordering::Relaxed))
     }

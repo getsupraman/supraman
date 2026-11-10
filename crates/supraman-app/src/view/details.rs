@@ -237,6 +237,7 @@ impl FleetView {
     }
 
     /// The text of the Details tab open on `target`; for tests.
+    #[cfg(feature = "selftest")]
     pub fn details_text(&self, target: &MenuTarget, cx: &gpui::App) -> Option<String> {
         let (_, page) = self.details_page(target)?;
         match &page.target {

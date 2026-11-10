@@ -257,6 +257,7 @@ impl FleetView {
         self.left_hold_timer = None;
     }
 
+    #[cfg(feature = "selftest")]
     pub fn left_held(&self) -> bool {
         self.left_hold.is_some()
     }
@@ -465,11 +466,13 @@ impl FleetView {
         self.reveal_pending = Some((pending, Instant::now()));
     }
 
+    #[cfg(feature = "selftest")]
     pub fn reveal_hit(&self, hit: &str) -> bool {
         self.left_list.reveal(hit)
     }
 
     /// A selftest's look at a sidebar key: painted, or false after the row that claims it was scrolled to.
+    #[cfg(feature = "selftest")]
     pub fn shown(&self, key: &str) -> bool {
         if self.hits.borrow().contains_key(key) {
             return true;
@@ -481,11 +484,13 @@ impl FleetView {
     }
 
     /// How many folder rows of `workspace` the sidebar holds, in view or not.
+    #[cfg(feature = "selftest")]
     pub fn folder_rows(&self, workspace: &str) -> usize {
         let (tree, rows) = &*self.left_rows;
         rows.iter().filter(|r| matches!(r, LeftRow::Folder(w, _) if tree.workspaces[*w].name == workspace)).count()
     }
 
+    #[cfg(feature = "selftest")]
     pub fn left_list(&self) -> &supraman_ui::keyed_list::KeyedList {
         &self.left_list
     }

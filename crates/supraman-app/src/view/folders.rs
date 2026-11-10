@@ -209,6 +209,7 @@ impl FleetView {
         self.request_edits(w, vec![edit], cx);
     }
 
+    #[cfg(feature = "selftest")]
     pub fn apply_edit(&mut self, w: &str, edit: Edit, cx: &mut Context<Self>) {
         self.apply_edits(w, vec![edit], cx);
     }

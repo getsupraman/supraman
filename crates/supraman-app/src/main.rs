@@ -1,6 +1,3 @@
-// The selftest-only items of the app's own code stay built without the feature.
-#![cfg_attr(not(feature = "selftest"), allow(dead_code, unused_imports, unused_variables))]
-
 mod brand;
 mod compose;
 mod dismissed_messages;
@@ -139,6 +136,7 @@ impl Mode {
     }
 }
 
+#[cfg(feature = "selftest")]
 const USAGE: &str =
     "usage: supraman [--selftest | --selftest-detach <n> | --selftest-detach-shutdown | --selftest-perf | --selftest-supervise [--release] | --selftest-shots] [--visible]";
 
@@ -406,6 +404,7 @@ fn run(mode: Mode, commands: UnboundedSender<Command>, mut received: UnboundedRe
     .detach();
 }
 
+#[cfg_attr(not(feature = "selftest"), expect(unused_variables))]
 fn open_main_window(mode: Mode, cx: &mut App) -> WindowHandle<FleetView> {
     let bounds = Bounds::centered(None, size(px(1400.), px(820.)), cx);
     cx.open_window(

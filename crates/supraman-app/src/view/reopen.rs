@@ -262,6 +262,7 @@ impl FleetView {
     }
 
     /// For the selftest: every tab closes as a quit closes them, without touching the saved file.
+    #[cfg(feature = "selftest")]
     pub fn close_tabs_unsaved(&mut self, cx: &mut Context<Self>) {
         self.tabs_frozen = true;
         let ids: Vec<u64> = self.tabs.iter().map(|t| t.id).collect();
@@ -269,11 +270,13 @@ impl FleetView {
     }
 
     /// For the selftest: a tab that runs nothing until resumed.
+    #[cfg(feature = "selftest")]
     pub fn open_placeholder(&mut self, saved: SavedTab, cx: &mut Context<Self>) -> u64 {
         self.open_reopened(Reopen::Placeholder(saved), cx)
     }
 
     /// For the selftest: the tabs as a start reopens them.
+    #[cfg(feature = "selftest")]
     pub fn restart_tabs(&mut self, cx: &mut Context<Self>) {
         self.tabs_frozen = false;
         self.tabs_restored = false;

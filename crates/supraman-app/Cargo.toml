@@ -11,8 +11,8 @@ path = "src/main.rs"
 
 [features]
 default = ["selftest"]
-# `selftest`: the --selftest* modes with their Win32 harness and GitMan's test repos (7g's `Fixture::new_in`).
-selftest = ["dep:windows", "supraman-gitman/test-support"]
+# `selftest`: the --selftest* modes with their Win32 harness, GitMan's test repos (7g's `Fixture::new_in`) and FakeWorkman.
+selftest = ["dep:windows", "supraman-gitman/test-support", "supraman-workman/fake"]
 
 [dependencies]
 anyhow = "1.0.86"
@@ -30,8 +30,7 @@ supraman-work-view = { path = "../supraman-work-view" }
 supraman-supervisor = { path = "../supraman-supervisor" }
 supraman-term = { path = "../supraman-term" }
 supraman-ui = { path = "../supraman-ui" }
-# `fake`: FakeWorkman serves the --selftest* modes, which ship in supraman.exe and run against the release build.
-supraman-workman = { path = "../supraman-workman", features = ["fake"] }
+supraman-workman = { path = "../supraman-workman" }
 futures = "0.3.34"
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "webp"] }
 log = "0.4"
@@ -55,6 +54,7 @@ embed-resource = "3.0"
 supraman-git-view = { path = "../supraman-git-view", features = ["test-support"] }
 gpui = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c", default-features = false, features = ["test-support"] }
 supraman-gitman = { path = "../supraman-gitman", features = ["test-support"] }
+supraman-workman = { path = "../supraman-workman", features = ["fake"] }
 sha2 = "0.10"
 tempfile = "3.27.0"
 toml = "0.9.8"
