@@ -132,6 +132,31 @@ pub fn closed_base() -> String {
     format!("http://127.0.0.1:{port}")
 }
 
+/// Every kind of row Workman's inbox serves.
+pub const INBOX_KINDS: [&str; 7] = ["question", "blocked", "blocker_finding", "done_unverified", "stale_in_progress", "expired_claim", "assumption_due"];
+
+/// One inbox row per [`INBOX_KINDS`] as Workman 3.0.3 serves it, in workspace `ws` and run `r1`: the task `<kind>`
+/// titled `Title of <kind>`, its resolving call as `what` and `call`, the blocker finding's target `r1/9`.
+pub fn inbox_rows(ws: &str) -> Vec<serde_json::Value> {
+    let call = |kind: &str| format!("work_status(ref:\"{ws}/r1/{kind}\", to:\"in_progress\")");
+    let task = |id: &str, ref_: &str, title: &str| serde_json::json!({ "id": id, "ref": ref_, "qualifiedRef": format!("r1/{ref_}"), "kind": "task", "title": title, "status": "open" });
+    INBOX_KINDS
+        .iter()
+        .map(|kind| {
+            serde_json::json!({
+                "key": format!("{kind}:id-{kind}"), "kind": kind,
+                "item": task(&format!("id-{kind}"), kind, &format!("Title of {kind}")),
+                "run": { "id": "run1", "ref": "r1", "qualifiedRef": "r1", "kind": "run", "title": "The run", "status": "in_progress" },
+                "what": call(kind), "since": "2026-11-06T11:00:00+00:00", "call": call(kind),
+                "audience": if matches!(*kind, "question" | "blocked") { "human" } else { "controller" },
+                "detail": null, "actor": "aw-1", "tree": null,
+                "target": if *kind == "blocker_finding" { task("t", "9", "T") } else { serde_json::Value::Null },
+                "count": 1, "url": format!("https://work.example/r/{ws}/r1/{kind}")
+            })
+        })
+        .collect()
+}
+
 pub struct FakeWorkman {
     base: String,
     seen: Log,

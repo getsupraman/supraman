@@ -3,36 +3,22 @@ use std::cell::RefCell;
 use gpui::{Bounds, Entity, Modifiers, Render, TestAppContext, VisualTestContext};
 use serde_json::json;
 use supraman_workman::Client;
-use supraman_workman::fake::{Answer, FakeWorkman};
+use supraman_workman::fake::{Answer, FakeWorkman, INBOX_KINDS, inbox_rows};
 
 use super::*;
 
-const KINDS: [&str; 7] = ["question", "blocked", "blocker_finding", "done_unverified", "stale_in_progress", "expired_claim", "assumption_due"];
 const LONG: &str = "A title long enough to need more than two lines in a narrow sidebar card, so the card cuts it with an ellipsis and keeps the whole of it for a tooltip";
-
-fn call(kind: &str) -> String {
-    format!("work_status(ref:\"ws/r1/{kind}\", to:\"in_progress\")")
-}
 
 /// One row per kind as Workman 3.0.3 serves it; the blocked row's title is long.
 fn served() -> Vec<InboxRow> {
-    let rows: Vec<_> = KINDS
-        .iter()
-        .map(|kind| {
-            let title = if *kind == "blocked" { LONG.to_string() } else { format!("Title of {kind}") };
-            json!({
-                "key": format!("{kind}:id-{kind}"), "kind": kind,
-                "item": { "id": format!("id-{kind}"), "ref": kind, "qualifiedRef": format!("r1/{kind}"), "kind": "task", "title": title, "status": "open" },
-                "run": { "id": "run1", "ref": "r1", "qualifiedRef": "r1", "kind": "run", "title": "The run", "status": "in_progress" },
-                "what": call(kind), "since": "2026-11-06T11:00:00+00:00", "call": call(kind),
-                "audience": if matches!(*kind, "question" | "blocked") { "human" } else { "controller" },
-                "detail": if *kind == "assumption_due" { json!("revisit: the board API ships") } else { json!(null) },
-                "actor": "aw-1", "tree": null,
-                "target": if *kind == "blocker_finding" { json!({ "id": "t", "ref": "9", "qualifiedRef": "r1/9", "kind": "task", "title": "T", "status": "open" }) } else { json!(null) },
-                "count": 1, "url": format!("https://work.example/r/ws/r1/{kind}")
-            })
-        })
-        .collect();
+    let mut rows = inbox_rows("ws");
+    for row in &mut rows {
+        match row["kind"].as_str() {
+            Some("blocked") => row["item"]["title"] = json!(LONG),
+            Some("assumption_due") => row["detail"] = json!("revisit: the board API ships"),
+            _ => {}
+        }
+    }
     let fake = FakeWorkman::start(vec![("/api/v1/inbox".into(), Answer::json(json!({ "asOf": "x", "seq": 1, "rows": rows }).to_string()))]);
     Client::new(fake.base(), "t").inbox(None).expect("the fake's inbox").rows
 }
@@ -58,7 +44,7 @@ fn open(cx: &mut TestAppContext) -> (Entity<Holder>, &mut VisualTestContext) {
     cx.update(|cx| supraman_ui::init_globals(cx, "test"));
     let now = supraman_core::time::rfc3339_ms("2026-11-06T12:00:00+00:00").unwrap();
     let cards: Vec<Card> = served().iter().filter_map(|row| cards::card("ws", row, false, now)).collect();
-    assert_eq!(cards.len(), KINDS.len());
+    assert_eq!(cards.len(), INBOX_KINDS.len());
     let (view, cx) = cx.add_window_view(|_, _| Holder { cards, hits: HitTargets::default(), done: Rc::default() });
     redraw(&view, cx);
     redraw(&view, cx);
@@ -111,7 +97,7 @@ fn copy_puts_the_call_on_the_clipboard_and_each_action_reaches_the_owner(cx: &mu
     let (view, cx) = open(cx);
     let card = view.read_with(cx, |h, _| h.cards.iter().find(|c| c.kind == "done_unverified").cloned().unwrap());
     click(&view, &part_key("copy", &card), cx);
-    assert_eq!(cx.read_from_clipboard().and_then(|c| c.text()), Some(call("done_unverified")));
+    assert_eq!(cx.read_from_clipboard().and_then(|c| c.text()), Some(r#"work_status(ref:"ws/r1/done_unverified", to:"in_progress")"#.to_string()));
     click(&view, &part_key("web", &card), cx);
     click(&view, &part_key("open", &card), cx);
     click(&view, &work_view::dismiss_key_of(&card.key), cx);

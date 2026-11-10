@@ -8,6 +8,7 @@ use sm::fire::{self, Host, Report, Request, RunCtx};
 use sm::run::{RunLog, SessionEnd};
 use supraman_core::schedule::{self, Action, ActionKind, Fired, Outcome, Overlap, Prompt, RunEvent, Schedule, Span, Stage, Status, Trigger};
 use supraman_core::secret::{MemoryStore, SecretStore};
+use supraman_core::testing::{eventually, polled};
 use supraman_core::{Folder, Registry, Workspace};
 
 mod common;
@@ -403,11 +404,7 @@ fn fire_overlap_queue_waits_for_the_lock_and_a_second_waiter_skips() {
     std::thread::scope(|scope| {
         let waiter = scope.spawn(|| run_now(&f, "gate", &mut TestHost::at(&f, 1_793_599_200_000)));
         let queued = f.live().join("gate.queued");
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while !(queued.exists() && supraman_core::fs::try_lock_file(&queued).unwrap().is_none()) {
-            assert!(Instant::now() < deadline, "the first waiter never queued");
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        eventually(Duration::from_secs(20), "the first waiter never queued", polled(Duration::from_millis(20)), || (queued.exists() && supraman_core::fs::try_lock_file(&queued).unwrap().is_none()).then_some(()));
         let second = run_now(&f, "gate", &mut TestHost::new(&f));
         assert_eq!(second.outcome, Some(Outcome::Skipped));
         assert!(second.why.ends_with("and another run waits for it"), "{second:?}");
@@ -426,11 +423,7 @@ fn fire_overlap_restart_asks_the_owner_and_runs_after_it() {
     std::thread::scope(|scope| {
         let restarter = scope.spawn(|| run_now(&f, "gate", &mut TestHost::new(&f)));
         let restart = f.live().join("gate.restart");
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while !restart.exists() {
-            assert!(Instant::now() < deadline, "no restart asked");
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        eventually(Duration::from_secs(20), "no restart asked", polled(Duration::from_millis(20)), || restart.exists().then_some(()));
         assert!(!restarter.is_finished());
         drop(held);
         assert_eq!(restarter.join().unwrap().outcome, Some(Outcome::NothingToDo));
@@ -446,11 +439,7 @@ fn fire_restart_interrupts_the_running_script() {
     std::thread::scope(|scope| {
         let owner = scope.spawn(|| run_now(&f, "long", &mut TestHost::at(&f, 1_793_599_200_000)));
         let live = f.live().join("long.json");
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while !live.exists() {
-            assert!(Instant::now() < deadline, "the owner never started");
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        eventually(Duration::from_secs(20), "the owner never started", polled(Duration::from_millis(20)), || live.exists().then_some(()));
         std::thread::sleep(Duration::from_millis(500));
         let restarter = run_now(&f, "long", &mut TestHost::new(&f));
         let owner = owner.join().unwrap();

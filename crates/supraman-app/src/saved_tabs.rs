@@ -239,6 +239,27 @@ mod tests {
     }
 
     #[test]
+    fn a_git_tab_comes_back_with_the_layout_files_sizes_and_one_saved_before_it_with_its_own() {
+        let folder = PathBuf::from("C:/demo/repo");
+        let saved = SavedTab::git("Git · repo".into(), folder.clone());
+        let home = tempfile::tempdir().unwrap();
+        save(home.path(), &SavedTabs { tabs: vec![saved.clone()], active: Some(0) }).unwrap();
+        let (back, notice) = load(home.path());
+        assert_eq!((back.tabs.as_slice(), notice), (std::slice::from_ref(&saved), None));
+        let has = |_: &str, _: &Path| false;
+        let world = world(&[], &[], false, &has);
+        let Ok(Reopen::Git { title, folder: reopened, sizes: back }) = plan(&back.tabs[0], &world) else { panic!("a Git tab reopens") };
+        assert_eq!((title.as_str(), reopened.as_path(), back), ("Git · repo", folder.as_path(), GitSizes::default()), "the sizes are the layout file's, not the tab's");
+        let gone = SavedTab::git("Git · x".into(), PathBuf::from("C:/demo/gone"));
+        assert!(plan(&gone, &world).unwrap_err().contains("is gone"));
+
+        let old = serde_json::json!({ "kind": "git", "title": "Git · repo", "folder": folder, "widths": [200, 90, 300, 130, 70], "panel": 360, "message": 150, "refs": 210, "refs_shut": true, "hidden": ["refs/heads/feature", "stash/0123"] });
+        let old: SavedTab = serde_json::from_value(old).unwrap();
+        let Ok(Reopen::Git { sizes: back, .. }) = plan(&old, &world) else { panic!("a Git tab reopens") };
+        assert_eq!(back, supraman_git_view::git_view::test_support::sizes(), "a tab saved before the layout file still hands over its sizes");
+    }
+
+    #[test]
     fn each_kind_comes_back_as_its_setting_and_its_session_say() {
         let has: &dyn Fn(&str, &Path) -> bool = &|sid, _| sid == SID;
         let none: &dyn Fn(&str, &Path) -> bool = &|_, _| false;

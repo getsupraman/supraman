@@ -4,9 +4,10 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use supraman_core::install::{self, Apply, FILES, Failed, LEFTOVERS};
+use supraman_core::testing::{polled, wait_until};
 
 const HOOK_EXE: &str = "plugins/supraman/bin/sm.exe";
 
@@ -103,10 +104,7 @@ fn hold(install: &Path) -> Holder {
     let mut cmd = supraman_core::process::command(&exe);
     cmd.args(["inbox", "--dir"]).arg(&inbox).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     let child = Holder(cmd.spawn().unwrap());
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !supraman_core::process::alive(child.id()) && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    wait_until(Duration::from_secs(10), polled(Duration::from_millis(20)), || supraman_core::process::alive(child.id()));
     assert!(fs::write(&exe, b"x").is_err(), "the running hooks copy cannot be overwritten");
     child
 }
@@ -166,11 +164,13 @@ fn a_running_hooks_copy_is_renamed_aside_and_the_next_start_removes_it() {
     assert_eq!(leftovers(&c.install), aside, "still locked: kept");
 
     drop(holder);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !leftovers(&c.install).is_empty() && Instant::now() < deadline {
+    wait_until(Duration::from_secs(10), polled(Duration::from_millis(50)), || {
+        if leftovers(&c.install).is_empty() {
+            return true;
+        }
         install::cleanup(&c.install);
-        std::thread::sleep(Duration::from_millis(50));
-    }
+        false
+    });
     assert_eq!(leftovers(&c.install), Vec::<String>::new());
     assert!(!c.install.join(LEFTOVERS).exists());
     assert_new(&c);
@@ -219,11 +219,13 @@ fn a_kill_between_the_rename_aside_and_the_move_in_is_put_back_at_the_next_start
     assert_eq!(out.result, Err(Failed::Stopped));
     assert!(!c.install.join(HOOK_EXE).exists(), "stopped with the hooks copy renamed aside and the new one not in");
     drop(holder);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !c.install.join(HOOK_EXE).exists() && Instant::now() < deadline {
+    wait_until(Duration::from_secs(10), polled(Duration::from_millis(50)), || {
+        if c.install.join(HOOK_EXE).exists() {
+            return true;
+        }
         install::cleanup(&c.install);
-        std::thread::sleep(Duration::from_millis(50));
-    }
+        false
+    });
     assert_eq!(fs::read(c.install.join(HOOK_EXE)).unwrap(), fs::read(env!("CARGO_BIN_EXE_sm")).unwrap(), "the old hooks copy is back");
 }
 
@@ -298,10 +300,7 @@ fn the_cli_waits_for_the_pid_applies_and_starts_the_restart_exe() {
     assert!(out.status.success(), "{out:?}");
     assert_new(&c);
     let started = marker.join("bin").join("sm.exe");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !started.exists() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    wait_until(Duration::from_secs(10), polled(Duration::from_millis(50)), || started.exists());
     assert!(started.exists(), "the restart exe ran: {}", fs::read_to_string(&c.log).unwrap_or_default());
 }
 
@@ -376,11 +375,13 @@ fn a_running_hooks_copy_is_replaced_in_one_rename_and_its_path_never_goes_missin
     assert_eq!(leftovers(&c.install), linked, "still running: kept");
 
     drop(holder);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !leftovers(&c.install).is_empty() && Instant::now() < deadline {
+    wait_until(Duration::from_secs(10), polled(Duration::from_millis(50)), || {
+        if leftovers(&c.install).is_empty() {
+            return true;
+        }
         install::cleanup(&c.install);
-        std::thread::sleep(Duration::from_millis(50));
-    }
+        false
+    });
     assert_eq!(leftovers(&c.install), Vec::<String>::new());
     assert!(!c.install.join(LEFTOVERS).exists());
     assert_new(&c);
@@ -406,11 +407,13 @@ fn a_kill_at_any_step_leaves_a_running_hooks_copy_in_place() {
         assert_eq!(install::apply(&job(&c)).result, Ok(()), "a second apply after {k} moves");
         assert_new(&c);
         drop(holder);
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !leftovers(&c.install).is_empty() && Instant::now() < deadline {
+        wait_until(Duration::from_secs(10), polled(Duration::from_millis(50)), || {
+            if leftovers(&c.install).is_empty() {
+                return true;
+            }
             install::cleanup(&c.install);
-            std::thread::sleep(Duration::from_millis(50));
-        }
+            false
+        });
         assert_eq!(leftovers(&c.install), Vec::<String>::new(), "after {k} moves");
         k += 1;
     }

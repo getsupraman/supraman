@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use supraman_core::secret::{MemoryStore, SecretStore};
+use supraman_core::testing::{eventually, polled};
 use supraman_core::workman_server::{self, ServerJson};
 use supraman_workman::auth::{http_browser, http_browser_with};
 use supraman_workman::fake::{Answer, FakeWorkman, closed_base, location_query};
@@ -418,11 +419,7 @@ fn status_answers_while_a_refresh_is_in_flight() {
     let refreshing = auth.clone();
     let origin = fake.base().to_string();
     let refresh = std::thread::spawn(move || refreshing.access_token(&origin));
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while oauth.stalled() == 0 {
-        assert!(std::time::Instant::now() < deadline, "the refresh never reached the token endpoint");
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    eventually(Duration::from_secs(5), "the refresh never reached the token endpoint", polled(Duration::from_millis(10)), || (oauth.stalled() != 0).then_some(()));
     let (tx, rx) = std::sync::mpsc::channel();
     let asking = auth.clone();
     let origin = fake.base().to_string();
@@ -446,11 +443,7 @@ fn concurrent_callers_share_one_refresh() {
             std::thread::spawn(move || auth.access_token(&origin))
         })
         .collect();
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while oauth.stalled() == 0 {
-        assert!(std::time::Instant::now() < deadline, "no refresh reached the token endpoint");
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    eventually(Duration::from_secs(5), "no refresh reached the token endpoint", polled(Duration::from_millis(10)), || (oauth.stalled() != 0).then_some(()));
     std::thread::sleep(Duration::from_millis(200));
     oauth.stall_tokens(false);
     let tokens: Vec<String> = callers.into_iter().map(|c| c.join().unwrap().unwrap()).collect();

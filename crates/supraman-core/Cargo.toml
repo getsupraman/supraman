@@ -5,6 +5,10 @@ edition = "2024"
 publish = false
 license.workspace = true
 
+[features]
+# `testing`: waits with a deadline, for other crates' tests.
+test-support = []
+
 [dependencies]
 base64 = "0.22.1"
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "now", "serde"] }

@@ -22,6 +22,8 @@ pub mod secret;
 pub mod shells;
 pub mod store;
 pub mod text;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 mod settings;
 mod slug;
 pub mod time;
