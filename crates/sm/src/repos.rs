@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use supraman_claude::{Session, list_sessions, now_ms};
-use supraman_core::{Folder, HOOK_EXE, Registry, Workspace, find_plugin_dir, owners};
+use supraman_core::{Folder, Registry, Workspace, find_plugin_dir, hook_exe, owners};
 use supraman_supervisor::{
     DesiredState, REPO_ROLE, Wanted, fill_paths, render_repo_role, repo_session, repo_session_name,
 };
@@ -92,7 +92,7 @@ fn repo_template(home: &Path) -> Result<String, Failure> {
         .map_err(|e| Failure::Usage(format!("no {}, and {e}: start Supraman once", home.join("roles").join(&file).display())))?;
     let template = std::fs::read_to_string(plugin.join("roles").join(&file))
         .map_err(|e| Failure::Usage(format!("{}: {e}", plugin.join("roles").join(&file).display())))?;
-    Ok(fill_paths(&template, &plugin.join("bin").join(HOOK_EXE), home))
+    Ok(fill_paths(&template, &plugin.join("bin").join(hook_exe()), home))
 }
 
 /// One session of the roster: a row of `claude agents`, a wanted session without one, or both.

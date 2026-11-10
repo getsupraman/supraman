@@ -295,7 +295,7 @@ impl Hands {
     pub fn open(home: &Path) -> (Self, Option<String>) {
         let (mut hands, notice) = Self::with(home, crate::signin::auth(home), HttpMinter::default(), git_repo);
         hands.claude_dir = supraman_core::paths::claude_dir();
-        hands.helper = Some((supraman_core::install::sm_exe().unwrap_or_else(|_| supraman_core::HOOK_EXE.into()), supraman_core::secret::default_store(home)));
+        hands.helper = Some((supraman_core::install::sm_exe().unwrap_or_else(|_| supraman_core::hook_exe().into()), supraman_core::secret::default_store(home)));
         (hands, notice)
     }
 
@@ -326,7 +326,7 @@ impl Hands {
             left: Vec::new(),
             claude_dir: None,
             carried: Default::default(),
-            helper: Some((supraman_core::HOOK_EXE.into(), Arc::new(supraman_core::secret::MemoryStore::default()))),
+            helper: Some((supraman_core::hook_exe().into(), Arc::new(supraman_core::secret::MemoryStore::default()))),
         };
         (hands, notice)
     }
@@ -396,7 +396,7 @@ impl Hands {
 
     /// Where a hand's token is kept, and its config written: [`Self::helper`].
     fn keeper(&self) -> Keeper {
-        let (sm, store) = self.helper.clone().unwrap_or_else(|| (supraman_core::HOOK_EXE.into(), Arc::new(supraman_core::secret::MemoryStore::default())));
+        let (sm, store) = self.helper.clone().unwrap_or_else(|| (supraman_core::hook_exe().into(), Arc::new(supraman_core::secret::MemoryStore::default())));
         Keeper::new(&self.home, &self.mcp_dir(), store).with_sm(sm)
     }
 

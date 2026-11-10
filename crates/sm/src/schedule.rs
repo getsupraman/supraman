@@ -648,7 +648,7 @@ pub(crate) fn run_spec(home: &Path, w: &Workspace, s: &Schedule, stamp: &str, pl
 /// The plugin's `sm.exe` by the path its `--allowedTools` rule names, else `sm` on the session's PATH.
 fn sm_command(plugin_dir: Option<&Path>) -> String {
     plugin_dir
-        .map(|d| d.join("bin").join(supraman_core::HOOK_EXE))
+        .map(|d| d.join("bin").join(supraman_core::hook_exe()))
         .filter(|exe| exe.is_file())
         .map(|exe| paths::normalize(&exe))
         .unwrap_or_else(|| "sm".into())

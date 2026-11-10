@@ -5,12 +5,13 @@
 use std::collections::{HashSet, VecDeque};
 use std::path::Path;
 
+use supraman_core::platform::fs::exe_name;
 use supraman_core::platform::process::Proc;
 
 use crate::peer::{Liveness, RegistryEntry, entry_of};
 
 fn is_claude(exe: &str) -> bool {
-    exe.eq_ignore_ascii_case("claude.exe") || exe.eq_ignore_ascii_case("claude")
+    exe.eq_ignore_ascii_case(&exe_name("claude")) || exe.eq_ignore_ascii_case("claude")
 }
 
 /// The claude processes below `root`, nearest first.

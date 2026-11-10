@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::{Context as _, anyhow};
 use supraman_claude::{Claude, Session};
 use supraman_core::{
-    HOOK_EXE, OutboxMessage, Registry, Settings, Workspace, clear_ready, ensure_relay_dirs, find_plugin_dir, install_hook_exe,
+    OutboxMessage, Registry, Settings, Workspace, clear_ready, ensure_relay_dirs, find_plugin_dir, install_hook_exe, hook_exe,
     read_answered, read_outbox, relay_demand, relay_ready,
 };
 use supraman_supervisor::{
@@ -96,7 +96,7 @@ pub fn write_role_template(home: &Path, plugin_dir: &Path, role: &str) -> anyhow
     let file = format!("{role}.md");
     let template = fill_paths(
         &std::fs::read_to_string(plugin_dir.join("roles").join(&file))?,
-        &plugin_dir.join("bin").join(HOOK_EXE),
+        &plugin_dir.join("bin").join(hook_exe()),
         home,
     );
     let dir = home.join("roles");

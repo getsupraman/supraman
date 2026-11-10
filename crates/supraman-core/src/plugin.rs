@@ -5,7 +5,10 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-pub const HOOK_EXE: &str = "sm.exe";
+/// `sm.exe`, the hooks' copy's file name.
+pub fn hook_exe() -> String {
+    crate::platform::fs::exe_name("sm")
+}
 
 /// The key of the workman plugin's MCP server in a supervised or scheduled session's own config.
 pub const AGENTS_SERVER: &str = "agents";
@@ -15,7 +18,7 @@ pub const AGENT_TOOLS: [&str; 3] = ["agent_launch", "agent_list", "agent_stop"];
 
 /// So `sm` never parks (by name on the session's PATH, or by its absolute path), nor a nested agent's launch.
 pub fn sm_allowed_tools(plugin_dir: &Path) -> Vec<String> {
-    let sm = ["Bash(sm:*)".to_string(), format!("Bash({}:*)", crate::paths::normalize(&plugin_dir.join("bin").join(HOOK_EXE)))];
+    let sm = ["Bash(sm:*)".to_string(), format!("Bash({}:*)", crate::paths::normalize(&plugin_dir.join("bin").join(hook_exe())))];
     sm.into_iter().chain(AGENT_TOOLS.map(|tool| format!("mcp__{AGENTS_SERVER}__{tool}"))).collect()
 }
 
@@ -70,8 +73,8 @@ pub fn install_hook_exe(plugin_dir: &Path, exe: &Path) -> io::Result<(PathBuf, b
     let bin = plugin_dir.join("bin");
     fs::create_dir_all(&bin)?;
     let bytes = fs::read(exe)?;
-    let copied = place(&bin, HOOK_EXE, &bytes)?;
-    Ok((bin.join(HOOK_EXE), copied))
+    let copied = place(&bin, &hook_exe(), &bytes)?;
+    Ok((bin.join(hook_exe()), copied))
 }
 
 fn place(bin: &Path, name: &str, bytes: &[u8]) -> io::Result<bool> {
@@ -112,7 +115,7 @@ mod tests {
         let beside = release.join("plugins").join("supraman");
         plugin_at(&beside);
         assert_eq!(find_plugin_dir(&exe).unwrap(), beside, "beside the exe wins over the walk");
-        assert_eq!(find_plugin_dir(&beside.join("bin").join(HOOK_EXE)).unwrap(), beside, "the hooks' copy");
+        assert_eq!(find_plugin_dir(&beside.join("bin").join(hook_exe())).unwrap(), beside, "the hooks' copy");
     }
 
     #[test]

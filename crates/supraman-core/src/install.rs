@@ -67,12 +67,12 @@ pub fn exe_dir() -> io::Result<PathBuf> {
 
 /// `sm.exe` beside the running exe.
 pub fn sm_exe() -> io::Result<PathBuf> {
-    Ok(exe_dir()?.join(crate::HOOK_EXE))
+    Ok(exe_dir()?.join(crate::hook_exe()))
 }
 
 /// [`exe_dir`] when `sm.exe` is in it: the folder a [+] tab puts first on its `PATH`.
 pub fn sm_dir() -> Option<PathBuf> {
-    exe_dir().ok().filter(|d| d.join(crate::HOOK_EXE).is_file())
+    exe_dir().ok().filter(|d| d.join(crate::hook_exe()).is_file())
 }
 
 /// A child's `PATH`: [`exe_dir`] first, then this process's, so the `sm` it runs is this build's.
