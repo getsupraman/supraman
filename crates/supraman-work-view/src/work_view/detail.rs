@@ -1,5 +1,4 @@
-//! The right column: the selected item, else the run. Its ref with Copy and Open in web, title, state pill and
-//! fact chips, then Overview | Evidence | Notes | Activity | Brief.
+//! The right column: the selected item, else the run, over Overview | Evidence | Notes | Activity | Brief.
 
 use std::rc::Rc;
 
