@@ -247,6 +247,8 @@ fn a_solo_walks_only_its_branch_and_head_and_persists_with_the_layout(cx: &mut T
     assert!(has(&view, &only, cx) && has(&view, &other, cx) && has(&view, f.sha("stash_feature_index"), cx));
     right_click(&view, "refpanel-name-local/topic/solo", cx);
     click(&view, "menu-ref-solo", cx);
+    assert_eq!(panel.read_with(cx, |p, _| p.walk().solo.clone()), keys(&["refs/heads/topic/solo"]), "the menu's Solo solos the ref");
+    assert!(!view.read_with(cx, |v, _| v.hits.borrow().contains_key("menu-ref-solo")), "a pick closes the menu");
     assert!(has(&view, &only, cx) && has(&view, f.sha("ahead"), cx), "the soloed branch and HEAD walk");
     assert!(!has(&view, &other, cx), "another branch's own commit leaves the graph");
     assert!(view.read_with(cx, |v, _| v.rows.iter().all(|r| r.stash().is_none())), "and every stash");
@@ -456,18 +458,6 @@ fn a_refs_menu_solos_and_hides_and_has_no_hide_for_the_current_branch(cx: &mut T
     assert!(words("tags/v1", cx).is_empty(), "a tag neither hides nor solos: no menu");
     panel.update(cx, |p, cx| p.toggle_solo(&["refs/heads/Alpha".into()], cx));
     assert_eq!(words("local/Alpha", cx), ["Stop soloing", "Hide"]);
-}
-
-#[gpui::test]
-fn a_right_click_opens_the_refs_menu_and_its_solo_solos_it(cx: &mut TestAppContext) {
-    let f = Fixture::shared();
-    let (view, cx) = open(&f.dir, Opts::default(), cx);
-    let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
-    right_click(&view, "refpanel-name-local/feature", cx);
-    click(&view, "menu-ref-solo", cx);
-    assert_eq!(panel.read_with(cx, |p, _| p.walk().solo.clone()), keys(&["refs/heads/feature"]));
-    let hits = view.read_with(cx, |v, _| v.hits.clone());
-    assert!(!hits.borrow().contains_key("menu-ref-solo"), "a pick closes the menu");
 }
 
 #[gpui::test]

@@ -4,12 +4,12 @@ use std::time::{Duration, Instant};
 use gpui::{TestAppContext, VisualTestContext};
 use supraman_core::watch::Batch;
 use supraman_gitman::Dirs;
-use supraman_gitman::fixture::{Fixture, Generated, git_in};
+use supraman_gitman::fixture::Fixture;
 
 use crate::git_view::cells::ref_cell;
 use crate::git_view::diff::Content;
-use crate::git_view::live::{Debounces, FOCUS_DELAY, Refresh, git_class, git_refresh, sent, work_files};
-use crate::git_view::test_support::{Opts, open, redraw};
+use crate::git_view::live::{Debounces, Refresh, git_class, git_refresh, sent, work_files};
+use crate::git_view::test_support::{Opts, open};
 use crate::git_view::wip::Section;
 use crate::git_view::test_support::select_wip;
 use crate::git_view::wip::tests::open_file;
@@ -57,6 +57,9 @@ fn live_refresh_shows_a_new_commit_and_its_refs_within_a_second_and_an_edit_with
     follow(cx);
     let (view, cx) = open(&f.dir, Opts::default(), cx);
     following(&view, cx);
+    let live = view.read_with(cx, |v, _| v.follow.live().unwrap().stopped());
+    assert_eq!(live.len(), 2, "the git dir's watcher and the work dir's");
+    assert!(live.iter().all(|s| !s.stopped()), "watching while the tab is open");
     f.git(&["commit", "-q", "--no-verify", "-m", "Made while watched"]);
     let head = f.git(&["rev-parse", "HEAD"]);
     let took = until("the new commit", DEADLINE, cx, |cx| {
@@ -77,37 +80,6 @@ fn live_refresh_shows_a_new_commit_and_its_refs_within_a_second_and_an_edit_with
 }
 
 #[gpui::test]
-fn live_refresh_keeps_the_selection_and_the_scroll_on_the_same_commit(cx: &mut TestAppContext) {
-    let g = Generated::copy(400);
-    let (view, cx) = open(&g.dir, Opts::default(), cx);
-    let row = px(graph::ROW);
-    let (sha, ix, top) = view.update(cx, |v, cx| {
-        let sha = v.rows[100].sha.clone();
-        v.select_sha(&sha, cx);
-        v.table.set_scroll_top(row * 90. + px(5.));
-        (sha, v.table.selected().unwrap(), v.table.scroll_top())
-    });
-    redraw(&view, cx);
-    assert_eq!(view.read_with(cx, |v, _| v.table.scroll_top()), top, "the scroll as set");
-    let top_sha = view.read_with(cx, |v, _| v.rows[90].sha.clone());
-    let env = [("GIT_AUTHOR_NAME", "Live".to_string()), ("GIT_AUTHOR_EMAIL", "live@example.test".to_string()), ("GIT_COMMITTER_NAME", "Live".to_string()), ("GIT_COMMITTER_EMAIL", "live@example.test".to_string())];
-    for n in 0..3 {
-        let sha = git_in(&g.git, &g.dir, &["commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", &format!("On top {n}")], &env, None);
-        git_in(&g.git, &g.dir, &["update-ref", "refs/heads/main", sha.trim()], &[], None);
-    }
-    view.update(cx, |v, cx| v.refresh_graph(None, cx));
-    cx.run_until_parked();
-    redraw(&view, cx);
-    view.read_with(cx, |v, _| {
-        assert_eq!(v.selected(), Some(Selected::Commit(sha.clone())), "the same commit selected");
-        assert_eq!(v.table.selected(), Some(ix + 3), "at its new row, three down");
-        assert_eq!(v.table.scroll_top(), top + row * 3., "the scroll followed it");
-        assert_eq!(v.rows[ix + 3 - 10].sha, top_sha, "the same commit on top of the view");
-        assert_eq!(v.rows.iter().filter(|r| r.summary.starts_with("On top")).count(), 3);
-    });
-}
-
-#[gpui::test]
 fn live_refresh_keeps_the_open_diff_and_reloads_it_when_its_file_changes(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     follow(cx);
@@ -125,33 +97,6 @@ fn live_refresh_keeps_the_open_diff_and_reloads_it_when_its_file_changes(cx: &mu
         assert_eq!(v.selected(), Some(Selected::Wip));
     });
     drop(diff);
-    close(view, cx);
-}
-
-#[gpui::test]
-fn live_refresh_runs_once_after_the_window_comes_back(cx: &mut TestAppContext) {
-    let f = Fixture::copy();
-    let (view, cx) = open(&f.dir, Opts::default(), cx);
-    let before = view.read_with(cx, |v, _| v.follow.refreshes);
-    view.update(cx, |v, cx| v.focus_regained(cx));
-    view.update(cx, |v, cx| v.focus_regained(cx));
-    cx.executor().advance_clock(FOCUS_DELAY / 2);
-    cx.run_until_parked();
-    assert_eq!(view.read_with(cx, |v, _| v.follow.refreshes), before, "not before the delay");
-    cx.executor().advance_clock(FOCUS_DELAY);
-    cx.run_until_parked();
-    assert_eq!(view.read_with(cx, |v, _| v.follow.refreshes), before + 1, "one refresh for two activations");
-}
-
-#[gpui::test]
-fn live_refresh_stops_the_watchers_when_the_tab_closes(cx: &mut TestAppContext) {
-    let f = Fixture::copy();
-    follow(cx);
-    let (view, cx) = open(&f.dir, Opts::default(), cx);
-    following(&view, cx);
-    let live = view.read_with(cx, |v, _| v.follow.live().unwrap().stopped());
-    assert_eq!(live.len(), 2, "the git dir's watcher and the work dir's");
-    assert!(live.iter().all(|s| !s.stopped()), "watching while the tab is open");
     close(view, cx);
 }
 

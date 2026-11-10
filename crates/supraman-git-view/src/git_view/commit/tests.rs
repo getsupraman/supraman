@@ -94,7 +94,7 @@ fn the_commit_items_cherry_pick_revert_reset_and_edit_the_message(cx: &mut gpui:
 }
 
 #[gpui::test]
-fn the_wip_rows_menu_stages_stashes_and_discards_everything(cx: &mut gpui::TestAppContext) {
+fn the_wip_rows_menu_lists_stage_stash_and_discard_all_and_stage_all_stages_everything(cx: &mut gpui::TestAppContext) {
     let f = Fixture::copy();
     let (view, cx) = open(&f.dir, Opts::default(), cx);
     view.update(cx, |v, cx| v.row_menu(0, point(px(200.), px(200.)), cx));

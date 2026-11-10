@@ -1,5 +1,5 @@
 use gpui::{TestAppContext, VisualTestContext};
-use supraman_gitman::fixture::{Generated, git_in};
+use supraman_gitman::fixture::{Fixture, Generated, git_in};
 use supraman_gitman::{FIRST_PAGE, NEXT_PAGE, Row};
 
 use crate::git_view::live::{FOCUS_DELAY, Refresh};
@@ -213,4 +213,23 @@ fn refresh_with_new_commits_on_top_follows_them_while_the_selection_stays_in_vie
     refreshed(&view, cx);
     let (ix, top, now) = place(&view, &sha, cx);
     assert_eq!((ix, top, now), (first + 106, before + row, offset), "far down: the selected row keeps its place on screen");
+    view.read_with(cx, |v, _| {
+        assert_eq!(v.selected(), Some(Selected::Commit(sha.clone().into())), "the same commit selected");
+        assert_eq!(v.rows.iter().filter(|r| ["An agent's commit", "Another", "A third"].contains(&&*r.summary)).count(), 3, "each new commit has its row");
+    });
+}
+
+#[gpui::test]
+fn refresh_runs_once_after_the_window_comes_back(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
+    let before = view.read_with(cx, |v, _| v.follow.refreshes);
+    view.update(cx, |v, cx| v.focus_regained(cx));
+    view.update(cx, |v, cx| v.focus_regained(cx));
+    cx.executor().advance_clock(FOCUS_DELAY / 2);
+    cx.run_until_parked();
+    assert_eq!(view.read_with(cx, |v, _| v.follow.refreshes), before, "not before the delay");
+    cx.executor().advance_clock(FOCUS_DELAY);
+    cx.run_until_parked();
+    assert_eq!(view.read_with(cx, |v, _| v.follow.refreshes), before + 1, "one refresh for two activations");
 }
