@@ -1,10 +1,9 @@
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
-use supraman_core::{DEFAULT_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Settings, TabKeys};
-use supraman_core::shells::ShellSetting;
-use supraman_ui::settings_page::{SettingsPage, SettingsPages, row};
-use supraman_ui::{banner, button, term_element};
+use supraman_core::Settings;
+use supraman_ui::settings_page::{SettingsPage, SettingsPages};
+use supraman_ui::{banner, button};
 use supraman_workman::AuthStatus;
 use supraman_ui::themes::{self, Catalog, TerminalColors};
 use gpui::{
@@ -16,11 +15,16 @@ use theme::ActiveTheme as _;
 
 use supraman_ui::hit::HitTargets;
 use supraman_ui::text_input::{InputEvent, TextInput};
-use crate::view::{Cli, FleetView, REFRESH_EVERY};
+use crate::view::FleetView;
 use crate::workman_setup::ServerCheck;
-use supraman_workman::status::{RECHECK_EVERY, WorkmanStatus};
+use supraman_workman::status::WorkmanStatus;
 
+mod about;
+mod appearance;
 pub mod gitman;
+mod plugins;
+mod sessions;
+mod workman;
 
 pub mod page {
     pub const SESSIONS: &str = "sessions";
@@ -75,9 +79,9 @@ pub struct SettingsView {
     _url_events: Subscription,
     saves: crate::view::writes::Serial,
     gitman: Entity<gitman::GitmanPage>,
+    /// The extra plugin dirs without a `.claude-plugin/plugin.json`, found with the settings they came with.
+    missing_plugins: Vec<PathBuf>,
 }
-
-static MONO_FONTS: OnceLock<Arc<Vec<String>>> = OnceLock::new();
 
 pub fn apply_theme(home: Option<&Path>, cx: &mut App) -> Option<String> {
     let settings = home.and_then(|h| Settings::load(h).ok()).unwrap_or_default();
@@ -122,22 +126,7 @@ pub fn open(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Option<&s
 
 impl SettingsView {
     fn new(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Option<&str>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        if let Some(fleet) = fleet.upgrade() {
-            cx.observe(&fleet, |this, fleet, cx| {
-                let workman = fleet.read(cx).workman.clone();
-                if this.workman != workman {
-                    if let Some(url) = workman.checked_url().filter(|u| this.workman.checked_url() != Some(*u)) {
-                        this.url_input.update(cx, |input, cx| input.set_text(url, cx));
-                    }
-                    this.workman = workman;
-                    this.reload(cx);
-                    cx.notify();
-                } else if [page::ABOUT, page::APPEARANCE].contains(&this.page) {
-                    cx.notify();
-                }
-            })
-            .detach();
-        }
+        Self::observe_fleet(&fleet, cx);
         let workman = fleet.upgrade().map_or(WorkmanStatus::Checking, |f| f.read(cx).workman.clone());
         let url_input = cx.new(|cx| TextInput::new("https://work.example", None, window, cx));
         let url_events = cx.subscribe_in(&url_input, window, |this: &mut Self, _, event: &InputEvent, _, cx| match event {
@@ -168,7 +157,7 @@ impl SettingsView {
             theme_problem: None,
             theme_picks: 0,
             shown_font_size: Default::default(),
-            mono_fonts: MONO_FONTS.get().cloned(),
+            mono_fonts: appearance::MONO_FONTS.get().cloned(),
             font_error: None,
             url_input,
             url_error: None,
@@ -179,28 +168,36 @@ impl SettingsView {
             _url_events: url_events,
             saves: Default::default(),
             gitman,
+            missing_plugins: Vec::new(),
         };
         if this.mono_fonts.is_none() {
-            let text_system = cx.text_system().clone();
-            let installed = this.fleet.upgrade().map(|f| f.read(cx).installed_fonts.clone()).unwrap_or_default();
-            cx.spawn(async move |this, cx| {
-                let found = cx
-                    .background_spawn(async move { installed.iter().filter(|f| term_element::is_monospace(&text_system, f)).cloned().collect::<Vec<_>>() })
-                    .await;
-                let found = MONO_FONTS.get_or_init(|| Arc::new(found)).clone();
-                this.update(cx, |this, cx| {
-                    this.mono_fonts = Some(found);
-                    cx.notify();
-                })
-                .ok();
-            })
-            .detach();
+            this.find_mono_fonts(cx);
         }
         this.reload(cx);
         if let Some(url) = this.workman.checked_url().map(str::to_string) {
             this.url_input.update(cx, |input, cx| input.set_text(&url, cx));
         }
         this
+    }
+
+    fn observe_fleet(fleet: &WeakEntity<FleetView>, cx: &mut Context<Self>) {
+        let Some(fleet) = fleet.upgrade() else {
+            return;
+        };
+        cx.observe(&fleet, |this, fleet, cx| {
+            let workman = fleet.read(cx).workman.clone();
+            if this.workman != workman {
+                if let Some(url) = workman.checked_url().filter(|u| this.workman.checked_url() != Some(*u)) {
+                    this.url_input.update(cx, |input, cx| input.set_text(url, cx));
+                }
+                this.workman = workman;
+                this.reload(cx);
+                cx.notify();
+            } else if [page::ABOUT, page::APPEARANCE].contains(&this.page) {
+                cx.notify();
+            }
+        })
+        .detach();
     }
 
     pub fn page(&self) -> &'static str {
@@ -231,15 +228,23 @@ impl SettingsView {
         self.settings_reads += 1;
         let read = self.settings_reads;
         cx.spawn(async move |this, cx| {
-            let loaded = cx.background_spawn(async move { Settings::load_with_notices(&home) }).await;
+            let loaded = cx
+                .background_spawn(async move {
+                    Settings::load_with_notices(&home).map(|(settings, notices)| {
+                        let missing = plugins::missing(&settings);
+                        (settings, notices, missing)
+                    })
+                })
+                .await;
             this.update(cx, |this, cx| {
                 if this.settings_reads != read {
                     return;
                 }
                 this.loaded = true;
                 match loaded {
-                    Ok((settings, notices)) => {
+                    Ok((settings, notices, missing)) => {
                         this.settings = settings;
+                        this.missing_plugins = missing;
                         if !notices.is_empty() {
                             this.error = Some(notices.join("; "));
                         }
@@ -251,32 +256,6 @@ impl SettingsView {
             .ok();
         })
         .detach();
-    }
-
-    /// server.json and claude's own `workman` entry, read off the UI thread.
-    pub fn check_server(&mut self, cx: &mut Context<Self>) {
-        let Some(home) = self.home.clone() else {
-            return;
-        };
-        self.server_checks += 1;
-        let check = self.server_checks;
-        cx.spawn(async move |this, cx| {
-            let found = cx
-                .background_spawn(async move { crate::workman_setup::check_server(&crate::signin::auth(&home), supraman_core::paths::claude_json().as_deref()) })
-                .await;
-            this.update(cx, |this, cx| {
-                if this.server_checks == check {
-                    this.server_check = Some(found);
-                    cx.notify();
-                }
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    pub fn server_check(&self) -> Option<&ServerCheck> {
-        self.server_check.as_ref()
     }
 
     /// The themes folder is listed and its files parsed off the UI thread.
@@ -313,84 +292,6 @@ impl SettingsView {
         .detach();
     }
 
-    /// The selftest types into the URL field.
-    pub fn set_url_text(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.url_input.update(cx, |input, cx| input.set_text(text, cx));
-    }
-
-    pub fn apply_url(&mut self, cx: &mut Context<Self>) {
-        let text = self.url_input.read(cx).text().to_string();
-        let result = self.fleet.update(cx, |fleet, cx| fleet.set_workman_url(&text, cx)).unwrap_or(Err("the main window is closed".into()));
-        match result {
-            Ok(()) => {
-                self.url_error = None;
-                self.reload(cx);
-                if let Ok(origin) = supraman_core::validate_workman_url(&text) {
-                    self.url_input.update(cx, |input, cx| input.set_text(&origin, cx));
-                }
-            }
-            Err(e) => self.url_error = Some(e),
-        }
-        cx.notify();
-    }
-
-    fn set_theme(&mut self, name: String, terminal: TerminalColors, cx: &mut Context<Self>) {
-        let chosen = name.clone();
-        self.change(move |s| choose_theme(s, &chosen, terminal), cx);
-        self.theme_picks += 1;
-        let (pick, home) = (self.theme_picks, self.home.clone());
-        let resolving = cx.background_spawn(async move { themes::resolve(Some(&name), terminal, home.as_deref()) });
-        cx.spawn(async move |this, cx| {
-            let resolved = resolving.await;
-            this.update(cx, |this, cx| {
-                if this.theme_picks == pick {
-                    this.theme_problem = themes::apply_resolved(cx, resolved).problem;
-                    cx.notify();
-                }
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    /// The fleet window owns and saves the size: one path for Settings, the keys and the wheel.
-    pub fn set_term_font_size(&mut self, size: Pixels, cx: &mut Context<Self>) {
-        self.fleet.update(cx, |fleet, cx| fleet.set_term_font_size(size, cx)).ok();
-        cx.notify();
-    }
-
-    pub fn shown_font_size(&self) -> Option<Pixels> {
-        self.shown_font_size.get()
-    }
-
-    pub fn set_term_font(&mut self, family: Option<&str>, ligatures: bool, cx: &mut Context<Self>) {
-        let result = self.fleet.update(cx, |fleet, cx| fleet.set_term_font(family, ligatures, cx));
-        self.font_error = match result {
-            Ok(Ok(())) => None,
-            Ok(Err(e)) => Some(e),
-            Err(_) => Some("the main window is closed".into()),
-        };
-        self.reload(cx);
-        cx.notify();
-    }
-
-    pub fn mono_fonts(&self) -> Option<Arc<Vec<String>>> {
-        self.mono_fonts.clone()
-    }
-
-    fn open_themes_folder(&mut self, cx: &mut Context<Self>) {
-        let Some(home) = &self.home else {
-            return;
-        };
-        let dir = themes::themes_dir(home);
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            self.error = Some(format!("Cannot create {}: {e}", dir.display()));
-            cx.notify();
-            return;
-        }
-        supraman_ui::open::open_off_thread(dir, cx).detach();
-    }
-
     fn change(&mut self, edit: impl FnOnce(&mut Settings) + Send + 'static, cx: &mut Context<Self>) {
         self.change_then(edit, |_, _| {}, cx);
     }
@@ -410,11 +311,19 @@ impl SettingsView {
             if let Some(previous) = previous {
                 previous.await;
             }
-            let saved = cx.background_spawn(async move { Settings::update(&home, edit) }).await;
+            let saved = cx
+                .background_spawn(async move {
+                    Settings::update(&home, edit).map(|(settings, ())| {
+                        let missing = plugins::missing(&settings);
+                        (settings, missing)
+                    })
+                })
+                .await;
             this.update(cx, |this, cx| {
                 match saved {
-                    Ok((settings, ())) => {
+                    Ok((settings, missing)) => {
                         this.settings = settings;
+                        this.missing_plugins = missing;
                         this.settings_reads += 1;
                         this.error = None;
                     }
@@ -435,27 +344,23 @@ impl SettingsView {
         self.saves.push(task);
     }
 
-    fn set_max_working(&mut self, n: usize, cx: &mut Context<Self>) {
-        // The fleet window saves it (one path for the app and its selftest) and shows any error.
-        if let Ok(shown) = self.fleet.update(cx, |fleet, cx| {
-            fleet.set_max_working(n, cx);
-            fleet.max_working
-        }) {
-            self.settings.sessions.max_working = shown;
-        }
-        cx.notify();
-    }
-
     fn open_file(&mut self, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
             return;
         };
         let path = Settings::path(&home);
-        if path.exists() {
-            supraman_ui::open::open_off_thread(path, cx).detach();
-        } else {
-            self.change_then(|_| {}, move |_, cx| supraman_ui::open::open_off_thread(path, cx).detach(), cx);
-        }
+        cx.spawn(async move |this, cx| {
+            let exists = cx.background_spawn({
+                let path = path.clone();
+                async move { path.exists() }
+            });
+            if exists.await {
+                cx.update(|cx| supraman_ui::open::open_off_thread(path, cx).detach());
+            } else {
+                this.update(cx, |this, cx| this.change_then(|_| {}, move |_, cx| supraman_ui::open::open_off_thread(path, cx).detach(), cx)).ok();
+            }
+        })
+        .detach();
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -464,600 +369,10 @@ impl SettingsView {
         }
     }
 
-    fn render_sessions(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let n = self.settings.sessions.max_working;
-        let stepper = div()
-            .flex()
-            .items_center()
-            .gap_1()
-            .child(button::small("max-dec", "−", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.set_max_working(n.saturating_sub(1), cx);
-            })))
-            .child(
-                div()
-                    .w(px(28.))
-                    .flex()
-                    .justify_center()
-                    .font_weight(FontWeight::BOLD)
-                    .child(SharedString::from(n.to_string())),
-            )
-            .child(button::small("max-inc", "+", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.set_max_working(n + 1, cx);
-            })));
-        let admin = self.settings.sessions.run_as_admin;
-        let toggle = button::small("run-as-admin", if admin { "On" } else { "Off" }, cx)
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.change(move |s| s.sessions.run_as_admin = !admin, cx)));
-        let now: SharedString = if supraman_claude::is_elevated() {
-            "Supraman runs as administrator now.".into()
-        } else {
-            "Supraman runs unelevated now.".into()
-        };
-        let now = div().text_xs().text_color(cx.theme().colors().text_muted).child(now).into_any_element();
-        let reopen = self.settings.sessions.reopen_tabs;
-        let reopen_toggle = button::small("reopen-tabs", if reopen { "On" } else { "Off" }, cx)
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.change(move |s| s.sessions.reopen_tabs = !reopen, cx)));
-        let on_click = self.settings.sessions.resume_tabs_on_click;
-        let resume_toggle = button::small("resume-tabs-on-click", if on_click { "On a click" } else { "At once" }, cx)
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.change(move |s| s.sessions.resume_tabs_on_click = !on_click, cx)));
-        vec![
-            row(
-                "Busy sessions at most",
-                "How many sessions of this Supraman may be working (mid-turn) at the same time, counted across \
-                 its workspaces. Launches and resumes wait while the limit is reached. 0 pauses them all. \
-                 Your own sessions and another Supraman's are not counted.",
-                stepper.into_any_element(),
-                None,
-                cx,
-            ),
-            row(
-                "Run Supraman as administrator",
-                "Turn this on when your terminals run as administrator: the claude background service they \
-                 start then refuses an unelevated Supraman, and its sessions cannot launch or resume. Each \
-                 start asks Windows (UAC) once. Takes effect the next time Supraman starts.",
-                toggle.into_any_element(),
-                Some(now),
-                cx,
-            ),
-            row(
-                "Reopen last tabs on start",
-                "Supraman keeps the open tabs, in their order, and reopens them when it starts again: shells in                  their folder, attached background sessions attached again while they run (a stopped one waits for                  Resume; nothing is restarted unasked), Work tabs, and claude tabs resumed with a fresh Workman                  token. A tab whose folder or session is gone is left out with one notice.",
-                reopen_toggle.into_any_element(),
-                None,
-                cx,
-            ),
-            row(
-                "Resume reopened claude tabs",
-                "At once: each claude tab of the last run resumes its conversation when Supraman starts. On a click:                  it opens with a Resume button and nothing runs until you click it.",
-                resume_toggle.into_any_element(),
-                None,
-                cx,
-            ),
-        ]
-    }
-
-    fn render_workman(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let status = cx.theme().status().clone();
-        let colors = cx.theme().colors().clone();
-        let field = div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(div().id("ws-url").w(px(280.)).child(self.url_input.clone()))
-            .child(button::small("ws-url-apply", "Apply", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.apply_url(cx))));
-        let below = div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .pt_2()
-            .children(self.url_error.clone().map(|e| div().id("ws-url-error").text_xs().text_color(status.error).child(SharedString::from(e))))
-            .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(match (&self.workman, self.workman.checked_url()) {
-                (_, Some(url)) => format!("Now {url}."),
-                (WorkmanStatus::NotSetUp { .. }, None) => "None: run /workman:setup, or apply a URL here.".to_string(),
-                (_, None) => "Checking…".to_string(),
-            })));
-        let warnings = self.server_check.iter().flat_map(|c| c.warnings.iter()).enumerate().map(|(ix, w)| {
-            banner::tinted(status.warning).id(("ws-server-warning", ix)).mt_2().text_xs().child(SharedString::from(w.clone()))
-        });
-        let below = below.children(warnings);
-        let mcp_name = match &self.server_check {
-            None => "checking…".to_string(),
-            Some(ServerCheck { mcp_name: Some(name), .. }) => name.clone(),
-            Some(ServerCheck { mcp_name: None, .. }) => "none: no usable ~/.workman/server.json".to_string(),
-        };
-        vec![
-            self.render_workman_status(cx),
-            row(
-                "Server URL",
-                format!(
-                    "The Workman server Supraman signs in to, as ~/.workman/server.json names it (http only for this \
-                     machine). While signed in, a new server is used only once you have signed in there: Supraman then \
-                     restarts its sessions with tokens from it, asks you to restart open claude tabs, and signs out of \
-                     the old one."
-                ),
-                field.into_any_element(),
-                Some(below.into_any_element()),
-                cx,
-            ),
-            row(
-                "MCP server name",
-                "The name ~/.workman/server.json gives the Workman MCP server, which /workman:setup registers in                  claude's user config. Supraman's sessions are given it as workman; Apply writes workman.",
-                div().id("ws-mcp-name").text_sm().child(SharedString::from(mcp_name)).into_any_element(),
-                None,
-                cx,
-            ),
-        ]
-    }
-
-    fn render_workman_status(&self, cx: &mut Context<Self>) -> AnyElement {
-        let status = cx.theme().status().clone();
-        let colors = cx.theme().colors().clone();
-        let (signing_in, sign_in_error) = self
-            .fleet
-            .upgrade()
-            .map(|f| {
-                let f = f.read(cx);
-                (f.signing_in.clone(), f.sign_in_error.clone())
-            })
-            .unwrap_or_default();
-        let (text, color) = match (&self.workman, &self.auth) {
-            (WorkmanStatus::Checking, _) => ("checking…".to_string(), colors.text_muted),
-            (WorkmanStatus::Ready { url, .. }, Some(AuthStatus::SignedIn { unsaved: Some(why), .. })) => {
-                (format!("Signed in on {url}, but {why}."), status.warning)
-            }
-            (WorkmanStatus::Ready { url, who, .. }, _) => (
-                match who {
-                    Some(who) => format!("Signed in on {url} as {who}."),
-                    None => format!("Signed in on {url}."),
-                },
-                status.success,
-            ),
-            (WorkmanStatus::NotSignedIn { .. }, _) => ("Not signed in.".to_string(), status.warning),
-            (WorkmanStatus::SignInAgain { why, .. }, _) => (format!("Sign in again: {why}."), status.warning),
-            (WorkmanStatus::Unreachable { url, error }, Some(AuthStatus::SignedIn { .. })) => {
-                (format!("Signed in on {url}, but it is unreachable ({error})."), status.error)
-            }
-            (ws, _) => (ws.problem().unwrap_or_default(), status.error),
-        };
-        let held = self.auth.as_ref().is_some_and(|a| !matches!(a, AuthStatus::NotSignedIn));
-        let mut controls = div().flex().flex_col().items_end().gap_1();
-        controls = match &signing_in {
-            Some(_) => controls.child(button::small("ws-cancel", "Cancel sign-in", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.fleet.update(cx, |fleet, _| fleet.cancel_sign_in()).ok();
-            }))),
-            None if self.auth.is_some() && (!held || matches!(self.workman, WorkmanStatus::SignInAgain { .. })) => {
-                controls.child(button::small("ws-signin", "Sign in", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.fleet.update(cx, |fleet, cx| fleet.sign_in(cx)).ok();
-                    cx.notify();
-                })))
-            }
-            None => controls,
-        };
-        if held && signing_in.is_none() {
-            controls = controls.child(button::small("ws-signout", "Sign out", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.fleet.update(cx, |fleet, cx| fleet.sign_out(cx)).ok();
-                cx.notify();
-            })));
-        }
-        controls = controls.child(button::small("ws-check", "Check now", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-            this.fleet.update(cx, |fleet, _| fleet.recheck_workman()).ok();
-            this.check_server(cx);
-        })));
-        row(
-            "Status",
-            format!(
-                "Supraman signs in to Workman in your browser (OAuth). The grant is kept in the Supraman home, \
-                 encrypted for your Windows account; Supraman uses it to read Workman and to give each session it \
-                 starts a token of its own. Sign out revokes the grant, and with it every session token minted \
-                 under it. Checked every {} s and after every change here.",
-                RECHECK_EVERY.as_secs()
-            ),
-            controls.into_any_element(),
-            Some(
-                div()
-                    .id("ws-status")
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .pt_2()
-                    .child(div().text_sm().text_color(color).child(SharedString::from(text)))
-                    .children(signing_in.map(|to| {
-                        div().text_xs().child(SharedString::from(format!("Waiting for the sign-in to {to} in your browser…")))
-                    }))
-                    .children(sign_in_error.map(|e| div().text_xs().text_color(status.error).child(SharedString::from(e))))
-                    .children(
-                        matches!(self.workman, WorkmanStatus::Unreachable { .. })
-                            .then(|| self.workman.fix())
-                            .flatten()
-                            .map(|fix| div().text_xs().child(SharedString::from(fix))),
-                    )
-                    .into_any_element(),
-            ),
-            cx,
-        )
-    }
-
-    pub fn workman(&self) -> &WorkmanStatus {
-        &self.workman
-    }
-
-    fn render_about(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let status = cx.theme().status().clone();
-        let colors = cx.theme().colors().clone();
-        let (cli, warning, refresh) = match self.fleet.upgrade() {
-            Some(fleet) => {
-                let fleet = fleet.read(cx);
-                let (cli, warning) = match &fleet.cli {
-                    Cli::Checking => ("checking…".to_string(), None),
-                    Cli::Supported(v) => (v.raw.clone(), v.untested().map(|w| (w, status.warning))),
-                    Cli::Failed(e) => ("unavailable".to_string(), Some((e.clone(), status.error))),
-                };
-                let refresh = match fleet.last_refresh_took {
-                    Some(took) => format!("every {} s · the last took {} ms", REFRESH_EVERY.as_secs(), took.as_millis()),
-                    None => format!("every {} s · loading…", REFRESH_EVERY.as_secs()),
-                };
-                (cli, warning, refresh)
-            }
-            None => ("the main window is closed".to_string(), None, "-".to_string()),
-        };
-        let value = |id: &'static str, text: String| div().id(id).text_sm().child(SharedString::from(text)).into_any_element();
-        let home = self.home.as_ref().map_or("not set".to_string(), |h| h.display().to_string());
-        let on = self.settings.updates.check;
-        let check_toggle = button::small("updates-check", if on { "On" } else { "Off" }, cx)
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_update_check(!on, cx)));
-        let last_check = div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(div().id("updates-last").max_w(px(260.)).text_sm().child(SharedString::from(self.updates_line(cx))))
-            .children(on.then(|| {
-                button::small("updates-check-now", "Check now", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.fleet.update(cx, |fleet, _| fleet.check_updates_now()).ok();
-                }))
-            }));
-        vec![
-            div()
-                .id("about-mark")
-                .flex()
-                .items_center()
-                .gap_3()
-                .py_3()
-                .border_b_1()
-                .border_color(colors.border_variant)
-                .child(crate::brand::supraman(40.))
-                .child(crate::brand::wordmark(22., cx))
-                .into_any_element(),
-            row("Supraman", "This build.", value("about-supraman", env!("CARGO_PKG_VERSION").to_string()), None, cx),
-            row(
-                "Check for updates",
-                "At start and once a day Supraman asks GitHub whether a newer release is published, and shows it above the session list. Off sends no request.",
-                check_toggle.into_any_element(),
-                None,
-                cx,
-            ),
-            row("Last check", "What the last update check found.", last_check.into_any_element(), None, cx),
-            row(
-                "claude CLI",
-                "The Claude Code CLI Supraman lists, launches and attaches sessions with (`claude --version`).",
-                value("about-cli", cli),
-                warning.map(|(text, color)| {
-                    banner::tinted(color)
-                        .id("about-cli-warning")
-                        .mt_2()
-                        .text_xs()
-                        .child(SharedString::from(text))
-                        .into_any_element()
-                }),
-                cx,
-            ),
-            row(
-                "Refresh",
-                "How often the session list (`claude agents`) is polled and the supervisor ticks.",
-                value("about-refresh", refresh),
-                None,
-                cx,
-            ),
-            row(
-                "Supraman home",
-                "SUPRAMAN_HOME, else %APPDATA%\\Supraman: workspaces, desired state, settings.toml, hook events.",
-                div().max_w(px(300.)).text_xs().text_color(colors.text_muted).child(SharedString::from(home)).into_any_element(),
-                None,
-                cx,
-            ),
-        ]
-    }
-
-    pub fn set_update_check(&mut self, on: bool, cx: &mut Context<Self>) {
-        self.change_then(
-            move |s| s.updates.check = on,
-            move |this, cx| {
-                if on {
-                    this.fleet.update(cx, |fleet, _| fleet.check_updates_now()).ok();
-                }
-            },
-            cx,
-        );
-    }
-
-    pub fn updates_line(&self, cx: &App) -> String {
-        let on = self.settings.updates.check;
-        self.fleet.upgrade().map_or_else(|| "the main window is closed".into(), |f| f.read(cx).updates.status_line(on))
-    }
-
-    fn render_appearance(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let colors = cx.theme().colors().clone();
-        let status = cx.theme().status().clone();
-        let current = self.settings.appearance.theme.as_deref().unwrap_or(themes::DEFAULT_THEME).to_string();
-        let terminal = TerminalColors::from_setting(self.settings.appearance.terminal_colors.as_deref());
-        let mut list = div().flex().flex_col().gap_1().pt_2();
-        for (ix, entry) in self.catalog.entries.iter().enumerate() {
-            let selected = entry.name == current;
-            let name = entry.name.clone();
-            let from: SharedString = match &entry.file {
-                None if entry.name == themes::DEFAULT_THEME => "bundled · default".into(),
-                None => "bundled".into(),
-                Some(file) => file.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned()).into(),
-            };
-            list = list.child(
-                button::choice(("theme", ix), SharedString::from(entry.name.clone()), selected, cx)
-                    .child(div().text_xs().text_color(colors.text_muted).child(from))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_theme(name.clone(), terminal, cx))),
-            );
-        }
-        let notes = self
-            .theme_problem
-            .iter()
-            .chain(&self.catalog.errors)
-            .map(|e| div().text_xs().text_color(status.warning).child(SharedString::from(e.clone())).into_any_element())
-            .collect::<Vec<_>>();
-        list = list.children(notes).child(
-            div()
-                .pt_1()
-                .text_xs()
-                .text_color(colors.text_muted)
-                .child("VS Code Dark Modern: kevcamel/vscode_dark_modern.zed, © 2024 Kevin Camellini, MIT licence (THIRD_PARTY.md)."),
-        );
-        let folder = button::small("themes-folder", "Open themes folder", cx)
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_themes_folder(cx)));
-
-        let mut terminal_choices = div().flex().gap_1();
-        for (ix, (label, value)) in [("Theme", TerminalColors::Theme), ("Campbell", TerminalColors::Campbell)].into_iter().enumerate() {
-            let name = current.clone();
-            terminal_choices = terminal_choices.child(
-                button::choice(("terminal-colors", ix), label, terminal == value, cx)
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_theme(name.clone(), value, cx))),
-            );
-        }
-        let size = self.fleet.upgrade().map(|f| f.read(cx).term_font_size);
-        self.shown_font_size.set(size);
-        let font_size = match size {
-            Some(size) => div()
-                .flex()
-                .items_center()
-                .gap_1()
-                .child(button::small("term-font-dec", "−", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.set_term_font_size(size - px(1.), cx);
-                })))
-                .child(
-                    div()
-                        .id("term-font-size")
-                        .w(px(28.))
-                        .flex()
-                        .justify_center()
-                        .font_weight(FontWeight::BOLD)
-                        .child(SharedString::from(format!("{}", f32::from(size)))),
-                )
-                .child(button::small("term-font-inc", "+", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.set_term_font_size(size + px(1.), cx);
-                })))
-                .child(button::small("term-font-reset", "Reset", cx).ml_1().on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.set_term_font_size(term_element::FONT_SIZE, cx);
-                })))
-                .into_any_element(),
-            None => div().text_sm().text_color(colors.text_muted).child("the main window is closed").into_any_element(),
-        };
-
-        let (family, ligatures, installed) = self
-            .fleet
-            .upgrade()
-            .map(|f| {
-                let f = f.read(cx);
-                (f.term_font_family.clone(), f.term_ligatures, f.installed_fonts.clone())
-            })
-            .unwrap_or_else(|| (SharedString::default(), self.settings.terminal.ligatures(), Arc::default()));
-        let mut fonts = div().flex().flex_wrap().gap_1().pt_2();
-        match &self.mono_fonts {
-            Some(mono) => {
-                for (ix, name) in mono.iter().enumerate() {
-                    let pick = name.clone();
-                    fonts = fonts.child(
-                        button::choice(("term-font", ix), SharedString::from(name.clone()), *name == family, cx)
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_term_font(Some(&pick), ligatures, cx))),
-                    );
-                }
-            }
-            None => fonts = fonts.child(div().text_xs().text_color(colors.text_muted).child("finding the monospace fonts…")),
-        }
-        let font_notes = self
-            .settings
-            .terminal.missing_font(&installed)
-            .map(|missing| format!("{missing} (settings.toml) is not installed: {family} is shown."))
-            .into_iter()
-            .chain(self.font_error.clone())
-            .map(|e| div().w_full().text_xs().text_color(status.warning).child(SharedString::from(e)).into_any_element())
-            .collect::<Vec<_>>();
-        fonts = fonts.children(font_notes);
-        let default = supraman_core::default_terminal_font_family(&installed);
-        let font_reset = button::small("term-font-default", "Default", cx)
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_term_font(None, ligatures, cx)));
-        let mut ligature_choices = div().flex().gap_1();
-        for (ix, (label, on)) in [("On", true), ("Off", false)].into_iter().enumerate() {
-            let family = self.settings.terminal.font_family.clone();
-            ligature_choices = ligature_choices.child(
-                button::choice(("ligatures", ix), label, ligatures == on, cx)
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_term_font(family.as_deref(), on, cx))),
-            );
-        }
-        let shell = self.render_shell(cx);
-        vec![
-            row(
-                "Theme",
-                "The colours of every Supraman window. Zed theme files (*.json) in the themes folder of the \
-                 Supraman home are listed too; a key a file leaves out keeps One Dark's. Applied at once.",
-                folder.into_any_element(),
-                Some(list.into_any_element()),
-                cx,
-            ),
-            row(
-                "Terminal colours",
-                "The 16 ANSI colours in terminal tabs: the theme's, or Windows Terminal's Campbell. Background, \
-                 text and cursor stay the theme's; the selection stays white, as in Windows Terminal.",
-                terminal_choices.into_any_element(),
-                None,
-                cx,
-            ),
-            row(
-                "Terminal font size",
-                format!(
-                    "The text size in every terminal tab, in pixels ({MIN_TERMINAL_FONT_SIZE} to {MAX_TERMINAL_FONT_SIZE}, \
-                     default {DEFAULT_TERMINAL_FONT_SIZE}). Ctrl+= and Ctrl+- or Ctrl+wheel in any terminal change it \
-                     too, Ctrl+0 resets it. Applied to open terminals at once and kept in settings.toml \
-                     ([terminal] font_size)."
-                ),
-                font_size,
-                None,
-                cx,
-            ),
-            row(
-                "Terminal font",
-                format!(
-                    "The font of every terminal tab, from the monospace fonts installed. Default: Cascadia Code, else \
-                     Cascadia Mono, else Consolas (here {default}). A character the font lacks is drawn from a fallback \
-                     font, shrunk to fit its cell. Applied to open terminals at once and kept in settings.toml \
-                     ([terminal] font_family)."
-                ),
-                font_reset.into_any_element(),
-                Some(fonts.into_any_element()),
-                cx,
-            ),
-            row(
-                "Ligatures",
-                "Character pairs such as -> and != drawn as one symbol, when the font has them (Cascadia Code does), \
-                 each character still in its own cell. Kept in settings.toml ([terminal] ligatures).",
-                ligature_choices.into_any_element(),
-                None,
-                cx,
-            ),
-            shell,
-            self.render_tab_keys(cx),
-        ]
-    }
-
-    /// Applied to the main window once saved.
-    pub fn set_tab_keys(&mut self, mode: TabKeys, cx: &mut Context<Self>) {
-        self.change_then(
-            move |s| s.window.set_tab_keys(mode),
-            |this, cx| {
-                let mode = this.settings.window.tab_keys();
-                this.fleet.update(cx, |fleet, cx| fleet.tab_keys.update(cx, |keys, _| keys.mode = mode)).ok();
-            },
-            cx,
-        );
-    }
-
-    fn render_tab_keys(&self, cx: &mut Context<Self>) -> AnyElement {
-        let current = self.settings.window.tab_keys();
-        let mut choices = div().flex().gap_1();
-        for (ix, (label, mode)) in [("Outside terminals", TabKeys::OutsideTerminals), ("Everywhere", TabKeys::Everywhere)].into_iter().enumerate() {
-            choices = choices.child(
-                button::choice(("tab-keys", ix), label, current == mode, cx)
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_tab_keys(mode, cx))),
-            );
-        }
-        row(
-            "Ctrl+T and Ctrl+W",
-            "Ctrl+T opens a new task tab and Ctrl+W closes the active tab. Outside terminals, the default, leaves both              to the program in a terminal tab; Everywhere takes them from terminals too. Ctrl+Shift+T and Ctrl+Shift+W              work in every tab, Ctrl+Alt+T reopens the last closed tab. Applied at once and kept in settings.toml              ([window] tab_keys).",
-            choices.into_any_element(),
-            None,
-            cx,
-        )
-    }
-
-    pub fn set_shell(&mut self, shell: ShellSetting, cx: &mut Context<Self>) {
-        self.change(move |s| s.terminal.set_shell(shell), cx);
-    }
-
-    fn render_shell(&self, cx: &mut Context<Self>) -> AnyElement {
-        let colors = cx.theme().colors().clone();
-        let current = self.settings.terminal.shell();
-        let (shells, notice) = self
-            .fleet
-            .upgrade()
-            .map(|f| {
-                let default = &f.read(cx).shell_default;
-                (default.found().cloned(), default.resolved().and_then(|(_, notice)| notice.clone()))
-            })
-            .unwrap_or_default();
-        let mut choices = div().flex().flex_wrap().gap_1().pt_2();
-        let mut notes = Vec::new();
-        match &shells {
-            Some(shells) => {
-                let named = shells.list.iter().filter_map(|s| s.setting.clone().map(|setting| (s.label.clone(), setting)));
-                let custom = matches!(current, ShellSetting::Custom(_)).then(|| (format!("{current} ([terminal] shell)"), current.clone()));
-                for (ix, (label, setting)) in [("Automatic".to_string(), ShellSetting::Auto)].into_iter().chain(named).chain(custom).enumerate() {
-                    let selected = setting == current;
-                    choices = choices.child(
-                        button::choice(("term-shell", ix), SharedString::from(label), selected, cx)
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_shell(setting.clone(), cx))),
-                    );
-                }
-                notes.extend(notice);
-            }
-            None => choices = choices.child(div().text_xs().text_color(colors.text_muted).child("finding this machine's shells…")),
-        }
-        let notes = notes.into_iter().map(|n| div().w_full().text_xs().text_color(cx.theme().status().warning).child(SharedString::from(n)).into_any_element());
-        row(
-            "Shell of new tabs",
-            "The shell + and Open terminal here start. Automatic is PowerShell 7 (pwsh), else Windows PowerShell. \
-             The ⌄ beside + opens any shell of this machine, Visual Studio's developer shells too. Tabs that start or \
-             attach claude always run PowerShell. Kept in settings.toml ([terminal] shell).",
-            div().into_any_element(),
-            Some(choices.children(notes).into_any_element()),
-            cx,
-        )
-    }
-
     fn render_gitman(&self, _: &mut Context<Self>) -> Vec<AnyElement> {
         vec![self.gitman.clone().into_any_element()]
     }
 
-    fn render_plugins(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let colors = cx.theme().colors().clone();
-        let dirs = &self.settings.sessions.extra_plugin_dirs;
-        let lines: Vec<AnyElement> = if dirs.is_empty() {
-            vec![div().text_sm().text_color(colors.text_muted).child("none").into_any_element()]
-        } else {
-            dirs.iter()
-                .map(|dir| {
-                    let missing = !dir.join(".claude-plugin").join("plugin.json").is_file();
-                    let text = format!("{}{}", dir.display(), if missing { "  (no .claude-plugin/plugin.json here)" } else { "" });
-                    div()
-                        .text_sm()
-                        .when(missing, |d| d.text_color(cx.theme().status().warning))
-                        .child(SharedString::from(text))
-                        .into_any_element()
-                })
-                .collect()
-        };
-        vec![row(
-            "Extra plugin dirs",
-            "Passed as --plugin-dir to every session Supraman launches, after Supraman's own plugin. A plugin \
-             installed for your user, such as workman, loads without being listed here. Change them in \
-             settings.toml ([sessions] extra_plugin_dirs = [\"…\"]); a running session keeps the plugins it was launched with.",
-            div().into_any_element(),
-            Some(div().flex().flex_col().gap_1().pt_2().children(lines).into_any_element()),
-            cx,
-        )]
-    }
 }
 
 impl Render for SettingsView {
