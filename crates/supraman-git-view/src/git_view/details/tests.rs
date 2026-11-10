@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use gpui::{Entity, Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px};
-use supraman_gitman::fixture::{Fixture, Shared, git_in};
+use supraman_gitman::fixture::{Fixture, git_in};
 use supraman_ui::tree::Order;
 
 use super::*;
@@ -113,14 +113,11 @@ fn nested_commit(f: &Fixture) -> String {
     git_in(&f.git, &f.worktree, &["rev-parse", "HEAD"], &[], None)
 }
 
-/// The fixture with [`nested_commit`], shared by the tests that only read it.
-fn nested() -> std::sync::Arc<(Fixture, String)> {
-    static NESTED: Shared<(Fixture, String)> = Shared::new();
-    NESTED.get(|| {
-        let f = Fixture::copy();
-        let sha = nested_commit(&f);
-        (f, sha)
-    })
+/// A test's own copy of the fixture with [`nested_commit`].
+fn nested() -> (Fixture, String) {
+    let f = Fixture::copy();
+    let sha = nested_commit(&f);
+    (f, sha)
 }
 
 fn visible(panel: &Entity<CommitPanel>, cx: &mut VisualTestContext) -> Vec<String> {

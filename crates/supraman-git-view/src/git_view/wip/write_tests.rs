@@ -44,6 +44,7 @@ pub(super) fn open_as<'a>(folder: &std::path::Path, live: occupancy::Live, cx: &
     let (holder, cx) = cx.add_window_view(|_, cx| Holder(GitView::open_with(folder, None, HitTargets::default(), &GitSizes::default(), Arc::new(live), cx)));
     let view = holder.read_with(cx, |h, _| h.0.clone());
     cx.run_until_parked();
+    crate::git_view::test_support::assert_loaded(&view, cx);
     (view, cx)
 }
 

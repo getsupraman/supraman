@@ -31,6 +31,7 @@ fn open<'a>(folder: &Path, home: &Path, cx: &'a mut TestAppContext) -> (Entity<G
     let (holder, cx) = cx.add_window_view(|_, cx| Holder(GitView::open(folder, Some(home), HitTargets::default(), &GitSizes::default(), cx)));
     let view = holder.read_with(cx, |h, _| h.0.clone());
     cx.run_until_parked();
+    crate::git_view::test_support::assert_loaded(&view, cx);
     redraw(&view, cx);
     (view, cx)
 }

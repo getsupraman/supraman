@@ -141,7 +141,7 @@ fn wip_view_shows_a_conflicted_file_in_file_view(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn wip_view_banner_view_change_selects_the_wip_row(cx: &mut TestAppContext) {
-    let f = Fixture::shared();
+    let f = Fixture::copy();
     let (view, vcx) = open(&f.worktree, cx);
     view.update(vcx, |v, cx| v.select_sha(f.sha("second"), cx));
     vcx.run_until_parked();

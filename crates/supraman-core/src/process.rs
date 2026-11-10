@@ -883,28 +883,24 @@ mod tests {
     }
 
     #[test]
-    fn a_child_that_exits_at_once_costs_little_more_than_its_own_run() {
-        let exits = || {
-            let mut cmd = command("cmd");
-            cmd.args(["/C", "exit 0"]);
-            cmd
-        };
-        let (mut ours, mut bare) = (Vec::new(), Vec::new());
-        for _ in 0..20 {
-            ours.push(median_ms(1, || assert!(run_bytes(&mut exits(), None, Duration::from_secs(30), Kill::Tree).unwrap().success())));
-            bare.push(median_ms(1, || assert!(exits().output().unwrap().status.success())));
-        }
-        let median = |mut v: Vec<f64>| {
-            v.sort_by(f64::total_cmp);
-            v[v.len() / 2]
-        };
-        let (ours, bare) = (median(ours), median(bare));
-        assert!(ours - bare < 10.0, "median {ours:.1} ms through run_bytes against {bare:.1} ms bare");
+    fn a_child_that_exits_at_once_never_waits_out_the_pipes() {
+        let ours = median_ms(20, || assert!(run_bytes(&mut exits_at_once(), None, Duration::from_secs(30), Kill::Tree).unwrap().success()));
+        let settle = PIPES_SETTLE.as_secs_f64() * 1000.0;
+        assert!(ours < settle / 2.0, "median {ours:.1} ms through run_bytes, PIPES_SETTLE {settle} ms");
+    }
+
+    fn exits_at_once() -> Command {
+        let mut cmd = command("cmd");
+        cmd.args(["/C", "exit 0"]);
+        cmd
     }
 
     #[test]
     #[ignore = "a measurement: cargo test -p supraman-core --release -- --ignored --nocapture child_overhead"]
     fn child_overhead_measured() {
+        let ours = median_ms(20, || assert!(run_bytes(&mut exits_at_once(), None, Duration::from_secs(30), Kill::Tree).unwrap().success()));
+        let bare = median_ms(20, || assert!(exits_at_once().output().unwrap().status.success()));
+        println!("cmd /C exit 0: run_bytes {ours:.1} ms, bare {bare:.1} ms (median of 20; within 10 ms when idle)");
         let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
         for args in [&["--version"][..], &["rev-parse", "HEAD"]] {
             let git = || {

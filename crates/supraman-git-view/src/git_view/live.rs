@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::path::{Component, Path};
 use std::time::Duration;
 
-use futures::channel::mpsc::{UnboundedReceiver, unbounded};
+use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use supraman_core::paths::within;
 use supraman_core::watch::{Batch, Watch, Watcher};
 use supraman_gitman::write::{self, Settled};
@@ -54,7 +54,7 @@ pub(crate) fn start(repo: &Repo, debounces: Debounces) -> Result<(Live, Unbounde
     let settled = {
         let tx = tx.clone();
         quiet.on_settled(move || {
-            tx.unbounded_send(Refresh::Graph).ok();
+            send(&tx, Refresh::Graph);
         })
     };
     let mut git_dirs = vec![Watch::tree(&dirs.common_dir)];
@@ -68,7 +68,7 @@ pub(crate) fn start(repo: &Repo, debounces: Debounces) -> Result<(Live, Unbounde
                 return;
             }
             if let Some(r) = git_refresh(&dirs, &batch) {
-                tx.unbounded_send(r).ok();
+                send(&tx, r);
             }
         })
     };
@@ -79,12 +79,50 @@ pub(crate) fn start(repo: &Repo, debounces: Debounces) -> Result<(Live, Unbounde
                 return;
             }
             if let Some(r) = work_refresh(&top, &dirs, &batch) {
-                tx.unbounded_send(r).ok();
+                send(&tx, r);
             }
         })
     };
     let watchers = vec![git.map_err(|e| e.to_string())?, work.map_err(|e| e.to_string())?];
     Ok((Live { _watchers: watchers, _settled: settled }, rx))
+}
+
+fn send(tx: &UnboundedSender<Refresh>, refresh: Refresh) {
+    tx.unbounded_send(refresh).ok();
+    #[cfg(test)]
+    sent::bump();
+}
+
+/// Every refresh any tab's watchers sent, so a test waits for the next one instead of sleeping.
+#[cfg(test)]
+pub(crate) mod sent {
+    use std::sync::{Condvar, Mutex, PoisonError};
+    use std::time::{Duration, Instant};
+
+    static SENT: (Mutex<u64>, Condvar) = (Mutex::new(0), Condvar::new());
+
+    pub(crate) fn bump() {
+        *SENT.0.lock().unwrap_or_else(PoisonError::into_inner) += 1;
+        SENT.1.notify_all();
+    }
+
+    pub(crate) fn count() -> u64 {
+        *SENT.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Whether a refresh past `seen` is sent within `within`.
+    pub(crate) fn past(seen: u64, within: Duration) -> bool {
+        let deadline = Instant::now() + within;
+        let mut count = SENT.0.lock().unwrap_or_else(PoisonError::into_inner);
+        while *count <= seen {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return false;
+            }
+            count = SENT.1.wait_timeout(count, left).unwrap_or_else(PoisonError::into_inner).0;
+        }
+        true
+    }
 }
 
 /// `path` below `base`, `/`-separated; `None` outside it.

@@ -46,18 +46,22 @@ impl Follow {
     }
 }
 
+/// A test's tabs follow their repositories only under this global (`live_tests::follow`, which allows parking).
 #[cfg(test)]
-thread_local! {
-    /// gpui's test scheduler refuses wake-ups from the watchers' threads unless a test allows parking.
-    pub(crate) static FOLLOW: std::cell::Cell<Option<live::Debounces>> = const { std::cell::Cell::new(None) };
-}
+pub(crate) struct Follows(pub(crate) live::Debounces);
+
+#[cfg(test)]
+impl gpui::Global for Follows {}
 
 /// Whether a loaded tab starts following its repository, and with which debounces.
-pub(super) fn follows() -> Option<live::Debounces> {
+pub(super) fn follows(cx: &gpui::App) -> Option<live::Debounces> {
     #[cfg(test)]
-    return FOLLOW.get();
+    return cx.try_global::<Follows>().map(|f| f.0);
     #[cfg(not(test))]
-    Some(live::DEBOUNCES)
+    {
+        let _ = cx;
+        Some(live::DEBOUNCES)
+    }
 }
 
 /// The row a refresh keeps in place: the selected commit while it is wholly in view, else the first commit row at or

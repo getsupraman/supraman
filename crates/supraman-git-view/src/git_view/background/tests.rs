@@ -34,12 +34,12 @@ fn held() -> Option<Box<dyn std::any::Any + Send>> {
 /// The background on for this test, its heavy-job lock free (the gate's own cargo holds the real one) and its clock
 /// the test's.
 fn start(home: Option<&Path>, settings: BackgroundSettings, cx: &mut TestAppContext) {
-    ON.set(true);
     cx.update(|cx| {
         supraman_ui::init_globals(cx, "test");
         supraman_ui::text_input::bind_keys(cx);
         bind_keys(cx);
         let mut bg = Background::new(home.map(Path::to_path_buf));
+        bg.on = true;
         bg.settings = Some(settings);
         bg.heavy = Arc::new(held);
         bg.clock = now;
@@ -51,6 +51,7 @@ fn open(folder: &Path, home: Option<&Path>, live: occupancy::Live, cx: &mut Visu
     let (folder, home) = (folder.to_path_buf(), home.map(Path::to_path_buf));
     let view = cx.update(|_, cx| GitView::open_with(folder, home, HitTargets::default(), &GitSizes::default(), Arc::new(live), cx));
     cx.run_until_parked();
+    crate::git_view::test_support::assert_loaded(&view, cx);
     view
 }
 
@@ -218,6 +219,7 @@ fn maintenance_runs_once_per_hour_after_a_tab_opens_and_a_restart_does_not_run_i
     NOW.set(NOW.get() + 1000);
     cx.update(|_, cx| {
         let mut bg = Background::new(Some(home.path().to_path_buf()));
+        bg.on = true;
         bg.settings = Some(BackgroundSettings { fetch_every_minutes: Some(0), maintenance: None, ..Default::default() });
         bg.heavy = Arc::new(held);
         bg.clock = now;

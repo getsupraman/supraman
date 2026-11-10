@@ -303,7 +303,7 @@ impl Session<'_> {
         if out.success() {
             return Ok(out.stdout);
         }
-        Err(GitError::Failed { args: call.label(), code: out.code, stderr: text(&out.stderr).trim().to_string() }.into())
+        Err(crate::repo::failed(call.label(), &self.writer.dirs.top, &out).into())
     }
 
     /// Runs `f` holding `locks` as well, what this session holds not asked again.
