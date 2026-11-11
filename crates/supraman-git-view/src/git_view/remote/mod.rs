@@ -26,7 +26,8 @@ use supraman_ui::confirm::{Answer, Confirm};
 use supraman_ui::hit::HitTargets;
 use supraman_ui::menu::{ContextMenu, MenuItem};
 
-use super::write_gate::{WriteGate, Writes, Written, capitalised};
+use super::write_gate::{WriteGate, Writes, Written};
+use supraman_core::text::capitalised;
 pub(crate) use bar::{caption, words};
 pub(crate) use dialogs::{Prompting, UpstreamDialog};
 pub(crate) use menu::RemoteFacts;

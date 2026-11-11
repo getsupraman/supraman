@@ -188,8 +188,15 @@ impl FleetView {
     pub fn session_sections(&self, page: &DetailsPage, cx: &gpui::App) -> Option<(String, Vec<Section>)> {
         let MenuTarget::Session { workspace, repo, .. } = &page.target else { return None };
         let row = page.seen.as_ref()?;
-        let registered = self.workspaces.iter().find(|w| &w.name == workspace);
-        let folder = page.folder.as_ref().map(|(n, p)| (n.as_str(), p.as_path())).or_else(|| {
+        let folder = page.folder.as_ref().map(|(n, p)| (n.as_str(), p.as_path()));
+        Some((row_details::session_title(row), self.row_sections(workspace, repo, row, folder, &page.disk, page.listed, cx)))
+    }
+
+    /// `row`'s facts as its Details tab shows them; `folder` the workspace's folder holding it, else found here.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn row_sections(&self, workspace: &str, repo: &str, row: &SessionRow, folder: Option<(&str, &std::path::Path)>, disk: &OnDisk, listed: bool, cx: &gpui::App) -> Vec<Section> {
+        let registered = self.workspaces.iter().find(|w| w.name == workspace);
+        let folder = folder.or_else(|| {
             registered?.folders.iter().filter(|f| within(&row.session.cwd, &f.path)).max_by_key(|f| path_key(&f.path).len()).map(|f| (f.name.as_str(), f.path.as_path()))
         });
         let adopt = match self.adoption(workspace, repo, row) {
@@ -206,10 +213,10 @@ impl FleetView {
             sign_in: self.hand_tab(row).and_then(|t| t.workman.clone()),
             open: self.open_of(row),
             adopt,
-            disk: &page.disk,
-            listed: page.listed,
+            disk,
+            listed,
         };
-        Some((row_details::session_title(row), row_details::session(&facts, now_ms())))
+        row_details::session(&facts, now_ms())
     }
 
     pub fn workspace_sections(&self, workspace: &str, cx: &gpui::App) -> Option<(WorkspaceNode, Vec<Section>)> {
@@ -278,15 +285,10 @@ impl FleetView {
             MenuTarget::Session { workspace, repo, .. } => {
                 let (title, sections) = self.session_sections(page, cx)?;
                 let row = page.seen.as_ref()?;
-                let (words, asks) = row_details::session_pill(row, page.listed);
-                let color = match (asks, &row.health) {
-                    (true, _) => status.warning,
-                    _ if !page.listed || row.closed => colors.text_muted,
-                    (false, h) if crate::fleet::is_alive(h) => status.success,
-                    _ => colors.text_muted,
-                };
+                let words = row_details::session_pill(row, page.listed);
+                let color = if page.listed { crate::fleet::State::of_row(row).mark(cx).color() } else { colors.text_muted };
                 let items = if page.listed { self.session_menu(workspace, repo, row, None, cx) } else { Vec::new() };
-                (title, (words.to_string(), color), sections, items)
+                (title, (words, color), sections, items)
             }
             MenuTarget::Workspace(w) => {
                 let (node, sections) = self.workspace_sections(w, cx)?;

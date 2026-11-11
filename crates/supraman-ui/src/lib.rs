@@ -22,6 +22,7 @@ pub mod open;
 pub mod palette;
 pub mod placeholder;
 pub mod segmented;
+pub mod session;
 pub mod settings_page;
 pub mod split;
 pub mod stall;

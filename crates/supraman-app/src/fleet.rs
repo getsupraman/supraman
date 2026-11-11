@@ -6,7 +6,9 @@ use supraman_core::paths::{normalize, path_key};
 use supraman_core::time::ago;
 use supraman_core::{Event, FolderKind, Workspace, owners};
 use supraman_git_view::occupancy::LiveSession;
-use supraman_ui::marks::Activity;
+use gpui::App;
+use supraman_ui::marks::{Activity, Mark};
+use theme::ActiveTheme as _;
 use supraman_supervisor::{relay_session_name, repo_session_name, workspace_session_name};
 
 #[derive(Debug, Clone)]
@@ -223,14 +225,14 @@ pub fn activity(health: &Health) -> Option<Activity> {
     }
 }
 
-/// The live sessions as the Git tabs show them, their attach id while [`attachable`].
+/// The live sessions as every tab shows them, by [`display_name`], their attach id while [`attachable`].
 pub fn live_sessions(sessions: &[Session], now_ms: i64) -> Vec<LiveSession> {
     sessions
         .iter()
         .filter_map(|s| {
             let health = s.health(now_ms);
             let activity = activity(&health)?;
-            Some(LiveSession { name: s.name.clone(), claude_session_id: s.session_id.clone(), cwd: s.cwd.clone(), activity, attach: attachable(s, &health).then(|| s.id.clone()) })
+            Some(LiveSession { name: display_name(s).to_string(), claude_session_id: s.session_id.clone(), cwd: s.cwd.clone(), activity, attach: attachable(s, &health).then(|| s.id.clone()) })
         })
         .collect()
 }
@@ -624,11 +626,49 @@ fn mark_second_occurrences(nodes: &mut [WorkspaceNode], desired: Option<&BTreeMa
     }
 }
 
-pub fn health_label(health: &Health) -> String {
-    match health {
-        Health::Orphaned { .. } => "interrupted".to_string(),
-        Health::Blocked { .. } => "blocked".to_string(),
-        other => other.to_string(),
+/// A session's state as every view words and marks it: a live one by its [`Activity`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum State {
+    Live(Activity),
+    Interrupted,
+    Stopped,
+    Closed,
+    Unknown,
+}
+
+impl State {
+    pub fn of(health: &Health, closed: bool) -> State {
+        match (activity(health), health) {
+            _ if closed => State::Closed,
+            (Some(a), _) => State::Live(a),
+            (None, Health::Orphaned { .. }) => State::Interrupted,
+            (None, Health::Unknown) => State::Unknown,
+            (None, _) => State::Stopped,
+        }
+    }
+
+    pub fn of_row(row: &SessionRow) -> State {
+        State::of(&row.health, row.closed)
+    }
+
+    pub fn word(self) -> &'static str {
+        match self {
+            State::Live(a) => a.word(),
+            State::Interrupted => "interrupted",
+            State::Stopped => "stopped",
+            State::Closed => "closed",
+            State::Unknown => "unknown",
+        }
+    }
+
+    pub fn mark(self, cx: &App) -> Mark {
+        let (status, colors) = (cx.theme().status(), cx.theme().colors());
+        match self {
+            State::Live(a) => Mark::Filled(a.color(cx)),
+            State::Interrupted => Mark::Ring(status.warning),
+            State::Unknown => Mark::Ring(status.hint),
+            State::Stopped | State::Closed => Mark::Ring(colors.text_disabled),
+        }
     }
 }
 
@@ -880,9 +920,9 @@ mod tests {
     fn labels() {
         let tree = build(&[workspace()], &sessions(), NOW, true, &Supervised::default());
         let beta = &tree.workspaces[0].repos[1];
-        assert_eq!(health_label(&beta.sessions[1].health), "interrupted");
+        assert_eq!(State::of_row(&beta.sessions[1]).word(), "interrupted");
         let alpha = &tree.workspaces[0].repos[0];
-        assert_eq!(health_label(&alpha.sessions[0].health), "blocked");
+        assert_eq!(State::of_row(&alpha.sessions[0]).word(), "waiting");
         assert_eq!(
             alpha.sessions[0].health,
             Health::Blocked {

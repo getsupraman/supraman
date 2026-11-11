@@ -72,7 +72,7 @@ use wip::WipPanel;
 use worktree_panel::{WorktreeEvent, WorktreePanel};
 use write_gate::WriteGate;
 
-pub use agent_rows::AttachAgent;
+pub use agent_rows::{AgentMenu, AttachAgent, PageAction, SessionPage, SessionPages};
 
 /// The table's id: its hit keys are `git-col-<c>`, `git-divider-<c>`, `git-row-<n>`.
 pub(crate) const TABLE: &str = "git";
@@ -551,8 +551,8 @@ impl GitView {
 
     pub(crate) fn selected(&self, cx: &App) -> Option<Selected> {
         let row = self.pages.read(cx).rows.get(self.table.selected()?)?;
-        if let Some(name) = &row.agent {
-            return Some(Selected::Agent(name.clone()));
+        if let Some(id) = &row.agent {
+            return Some(Selected::Agent(id.clone()));
         }
         if let Some(path) = &row.row.worktree {
             return Some(Selected::Worktree(path.clone()));
@@ -788,8 +788,8 @@ impl GitView {
         if let Some(Selected::Worktree(_)) = selected {
             return div().size_full().child(self.worktree_panel.clone()).into_any_element();
         }
-        if let Some(Selected::Agent(name)) = &selected {
-            return self.render_agent_panel(name, cx);
+        if let Some(Selected::Agent(id)) = &selected {
+            return self.render_agent_panel(id, cx);
         }
         let dirty = self.wip.map_or(0, |w| w.total());
         let banner = (dirty > 0 && selected.is_some()).then(|| wip::banner(dirty, &self.hits, cx));

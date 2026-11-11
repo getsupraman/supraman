@@ -24,7 +24,7 @@ pub(crate) struct GraphRow {
     pub(crate) merge: bool,
     /// Empty on the WIP row.
     pub(crate) parents: Vec<SharedString>,
-    /// The live session whose row this is, by name.
+    /// The live session whose row this is, by claude's session id.
     pub(crate) agent: Option<SharedString>,
 }
 

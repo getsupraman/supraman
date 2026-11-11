@@ -41,7 +41,7 @@ use supraman_workman::status::WorkmanStatus;
 pub(crate) use actions::RowAction;
 pub(crate) use detail::DetailTab;
 pub use inbox::{Binding, DISMISSED_FILE, HOUSEKEEPING_KEY, WorkInbox, dismiss_key_of, row_key_of};
-pub use item::{FleetLink, LiveSession};
+pub use item::FleetLink;
 pub(crate) use item::{ItemState, OpenItem};
 pub use projects::RepoOf;
 pub(crate) use state::Filter;

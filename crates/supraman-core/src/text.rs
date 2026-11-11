@@ -30,6 +30,12 @@ impl Encoding {
     }
 }
 
+/// `text` with its first letter capitalised: a state's word as a pill says it, an error as a toast does.
+pub fn capitalised(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |c| c.to_uppercase().chain(chars).collect())
+}
+
 /// `n` and its noun, `one` when `n` is 1, else `many`: `1 file`, `3 files`.
 pub fn count(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })

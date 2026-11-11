@@ -34,7 +34,7 @@ impl FleetView {
     }
 
     pub(super) fn render_work_cards(&self, rows: &[(String, InboxRow)], cx: &mut Context<Self>) -> (Vec<AnyElement>, Option<AnyElement>) {
-        let live: Vec<String> = crate::view::work_tab::attachable(&self.occupancy).into_iter().map(|s| s.name).collect();
+        let live: Vec<String> = crate::view::work_tab::attachable(&self.occupancy);
         let this = cx.weak_entity();
         let mark: inbox_card::Mark = |color| crate::brand::workman(rems(0.875), color).into_any_element();
         inbox_card::render_sections(rows, &live, &self.work_inbox, &self.hits, mark, &|card| Self::on_card(&this, card), cx)

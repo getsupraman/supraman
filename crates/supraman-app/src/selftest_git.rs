@@ -73,7 +73,7 @@ async fn viewport(cx: &mut AsyncWindowContext) -> anyhow::Result<Size<Pixels>> {
     Ok(cx.update(|window, _| window.viewport_size())?)
 }
 
-async fn resize(view: &Entity<FleetView>, to: Size<Pixels>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+pub(crate) async fn resize(view: &Entity<FleetView>, to: Size<Pixels>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     cx.update(|window, _| window.resize(to))?;
     let what = format!("the window at {:.0} px wide", f32::from(to.width));
     until_with(cx, WITHIN, &what, |cx| cx.update(|window, _| ((window.viewport_size().width - to.width).abs() < px(1.)).then_some(())).ok().flatten()).await?;

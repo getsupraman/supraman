@@ -12,7 +12,8 @@ use supraman_ui::hit::HitTargets;
 use supraman_ui::menu::{ContextMenu, MenuItem, item};
 use supraman_ui::text_input::{InputEvent, TextInput};
 
-use super::write_gate::{WriteGate, Writes, Written, capitalised};
+use super::write_gate::{WriteGate, Writes, Written};
+use supraman_core::text::capitalised;
 
 /// A stash as its row names it: its commit and its label.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -108,7 +108,7 @@ impl WorkView {
             .cursor_pointer()
             .when(selected, |d| d.bg(colors.element_selected))
             .when(!selected, |d| d.hover(|s| s.bg(colors.ghost_element_hover)))
-            .child(div().relative().flex_none().h(px(COPY_SIDE)).flex().items_center().child(dot(state.key.mark(cx), 8.)).child(hit_target(&self.hits, dot_key(&item.qualified_ref, state.key))))
+            .child(div().relative().flex_none().h(px(COPY_SIDE)).flex().items_center().child(dot(state.key.mark(cx))).child(hit_target(&self.hits, dot_key(&item.qualified_ref, state.key))))
             .child(div().flex_none().h(px(COPY_SIDE)).flex().items_center().font_family(fonts::MONO).text_xs().text_color(colors.text_muted).child(SharedString::from(ref_)))
             .child(copy)
             .child(div().flex_1().min_w_0().pt(px(1.)).child(clamped(format!("work-row-title-{}", item.qualified_ref), title, 2)))

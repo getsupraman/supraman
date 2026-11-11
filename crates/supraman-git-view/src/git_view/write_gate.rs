@@ -36,12 +36,6 @@ pub(crate) struct WriteGate {
 
 impl EventEmitter<Written> for WriteGate {}
 
-/// A write's error as a toast says it: its first letter capitalised.
-pub(crate) fn capitalised(why: &str) -> String {
-    let mut chars = why.chars();
-    chars.next().map_or_else(String::new, |c| c.to_uppercase().chain(chars).collect())
-}
-
 impl WriteGate {
     /// `occupancy` answers from memory: it is asked on the UI thread.
     pub(crate) fn new(occupancy: Arc<dyn Occupancy>) -> WriteGate {

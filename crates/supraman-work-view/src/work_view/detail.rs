@@ -181,10 +181,8 @@ impl WorkView {
     fn render_over(&self, page: &ItemPage, key: StateKey, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let live = (self.link.live)();
-        let attach = page.claim.as_ref().and_then(|c| attach_target(c, &live)).map(|session| {
-            let name = if session.name.is_empty() { session.id.clone() } else { session.name.clone() };
-            let id = session.id.clone();
-            button::bordered(&self.hits, format!("work-attach-{}", session.id), format!("Attach to {name}"), cx).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+        let attach = page.claim.as_ref().and_then(|c| attach_target(c, &live)).and_then(|session| Some((session.name.clone(), session.attach.clone()?))).map(|(name, id)| {
+            button::bordered(&self.hits, format!("work-attach-{id}"), format!("Attach to {name}"), cx).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 let attach = this.link.attach.clone();
                 attach(&id, window, cx);
             }))
@@ -238,7 +236,7 @@ impl WorkView {
             div()
                 .flex()
                 .flex_col()
-                .child(div().flex().items_center().gap_2().text_sm().font_weight(FontWeight::SEMIBOLD).child(dot(supraman_ui::marks::Mark::Filled(mark), 7.)).child(SharedString::from(title.to_string())))
+                .child(div().flex().items_center().gap_2().text_sm().font_weight(FontWeight::SEMIBOLD).child(dot(supraman_ui::marks::Mark::Filled(mark))).child(SharedString::from(title.to_string())))
                 .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(sub.to_string())))
         };
         let mut reported = div().flex_1().min_w_0().flex().flex_col().gap_2().child(head("What the agent reported", "From work_report. A claim, not proof.", status.warning));

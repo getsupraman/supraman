@@ -203,7 +203,13 @@ fn open(cx: &mut TestAppContext) -> Opened<'_> {
             i.use_repo_of(repo_of);
             i.set_workspaces(vec![("w".into(), folders())], cx)
         });
-        let live = vec![LiveSession { claude_session_id: "uuid-live".into(), id: "live0001".into(), name: "fm-w-ra".into() }];
+        let live = vec![supraman_ui::session::LiveSession {
+            name: "fm-w-ra".into(),
+            claude_session_id: "uuid-live".into(),
+            cwd: Default::default(),
+            activity: supraman_ui::marks::Activity::Working,
+            attach: Some("live0001".into()),
+        }];
         let opening = Opening {
             workspace: "w".into(),
             folders: folders(),

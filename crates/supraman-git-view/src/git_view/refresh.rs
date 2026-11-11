@@ -293,7 +293,7 @@ impl GitView {
             Some(Selected::Stash(stash)) => self.pages.read(cx).rows.iter().position(|r| r.stash().is_some_and(|s| s.sha == stash.sha)),
             Some(Selected::Wip) => self.wip_row(cx),
             Some(Selected::Worktree(path)) => self.pages.read(cx).rows.iter().position(|r| r.worktree() == Some(path.as_ref())),
-            Some(Selected::Agent(name)) => self.agent_row(name, cx),
+            Some(Selected::Agent(id)) => self.agent_row(id, cx),
         };
         self.table.select(row);
         match (row, selected) {

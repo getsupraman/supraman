@@ -28,7 +28,8 @@ use menu::{Dragged, Facts, RefAct, Subject};
 use super::ref_panel::RefAction;
 use super::remote::RemoteFacts;
 use super::remote::menu as remote_menu;
-use super::write_gate::{STILL_OPENING, WriteGate, Writes, Written, capitalised};
+use super::write_gate::{STILL_OPENING, WriteGate, Writes, Written};
+use supraman_core::text::capitalised;
 
 /// A ref write ran, or did not, or wants the tab.
 #[derive(Debug, Clone, PartialEq, Eq)]

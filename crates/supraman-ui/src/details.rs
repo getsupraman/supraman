@@ -8,6 +8,7 @@ use theme::{ActiveTheme as _, ThemeColors};
 
 use crate::banner;
 use crate::button;
+use crate::clipped::path_label;
 use crate::hit::{HitTargets, hit_target};
 
 const LABEL: f32 = 128.;
@@ -16,6 +17,8 @@ const LABEL: f32 = 128.;
 pub enum Line {
     /// `label  value`.
     Row(String, String),
+    /// `label  path`, the path in `/`s, its folder muted and cut ([`crate::clipped::path_label`]).
+    Path(String, String),
     Text(String),
     /// Wrapped as written, in the mono font, with a Copy button.
     Long(String),
@@ -40,6 +43,11 @@ impl Section {
 
     pub fn row(mut self, label: impl Into<String>, value: impl Into<String>) -> Self {
         self.lines.push(Line::Row(label.into(), value.into()));
+        self
+    }
+
+    pub fn path(mut self, label: impl Into<String>, path: &std::path::Path) -> Self {
+        self.lines.push(Line::Path(label.into(), supraman_core::paths::normalize(path)));
         self
     }
 
@@ -71,7 +79,7 @@ pub fn text(title: &str, sections: &[Section]) -> String {
         out.push_str(&format!("\n\n{}", s.caption));
         for line in &s.lines {
             match line {
-                Line::Row(label, value) | Line::Link { label, value, .. } => out.push_str(&format!("\n{label}  {value}")),
+                Line::Row(label, value) | Line::Path(label, value) | Line::Link { label, value, .. } => out.push_str(&format!("\n{label}  {value}")),
                 Line::Text(t) | Line::Long(t) => out.push_str(&format!("\n{t}")),
                 Line::Check { done, text, note } => {
                     out.push_str(&format!("\n[{}] {text}", if *done { "x" } else { " " }));
@@ -164,6 +172,9 @@ fn render_section<V: 'static>(page: &str, section: &Section, on_link: Option<OnL
     for (i, line) in section.lines.iter().enumerate() {
         out = out.child(match line {
             Line::Row(label, value) => labelled(label, &colors).child(div().flex_1().min_w_0().child(SharedString::from(value.clone()))).into_any_element(),
+            Line::Path(label, path) => labelled(label, &colors)
+                .child(path_label(format!("{key}-path-{i}"), path, crate::themes::secondary(&colors), colors.text).flex_1())
+                .into_any_element(),
             Line::Link { label, value, target } => link_line(label, value, target, format!("{key}-link-{i}"), on_link.clone(), hits, cx),
             Line::Text(t) => div().text_sm().whitespace_normal().child(SharedString::from(t.clone())).into_any_element(),
             Line::Check { done, text, note } => check_line(*done, text, note.as_deref(), format!("{key}-check-{i}"), hits, cx),

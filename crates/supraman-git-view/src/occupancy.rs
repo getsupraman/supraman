@@ -1,23 +1,12 @@
 //! The live sessions kept from each poll, so every Git tab's agent rows and background work answer from memory.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use supraman_core::paths::within;
 use supraman_gitman::write::Occupancy;
-use supraman_ui::marks::Activity;
 use supraman_ui::nudge::{Nudge, Nudged, nudge};
-
-/// A live session as the Git tab shows it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LiveSession {
-    pub name: String,
-    pub claude_session_id: String,
-    pub cwd: PathBuf,
-    pub activity: Activity,
-    /// The id `claude attach` takes, while the session can be attached (`fleet::attachable`).
-    pub attach: Option<String>,
-}
+pub use supraman_ui::session::LiveSession;
 
 #[derive(Default)]
 struct Shared {
