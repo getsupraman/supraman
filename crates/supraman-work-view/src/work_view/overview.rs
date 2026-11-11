@@ -145,7 +145,6 @@ impl WorkView {
 
     fn render_needs(&self, needs: &[Card], now: i64, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
-        let error = cx.theme().status().error;
         let mut card = self.card("Needs you", Some(needs.len()), cx).flex_1().min_w(px(320.));
         if needs.is_empty() {
             card = card.child(div().px_3().pb_3().text_sm().text_color(colors.text_muted).child("Nothing needs you."));
@@ -161,7 +160,7 @@ impl WorkView {
                     .py(px(5.))
                     .border_t_1()
                     .border_color(colors.border_variant)
-                    .child(div().pt(px(6.)).child(dot(Mark::Filled(error))))
+                    .child(div().pt(px(6.)).child(dot(Mark::Filled(supraman_ui::inbox_card::kind_color(&c.kind, cx)))))
                     .child(
                         div()
                             .flex_1()
@@ -169,7 +168,7 @@ impl WorkView {
                             .child(div().text_sm().whitespace_normal().child(SharedString::from(c.title.clone())))
                             .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(format!("{} · {}", c.badge, c.ref_)))),
                     )
-                    .child(div().flex_none().text_xs().text_color(colors.text_muted).child(SharedString::from(c.since.map(|at| time::ago(now - at)).unwrap_or_default())))
+                    .children(c.since.and_then(|at| supraman_ui::inbox_card::when(format!("work-overview-needs-when-{}", c.ref_), at, now, cx)).map(|w| w.text_xs()))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.open_from_inbox(id.clone(), cx))),
             );
         }

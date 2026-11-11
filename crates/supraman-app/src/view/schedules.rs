@@ -16,6 +16,7 @@ use theme::ActiveTheme as _;
 
 use super::{FleetView, Tab, TabKind};
 use supraman_ui::icon::Icon;
+use supraman_ui::inbox_card::{self, InboxCard};
 use super::left::{REPO_ROW, SESSION_LINE, disclosure, grid, icon_slot, secondary, tree_label};
 use super::menu::{Confirm, Confirmed, MenuTarget};
 use supraman_ui::clipped::clipped;
@@ -1009,54 +1010,27 @@ impl FleetView {
     }
 
     pub(super) fn render_schedule_inbox(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let colors = cx.theme().colors().clone();
-        let status = cx.theme().status().clone();
         let now = supraman_core::time::now_ms();
         let (runs, syncs) = self.schedule_attention();
         let waiting = self.schedules_waiting();
-        let card = |color: gpui::Hsla, label: &'static str, title: String, when: Option<String>, detail: String, buttons: gpui::Div| {
-            div()
-                .flex()
-                .items_start()
-                .gap_2()
-                .p_2()
-                .rounded_md()
-                .border_l_2()
-                .border_color(color)
-                .bg(color.opacity(0.10))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .flex_1()
-                        .min_w_0()
-                        .gap(px(2.))
-                        .child(
-                            div()
-                                .flex()
-                                .gap_2()
-                                .text_sm()
-                                .child(div().font_weight(gpui::FontWeight::BOLD).text_color(color).child(label))
-                                .child(SharedString::from(title))
-                                .children(when.map(|w| div().text_xs().text_color(colors.text_muted).child(SharedString::from(w)))),
-                        )
-                        .child(div().text_xs().text_color(colors.text).child(SharedString::from(detail))),
-                )
-                .child(buttons)
-                .into_any_element()
+        let act = |key: String, card: &str, icon: Icon, tip: &'static str| {
+            inbox_card::action(&self.hits, key, card.to_string(), icon.svg(inbox_card::ICON, inbox_card::icon_color(cx)), tip, cx)
         };
         let mut out = Vec::new();
         for w in waiting {
             let k = key(&w.workspace, &w.id);
-            let open = button::bordered(&self.hits, format!("inbox-sched-open-{k}"), "Open", cx).on_click(cx.listener({
+            let card = format!("inbox-sched-card-{k}");
+            let open = act(format!("inbox-sched-open-{k}"), &card, Icon::Check, "Open to approve").on_click(cx.listener({
                 let (ws, id) = (w.workspace.clone(), w.id.clone());
                 move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
                     this.open_schedule(&ws, &id, At::Approve, cx);
                 }
             }));
-            let dismiss = button::bordered(&self.hits, format!("inbox-sched-later-{k}"), "Dismiss", cx).on_click(cx.listener({
+            let dismiss = act(format!("inbox-sched-later-{k}"), &card, Icon::Close, "Dismiss").on_click(cx.listener({
                 let (ws, dismissed) = (w.workspace.clone(), w.key.clone());
                 move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
                     let save = this.scheduling.waiting_dismissed.dismiss(&ws, &dismissed);
                     this.save_off_thread(save, "Cannot save the dismissed approval", cx);
                     cx.notify();
@@ -1070,31 +1044,38 @@ impl FleetView {
             } else {
                 (format!("{} waits for your approval", w.title), format!("Schedule {} of {}: nothing runs until you approve it.", w.id, w.workspace))
             };
-            out.push(card(status.warning, "Approve", title, None, detail, div().flex().flex_none().gap_1().child(open).child(dismiss)));
+            out.push(InboxCard::new(card, "approve", "Approve", title).context(w.workspace.clone()).line("detail", detail, false).action(open).action(dismiss).render(&self.hits, cx));
         }
         for a in runs {
             let needs_you = a.outcome == schedule::Outcome::NeedsYou;
-            let color = if needs_you { status.warning } else { status.error };
-            let label = if needs_you { "Needs you" } else { "Run failed" };
+            let (kind, label) = if needs_you { ("needs you", "Needs you") } else { ("run failed", "Run failed") };
             let detail = if a.why.is_empty() { schedules::outcome_text(a.outcome).to_string() } else { format!("{}: {}", schedules::outcome_text(a.outcome), a.why) };
             let (w, id, run) = (a.workspace.clone(), a.id.clone(), a.run.clone());
-            let history = button::bordered(&self.hits, format!("inbox-sched-history-{}", a.run), "Details", cx).on_click(cx.listener({
+            let card = format!("inbox-sched-run-{}", a.run);
+            let history = act(format!("inbox-sched-history-{}", a.run), &card, Icon::Clock, "Details").on_click(cx.listener({
                 let (w, id) = (w.clone(), id.clone());
-                move |this, _: &ClickEvent, _, cx| this.schedule_history(&w, &id, cx)
+                move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.schedule_history(&w, &id, cx);
+                }
             }));
-            let dismiss = button::bordered(&self.hits, format!("inbox-sched-dismiss-{}", a.run), "Dismiss", cx)
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.dismiss_schedule_notice(&w, &run, cx)));
-            out.push(card(color, label, format!("{} · {}", a.workspace, a.id), Some(supraman_core::time::ago(now - a.at)), detail, div().flex().flex_none().gap_1().child(history).child(dismiss)));
+            let dismiss = act(format!("inbox-sched-dismiss-{}", a.run), &card, Icon::Close, "Dismiss").on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                this.dismiss_schedule_notice(&w, &run, cx);
+            }));
+            out.push(InboxCard::new(card, kind, label, a.id.clone()).context(a.workspace.clone()).when(Some(a.at), now).line("detail", detail, false).action(history).action(dismiss).render(&self.hits, cx));
         }
         for (k, e) in syncs {
-            let dismiss = button::bordered(&self.hits, format!("inbox-sync-dismiss-{k}"), "Dismiss", cx).on_click(cx.listener({
+            let card = format!("inbox-sync-card-{k}");
+            let dismiss = act(format!("inbox-sync-dismiss-{k}"), &card, Icon::Close, "Dismiss").on_click(cx.listener({
                 let k = k.clone();
                 move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
                     this.scheduling.sync_errors.remove(&k);
                     cx.notify();
                 }
             }));
-            out.push(card(status.error, "Task not synced", k, None, e, div().flex().flex_none().child(dismiss)));
+            out.push(InboxCard::new(card, "task not synced", "Task not synced", k).line("detail", e, false).action(dismiss).render(&self.hits, cx));
         }
         out
     }
