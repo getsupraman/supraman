@@ -123,6 +123,15 @@ impl Updates {
             let shared = source.clone();
             cx.spawn(async move |this, cx| {
                 let executor = cx.background_executor().clone();
+                let at = home.clone();
+                let (last, dismissed) = executor.spawn(async move { (updates::last(&at), updates::dismissed(&at)) }).await;
+                let landed = this.update(cx, |this, cx| {
+                    this.updates.stored(last, dismissed);
+                    cx.notify();
+                });
+                if landed.is_err() {
+                    return;
+                }
                 loop {
                     let source = shared.lock().unwrap_or_else(|e| e.into_inner()).clone();
                     let started = this.update(cx, |this, cx| {
@@ -157,7 +166,6 @@ impl Updates {
             })
             .detach();
         }
-        let (last, dismissed) = home.as_deref().map_or((None, None), |h| (updates::last(h), updates::dismissed(h)));
         let target = Target::this_install();
         let stage = match home.as_deref().and_then(|h| updates::failed_apply(h, &running)) {
             Some((version, why)) => Stage::Failed(format!("The update to {version} did not apply: {why}")),
@@ -172,7 +180,17 @@ impl Updates {
                 }
             })
             .detach();
-        Self { source, nudge, last, checking: false, checks: 0, dismissed, action: install_update, target, stage, cancel: Arc::default() }
+        Self { source, nudge, last: None, checking: false, checks: 0, dismissed: None, action: install_update, target, stage, cancel: Arc::default() }
+    }
+
+    /// What the last run kept, under a check or a Dismiss made before it landed.
+    fn stored(&mut self, last: Option<Checked>, dismissed: Option<Version>) {
+        if self.last.is_none() {
+            self.last = last;
+        }
+        if self.dismissed.is_none() {
+            self.dismissed = dismissed;
+        }
     }
 
     pub fn stage_line(&self) -> Option<String> {
@@ -445,5 +463,22 @@ mod tests {
         assert_eq!(u.status_line(true), "Checking…");
         let failed = updates("0.1.0", Some(Outcome::Failed { reason: "no release is published yet".into() }));
         assert!(failed.status_line(true).ends_with("failed: no release is published yet"), "{}", failed.status_line(true));
+    }
+
+    #[test]
+    fn the_kept_check_and_dismissal_land_under_what_came_first() {
+        let mut u = updates("0.1.0", None);
+        u.stored(Some(Checked { at_ms: 0, outcome: Outcome::Available(available("0.2.0")) }), None);
+        assert_eq!(u.offered().map(Available::version), Some("0.2.0"), "the kept check shows the banner");
+
+        let mut u = updates("0.1.0", Some(Outcome::UpToDate));
+        u.dismissed = Version::parse("0.3.0").ok();
+        u.stored(Some(Checked { at_ms: 0, outcome: Outcome::Available(available("0.2.0")) }), Version::parse("0.1.5").ok());
+        assert!(matches!(u.last.as_ref().map(|c| &c.outcome), Some(Outcome::UpToDate)), "a check that landed first stays");
+        assert_eq!(u.dismissed, Version::parse("0.3.0").ok(), "a Dismiss made before the read stays");
+
+        let mut u = updates("0.1.0", None);
+        u.stored(None, Version::parse("0.2.0").ok());
+        assert_eq!(u.dismissed, Version::parse("0.2.0").ok());
     }
 }

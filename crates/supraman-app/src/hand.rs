@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use supraman_core::home::home_env;
-use supraman_core::platform::shell::launch::{encoded_command, quote, runner};
+use supraman_core::platform::shell::launch::{encoded_command, runner};
+use supraman_core::platform::shell::quote;
 use supraman_core::paths::{path_key, within};
 use supraman_core::{Workspace, owners};
 use supraman_supervisor::{Bearer, HAND_ROLE, HttpMinter, Keeper, LaunchConfig, MintError, MintRepo, MintRequest, Minted, MintedSession, MintedSessions, Minter, git_repo, launched_by, mint_as};
@@ -156,7 +157,7 @@ pub struct Hands {
     /// Names whose token a continuation of their claude session holds: never revoked here, they lapse unused.
     carried: std::collections::HashSet<String>,
     /// `sm.exe` and the store a hand's token is kept in: its config's `headersHelper` prints it at each connect.
-    helper: Option<(PathBuf, Arc<dyn supraman_core::secret::SecretStore>)>,
+    helper: (PathBuf, Arc<dyn supraman_core::secret::SecretStore>),
 }
 
 pub fn restart_notice(n: usize, to: &str) -> Option<String> {
@@ -249,9 +250,9 @@ impl Hands {
     }
 
     pub fn open(home: &Path) -> (Self, Option<String>) {
-        let (mut hands, notice) = Self::with(home, crate::signin::auth(home), HttpMinter::default(), git_repo);
+        let (mut hands, notice) = Self::with(home, crate::signin::auth(home), HttpMinter::default(), git_repo, supraman_core::secret::default_store(home));
         hands.claude_dir = supraman_core::paths::claude_dir();
-        hands.helper = Some((supraman_core::install::sm_exe().unwrap_or_else(|_| supraman_core::hook_exe().into()), supraman_core::secret::default_store(home)));
+        hands.helper.0 = supraman_core::install::sm_exe().unwrap_or_else(|_| supraman_core::hook_exe().into());
         (hands, notice)
     }
 
@@ -260,6 +261,7 @@ impl Hands {
         auth: Arc<Auth>,
         minter: impl Minter + Send + Sync + 'static,
         repo_of: fn(&Path) -> Option<MintRepo>,
+        store: Arc<dyn supraman_core::secret::SecretStore>,
     ) -> (Self, Option<String>) {
         let path = Self::path(home);
         let (mut minted, notice) = match MintedSessions::load(Some(path.clone())) {
@@ -282,7 +284,7 @@ impl Hands {
             left: Vec::new(),
             claude_dir: None,
             carried: Default::default(),
-            helper: Some((supraman_core::hook_exe().into(), Arc::new(supraman_core::secret::MemoryStore::default()))),
+            helper: (supraman_core::hook_exe().into(), store),
         };
         (hands, notice)
     }
@@ -350,7 +352,7 @@ impl Hands {
 
     /// Where a hand's token is kept, and its config written: [`Self::helper`].
     fn keeper(&self) -> Keeper {
-        let (sm, store) = self.helper.clone().unwrap_or_else(|| (supraman_core::hook_exe().into(), Arc::new(supraman_core::secret::MemoryStore::default())));
+        let (sm, store) = self.helper.clone();
         Keeper::new(&self.home, &self.mcp_dir(), store).with_sm(sm)
     }
 
@@ -608,6 +610,10 @@ mod tests {
         (fake.base().to_string(), Requests { fake, taken: Cell::new(0) }, oauth)
     }
 
+    fn memory() -> Arc<dyn supraman_core::secret::SecretStore> {
+        Arc::new(supraman_core::secret::MemoryStore::default())
+    }
+
     fn a_repo(cwd: &Path) -> Option<MintRepo> {
         cwd.ends_with("alpha").then(|| MintRepo {
             root: "C:/demo/alpha".into(),
@@ -640,7 +646,7 @@ mod tests {
         let (a, seen_a, _) = fake_workman(vec![]);
         let (b, seen_b, _) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&a));
-        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         let Launch::Minted { name, .. } = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!() };
         seen_a.recv_timeout(WAIT).unwrap();
         assert!(hands.elsewhere(&a).is_empty(), "minted there");
@@ -666,7 +672,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (a, seen, _) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&a));
-        let (mut hands, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        let (mut hands, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo, memory());
         let Launch::Minted { name, config, .. } = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!() };
         seen.recv_timeout(WAIT).unwrap();
         assert!(hands.signed_out("https://b.example").is_empty());
@@ -674,7 +680,7 @@ mod tests {
         assert!(hands.signed_out(&format!("{a}/")).is_empty());
         assert!(seen.recv_timeout(std::time::Duration::from_millis(300)).is_err(), "no DELETE: the grant revoke took it");
         assert!(hands.minted.get(&name).is_some() && config.exists(), "its record and config stay");
-        let kept = hands.helper.as_ref().unwrap().1.get(&supraman_claude::mcp_token_key(&name)).unwrap();
+        let kept = hands.helper.1.get(&supraman_claude::mcp_token_key(&name)).unwrap();
         assert_eq!(kept.as_deref(), Some("wss_fake1"), "its kept token stays for its helper");
         let marks = std::fs::read_to_string(home.join("supervisor").join("kept.json")).unwrap_or_default();
         assert!(marks.contains(r#""signedOut": true"#), "{marks}");
@@ -688,7 +694,7 @@ mod tests {
         std::fs::write(Hands::path(&home), r#"{"hand-alpha-1":{"sessionId":"h1","role":"hand"},"hand-beta-1":{"sessionId":"h2","role":"hand"}}"#).unwrap();
         supraman_claude::write_mcp_config_helped(&home.join("mcp"), "hand-alpha-1", "http://127.0.0.1:1/mcp", "sm", &[]).unwrap();
         let (_, auth) = home_with(dir.path(), None);
-        let (hands, notice) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        let (hands, notice) = Hands::with(&home, auth, HttpMinter::default(), a_repo, memory());
         assert_eq!(notice, None);
         assert_eq!(hands.elsewhere("https://b.example"), [
             ("hand-alpha-1".to_string(), Some("http://127.0.0.1:1".to_string())),
@@ -702,7 +708,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (url, seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&url));
-        let (mut hands, notice) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut hands, notice) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         assert_eq!(notice, None);
 
         let launch = hands.launch(Path::new(r"C:\demo\alpha"), None);
@@ -725,7 +731,7 @@ mod tests {
         assert!(launch.script().contains(&format!("try {{ supramanClaude @('--session-id', '{sid}', '--mcp-config', '")), "{}", launch.script());
         assert_eq!(hands.minted.get(&name).unwrap().claude_session_id.as_deref(), Some(sid.as_str()));
         let text = std::fs::read_to_string(&config).unwrap();
-        let kept = hands.helper.as_ref().unwrap().1.get(&supraman_claude::mcp_token_key(&name)).unwrap().unwrap_or_default();
+        let kept = hands.helper.1.get(&supraman_claude::mcp_token_key(&name)).unwrap().unwrap_or_default();
         assert!(kept == "wss_fake1" && text.contains(&format!("{url}/mcp")), "the minted token, not the sign-in's");
         assert!(text.contains("headersHelper") && !text.contains("Bearer") && !text.contains("wss_"), "no token in the config: {text}");
         assert!(!text.contains("eyJ"));
@@ -863,7 +869,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (url, _seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&url));
-        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         let Launch::Minted { config, .. } = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!() };
         #[cfg(windows)]
         {
@@ -886,7 +892,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (url, seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&url));
-        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         let alpha = Path::new(r"C:\demo\alpha");
 
         let Launch::Minted { name, config, .. } = hands.launch(alpha, None) else { panic!() };
@@ -919,12 +925,12 @@ mod tests {
         let Launch::Minted { config: c5, .. } = hands.launch(alpha, None) else { panic!() };
         seen.recv_timeout(WAIT).unwrap();
         drop(hands);
-        let (mut again, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut again, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         assert_eq!(again.names(), ["hand-alpha-1"]);
         assert!(again.release_all().is_empty());
         assert_eq!(seen.recv_timeout(WAIT).unwrap().0, "DELETE /api/agent-sessions/h5 HTTP/1.1");
         assert!(!c5.exists());
-        let (third, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (third, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         assert!(third.names().is_empty(), "the revoke was saved");
     }
 
@@ -956,7 +962,7 @@ mod tests {
         let (home, auth) = home_with(dir, Some(&url));
         let revoked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let minter = SlowRevokes { revoke_takes, revoked: revoked.clone(), minted: Default::default() };
-        let (hands, _) = Hands::with(&home, auth.clone(), minter, a_repo);
+        let (hands, _) = Hands::with(&home, auth.clone(), minter, a_repo, memory());
         (home, Arc::new(Mutex::new(hands)), revoked, auth)
     }
 
@@ -979,7 +985,7 @@ mod tests {
         assert_eq!(release_all_within(hands, std::time::Duration::from_millis(300)), None);
         assert!(started.elapsed() < std::time::Duration::from_secs(2), "{:?}", started.elapsed());
         assert_eq!(revoked.load(std::sync::atomic::Ordering::SeqCst), 0);
-        let (left, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        let (left, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo, memory());
         assert_eq!(left.names().len(), 3, "what quit did not reach stays for the next start");
     }
 
@@ -1016,7 +1022,7 @@ mod tests {
         let held = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
         let (entered, mints) = std::sync::mpsc::channel();
         let minter = HeldMints { held: held.clone(), entered: Mutex::new(entered), minted: Default::default() };
-        let (hands, _) = Hands::with(&home, auth, minter, a_repo);
+        let (hands, _) = Hands::with(&home, auth, minter, a_repo, memory());
         let hands = Arc::new(Mutex::new(hands));
         let alpha = Path::new(r"C:\demo\alpha");
         let Launch::Minted { name: first, .. } = launch_locked(&hands, alpha, None, None) else { panic!() };
@@ -1067,7 +1073,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (url, seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&url));
-        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         let alpha = Path::new(r"C:\demo\alpha");
         let sid = "5e1f7e57-0000-4000-8000-00000000c105";
         let Launch::Minted { name, config, .. } = hands.launch_for(alpha, Some("resumed"), Some(sid)) else { panic!() };
@@ -1096,7 +1102,7 @@ mod tests {
         assert_eq!(workman["url"].as_str(), Some(url), "{text}");
         assert!(workman["headersHelper"].as_str().is_some_and(|h| h.ends_with(&format!(" mcp-header --home \"{}\" {name}", hands.home.display()))), "{text}");
         assert!(!text.contains("Bearer") && !text.contains("wss_"), "no token in the config: {text}");
-        assert_eq!(hands.helper.as_ref().unwrap().1.get(&supraman_claude::mcp_token_key(name)).unwrap(), None, "no token kept");
+        assert_eq!(hands.helper.1.get(&supraman_claude::mcp_token_key(name)).unwrap(), None, "no token kept");
         let script = launch.script();
         assert!(script.contains(&format!("supramanClaude @('--mcp-config', {})", quote(&config.to_string_lossy()))), "{script}");
         assert!(!script.contains("--strict-mcp-config"), "the user's other servers stay: {script}");
@@ -1108,7 +1114,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (_url, seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), None);
-        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         let url = supraman_supervisor::mcp_url(&auth).unwrap();
         let first = hands.launch(Path::new(r"C:\demo\alpha"), None);
         assert_eq!(assert_helped_tab(&hands, &first, &url), ("hand-alpha-1".to_string(), None));
@@ -1129,7 +1135,7 @@ mod tests {
         oauth.set_access_ttl(60);
         let (home, auth) = home_with(dir.path(), Some(&url));
         oauth.fail_refresh(true);
-        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         let launch = hands.launch(Path::new(r"C:\demo\alpha"), None);
         let (_, notice) = assert_helped_tab(&hands, &launch, &format!("{url}/mcp"));
         let notice = notice.unwrap();
@@ -1142,7 +1148,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
         let auth = Arc::new(Auth::with_store(&home, Arc::new(supraman_core::secret::MemoryStore::default())));
-        let (mut hands, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        let (mut hands, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo, memory());
         let Launch::Unminted(notice) = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!("a tab without Workman") };
         assert!(notice.contains("runs without Workman") && notice.contains("run /workman:setup"), "{notice}");
         assert!(!home.join("mcp").exists(), "no config written");
@@ -1153,7 +1159,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (url, seen, _oauth) = fake_workman(vec![(500, r#"{"error":"the store is down"}"#)]);
         let (home, auth) = home_with(dir.path(), Some(&url));
-        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         let launch = hands.launch(Path::new(r"C:\demo\alpha"), None);
         let (_, notice) = assert_helped_tab(&hands, &launch, &format!("{url}/mcp"));
         assert_eq!(
@@ -1169,7 +1175,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (url, seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&url));
-        let (mut hands, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        let (mut hands, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo, memory());
         let folder = Path::new(r"C:\demo\Alpha");
         let sid = "fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff";
         let Launch::Minted { session, .. } = hands.launch_for(folder, Some("hand-Alpha-1"), Some(sid)) else { panic!() };
@@ -1185,7 +1191,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (url, seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&url));
-        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         let former = MintRequest {
             name: "mw-workflow".into(),
             role: ROLE.into(),
@@ -1214,7 +1220,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (url, seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&url));
-        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         let alpha = Path::new(r"C:\demo\alpha");
 
         let sid = "fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff";
@@ -1261,7 +1267,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (url, seen, _oauth) = fake_workman(vec![(409, r#"{"error":"the session name \"nomos-0c\" is held by a session launched by no launcher"}"#)]);
         let (home, auth) = home_with(dir.path(), Some(&url));
-        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         let Launch::Minted { name, session, notice, .. } = hands.launch(Path::new(r"C:\demo\alpha"), Some("nomos-0c")) else { panic!() };
         assert_eq!((name.as_str(), session.as_str()), ("hand-alpha-1", "hand-alpha-1"));
         assert!(notice.unwrap().starts_with("Workman session hand-alpha-1, not nomos-0c: "));
@@ -1276,7 +1282,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (url, seen, _oauth) = fake_workman(vec![(403, r#"{"error":"a worker cannot mint a orchestrator token; a role is never raised"}"#)]);
         let (home, auth) = home_with(dir.path(), Some(&url));
-        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         let launch = hands.launch(Path::new(r"C:\demo\alpha"), Some("mw-workflow"));
         let notice = assert_helped_tab(&hands, &launch, &format!("{url}/mcp")).1.unwrap();
         assert!(notice.contains("cannot mint an orchestrator one (Workman answered HTTP 403"), "{notice}");
@@ -1481,7 +1487,7 @@ mod tests {
         let (fake, sessions) = session_workman();
         let (home, auth) = home_with(dir.path(), Some(fake.base()));
         let alpha = Path::new(r"C:\demo\alpha");
-        let (mut before, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut before, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         before.claude_dir = Some(continued_claude(dir.path(), true));
         let Launch::Minted { config, .. } = before.launch_for(alpha, Some("mw-workflow"), Some(SID)) else { panic!() };
         let held = sessions.token_of("mw-workflow").unwrap();
@@ -1491,7 +1497,7 @@ mod tests {
         let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(Hands::path(&home)).unwrap()).unwrap();
         assert_eq!(saved["hand-alpha-1"]["claudeSessionId"], NEXT, "hands.json follows the chain");
 
-        let (mut reopened, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut reopened, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         reopened.claude_dir = Some(dir.path().join("claude"));
         assert!(reopened.release_last_run().is_empty(), "the start");
         assert!(sessions.live(&held), "NEXT still runs: the start leaves its token");
@@ -1521,14 +1527,14 @@ mod tests {
         let (fake, sessions) = session_workman();
         let (home, auth) = home_with(dir.path(), Some(fake.base()));
         let alpha = Path::new(r"C:\demo\alpha");
-        let (mut before, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut before, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         before.claude_dir = Some(running_claude(dir.path(), true));
         let Launch::Minted { config, .. } = before.launch_for(alpha, Some("mw-live"), Some(SID)) else { panic!() };
         let held = sessions.token_of("mw-live").unwrap();
 
         assert!(before.release_all().is_empty(), "the quit");
         assert!(sessions.live(&held) && config.exists(), "its claude runs: token and config stay");
-        let (mut after, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        let (mut after, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo, memory());
         after.claude_dir = Some(dir.path().join("claude"));
         assert!(after.release_last_run().is_empty(), "the start");
         assert!(sessions.live(&held) && config.exists(), "still running at the start: nothing is minted or revoked");
@@ -1541,19 +1547,19 @@ mod tests {
         let (fake, sessions) = session_workman();
         let (home, auth) = home_with(dir.path(), Some(fake.base()));
         let alpha = Path::new(r"C:\demo\alpha");
-        let (mut quit, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut quit, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         quit.claude_dir = Some(running_claude(dir.path(), false));
         let Launch::Minted { config, .. } = quit.launch_for(alpha, Some("mw-ended"), Some(SID)) else { panic!() };
         let held = sessions.token_of("mw-ended").unwrap();
         assert!(quit.release_all().is_empty());
         assert!(!sessions.live(&held) && !config.exists(), "the quit revokes it");
 
-        let (mut crashed, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut crashed, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         crashed.claude_dir = Some(dir.path().join("claude"));
         let Launch::Minted { config, .. } = crashed.launch_for(alpha, Some("mw-ended"), Some(SID)) else { panic!() };
         let held = sessions.token_of("mw-ended").unwrap();
         drop(crashed);
-        let (mut start, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        let (mut start, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo, memory());
         start.claude_dir = Some(dir.path().join("claude"));
         assert!(start.release_last_run().is_empty());
         assert!(!sessions.live(&held) && !config.exists(), "the start revokes what a run left behind");
@@ -1567,8 +1573,8 @@ mod tests {
         let alpha = Path::new(r"C:\demo\alpha");
         let sm = PathBuf::from(r"C:\Tools\supra man\sm.exe");
         let store: Arc<dyn supraman_core::secret::SecretStore> = Arc::new(supraman_core::secret::MemoryStore::default());
-        let helped = |hands: &mut Hands| hands.helper = Some((sm.clone(), store.clone()));
-        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let helped = |hands: &mut Hands| hands.helper = (sm.clone(), store.clone());
+        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         helped(&mut hands);
         let Launch::Minted { name, config, .. } = hands.launch_for(alpha, Some("mw-helped"), Some(SID)) else { panic!() };
         let first = sessions.token_of("mw-helped").unwrap();
@@ -1584,7 +1590,7 @@ mod tests {
         assert!(header(&first), "the helper prints the minted token");
 
         std::fs::remove_file(&config).unwrap();
-        let (mut reopened, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        let (mut reopened, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo, memory());
         helped(&mut reopened);
         let Launch::Minted { name: again, .. } = reopened.launch_for(alpha, Some("mw-helped"), Some(SID)) else { panic!() };
         let second = sessions.token_of("mw-helped").unwrap();
@@ -1601,13 +1607,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (fake, sessions) = session_workman();
         let (home, auth) = home_with(dir.path(), Some(fake.base()));
-        let (mut before, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut before, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         before.claude_dir = Some(continued_claude(dir.path(), false));
         let Launch::Minted { .. } = before.launch_for(Path::new(r"C:\demo\alpha"), Some("mw-workflow"), Some(SID)) else { panic!() };
         let held = sessions.token_of("mw-workflow").unwrap();
         drop(before);
 
-        let (mut reopened, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        let (mut reopened, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo, memory());
         reopened.claude_dir = Some(dir.path().join("claude"));
         assert!(reopened.release_last_run().is_empty());
         assert!(!sessions.live(&held), "nothing runs holding it");
@@ -1621,11 +1627,11 @@ mod tests {
         let (fake, sessions) = session_workman();
         let (home, auth) = home_with(dir.path(), Some(fake.base()));
         let alpha = Path::new(r"C:\demo\alpha");
-        let (mut before, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut before, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         let Launch::Minted { config, .. } = before.launch_for(alpha, Some("mw-logged"), Some(SID)) else { panic!() };
         let first = sessions.token_of("mw-logged").unwrap();
         std::fs::remove_file(&config).unwrap();
-        let (mut reopened, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        let (mut reopened, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo, memory());
         let Launch::Minted { .. } = reopened.launch_for(alpha, Some("mw-logged"), Some(SID)) else { panic!() };
         let second = sessions.token_of("mw-logged").unwrap();
 
@@ -1642,12 +1648,12 @@ mod tests {
         let (fake, sessions) = session_workman();
         let (home, auth) = home_with(dir.path(), Some(fake.base()));
         let alpha = Path::new(r"C:\demo\alpha");
-        let (mut before, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut before, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         let Launch::Minted { session, config, .. } = before.launch_for(alpha, Some("mw-workflow"), Some(SID)) else { panic!() };
         assert_eq!(session, "mw-workflow");
         let held = sessions.token_of("mw-workflow").unwrap();
 
-        let (mut reopened, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        let (mut reopened, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo, memory());
         let Launch::Minted { session, notice, .. } = reopened.launch_for(alpha, Some("mw-workflow"), Some(SID)) else { panic!() };
         assert!(sessions.live(&held), "the claude still running under mw-workflow keeps its token");
         assert_eq!(session, "hand-alpha-2");
@@ -1662,12 +1668,12 @@ mod tests {
         let (fake, sessions) = session_workman();
         let (home, auth) = home_with(dir.path(), Some(fake.base()));
         let alpha = Path::new(r"C:\demo\alpha");
-        let (mut before, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut before, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         let Launch::Minted { config, .. } = before.launch_for(alpha, Some("mw-workflow"), Some(SID)) else { panic!() };
         let held = sessions.token_of("mw-workflow").unwrap();
         std::fs::remove_file(&config).unwrap();
 
-        let (mut reopened, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        let (mut reopened, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo, memory());
         let Launch::Minted { session, notice, .. } = reopened.launch_for(alpha, Some("mw-workflow"), Some(SID)) else { panic!() };
         assert_eq!((session.as_str(), notice), ("mw-workflow", None));
         assert!(!sessions.live(&held), "its exited claude's token is replaced");
@@ -1680,7 +1686,7 @@ mod tests {
         let (fake, sessions) = session_workman();
         let (home, auth) = home_with(dir.path(), Some(fake.base()));
         let alpha = Path::new(r"C:\demo\alpha");
-        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         let Launch::Minted { session, .. } = hands.launch(alpha, None) else { panic!() };
         let held = sessions.token_of(&session).unwrap();
         auth.sign_in(fake.base(), &supraman_workman::auth::http_browser()).unwrap();
@@ -1696,7 +1702,7 @@ mod tests {
         let refused = (409, r#"{"error":"the session \"x\" already has a live token; pass replace: true to revoke it and mint a new one"}"#);
         let (url, seen, _oauth) = fake_workman(vec![refused; 1 + FRESH_TRIES]);
         let (home, auth) = home_with(dir.path(), Some(&url));
-        let (mut hands, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        let (mut hands, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo, memory());
         let launch = hands.launch(Path::new(r"C:\demo\alpha"), None);
         assert!(matches!(&launch, Launch::Helped { notice: Some(why), .. } if why.contains("HTTP 409")), "{launch:?}");
         assert_helped_tab(&hands, &launch, &format!("{url}/mcp"));
