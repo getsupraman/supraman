@@ -134,14 +134,7 @@ pub fn inbox_buttons(need: &NeedsYou) -> Vec<(String, &'static str, InboxButton)
 }
 
 fn inbox_button_icon(button: &InboxButton) -> Icon {
-    match button {
-        InboxButton::Remedy(Remedy::Attach { .. }) => Icon::Attach,
-        InboxButton::Remedy(Remedy::Retry | Remedy::Adopt { .. }) | InboxButton::Retry => Icon::Refresh,
-        InboxButton::Remedy(Remedy::RunInTerminal { .. }) => Icon::Terminal,
-        InboxButton::Remedy(Remedy::Remint { .. }) => Icon::Lock,
-        InboxButton::Remedy(Remedy::RestartElevated) => Icon::Resume,
-        InboxButton::StartFresh => Icon::Plus,
-    }
+    if matches!(button, InboxButton::StartFresh) { Icon::Plus } else { Icon::Refresh }
 }
 
 fn icon_button(hits: &HitTargets, key: &'static str, icon: Icon, tip: impl Into<SharedString>, on: bool, cx: &gpui::App) -> Stateful<Div> {
@@ -622,8 +615,13 @@ impl FleetView {
         let mut card = InboxCard::new(key.clone(), label, label, need.name.clone()).context(need.workspace.clone()).when(Some(need.since), now).line("detail", need.detail.clone(), false);
         for (button, tip, does) in inbox_buttons(need) {
             let (workspace, name) = (need.workspace.clone(), need.name.clone());
-            let icon = inbox_button_icon(&does).svg(inbox_card::ICON, inbox_card::icon_color(cx));
-            card = card.action(inbox_card::action(&self.hits, button, key.clone(), icon, tip, cx).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            let main = matches!(does, InboxButton::Remedy(_));
+            let shown = if main {
+                inbox_card::primary(&self.hits, button, tip, cx)
+            } else {
+                inbox_card::action(&self.hits, button, key.clone(), inbox_button_icon(&does).svg(inbox_card::ICON, inbox_card::icon_color(cx)), tip, cx)
+            };
+            let shown = shown.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 cx.stop_propagation();
                 match &does {
                     InboxButton::Remedy(Remedy::Attach { id }) => {
@@ -636,7 +634,8 @@ impl FleetView {
                     InboxButton::Remedy(Remedy::RestartElevated) => this.restart_elevated(window, cx),
                     InboxButton::StartFresh => this.start_fresh(&workspace, &name, cx),
                 }
-            })));
+            }));
+            card = if main { card.primary(shown) } else { card.action(shown) };
         }
         card.render(&self.hits, cx)
     }

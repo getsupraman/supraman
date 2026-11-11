@@ -61,6 +61,14 @@ fn suffix(error: &str) -> String {
     if error.is_empty() { String::new() } else { format!(" ({error})") }
 }
 
+/// How a sign-out ended once the local tokens were gone; a grant not revoked is logged, never a notice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignedOut {
+    Revoked,
+    Nothing,
+    NotRevoked(String),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthStatus {
     NotSignedIn,
@@ -451,20 +459,19 @@ impl Auth {
         Ok(AuthStatus::SignedIn { who, unsaved })
     }
 
-    /// Local tokens go before the revoke, so no other call waits on it. `Err` is a notice: the revoke failed.
-    pub fn sign_out(&self, origin: &str) -> Result<(), String> {
+    /// Local tokens go before the revoke, so no other call waits on it. `Err` is a notice: the store could not be read or written.
+    pub fn sign_out(&self, origin: &str) -> Result<SignedOut, String> {
         let origin = supraman_core::url::origin(origin);
-        let revoked = self.sign_out_flow(&origin);
-        match &revoked {
-            Ok(true) => log::info!("Workman at {origin}: signed out; the grant is revoked, with every session token minted under it"),
-            Ok(false) => log::info!("Workman at {origin}: signed out; no stored sign-in, nothing to revoke"),
-            Err(e) => log::warn!("Workman at {origin}: signed out here, but the grant is not revoked: {e}"),
+        let out = self.sign_out_flow(&origin)?;
+        match &out {
+            SignedOut::Revoked => log::info!("Workman at {origin}: signed out; the grant is revoked, with every session token minted under it"),
+            SignedOut::Nothing => log::info!("Workman at {origin}: signed out; no stored sign-in, nothing to revoke"),
+            SignedOut::NotRevoked(e) => log::warn!("Workman at {origin}: signed out here, but the grant is not revoked: {e}"),
         }
-        revoked.map(|_| ())
+        Ok(out)
     }
 
-    /// `Ok(true)`: the server revoked the grant.
-    fn sign_out_flow(&self, origin: &str) -> Result<bool, String> {
+    fn sign_out_flow(&self, origin: &str) -> Result<SignedOut, String> {
         let origin = origin.to_string();
         let known = self.load_known().map_err(|e| e.to_string())?;
         let refresh = {
@@ -473,7 +480,7 @@ impl Auth {
                 inner.held = None;
             }
             let Some(meta) = known.servers.get(&origin) else {
-                return Ok(false);
+                return Ok(SignedOut::Nothing);
             };
             inner.broken.remove(&meta.issuer);
             let unsaved = inner.unsaved.remove(&meta.issuer).map(|(rt, _)| rt);
@@ -484,9 +491,9 @@ impl Auth {
             unsaved.or(stored)
         };
         let meta = &known.servers[&origin];
-        match (&refresh, &meta.revocation_endpoint, known.clients.get(&meta.issuer)) {
-            (None, _, _) => Ok(false),
-            (Some(_), None, _) => Err(format!("Workman at {origin} names no revocation endpoint; the grant lapses after 30 days")),
+        Ok(match (&refresh, &meta.revocation_endpoint, known.clients.get(&meta.issuer)) {
+            (None, _, _) => SignedOut::Nothing,
+            (Some(_), None, _) => SignedOut::NotRevoked(format!("Workman at {origin} names no revocation endpoint; the grant lapses after 30 days")),
             (Some(rt), Some(endpoint), client) => {
                 let mut form = vec![("token", rt.as_str()), ("token_type_hint", "refresh_token")];
                 if let Some(client) = client {
@@ -499,12 +506,12 @@ impl Auth {
                     .content_type("application/x-www-form-urlencoded")
                     .send(form_encode(&form).as_str());
                 match read(&origin, res) {
-                    Ok((status, _)) if (200..300).contains(&status) => Ok(true),
-                    Ok((status, body)) => Err(format!("Workman at {origin} refused the sign-out: HTTP {status}{}", suffix(&oauth_error(&body)))),
-                    Err(e) => Err(format!("{e}; the grant lapses after 30 days")),
+                    Ok((status, _)) if (200..300).contains(&status) => SignedOut::Revoked,
+                    Ok((status, body)) => SignedOut::NotRevoked(format!("Workman at {origin} refused the sign-out: HTTP {status}{}", suffix(&oauth_error(&body)))),
+                    Err(e) => SignedOut::NotRevoked(format!("{e}; the grant lapses after 30 days")),
                 }
             }
-        }
+        })
     }
 
     fn discover(&self, origin: &str) -> Result<ServerMeta, AuthError> {

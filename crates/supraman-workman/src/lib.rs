@@ -12,7 +12,7 @@ pub mod status;
 mod stream;
 pub mod updates;
 
-pub use auth::{Auth, AuthError, AuthStatus};
+pub use auth::{Auth, AuthError, AuthStatus, SignedOut};
 pub use client::{API_VERSION, BearerSource, BriefFor, Client, Error, JournalQuery, Result, SessionsQuery};
 pub use health::{health, refuses};
 pub use http::{Reply, agent as http_agent, agent_following as http_agent_following, pct_encode, read as read_reply, server_reason};

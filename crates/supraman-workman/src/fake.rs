@@ -377,6 +377,7 @@ struct AuthState {
     access_ttl: u64,
     refresh_len: usize,
     fail_refresh: bool,
+    fail_revoke: bool,
     deny: bool,
     issued: Vec<String>,
     refusals: Vec<String>,
@@ -427,6 +428,11 @@ impl FakeAuth {
 
     pub fn fail_refresh(&self, fail: bool) {
         self.st().fail_refresh = fail;
+    }
+
+    /// The revoke endpoint refuses with `invalid_request`, the grant kept.
+    pub fn fail_revoke(&self, fail: bool) {
+        self.st().fail_revoke = fail;
     }
 
     /// As Workman 2.1: the old `workstate.*` scope names are no longer offered, and a grant made with them is refused.
@@ -675,6 +681,9 @@ impl FakeAuth {
                 let f = form_decode(body);
                 let token = f.get("token").cloned().unwrap_or_default();
                 let mut st = self.st();
+                if st.fail_revoke {
+                    return Some(Self::refuse(&mut st, "/connect/revoke", "invalid_request", "refused on request"));
+                }
                 if let Some((grant, _)) = st.refresh.get(&token).copied() {
                     st.revoked.insert(grant);
                 } else {

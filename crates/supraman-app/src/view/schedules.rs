@@ -20,6 +20,7 @@ use supraman_ui::inbox_card::{self, InboxCard};
 use super::left::{REPO_ROW, SESSION_LINE, disclosure, grid, icon_slot, secondary, tree_label};
 use super::menu::{Confirm, Confirmed, MenuTarget};
 use supraman_ui::clipped::clipped;
+use supraman_ui::tooltip::Tooltip;
 use crate::fleet::WorkspaceNode;
 use crate::schedules::{self, Primary, ScheduleRow, Waiting};
 
@@ -1020,7 +1021,7 @@ impl FleetView {
         for w in waiting {
             let k = key(&w.workspace, &w.id);
             let card = format!("inbox-sched-card-{k}");
-            let open = act(format!("inbox-sched-open-{k}"), &card, Icon::Check, "Open to approve").on_click(cx.listener({
+            let open = inbox_card::primary(&self.hits, format!("inbox-sched-open-{k}"), "Review", cx).tooltip(Tooltip::text("Open to review and approve")).on_click(cx.listener({
                 let (ws, id) = (w.workspace.clone(), w.id.clone());
                 move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
@@ -1044,7 +1045,7 @@ impl FleetView {
             } else {
                 (format!("{} waits for your approval", w.title), format!("Schedule {} of {}: nothing runs until you approve it.", w.id, w.workspace))
             };
-            out.push(InboxCard::new(card, "approve", "approve", title).context(w.workspace.clone()).line("detail", detail, false).action(open).action(dismiss).render(&self.hits, cx));
+            out.push(InboxCard::new(card, "approve", "approve", title).context(w.workspace.clone()).line("detail", detail, false).action(dismiss).primary(open).render(&self.hits, cx));
         }
         for a in runs {
             let needs_you = a.outcome == schedule::Outcome::NeedsYou;
@@ -1052,7 +1053,7 @@ impl FleetView {
             let detail = if a.why.is_empty() { schedules::outcome_text(a.outcome).to_string() } else { format!("{}: {}", schedules::outcome_text(a.outcome), a.why) };
             let (w, id, run) = (a.workspace.clone(), a.id.clone(), a.run.clone());
             let card = format!("inbox-sched-run-{}", a.run);
-            let history = act(format!("inbox-sched-history-{}", a.run), &card, Icon::Clock, "Details").on_click(cx.listener({
+            let history = inbox_card::primary(&self.hits, format!("inbox-sched-history-{}", a.run), "Open", cx).tooltip(Tooltip::text("Details")).on_click(cx.listener({
                 let (w, id) = (w.clone(), id.clone());
                 move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
@@ -1063,7 +1064,7 @@ impl FleetView {
                 cx.stop_propagation();
                 this.dismiss_schedule_notice(&w, &run, cx);
             }));
-            out.push(InboxCard::new(card, kind, kind, a.id.clone()).context(a.workspace.clone()).when(Some(a.at), now).line("detail", detail, false).action(history).action(dismiss).render(&self.hits, cx));
+            out.push(InboxCard::new(card, kind, kind, a.id.clone()).context(a.workspace.clone()).when(Some(a.at), now).line("detail", detail, false).action(dismiss).primary(history).render(&self.hits, cx));
         }
         for (k, e) in syncs {
             let card = format!("inbox-sync-card-{k}");
