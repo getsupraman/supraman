@@ -1,6 +1,6 @@
 //! The right pane: the tab strip with its new-shell buttons, and the active tab's content.
 
-mod tab_menu;
+pub(in crate::view) mod tab_menu;
 
 use super::*;
 

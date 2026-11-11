@@ -11,15 +11,16 @@ use supraman_ui::marks::Activity;
 
 use crate::git_view::test_support::{self, Opts, painted, press, redraw};
 use super::super::{GitView, Selected};
-use super::AttachAgent;
+use super::{AgentMenu, AttachAgent};
 use crate::occupancy::{Live, LiveSession};
 
 fn open<'a>(folder: PathBuf, live: Live, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
     test_support::open(&folder, Opts::default().following(live).background().size(1400., 900.), cx)
 }
 
+/// A session whose claude session id is its name, so a row's key reads as its name.
 fn session(name: &str, cwd: PathBuf, activity: Activity, attach: Option<&str>) -> LiveSession {
-    LiveSession { name: name.into(), claude_session_id: String::new(), cwd, activity, attach: attach.map(str::to_string) }
+    LiveSession { name: name.into(), claude_session_id: name.into(), cwd, activity, attach: attach.map(str::to_string) }
 }
 
 fn set(live: &Live, sessions: Vec<LiveSession>, view: &Entity<GitView>, cx: &mut VisualTestContext) {
@@ -120,6 +121,44 @@ fn selecting_an_agent_row_shows_the_session_and_attach_asks_for_it(cx: &mut Test
     assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Agent("fm-alpha".into())), "the selection follows its session's row");
     set(&live, vec![session("fm-gamma", f.dir.clone(), Activity::Working, None)], &view, cx);
     assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), None, "the selected session ended");
+}
+
+#[gpui::test]
+fn two_sessions_of_one_name_are_two_rows_each_selected_and_attached_by_its_own_id(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    std::fs::write(f.dir.join("new.txt"), b"new\n").unwrap();
+    let live = Live::default();
+    let (view, cx) = open(f.dir.clone(), live.clone(), cx);
+    let twin = |id: &str, attach: &str| LiveSession { claude_session_id: id.into(), ..session("77aa88bb", f.dir.clone(), Activity::Working, Some(attach)) };
+    let (first, second) = (twin("uuid-1", "a1"), twin("uuid-2", "a2"));
+    set(&live, vec![first.clone(), second.clone()], &view, cx);
+    assert_eq!(agents(&view, cx), [(0, "uuid-1".to_string()), (1, "uuid-2".to_string())], "a row per session, keyed by its claude session id");
+    let heard = Rc::new(RefCell::new(Vec::new()));
+    let seen = heard.clone();
+    cx.update(|_, cx| cx.subscribe(&view, move |_, e: &AttachAgent, _| seen.borrow_mut().push(e.0.clone())).detach());
+
+    press(&view, "git-agent-1", MouseButton::Left, 2, cx);
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Agent("uuid-2".into())));
+    assert_eq!(*heard.borrow(), [second.clone()], "the second row attaches the second session");
+
+    set(&live, vec![second.clone()], &view, cx);
+    assert_eq!(agents(&view, cx), [(0, "uuid-2".to_string())], "the first ended: its row goes, the other stays");
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Agent("uuid-2".into())), "the selection stays on its session");
+}
+
+#[gpui::test]
+fn right_clicking_an_agent_row_asks_the_fleet_for_its_sessions_menu(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    std::fs::write(f.dir.join("new.txt"), b"new\n").unwrap();
+    let live = Live::default();
+    let (view, cx) = open(f.dir.clone(), live.clone(), cx);
+    let alpha = session("fm-alpha", f.dir.clone(), Activity::Idle, None);
+    set(&live, vec![alpha.clone()], &view, cx);
+    let heard = Rc::new(RefCell::new(Vec::new()));
+    let seen = heard.clone();
+    cx.update(|_, cx| cx.subscribe(&view, move |_, e: &AgentMenu, _| seen.borrow_mut().push(e.session.clone())).detach());
+    press(&view, "git-agent-0", MouseButton::Right, 1, cx);
+    assert_eq!(*heard.borrow(), [alpha], "the session's menu is the fleet's");
 }
 
 #[gpui::test]

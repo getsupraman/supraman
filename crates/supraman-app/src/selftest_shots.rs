@@ -9,7 +9,7 @@ use std::{
 use anyhow::{Context as _, anyhow, bail};
 use supraman_core::{Folder, FolderKind, Registry, Workspace};
 use supraman_workman::fake::{Answer, FakeWorkman};
-use gpui::{AsyncWindowContext, Entity};
+use gpui::{AsyncWindowContext, Entity, MouseButton};
 use serde_json::{Value, json};
 
 use crate::{
@@ -277,7 +277,45 @@ async fn git_palette(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowC
     println!("shot: {}", shot.display());
     cx.update(|window, cx| git.update(cx, |g, cx| g.close_find(window, cx)))?;
     git_wip(view, &git, out, cx).await?;
+    git_agent(view, &dir, out, cx).await?;
     drop(fixture);
+    Ok(())
+}
+
+/// A session working in the same tab's worktree: its agent row, its page as the fleet gives it, and the sidebar's menu on a right-click.
+/// The page and the menu come from `FleetView`, which no unit test builds.
+async fn git_agent(view: &Entity<FleetView>, dir: &Path, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let folder = dir.to_path_buf();
+    cx.background_executor()
+        .spawn(async move { Registry::from_env()?.edit(WORKSPACE, supraman_core::Edit::AddFolder { path: folder, enable: false }) })
+        .await
+        .context("adding the Git fixture to the demo workspace")?;
+    let session = json!([{
+        "id": "d0000007",
+        "sessionId": "d0000007-0000-4000-8000-00000000demo",
+        "name": "fm-demo-shop",
+        "cwd": dir,
+        "kind": "background",
+        "startedAt": supraman_claude::now_ms() - 5 * 60_000,
+        "state": "working",
+        "status": "busy",
+        "pid": std::process::id(),
+    }]);
+    let sessions = supraman_claude::parse(&session.to_string())?;
+    view.read_with(cx, |v, _| v.polls.injected.lock().unwrap_or_else(|e| e.into_inner()).extend(sessions));
+    crate::selftest::until(view, cx, Duration::from_secs(20), "the session's row in the tree", |v| v.tree().workspaces.iter().find(|n| n.name == WORKSPACE)?.rows().any(|r| r.session.name == "fm-demo-shop").then_some(())).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(20), "the session's agent row", |v| v.hits.borrow().contains_key("git-agent-0").then_some(())).await?;
+    crate::selftest::click(view, "git-agent-0", cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the agent row's page", |v| v.hits.borrow().contains_key("git-agent-section-session").then_some(())).await?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-git-agent.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    crate::selftest::press(view, "git-agent-0", MouseButton::Right, cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the session's menu over the Git tab", |v| v.dialogs.menu.as_ref().filter(|m| m.title == "fm-demo-shop").map(|_| ())).await?;
+    view.update(cx, |v, cx| {
+        v.dialogs.menu = None;
+        cx.notify();
+    });
     Ok(())
 }
 

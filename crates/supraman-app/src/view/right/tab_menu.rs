@@ -103,7 +103,7 @@ pub fn with_workman(mut items: Vec<MenuItem>, folder: Option<&Path>, work: &Work
 }
 
 /// The folder a session row is listed under, as the sidebar names it for its menu.
-fn row_folder<'a>(node: &'a WorkspaceNode, session_id: &str) -> &'a str {
+pub(in crate::view) fn row_folder<'a>(node: &'a WorkspaceNode, session_id: &str) -> &'a str {
     let is = |row: &crate::fleet::SessionRow| row.session.session_id == session_id;
     if node.own.as_ref().is_some_and(is) {
         return "workspace";

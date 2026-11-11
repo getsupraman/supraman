@@ -207,7 +207,7 @@ impl FleetView {
         }
     }
 
-    pub(super) fn session_menu(&self, workspace: &str, repo: &str, row: &SessionRow, send_name: Option<String>, cx: &Context<Self>) -> Vec<MenuItem> {
+    pub(super) fn session_menu(&self, workspace: &str, repo: &str, row: &SessionRow, send_name: Option<String>, cx: &gpui::App) -> Vec<MenuItem> {
         let claimed = self.claimed_item(workspace, &row.session.name, cx);
         let adopt = match self.adoption(workspace, repo, row) {
             Some(fleet::Adoption::Offer { name }) => Some(name),

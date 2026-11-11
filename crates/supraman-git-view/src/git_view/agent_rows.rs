@@ -5,11 +5,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use gpui::{AnyElement, App, ClickEvent, Context, Entity, EventEmitter, ScrollHandle, SharedString, div, prelude::*};
+use gpui::{AnyElement, App, ClickEvent, Context, Entity, EventEmitter, Hsla, MouseButton, MouseDownEvent, Pixels, Point, ScrollHandle, SharedString, Window, div, prelude::*};
 use supraman_gitman::Row;
 use supraman_ui::details::{self, Page, Section};
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::marks::{self, Activity, Mark};
+use supraman_ui::session;
 use supraman_ui::tooltip::Tooltip;
 use supraman_ui::{button, placeholder};
 
@@ -22,6 +23,34 @@ use crate::occupancy::{Live, LiveSession};
 /// Attach asked for this session, in a terminal tab of the fleet's.
 pub struct AttachAgent(pub LiveSession);
 
+/// A right-click on this session's row: the fleet's menu of the session, at `position` in the window.
+pub struct AgentMenu {
+    pub session: LiveSession,
+    pub position: Point<Pixels>,
+}
+
+/// One of a [`SessionPage`]'s actions: the fleet's menu item `key`, dimmed with why when it cannot run.
+pub struct PageAction {
+    pub key: String,
+    pub label: String,
+    pub dimmed: Option<String>,
+}
+
+/// The fleet's page of a live session, the facts and actions of its Details tab.
+pub struct SessionPage {
+    pub title: String,
+    pub pill: (String, Hsla),
+    pub sections: Vec<Section>,
+    pub actions: Vec<PageAction>,
+}
+
+/// How an agent row's panel reads its session's page from the fleet, and runs one of its actions.
+#[derive(Clone)]
+pub struct SessionPages {
+    pub page: Rc<dyn Fn(&LiveSession, &App) -> Option<SessionPage>>,
+    pub act: Rc<dyn Fn(&LiveSession, &str, &mut Window, &mut App)>,
+}
+
 /// Why Attach is dimmed.
 pub(crate) const NOT_ATTACHABLE: &str = "Only a running background session can be attached";
 
@@ -31,6 +60,7 @@ const WAKE_AT_LEAST: Duration = Duration::from_secs(60);
 #[derive(Default)]
 pub(super) struct Agents {
     live: Option<Live>,
+    pages: Option<SessionPages>,
     /// The sessions working in the worktree, by name; the rows from `at` while `base` holds the row under them.
     shown: Vec<LiveSession>,
     at: usize,
@@ -56,6 +86,7 @@ impl Agents {
 }
 
 impl EventEmitter<AttachAgent> for GitView {}
+impl EventEmitter<AgentMenu> for GitView {}
 
 impl GitView {
     /// [`GitView::open_with`] of `live`, whose sessions working in the worktree the graph shows as agent rows.
@@ -63,6 +94,12 @@ impl GitView {
         let view = GitView::open_with(folder, home, hits, Arc::new(live.clone()), cx);
         view.update(cx, |v, cx| v.follow_live(live, cx));
         view
+    }
+
+    /// The fleet's pages of the sessions, for the agent rows' panel.
+    pub fn set_session_pages(&mut self, pages: SessionPages, cx: &mut Context<Self>) {
+        self.agents.pages = Some(pages);
+        cx.notify();
     }
 
     fn follow_live(&mut self, live: Live, cx: &mut Context<Self>) {
@@ -97,7 +134,7 @@ impl GitView {
 
     fn sessions_elsewhere(&self, cx: &Context<Self>) -> Vec<(String, PathBuf)> {
         let Some(live) = &self.agents.live else { return Vec::new() };
-        self.other_wips(cx).iter().flat_map(|w| live.working_in(w.path()).into_iter().map(|s| (s.name, w.path().to_path_buf()))).collect()
+        self.other_wips(cx).iter().flat_map(|w| live.working_in(w.path()).into_iter().map(|s| (s.claude_session_id, w.path().to_path_buf()))).collect()
     }
 
     fn agents_here(&self) -> Vec<LiveSession> {
@@ -111,8 +148,8 @@ impl GitView {
     /// The agent rows laid out again for the sessions working here now; the selection kept on its row.
     pub(super) fn relay_agents(&mut self, cx: &mut Context<Self>) {
         let sessions = self.agents_here();
-        let names = |s: &[LiveSession]| s.iter().map(|s| s.name.clone()).collect::<Vec<_>>();
-        let unchanged = if self.agents.base.is_some() { names(&sessions) == names(&self.agents.shown) } else { sessions.is_empty() };
+        let ids = |s: &[LiveSession]| s.iter().map(|s| s.claude_session_id.clone()).collect::<Vec<_>>();
+        let unchanged = if self.agents.base.is_some() { ids(&sessions) == ids(&self.agents.shown) } else { sessions.is_empty() };
         if unchanged {
             self.agents.shown = sessions;
             return;
@@ -121,7 +158,7 @@ impl GitView {
         let ix = self.unstack_agents(self.table.selected(), cx);
         let ix = self.stack_agents(sessions, ix, cx);
         let ix = match &selected {
-            Some(Selected::Agent(name)) => self.agent_row(name, cx),
+            Some(Selected::Agent(id)) => self.agent_row(id, cx),
             _ => ix,
         };
         self.table.select(ix);
@@ -137,8 +174,8 @@ impl GitView {
         self.stack_agents(sessions, None, cx);
     }
 
-    pub(super) fn agent_row(&self, name: &str, cx: &App) -> Option<usize> {
-        self.pages.read(cx).rows.iter().position(|r| r.agent.as_deref() == Some(name))
+    pub(super) fn agent_row(&self, id: &str, cx: &App) -> Option<usize> {
+        self.pages.read(cx).rows.iter().position(|r| r.agent.as_deref() == Some(id))
     }
 
     /// Takes the stack away; where the row `ix` is then.
@@ -166,7 +203,7 @@ impl GitView {
             let rows = Rc::make_mut(&mut p.rows);
             let (above, base) = rows[at].row.stacked_above(n);
             let base = std::mem::replace(&mut rows[at].row, base);
-            let added: Vec<GraphRow> = above.into_iter().zip(shown).map(|(row, s)| GraphRow { agent: Some(s.name.clone().into()), ..load::graph_row(row, None) }).collect();
+            let added: Vec<GraphRow> = above.into_iter().zip(shown).map(|(row, s)| GraphRow { agent: Some(s.claude_session_id.clone().into()), ..load::graph_row(row, None) }).collect();
             rows.splice(at..at, added);
             p.marks.shift(at, n as isize);
             Some((at, base))
@@ -177,8 +214,8 @@ impl GitView {
         ix.map(|i| if i >= at { i + n } else { i })
     }
 
-    fn shown_agent(&self, name: &str) -> Option<&LiveSession> {
-        self.agents.shown.iter().find(|s| s.name == name)
+    fn shown_agent(&self, id: &str) -> Option<&LiveSession> {
+        self.agents.shown.iter().find(|s| s.claude_session_id == id)
     }
 
     /// The live session `name` working in `path`, for its state's dot.
@@ -186,66 +223,97 @@ impl GitView {
         self.agents.live.as_ref()?.working_in(path).into_iter().find(|s| s.name == name).map(|s| s.activity)
     }
 
-    /// Row `ix`'s cell of column `col` for an agent row: the bot node, its dot and `agent <name> is working here`.
+    /// Row `ix`'s cell of column `col` for an agent row: the bot node, then the session's lead and `is working here`.
     pub(super) fn agent_cell(&mut self, ix: usize, col: usize, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let rows = self.pages.read(cx).rows.clone();
         let row = &rows[ix];
-        let Some(name) = row.agent.clone() else { return div().into_any_element() };
-        let cell = match col {
-            1 => graph::cell(ix, row, false, palette, &self.hits),
-            2 => {
-                let activity = self.shown_agent(&name).map(|s| s.activity);
-                let lead = div()
+        let Some(id) = row.agent.clone() else { return div().into_any_element() };
+        let session = self.shown_agent(&id).cloned();
+        let cell = match (col, &session) {
+            (1, _) => graph::cell(ix, row, false, palette, &self.hits),
+            (2, Some(s)) => {
+                let here = div().text_color(palette.muted).child("is working here").into_any_element();
+                let lead = session::lead(Mark::Filled(s.activity.color(cx)), &s.name, Some(here))
                     .relative()
-                    .flex()
-                    .items_center()
-                    .gap_1p5()
-                    .min_w_0()
-                    .whitespace_nowrap()
                     .text_color(palette.text)
-                    .children(activity.map(|a| state_dot(a, cx)))
-                    .child(SharedString::from(format!("agent {name} is working here")))
                     .child(hit_target(&self.hits, format!("git-agent-{ix}")));
-                cells::wip_message(row, lead, activity.map(Activity::word).unwrap_or_default().to_string(), palette)
+                cells::wip_message(row, lead, s.activity.word().to_string(), palette)
             }
             _ => div().into_any_element(),
         };
+        let menu_id = id.clone();
         div()
             .id(SharedString::from(format!("git-agent-{ix}-{col}")))
             .size_full()
             .on_click(cx.listener(move |this, e: &ClickEvent, _, cx| {
                 if e.click_count() == 2 {
-                    this.attach_agent(&name, cx);
+                    this.attach_agent(&id, cx);
                 }
             }))
+            .on_mouse_down(MouseButton::Right, cx.listener(move |this, e: &MouseDownEvent, _, cx| this.agent_menu(&menu_id, e.position, cx)))
             .child(cell)
             .into_any_element()
     }
 
-    fn attach_agent(&mut self, name: &str, cx: &mut Context<Self>) {
-        if let Some(session) = self.shown_agent(name).filter(|s| s.attach.is_some()).cloned() {
+    fn agent_menu(&mut self, id: &str, position: Point<Pixels>, cx: &mut Context<Self>) {
+        if let Some(session) = self.shown_agent(id).cloned() {
+            cx.stop_propagation();
+            cx.emit(AgentMenu { session, position });
+        }
+    }
+
+    /// The fleet's menu of the first session, by name, working in the worktree at `path`.
+    pub(super) fn worktree_session_menu(&mut self, path: &Path, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some(session) = self.agents.live.as_ref().and_then(|l| l.working_in(path).into_iter().next()) else { return };
+        cx.stop_propagation();
+        cx.emit(AgentMenu { session, position });
+    }
+
+    fn attach_agent(&mut self, id: &str, cx: &mut Context<Self>) {
+        if let Some(session) = self.shown_agent(id).filter(|s| s.attach.is_some()).cloned() {
             cx.emit(AttachAgent(session));
         }
     }
 
-    /// The selected agent row's session: its name, state and folder, and Attach, dimmed with why when it cannot be.
-    pub(super) fn render_agent_panel(&mut self, name: &str, cx: &mut Context<Self>) -> AnyElement {
-        let Some(session) = self.shown_agent(name).cloned() else {
-            return placeholder::placeholder(name.to_string(), ["The session ended."], cx).size_full().into_any_element();
+    /// The selected agent row's session: the fleet's page of it, else its folder and state with Attach, dimmed with why when it cannot be.
+    pub(super) fn render_agent_panel(&mut self, id: &str, cx: &mut Context<Self>) -> AnyElement {
+        let Some(session) = self.shown_agent(id).cloned() else {
+            return placeholder::placeholder("The session ended.", Vec::<String>::new(), cx).size_full().into_any_element();
         };
-        let colour = session.activity.color(cx);
-        let sections = [Section::new("session", "Session").row("Folder", session.cwd.display().to_string()).row("State", session.activity.word())];
+        let scroll = self.agents.scroll.clone();
+        let hits = self.hits.clone();
+        if let Some(page) = self.agents.pages.as_ref().and_then(|p| (p.page)(&session, cx)) {
+            let actions = page.actions.into_iter().map(|a| self.page_action(&session, a, cx)).collect();
+            let page = Page { key: "git-agent", title: page.title, pill: Some(page.pill), sections: &page.sections, actions, scroll: &scroll, on_link: None, top: None, over: None, bar: None };
+            return details::render(page, &hits, cx);
+        }
+        let sections = [Section::new("session", "Session").path("Working directory", &session.cwd).row("State", session.activity.word())];
         let attach = button::bordered(&self.hits, "git-agent-attach", "Attach", cx);
         let attach = match session.attach {
             Some(_) => {
-                let name = name.to_string();
-                attach.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.attach_agent(&name, cx))).into_any_element()
+                let id = id.to_string();
+                attach.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.attach_agent(&id, cx))).into_any_element()
             }
             None => button::dimmed(attach).tooltip(Tooltip::text(NOT_ATTACHABLE)).into_any_element(),
         };
-        let scroll = self.agents.scroll.clone();
-        let page = Page { key: "git-agent", title: name.to_string(), pill: Some((capitalised(session.activity.word()), colour)), sections: &sections, actions: vec![attach], scroll: &scroll, on_link: None, top: None, over: None, bar: None };
-        details::render(page, &self.hits.clone(), cx)
+        let pill = (capitalised(session.activity.word()), session.activity.color(cx));
+        let page = Page { key: "git-agent", title: session.name.clone(), pill: Some(pill), sections: &sections, actions: vec![attach], scroll: &scroll, on_link: None, top: None, over: None, bar: None };
+        details::render(page, &hits, cx)
+    }
+
+    fn page_action(&self, session: &LiveSession, action: PageAction, cx: &mut Context<Self>) -> AnyElement {
+        let button = button::bordered(&self.hits, format!("git-agent-{}", action.key), action.label, cx);
+        if let Some(why) = action.dimmed {
+            return button::dimmed(button).tooltip(Tooltip::text(why)).into_any_element();
+        }
+        let (session, key) = (session.clone(), action.key);
+        button
+            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                if let Some(pages) = this.agents.pages.clone() {
+                    (pages.act)(&session, &key, window, cx);
+                }
+            }))
+            .into_any_element()
     }
 }
 

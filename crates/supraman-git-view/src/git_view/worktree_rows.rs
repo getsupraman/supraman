@@ -1,6 +1,8 @@
 //! The graph's WIP rows of the repository's other worktrees: which the layout places, their cells, and Open Worktree.
 
-use gpui::{AnyElement, ClickEvent, Context, SharedString, div, prelude::*, px};
+use std::path::Path;
+
+use gpui::{AnyElement, ClickEvent, Context, MouseButton, MouseDownEvent, SharedString, div, prelude::*, px};
 use supraman_core::paths::path_key;
 use supraman_gitman::{WorktreeRow, WorktreeWip};
 use supraman_ui::button;
@@ -123,7 +125,7 @@ impl GitView {
         cx.emit(OpenGit(path.to_path_buf()));
     }
 
-    /// Row `ix`'s cell of column `col`, row `ix` a worktree's: its cells double-click to open it, and it has no menu.
+    /// Row `ix`'s cell of column `col`, row `ix` a worktree's: its cells double-click to open it; a right-click is its session's menu.
     pub(super) fn worktree_cell(&mut self, ix: usize, col: usize, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let view = self.worktree_view(ix, cx);
         let rows = self.pages.read(cx).rows.clone();
@@ -147,6 +149,7 @@ impl GitView {
             }
             _ => div().into_any_element(),
         };
+        let path = row.worktree().map(Path::to_path_buf);
         div()
             .id(SharedString::from(format!("git-worktree-{ix}-{col}")))
             .size_full()
@@ -155,6 +158,14 @@ impl GitView {
                     this.open_worktree(ix, false, cx);
                 }
             }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                    if let Some(path) = &path {
+                        this.worktree_session_menu(path, e.position, cx);
+                    }
+                }),
+            )
             .child(cell)
             .into_any_element()
     }
