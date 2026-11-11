@@ -78,6 +78,16 @@ impl GitView {
         self.branch.update(cx, |b, _| b.set_refs(refs, under_way));
     }
 
+    /// Create Worktree over the refs the ref panel lists, its folders beside the main checkout.
+    pub(crate) fn open_add_worktree(&mut self, cx: &mut Context<Self>) {
+        let panel = self.ref_panel.read(cx);
+        let refs = crate::git_view::find::entries::refs(&panel.entries(), panel.walk());
+        let main = self.branch.read(cx).refs().worktrees.iter().find(|w| w.main).map_or_else(|| self.folder.clone(), |w| w.path.clone());
+        self.remote.update(cx, |r, cx| r.close_add(cx));
+        self.branch.update(cx, |b, cx| b.open_add_worktree(refs, main, cx));
+        cx.notify();
+    }
+
     pub(crate) fn branch_event(&mut self, _: Entity<BranchActions>, e: &BranchEvent, cx: &mut Context<Self>) {
         match e {
             BranchEvent::Wrote(toast) => {

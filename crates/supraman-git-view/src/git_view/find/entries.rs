@@ -220,7 +220,7 @@ pub(crate) fn top_rank(boost: impl Fn(&str, &str) -> u32 + 'static) -> Rank<GitE
     })
 }
 
-fn kind_mark(kind: RefKind) -> (Icon, &'static str) {
+pub(crate) fn kind_mark(kind: RefKind) -> (Icon, &'static str) {
     match kind {
         RefKind::Local => (Section::Local.icon(), "Local branch"),
         RefKind::Remote => (Section::Remote.icon(), "Remote branch"),

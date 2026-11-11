@@ -3,6 +3,7 @@
 mod dialog;
 pub(crate) mod menu;
 mod view;
+pub(crate) mod worktree;
 
 #[cfg(test)]
 mod tests;
@@ -111,6 +112,7 @@ enum Doing {
     Created { what: String },
     Merge { source: String, into: String },
     Rebase { branch: String, onto: String },
+    Worktree(PathBuf),
     Plain(String),
 }
 
@@ -121,6 +123,7 @@ pub(crate) struct BranchActions {
     under_way: bool,
     menu: Option<ContextMenu<RefAct>>,
     naming: Option<NameDialog>,
+    adding: Option<worktree::AddWorktree>,
     remote: Arc<RemoteFacts>,
 }
 
@@ -140,7 +143,7 @@ impl BranchActions {
     }
 
     pub(crate) fn new(gate: Entity<WriteGate>, hits: HitTargets, cx: &mut Context<Self>) -> BranchActions {
-        BranchActions { hits, writes: Writes::new(gate, Self::written, cx), refs: Arc::new(Refs::empty()), under_way: false, menu: None, naming: None, remote: Arc::default() }
+        BranchActions { hits, writes: Writes::new(gate, Self::written, cx), refs: Arc::new(Refs::empty()), under_way: false, menu: None, naming: None, adding: None, remote: Arc::default() }
     }
 
     /// The refs the last read found, and whether an operation is under way.
@@ -386,6 +389,7 @@ impl BranchActions {
                 }
             },
             (Doing::Created { what }, _) => format!("Created {what}"),
+            (Doing::Worktree(folder), _) => self.added_worktree(&folder),
             (Doing::Plain(words), Some(Outcome::Checkout(CheckedOut::Done(stash)))) => with_stash(words, &stash),
             (Doing::Plain(words), _) => words,
             (_, _) => String::new(),

@@ -1,4 +1,4 @@
-//! The panel painted; hit keys `refpanel-{row,name,mark}-<path>`, `-filter`, `-show-all`, `-collapse`, `-expand`, `-strip-<section>`, `-sections-divider-<pane>`, `-remote-add`, `-remote-count`.
+//! The panel painted; hit keys `refpanel-{row,name,mark}-<path>`, `-filter`, `-show-all`, `-collapse`, `-expand`, `-strip-<section>`, `-sections-divider-<pane>`, `-{remote,worktrees}-add`, `-{remote,worktrees}-count`.
 
 use gpui::{AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla, IntoElement, Render, Window, div, prelude::*, px};
 use supraman_gitman::short_sha;
@@ -208,7 +208,7 @@ impl RefPanel {
             .border_t_1()
             .border_color(cx.theme().colors().border_variant)
             .child(ink::mark(div().flex().flex_none().items_center().justify_center().w(px(LEAD)).child(chevron.svg(ICON, secondary(cx.theme().colors())))))
-            .child(self.header(section, open, (section == Section::Remote).then(|| self.add_remote(cx)), cx))
+            .child(self.header(section, open, self.add_button(section, cx), cx))
             .children((section == Section::Worktrees).then(|| self.refresh_wips(cx)).flatten())
             .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
                 cx.stop_propagation();
@@ -222,16 +222,21 @@ impl RefPanel {
             .into_any_element()
     }
 
-    /// The REMOTE header's +, in its count's place while the header is hovered.
-    fn add_remote(&self, cx: &mut Context<Self>) -> (String, AnyElement) {
-        let group = format!("{LIST}-row-{}", Section::Remote.key());
-        let plus = button::revealed(&self.hits, format!("{LIST}-remote-add"), Icon::Plus.svg(ICON, cx.theme().status().success), px(18.), group.clone(), false, cx)
-            .tooltip(Tooltip::text("Add Remote"))
-            .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
+    /// REMOTE's and WORKTREES' header +, in its count's place while the header is hovered.
+    fn add_button(&self, section: Section, cx: &mut Context<Self>) -> Option<(String, AnyElement)> {
+        let (tip, event): (_, fn() -> RefEvent) = match section {
+            Section::Remote => ("Add Remote", || RefEvent::AddRemote),
+            Section::Worktrees => ("Add a new worktree", || RefEvent::AddWorktree),
+            _ => return None,
+        };
+        let group = format!("{LIST}-row-{}", section.key());
+        let plus = button::revealed(&self.hits, format!("{LIST}-{}-add", section.key()), Icon::Plus.svg(ICON, cx.theme().status().success), px(18.), group.clone(), false, cx)
+            .tooltip(Tooltip::text(tip))
+            .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();
-                cx.emit(RefEvent::AddRemote);
+                cx.emit(event());
             }));
-        (group, plus.into_any_element())
+        Some((group, plus.into_any_element()))
     }
 
     fn section_list(&self, section: Section, cx: &mut Context<Self>) -> AnyElement {
