@@ -8,6 +8,7 @@ use supraman_gitman::write::remote::PullChoice;
 
 use super::bar::{PULL_KEY, PULL_MENU_KEY, PUSH_KEY};
 use super::{DETACHED, NO_REMOTE};
+use supraman_ui::confirm::Answer;
 use crate::git_view::test_support::{self, Opts, click, redraw, toast};
 use crate::git_view::*;
 
@@ -45,6 +46,10 @@ fn commit(f: &Fixture, dir: &Path, file: &str, message: &str) -> String {
     f.at(dir, &["commit", "-q", "-m", message]);
     f.at(dir, &["rev-parse", "HEAD"])
 }
+
+const BEHIND: &str = "'refs/heads/main' is behind 'refs/remotes/origin/main'. Update your branch by doing a Pull.";
+const STALE: &str = "'refs/remotes/origin/main' has changed since your last fetch. Update it by doing a Fetch.";
+const DESTRUCTIVE: &str = "Force push is destructive and rewrites history.";
 
 fn asking(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<String> {
     view.read_with(cx, |v, cx| v.remote.read(cx).asking().map(str::to_string))
@@ -212,7 +217,7 @@ fn the_palettes_remote_commands_are_dimmed_on_a_detached_head_and_without_a_remo
 }
 
 #[gpui::test]
-fn a_push_behind_asks_pull_or_force_and_a_stale_lease_asks_fetch_or_force_anyway(cx: &mut TestAppContext) {
+fn a_push_behind_asks_pull_or_force_push_and_a_stale_lease_asks_fetch_or_force_push(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let home = tempfile::tempdir().unwrap();
     let (mine, other) = (clone(&f, "mine"), clone(&f, "other"));
@@ -221,11 +226,11 @@ fn a_push_behind_asks_pull_or_force_and_a_stale_lease_asks_fetch_or_force_anyway
     let (view, cx) = open(&mine, home.path(), cx);
     let rewritten = commit(&f, &mine, "m.txt", "Mine");
     click(&view, PUSH_KEY, cx);
-    assert_eq!(asking(&view, cx).as_deref(), Some("origin/main has commits main lacks. Pull them first, or force the push with lease, dropping them from origin?"));
+    assert_eq!(asking(&view, cx).as_deref(), Some(BEHIND));
     click(&view, "git-remote-ask-alt", cx);
-    assert_eq!(asking(&view, cx).as_deref(), Some("Force push main to origin/main? The commits only origin holds are lost there."), "a second question before forcing");
+    assert_eq!(asking(&view, cx).as_deref(), Some(DESTRUCTIVE), "a second question before forcing");
     click(&view, "git-remote-ask-yes", cx);
-    assert_eq!(asking(&view, cx).as_deref(), Some("origin/main moved since this repository last fetched it. Fetch first, or force the push anyway?"), "never fetched: the lease is stale");
+    assert_eq!(asking(&view, cx).as_deref(), Some(STALE), "never fetched: the lease is stale");
     click(&view, "git-remote-ask-alt", cx);
     click(&view, "git-remote-ask-yes", cx);
     assert_eq!(f.at(&f.temp.path().join("origin.git"), &["rev-parse", "main"]), rewritten);
@@ -282,4 +287,134 @@ fn sshs_passphrase_prompt_answers_through_the_dialog_and_is_kept_only_when_remem
         let kept = store.get(&secret_key("C:/keys/id_ed25519")).unwrap();
         assert_eq!(kept.as_deref(), remember.then_some(typed), "kept only when Remember is ticked");
     }
+}
+
+/// The band's answers, each with whether it destroys something, and what Enter answers.
+fn answers(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<(Vec<(String, bool)>, Answer)> {
+    view.read_with(cx, |v, cx| v.remote.read(cx).answers())
+}
+
+fn owned(answers: &[(&str, bool)]) -> Vec<(String, bool)> {
+    answers.iter().map(|(w, d)| (w.to_string(), *d)).collect()
+}
+
+fn key(view: &Entity<GitView>, keys: &str, cx: &mut VisualTestContext) {
+    assert!(cx.update(|window, cx| view.read(cx).band_focused(window)), "the band takes the keyboard before {keys}");
+    cx.simulate_keystrokes(keys);
+    cx.run_until_parked();
+    redraw(view, cx);
+}
+
+fn ask_stale(view: &Entity<GitView>, cx: &mut VisualTestContext) {
+    view.update(cx, |v, cx| v.remote.update(cx, |r, cx| r.ask(super::Ask::Stale { local: "main".into(), remote: "origin".into(), branch: "main".into() }, cx)));
+    redraw(view, cx);
+}
+
+#[gpui::test]
+fn force_push_asks_a_second_band_and_only_its_force_push_pushes_with_lease(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let home = tempfile::tempdir().unwrap();
+    let origin = f.temp.path().join("origin.git");
+    let (mine, other) = (clone(&f, "mine"), clone(&f, "other"));
+    commit(&f, &other, "o.txt", "Other's");
+    f.at(&other, &["push", "-q"]);
+    f.at(&mine, &["fetch", "-q"]);
+    let (view, cx) = open(&mine, home.path(), cx);
+    let rewritten = commit(&f, &mine, "m.txt", "Mine");
+    let theirs = f.at(&origin, &["rev-parse", "main"]);
+    let first = (owned(&[("Pull (fast-forward if possible)", false), ("Force Push", true), ("Cancel", false)]), Answer::Yes);
+    let second = (owned(&[("Force Push", true), ("Cancel", false)]), Answer::No);
+
+    click(&view, PUSH_KEY, cx);
+    assert_eq!((asking(&view, cx).as_deref(), answers(&view, cx)), (Some(BEHIND), Some(first)), "Pull the default, Force Push destructive");
+    key(&view, "escape", cx);
+    assert_eq!((asking(&view, cx), f.at(&origin, &["rev-parse", "main"])), (None, theirs.clone()), "Esc at the first band pushes nothing");
+
+    click(&view, PUSH_KEY, cx);
+    click(&view, "git-remote-ask-cancel", cx);
+    assert_eq!((asking(&view, cx), f.at(&origin, &["rev-parse", "main"])), (None, theirs.clone()), "Cancel at the first band pushes nothing");
+
+    click(&view, PUSH_KEY, cx);
+    click(&view, "git-remote-ask-alt", cx);
+    assert_eq!((asking(&view, cx).as_deref(), answers(&view, cx)), (Some(DESTRUCTIVE), Some(second)), "the second band: Enter cancels");
+    assert_eq!(f.at(&origin, &["rev-parse", "main"]), theirs, "the first Force Push pushes nothing");
+    key(&view, "enter", cx);
+    assert_eq!((asking(&view, cx), f.at(&origin, &["rev-parse", "main"])), (None, theirs.clone()), "Enter at the second band pushes nothing");
+
+    click(&view, PUSH_KEY, cx);
+    click(&view, "git-remote-ask-alt", cx);
+    click(&view, "git-remote-ask-cancel", cx);
+    assert_eq!((asking(&view, cx), f.at(&origin, &["rev-parse", "main"])), (None, theirs.clone()), "Cancel at the second band pushes nothing");
+
+    click(&view, PUSH_KEY, cx);
+    click(&view, "git-remote-ask-alt", cx);
+    f.at(&other, &["commit", "-q", "--allow-empty", "-m", "Moved"]);
+    f.at(&other, &["push", "-q"]);
+    let moved = f.at(&origin, &["rev-parse", "main"]);
+    click(&view, "git-remote-ask-yes", cx);
+    assert_eq!((asking(&view, cx).as_deref(), f.at(&origin, &["rev-parse", "main"])), (Some(STALE), moved), "with lease: a remote moved since the fetch is kept");
+
+    click(&view, "git-remote-ask-cancel", cx);
+    f.at(&mine, &["fetch", "-q"]);
+    click(&view, PUSH_KEY, cx);
+    click(&view, "git-remote-ask-alt", cx);
+    click(&view, "git-remote-ask-yes", cx);
+    assert_eq!(f.at(&origin, &["rev-parse", "main"]), rewritten, "the second Force Push pushes");
+    assert_eq!(toast(&view, cx).as_deref(), Some("Pushed main to origin/main"));
+}
+
+#[gpui::test]
+fn a_stale_lease_asks_fetch_or_force_push_and_its_force_push_asks_the_same_second_band(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let home = tempfile::tempdir().unwrap();
+    let origin = f.temp.path().join("origin.git");
+    let (mine, other) = (clone(&f, "mine"), clone(&f, "other"));
+    commit(&f, &other, "o.txt", "Other's");
+    f.at(&other, &["push", "-q"]);
+    let (view, cx) = open(&mine, home.path(), cx);
+    let rewritten = commit(&f, &mine, "m.txt", "Mine");
+    let theirs = f.at(&origin, &["rev-parse", "main"]);
+
+    ask_stale(&view, cx);
+    assert_eq!((asking(&view, cx).as_deref(), answers(&view, cx)), (Some(STALE), Some((owned(&[("Fetch", false), ("Force Push", true), ("Cancel", false)]), Answer::Yes))));
+    click(&view, "git-remote-ask-cancel", cx);
+    assert_eq!((asking(&view, cx), f.at(&origin, &["rev-parse", "main"])), (None, theirs.clone()), "Cancel pushes nothing");
+
+    ask_stale(&view, cx);
+    click(&view, "git-remote-ask-alt", cx);
+    assert_eq!((asking(&view, cx).as_deref(), answers(&view, cx)), (Some(DESTRUCTIVE), Some((owned(&[("Force Push", true), ("Cancel", false)]), Answer::No))));
+    assert_eq!(f.at(&origin, &["rev-parse", "main"]), theirs, "the first Force Push pushes nothing");
+    click(&view, "git-remote-ask-yes", cx);
+    assert_eq!(f.at(&origin, &["rev-parse", "main"]), rewritten, "forced anyway over a remote never fetched");
+
+    ask_stale(&view, cx);
+    commit(&f, &other, "o2.txt", "Other's again");
+    f.at(&other, &["push", "-q", "--force"]);
+    let again = f.at(&origin, &["rev-parse", "main"]);
+    key(&view, "enter", cx);
+    assert_eq!(f.at(&mine, &["rev-parse", "origin/main"]), again, "Enter fetches");
+}
+
+#[gpui::test]
+fn the_pull_answer_fast_forwards_a_branch_only_behind_and_merges_a_diverged_one(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let home = tempfile::tempdir().unwrap();
+    let (mine, other) = (clone(&f, "mine"), clone(&f, "other"));
+    let theirs = commit(&f, &other, "o.txt", "Other's");
+    f.at(&other, &["push", "-q"]);
+    let (view, cx) = open(&mine, home.path(), cx);
+
+    click(&view, PUSH_KEY, cx);
+    assert_eq!(asking(&view, cx).as_deref(), Some(BEHIND), "a branch only behind is refused too");
+    key(&view, "enter", cx);
+    assert_eq!(f.at(&mine, &["rev-parse", "HEAD"]), theirs, "Enter pulls: a fast-forward");
+    assert_eq!(toast(&view, cx).as_deref(), Some("Pulled"));
+
+    let again = commit(&f, &other, "o2.txt", "Other's again");
+    f.at(&other, &["push", "-q"]);
+    let ours = commit(&f, &mine, "m.txt", "Mine");
+    click(&view, PUSH_KEY, cx);
+    assert_eq!(asking(&view, cx).as_deref(), Some(BEHIND));
+    click(&view, "git-remote-ask-yes", cx);
+    assert_eq!((f.at(&mine, &["rev-parse", "HEAD^1"]), f.at(&mine, &["rev-parse", "HEAD^2"])), (ours, again), "a diverged branch is merged");
 }
