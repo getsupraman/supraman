@@ -558,7 +558,7 @@ mod tests {
         }
         let path_b = write_mcp_config_helped(&mcp, "fm-demo-beta", "http://x/mcp", "sm", &[]).unwrap();
         assert_ne!(path_b, path, "one file per session");
-        for bad in ["", "..", "../x", r"a", "a b"] {
+        for bad in ["", "..", "../x", r"a\b", "a b"] {
             assert!(write_mcp_config_helped(&mcp, bad, "u", "sm", &[]).is_err(), "{bad:?}");
             assert!(mcp_config_path(&mcp, bad).is_err(), "{bad:?}");
         }
