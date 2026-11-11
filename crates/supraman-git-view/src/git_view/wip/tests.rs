@@ -167,3 +167,30 @@ fn wip_view_shows_the_status_a_refresh_read_without_reading_it_again(cx: &mut Te
     assert!(has(&shown(&view, cx), "graph.txt"), "the graph refresh's file is listed");
     assert_eq!(reads(cx), before, "the panel took each refresh's status");
 }
+
+#[gpui::test]
+fn wip_header_shows_the_branch_pill_and_its_upstreams_ahead_and_behind_or_detached_head(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    f.at(&f.worktree, &["branch", "-q", "-u", "origin/main"]);
+    std::fs::write(f.worktree.join("new.txt"), b"new\n").unwrap();
+    let counts = f.at(&f.worktree, &["rev-list", "--left-right", "--count", "HEAD...origin/main"]);
+    let (ahead, behind) = counts.split_once('\t').unwrap();
+    let (view, cx) = open(&f.worktree, Opts::default(), cx);
+    select_wip(&view, cx);
+    let s = shown(&view, cx);
+    let track = crate::git_view::ref_panel::track(ahead.trim().parse().unwrap(), behind.trim().parse().unwrap());
+    assert!(!track.is_empty(), "side and origin/main differ");
+    assert_eq!((&s.branch, s.track.as_str()), (&Branch::Named("side".into()), track.as_str()));
+    let painted = repaint(&view, cx);
+    for key in ["wip-branch", "wip-upstream"] {
+        assert!(painted.borrow().contains_key(key), "{key}");
+    }
+
+    f.at(&f.worktree, &["checkout", "-q", "--detach"]);
+    view.update(cx, |v, cx| v.refresh_wip(None, cx));
+    cx.run_until_parked();
+    let s = shown(&view, cx);
+    assert_eq!((&s.branch, s.track.as_str()), (&Branch::Detached, ""));
+    let painted = repaint(&view, cx);
+    assert!(painted.borrow().contains_key("wip-branch") && !painted.borrow().contains_key("wip-upstream"), "Detached HEAD, no upstream");
+}

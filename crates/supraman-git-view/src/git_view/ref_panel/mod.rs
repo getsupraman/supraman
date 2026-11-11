@@ -13,7 +13,7 @@ mod tests;
 use std::sync::Arc;
 
 use gpui::{Context, Entity, EventEmitter, FocusHandle, Pixels, SharedString, Subscription, Window, px};
-use supraman_gitman::{Refs, Worktree};
+use supraman_gitman::{BranchStatus, Refs, Worktree};
 use supraman_ui::hit::HitTargets;
 use supraman_ui::menu::ContextMenu;
 use supraman_ui::text_input::{self, TextInput};
@@ -58,6 +58,11 @@ pub(crate) struct Built {
 /// Ahead of and behind an upstream as every ref row says it: `2↑ 1↓`, the zero ones left out.
 pub(crate) fn track(ahead: u32, behind: u32) -> String {
     [(ahead, "↑"), (behind, "↓")].iter().filter(|(n, _)| *n > 0).map(|(n, arrow)| format!("{n}{arrow}")).collect::<Vec<_>>().join(" ")
+}
+
+/// [`track`] of a branch's upstream; empty without one.
+pub(crate) fn upstream_track(branch: &BranchStatus) -> String {
+    if branch.upstream.is_some() { track(branch.ahead, branch.behind) } else { String::new() }
 }
 
 pub(crate) fn remote_folder(path: &str) -> Option<&str> {

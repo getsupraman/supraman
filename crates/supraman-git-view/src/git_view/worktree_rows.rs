@@ -26,10 +26,14 @@ use crate::occupancy::LiveSession;
 pub(crate) struct WorktreeView {
     /// `on <branch>` or `Detached HEAD`.
     pub(crate) label: String,
+    /// `None` when detached.
+    pub(crate) branch: Option<String>,
     /// [`supraman_gitman::WipCounts::words`].
     pub(crate) counts: String,
     /// Its conflicted files, which show the conflict node in place of the counts.
     pub(crate) conflicted: u32,
+    /// Its row's lane, its header pill's fill; 0 off the graph.
+    pub(crate) colour: usize,
     /// Ahead of and behind its upstream ([`super::ref_panel::track`]).
     pub(crate) upstream: String,
     /// The live sessions working there, whose leads stand in place of `// WIP`.
@@ -44,9 +48,9 @@ impl WorktreeView {
             None => "Detached HEAD".into(),
         };
         let counts = wip.counts();
-        let (ahead, behind) = wip.upstream().map_or((0, 0), |(_, ahead, behind)| (ahead, behind));
-        let upstream = super::ref_panel::track(ahead, behind);
-        WorktreeView { label, counts: counts.words(), conflicted: counts.conflicted, upstream, sessions, detached: wip.detached() }
+        let upstream = wip.status().map(|s| super::ref_panel::upstream_track(&s.branch)).unwrap_or_default();
+        let branch = wip.branch().map(str::to_string);
+        WorktreeView { label, branch, counts: counts.words(), conflicted: counts.conflicted, colour: 0, upstream, sessions, detached: wip.detached() }
     }
 }
 
@@ -117,7 +121,8 @@ impl GitView {
     pub(crate) fn worktree_view(&self, ix: usize, cx: &Context<Self>) -> Option<WorktreeView> {
         let path = self.pages.read(cx).rows.get(ix)?.worktree()?;
         let wip = background::wips(cx.entity_id(), cx)?.read(cx).get(path).cloned()?;
-        Some(WorktreeView::of(&wip, self.sessions_in(path)))
+        let colour = self.pages.read(cx).rows.get(ix)?.row.colour;
+        Some(WorktreeView { colour, ..WorktreeView::of(&wip, self.sessions_in(path)) })
     }
 
     /// Asks the workspace for row `ix`'s worktree's Git tab; a detached worktree's only when `detached_too`.
@@ -161,14 +166,16 @@ impl GitView {
             .into_any_element()
     }
 
-    /// The leads or `// WIP`, then the conflict node or the counts.
+    /// The leads or `// WIP`, then the conflict node or the counts, then the upstream's ahead and behind.
     fn worktree_message(&self, ix: usize, row: &GraphRow, view: WorktreeView, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let lead = self.worktree_leads(ix, &view.sessions, row.worktree(), palette, cx);
         let counts = match view.conflicted {
             0 => div().child(SharedString::from(view.counts)),
             n => conflict_node(n, format!("git-conflict-node-{ix}"), &self.hits, palette, cx),
         };
-        cells::wip_message(row, lead, counts, palette)
+        let upstream = div().relative().child(SharedString::from(view.upstream.clone())).child(hit_target(&self.hits, format!("git-worktree-upstream-{ix}")));
+        let tail = div().flex().items_center().gap_2().child(counts).when(!view.upstream.is_empty(), |d| d.child(upstream));
+        cells::wip_message(row, lead, tail, palette)
     }
 
     /// Each session's [`agent_rows::session_lead`], its state's word in its tooltip once there are several; its right-click that session's menu; `// WIP` while nobody works there.

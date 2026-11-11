@@ -34,6 +34,7 @@ pub(crate) use render::banner;
 #[derive(Debug, Clone)]
 pub(crate) struct Shown {
     pub(crate) branch: Branch,
+    pub(crate) track: String,
     pub(crate) total: usize,
     pub(crate) conflicted: Vec<FileChange>,
     pub(crate) unstaged: Vec<FileChange>,
@@ -236,7 +237,7 @@ impl WipPanel {
                         list.paths.select(None);
                     }
                 }
-                let shown = Shown { branch: l.branch, total: l.total, conflicted: l.conflicted, unstaged: l.unstaged, staged: l.staged, state: l.state, under_way: l.under_way, conflicts: l.conflicts };
+                let shown = Shown { branch: l.branch, track: l.track, total: l.total, conflicted: l.conflicted, unstaged: l.unstaged, staged: l.staged, state: l.state, under_way: l.under_way, conflicts: l.conflicts };
                 if before != Some(shown.state) {
                     self.fill_merge_message(&shown, cx);
                 }
@@ -346,10 +347,6 @@ impl WipPanel {
 
     /// The header's words before the branch: `3 file changes on`.
     pub(crate) fn header_words(shown: &Shown) -> SharedString {
-        let on = match shown.branch {
-            Branch::Named(_) => "on",
-            Branch::Detached(_) => "on detached HEAD",
-        };
-        format!("{} {on}", file_changes(shown.total)).into()
+        format!("{} on", file_changes(shown.total)).into()
     }
 }

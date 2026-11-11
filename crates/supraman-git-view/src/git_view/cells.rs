@@ -62,6 +62,21 @@ pub(crate) fn pill_box(colour: usize, palette: &Palette) -> Div {
     div().flex().items_center().gap_1().min_w_0().h(px(PILL)).px_1p5().rounded(px(4.)).bg(palette.pill(colour)).text_color(palette.text).text_xs()
 }
 
+/// A panel's header branch: its pill in lane `colour`, or `Detached HEAD`, then [`super::ref_panel::track`]'s words; painted under `<key>-branch` and `<key>-upstream`.
+pub(crate) fn branch_header(key: &str, branch: Option<&str>, track: &str, colour: usize, palette: &Palette, hits: &HitTargets) -> Div {
+    let shown = match branch {
+        Some(name) => pill_box(colour, palette).child(ink::text(clipped(format!("{key}-branch-name"), SharedString::from(name.to_string()), false))),
+        None => div().flex_none().text_color(palette.muted).child("Detached HEAD"),
+    };
+    div()
+        .flex()
+        .items_center()
+        .gap_1p5()
+        .min_w_0()
+        .child(shown.relative().child(hit_target(hits, format!("{key}-branch"))))
+        .when(!track.is_empty(), |d| d.child(div().relative().flex_none().whitespace_nowrap().text_color(palette.muted).child(SharedString::from(track.to_string())).child(hit_target(hits, format!("{key}-upstream")))))
+}
+
 /// The icons after a pill's name: its refs' kinds, a linked worktree's last (GitKraken's order).
 pub(crate) fn kind_icons(group: &RefGroup) -> Vec<Icon> {
     let mut kinds: Vec<RefKind> = group.refs.iter().map(|r| r.kind).collect();

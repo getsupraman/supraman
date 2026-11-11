@@ -175,14 +175,18 @@ fn every_session_in_a_worktree_has_its_lead_on_its_row_its_word_in_its_tooltip_a
 }
 
 #[gpui::test]
-fn a_conflicted_worktree_row_shows_the_conflict_node(cx: &mut TestAppContext) {
+fn a_conflicted_worktree_row_shows_the_conflict_node_and_its_upstreams_ahead_and_behind(cx: &mut TestAppContext) {
     let (f, _) = fixture();
     f.cherry_pick_conflict();
+    f.at(&f.worktree, &["branch", "-q", "-u", "origin/main"]);
     let (view, cx) = open(&f, occupancy::Live::default(), cx);
     reread(&view, cx);
 
     let side = row_of(&view, &f.worktree, cx);
     let said = view.update(cx, |v, cx| v.worktree_view(side, cx)).expect("read");
     assert_eq!(said.conflicted, 1, "a.txt");
-    assert!(painted(&view, &format!("git-conflict-node-{side}"), cx));
+    assert!(!said.upstream.is_empty(), "side and origin/main differ");
+    for key in [format!("git-conflict-node-{side}"), format!("git-worktree-upstream-{side}")] {
+        assert!(painted(&view, &key, cx), "{key}");
+    }
 }
