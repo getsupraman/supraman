@@ -1,6 +1,6 @@
 //! The conflict panel: the WIP panel's header while an operation is under way, the conflicted files' buttons and their writes.
 
-
+use supraman_core::text::count;
 use gpui::{Context, Div, SharedString, Stateful, div, prelude::*, px};
 use supraman_gitman::write::conflicts::{self, Marked, Sequence, Side};
 use supraman_gitman::{OperationState, UnderWay};
@@ -17,10 +17,15 @@ use super::{Shown, WipPanel};
 use crate::git_view::cells::pill_box;
 use crate::git_view::colours::Palette;
 
+/// `2 file conflicts in working directory`: the graph's conflict node and the conflict panel's header.
+pub(crate) fn conflicts_sentence(n: usize) -> String {
+    format!("{} in working directory", count(n, "file conflict", "file conflicts"))
+}
+
 /// The header's first line: what conflicts, or what is under way while nothing does.
 pub(crate) fn headline(state: OperationState, conflicted: usize) -> String {
     let what = match state {
-        OperationState::None => return if conflicted == 1 { "1 file conflict detected".into() } else { format!("{conflicted} file conflicts detected") },
+        OperationState::None => return conflicts_sentence(conflicted),
         OperationState::Rebase { external: true } => return "External rebase in progress".into(),
         OperationState::Merge => "Merge",
         OperationState::Rebase { .. } => "Rebase",

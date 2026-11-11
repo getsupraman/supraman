@@ -3,7 +3,7 @@
 mod actions;
 pub(crate) mod compose;
 mod compose_render;
-mod conflicts;
+pub(crate) mod conflicts;
 mod load;
 mod render;
 

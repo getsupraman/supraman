@@ -26,7 +26,7 @@ pub(crate) fn open_of(r: &Rollup) -> u32 {
 
 pub(crate) fn sentence(projects: &[OverviewProject], needs: usize) -> String {
     let tasks: u32 = projects.iter().map(|p| open_of(&p.rollup)).sum();
-    let needs = if needs == 1 { "1 thing needs you".to_string() } else { format!("{needs} things need you") };
+    let needs = count(needs, "thing needs you", "things need you");
     format!("{} open across {}. {needs}.", count(tasks as usize, "task", "tasks"), count(projects.len(), "project", "projects"))
 }
 

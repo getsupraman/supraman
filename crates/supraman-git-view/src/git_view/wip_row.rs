@@ -1,6 +1,5 @@
 //! The graph's WIP row with the commit summary's second field (the conflict node while files conflict), and the staging keys.
 
-use supraman_core::text::count;
 use std::collections::HashMap;
 
 use gpui::{AnyElement, App, Div, MouseButton, MouseDownEvent, SharedString, Window, div, prelude::*, px};
@@ -12,6 +11,7 @@ use theme::ActiveTheme as _;
 
 use super::colours::Palette;
 use super::load::Wip;
+use super::wip::conflicts::conflicts_sentence;
 use super::{GitView, Selected, cells, keys};
 
 /// The WIP row's summary field's width (GitKraken's).
@@ -97,9 +97,9 @@ impl GitView {
     }
 }
 
-/// `n file conflicts in working directory` after the conflict mark, painted under `git-conflict-node`.
+/// [`conflicts_sentence`] after the conflict mark, painted under `git-conflict-node`.
 fn conflict_node(n: usize, hits: &HitTargets, palette: &Palette, cx: &App) -> Div {
-    let words = format!("{} in working directory", count(n, "file conflict", "file conflicts"));
+    let words = conflicts_sentence(n);
     div()
         .relative()
         .flex()

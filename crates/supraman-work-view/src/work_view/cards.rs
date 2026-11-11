@@ -1,5 +1,6 @@
 //! What the Inbox paints of a Workman row: why the user sees it and what they can do; the resolving call is only ever copied.
 
+use supraman_core::text::count;
 use supraman_core::time;
 use supraman_workman::{InboxRow, ItemRef};
 
@@ -135,18 +136,17 @@ fn needs_you(row: &InboxRow, held: bool) -> bool {
 }
 
 fn caption(kind: &str, n: usize, run: Option<&ItemRef>) -> String {
-    let plural = |one: &str, many: &str| if n == 1 { one.to_string() } else { many.to_string() };
     let what = match kind {
-        "done_unverified" => "done without verification".to_string(),
-        "blocker_finding" => plural("blocker finding", "blocker findings"),
-        "assumption_due" => plural("assumption due", "assumptions due"),
-        "stale_in_progress" => "stalled".to_string(),
-        "expired_claim" => plural("expired claim", "expired claims"),
-        other => other.replace('_', " "),
+        "done_unverified" => format!("{n} done without verification"),
+        "blocker_finding" => count(n, "blocker finding", "blocker findings"),
+        "assumption_due" => count(n, "assumption due", "assumptions due"),
+        "stale_in_progress" => format!("{n} stalled"),
+        "expired_claim" => count(n, "expired claim", "expired claims"),
+        other => format!("{n} {}", other.replace('_', " ")),
     };
     match run.map(|r| if r.title.is_empty() { r.qualified_ref.as_str() } else { r.title.as_str() }) {
-        Some(run) if !run.is_empty() => format!("{n} {what} · {run}"),
-        _ => format!("{n} {what}"),
+        Some(run) if !run.is_empty() => format!("{what} · {run}"),
+        _ => what,
     }
 }
 
