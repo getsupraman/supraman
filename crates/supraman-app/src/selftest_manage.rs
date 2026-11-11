@@ -219,7 +219,7 @@ async fn row_details(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWind
     crate::selftest_schedules::themed_shots(&home, "sched2-5-details-workspace", cx).await;
     let (session_tab, session) = details_tab(view, &session_row, &own.name, cx).await?;
     let name = format!("\nName  {}\n", own.name);
-    let cwd = format!("\nWorking directory  {}\n", own.cwd.display());
+    let cwd = format!("\nWorking directory  {}\n", supraman_core::paths::normalize(&own.cwd));
     let folder_line = session.lines().find(|l| l.starts_with("Folder  ")).unwrap_or_default().to_string();
     if !session.contains(&name) || !session.contains(&cwd) || folder_line.is_empty() || folder_line.contains("none of") || !session.contains("\nState  ") {
         bail!("the Details tab of {} reads {session:?}, not its name, its folder and {cwd:?}", own.name);
