@@ -41,6 +41,24 @@ pub fn secondary(colors: &ThemeColors) -> Hsla {
     colors.text.opacity(SECONDARY)
 }
 
+/// The theme's text over the panel at this alpha is a list's selected row while another element has the keys.
+pub const INACTIVE_SELECTION: f32 = 0.16;
+/// The least contrast of the inactive selection against the panel, so the row still shows; less only where the active one shows less.
+pub const INACTIVE_SELECTION_SHOWS: f32 = 1.25;
+
+/// Every list's selected-row fill: `element.selected` while the list has the keys, else a neutral fill
+/// ([`INACTIVE_SELECTION`]) moved to the nearest lightness where the text on it holds [`NAME_FLOOR`] and it still shows on the panel.
+pub fn selection(colors: &ThemeColors, focused: bool) -> Hsla {
+    if focused {
+        return colors.element_selected;
+    }
+    let panel = colors.panel_background;
+    let blend: Hsla = over(colors.text.opacity(INACTIVE_SELECTION), panel).into();
+    let shows = INACTIVE_SELECTION_SHOWS.min(contrast(colors.element_selected, panel));
+    let holds = |fill: Hsla| contrast(colors.text, fill) >= NAME_FLOOR && contrast(fill, panel) >= shows;
+    nearest_holding(blend, holds).unwrap_or(blend)
+}
+
 /// A Messages row's tint over the panel (its status colour at this alpha), and under the pointer.
 pub const MESSAGE_TINT: f32 = 0.10;
 pub const MESSAGE_TINT_HOVER: f32 = 0.16;
@@ -943,6 +961,21 @@ mod tests {
         for t in [TerminalColors::Theme, TerminalColors::Campbell] {
             assert_eq!(TerminalColors::from_setting(t.setting().as_deref()), t);
         }
+    }
+
+    #[test]
+    fn the_inactive_selection_differs_from_the_active_one_and_holds_the_floors_on_the_panel() {
+        let light = from_zed(&one_dark(), &parse_family(selftest_light::LIGHT).unwrap().themes[0]).theme;
+        for theme in [dark_modern().theme, supraman_dark().theme, one_dark(), light] {
+            let c = theme.colors();
+            let (active, inactive) = (selection(c, true), selection(c, false));
+            assert_eq!(active, c.element_selected, "{}", theme.name);
+            assert_ne!(hex(active), hex(inactive), "{}", theme.name);
+            assert!(contrast(c.text, inactive) >= NAME_FLOOR, "{}: text on {}", theme.name, hex(inactive));
+            let shows = INACTIVE_SELECTION_SHOWS.min(contrast(active, c.panel_background));
+            assert!(contrast(inactive, c.panel_background) >= shows, "{}: {} on the panel", theme.name, hex(inactive));
+        }
+        assert_eq!(hex(selection(dark_modern().theme.colors(), false)), "#353535", "VS Code's list.inactiveSelectionBackground is #37373D");
     }
 }
 

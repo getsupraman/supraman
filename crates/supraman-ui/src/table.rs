@@ -123,6 +123,7 @@ struct Inner {
     /// The columns' widths as last laid out; the owner keeps the preferred ones.
     current: Vec<Pixels>,
     near_end: NearEnd,
+    shown_selection: Option<Hsla>,
 }
 
 /// What the owner keeps of a table between frames.
@@ -144,6 +145,11 @@ impl TableState {
 
     pub fn selected(&self) -> Option<usize> {
         self.inner.borrow().selected
+    }
+
+    /// The fill the last frame painted the selected row with; `None` while it was not in view.
+    pub fn selection_shown(&self) -> Option<Hsla> {
+        self.inner.borrow().shown_selection
     }
 
     /// Selects `row` (none with `None`) without scrolling to it.
@@ -508,8 +514,12 @@ impl<V: 'static> Table<V> {
             }
             let selected = state.selected();
             let colors = cx.theme().colors();
-            let (selection, hover) = (colors.element_selected, colors.ghost_element_hover);
+            let focused = state.focus.is_focused(window) || state.focus.contains_focused(window, cx);
+            let (selection, hover) = (crate::themes::selection(colors, focused), colors.ghost_element_hover);
             let mut out = Vec::with_capacity(range.len());
+            if range.len() > 1 || range.start > 0 {
+                state.inner.borrow_mut().shown_selection = selected.filter(|s| range.contains(s)).map(|_| selection);
+            }
             for ix in range {
                 let part = row_key.as_ref().map_or_else(|| ix.to_string(), |k| k(ix));
                 let (key, fill_key) = (format!("{id}-row-{part}"), format!("{id}-fill-{part}"));
@@ -754,6 +764,51 @@ mod tests {
         });
         cx.simulate_keystrokes("up");
         grid.read_with(cx, |g, _| assert!(g.selected.is_empty(), "an Up on the first row selects nothing anew: {:?}", g.selected));
+    }
+
+    #[gpui::test]
+    fn the_selection_is_the_active_fill_only_while_the_table_has_the_keys(cx: &mut TestAppContext) {
+        let (grid, cx) = grid(100, cx);
+        let colors = cx.update(|_, cx| cx.theme().colors().clone());
+        let (active, inactive) = (crate::themes::selection(&colors, true), crate::themes::selection(&colors, false));
+        let shown = |cx: &mut VisualTestContext| {
+            redraw(&grid, cx);
+            grid.read_with(cx, |g, _| g.state.selection_shown())
+        };
+        cx.simulate_keystrokes("down down");
+        assert_eq!(shown(cx), Some(active));
+        let elsewhere = cx.update(|window, cx| {
+            let other = cx.focus_handle();
+            window.focus(&other, cx);
+            other
+        });
+        assert_eq!(shown(cx), Some(inactive), "another handle has the keys");
+        cx.simulate_keystrokes("down");
+        grid.read_with(cx, |g, _| assert_eq!(g.state.selected(), Some(1), "a key the table does not have moves nothing"));
+        drop(elsewhere);
+        let handle = grid.read_with(cx, |g, _| g.state.focus_handle().clone());
+        cx.update(|window, cx| window.focus(&handle, cx));
+        assert_eq!(shown(cx), Some(active));
+        cx.simulate_keystrokes("down");
+        grid.read_with(cx, |g, _| assert_eq!(g.state.selected(), Some(2)));
+    }
+
+    #[gpui::test]
+    fn a_click_on_a_row_gives_the_table_the_keys(cx: &mut TestAppContext) {
+        let (grid, cx) = grid(100, cx);
+        let _elsewhere = cx.update(|window, cx| {
+            let other = cx.focus_handle();
+            window.focus(&other, cx);
+            other
+        });
+        redraw(&grid, cx);
+        let row = grid.read_with(cx, |g, _| g.hits.borrow().get("t-row-3").copied()).expect("row 3 paints under its key");
+        cx.simulate_click(row.bounds.center(), gpui::Modifiers::none());
+        cx.simulate_keystrokes("down");
+        grid.read_with(cx, |g, _| assert_eq!(g.state.selected(), Some(4)));
+        let colors = cx.update(|_, cx| cx.theme().colors().clone());
+        redraw(&grid, cx);
+        assert_eq!(grid.read_with(cx, |g, _| g.state.selection_shown()), Some(crate::themes::selection(&colors, true)));
     }
 
     #[gpui::test]

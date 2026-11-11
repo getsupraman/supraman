@@ -5,7 +5,7 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ClickEvent, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, MouseButton, Render,
+    AnyElement, App, ClickEvent, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla, MouseButton, Render,
     SharedString, Subscription, Window, div, prelude::*, px,
 };
 use theme::ActiveTheme as _;
@@ -83,6 +83,7 @@ pub struct Palette<T: Entry> {
     list: KeyedList,
     paint: Paint<T>,
     caption: SharedString,
+    selection_shown: Option<Hsla>,
 }
 
 impl<T: Entry> EventEmitter<PaletteEvent<T>> for Palette<T> {}
@@ -149,9 +150,15 @@ impl<T: Entry> Palette<T> {
             list: KeyedList::default(),
             paint,
             caption: "ITEMS".into(),
+            selection_shown: None,
         };
         palette.refresh(false, cx);
         palette
+    }
+
+    /// The fill the last frame painted the selected row with.
+    pub fn selection_shown(&self) -> Option<Hsla> {
+        self.selection_shown
     }
 
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
@@ -312,16 +319,19 @@ impl<T: Entry> Palette<T> {
         }
     }
 
-    fn render_row(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn render_row(&mut self, ix: usize, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let Some((entry, marks)) = self.shown.get(ix).cloned() else { return div().into_any_element() };
         let on = ix == self.selected;
-        let colors = cx.theme().colors().clone();
+        let selection = crate::themes::selection(cx.theme().colors(), self.input.focus_handle(cx).is_focused(window));
+        if on {
+            self.selection_shown = Some(selection);
+        }
         let body = (self.paint)(&entry, &marks, on, cx);
         let row = button::ghost(&self.hits, self.row_key(&entry.key()), cx)
             .w_full()
             .px_3()
             .py(px(5.))
-            .when(on, |d| d.bg(colors.element_selected).child(hit_target(&self.hits, format!("{}-selected", self.id))))
+            .when(on, |d| d.bg(selection).child(hit_target(&self.hits, format!("{}-selected", self.id))))
             .child(body)
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.selected = ix;
@@ -363,7 +373,7 @@ impl<T: Entry> Palette<T> {
             let empty = mode.map_or_else(|| SharedString::from("Nothing matches."), |m| m.empty.clone());
             return line().child(hit_target(&self.hits, format!("{}-empty", self.id))).child(empty).into_any_element();
         }
-        gpui::list(self.list.state(), cx.processor(|this: &mut Self, ix: usize, _, cx| this.render_row(ix, cx))).w_full().h(px(LIST_HEIGHT)).into_any_element()
+        gpui::list(self.list.state(), cx.processor(|this: &mut Self, ix: usize, window, cx| this.render_row(ix, window, cx))).w_full().h(px(LIST_HEIGHT)).into_any_element()
     }
 }
 
@@ -474,5 +484,28 @@ mod tests {
         let boost = |e: &E| u32::from(e.0 == "refresh") * 50;
         let names: Vec<&str> = ranked_by(&entries, "refs", |e, q| fuzzy(e.0, q), boost).into_iter().map(|(e, _)| e.0).collect();
         assert_eq!(names, ["refs", "refresh"], "a better fit beats a boost");
+    }
+
+    #[gpui::test]
+    fn the_selected_row_is_active_from_the_first_frame_while_the_query_has_the_keys(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| crate::init_globals(cx, "test"));
+        let paint: Paint<E> = Rc::new(|e: &E, _, _, _| div().child(e.0).into_any_element());
+        let (palette, cx) = cx.add_window_view(|window, cx| {
+            let palette = Palette::new("p", HitTargets::default(), vec![E("one"), E("two")], paint, window, cx);
+            palette.focus(window, cx);
+            palette
+        });
+        cx.update(|_, _| ());
+        let colors = cx.update(|_, cx| cx.theme().colors().clone());
+        assert_eq!(palette.read_with(cx, |p, _| p.selection_shown()), Some(crate::themes::selection(&colors, true)));
+        let _elsewhere = cx.update(|window, cx| {
+            let other = cx.focus_handle();
+            window.focus(&other, cx);
+            other
+        });
+        palette.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        cx.update(|_, _| ());
+        assert_eq!(palette.read_with(cx, |p, _| p.selection_shown()), Some(crate::themes::selection(&colors, false)));
     }
 }
