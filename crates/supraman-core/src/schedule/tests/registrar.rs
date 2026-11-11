@@ -223,13 +223,13 @@ fn a_new_task_starts_on_its_first_fire_after_now() {
     assert!(xml.contains(&format!("<StartBoundary>{day}T09:00:00</StartBoundary>")), "{xml}");
 }
 
-/// The real Task Scheduler: registers `\ForemanProbe-sched-3\probe`, reads it back with its settings,
+/// The real Task Scheduler: registers `\SupramanProbe-sched-3\probe`, reads it back with its settings,
 /// removes it and deletes the folder. Never in the gate (C101); run it by hand with `--ignored`.
 #[cfg(windows)]
 #[test]
-#[ignore = "registers a real Windows task under \\ForemanProbe-sched-3\\"]
+#[ignore = "registers a real Windows task under \\SupramanProbe-sched-3\\"]
 fn a_real_task_registers_reads_back_and_goes_with_its_folder() {
-    const FOLDER: &str = r"\ForemanProbe-sched-3";
+    const FOLDER: &str = r"\SupramanProbe-sched-3";
     let tasks = WindowsRegistrar;
     let mut s = example();
     s.id = "probe".into();

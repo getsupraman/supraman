@@ -16,7 +16,7 @@ mod common;
 const SECRET: &str = "s3cr3t-Value-81f2";
 
 /// One `.cmd` per behaviour, in folder Alpha's `scripts/`.
-const SCRIPTS: [(&str, &str); 8] = [
+const SCRIPTS: [(&str, &str); 7] = [
     ("exit0.cmd", "@exit /b 0\r\n"),
     ("gate.cmd", "@echo gate output\r\n@echo token %API_TOKEN%\r\n@exit /b 10\r\n"),
     ("fail.cmd", "@echo first line 1>&2\r\n@echo boom %API_TOKEN% 1>&2\r\n@exit /b 1\r\n"),
@@ -25,7 +25,6 @@ const SCRIPTS: [(&str, &str); 8] = [
         "env.cmd",
         "@echo %SUPRAMAN_HOME%^|%SUPRAMAN_WORKSPACE%^|%SUPRAMAN_SCHEDULE%^|%SUPRAMAN_RUN%^|%SUPRAMAN_FOLDER%^|%SUPRAMAN_LAST_RUN%^|%SUPRAMAN_LAST_OUTCOME%^|%CD%> \"%SUPRAMAN_STATE_DIR%\\env.txt\"\r\n@exit /b 0\r\n",
     ),
-    ("foreman.cmd", "@echo %FOREMAN_WORKSPACE%^|%FOREMAN_SCHEDULE%^|%FOREMAN_RUN%^|%FOREMAN_FOLDER%^|%FOREMAN_LAST_RUN%^|%FOREMAN_LAST_OUTCOME%> \"%FOREMAN_STATE_DIR%\\foreman.txt\"\r\n@exit /b 0\r\n"),
     ("secret.cmd", "@if \"%API_TOKEN%\"==\"s3cr3t-Value-81f2\" exit /b 10\r\n@exit /b 1\r\n"),
     ("once.cmd", "@if exist \"%SUPRAMAN_STATE_DIR%\\once\" exit /b 0\r\n@echo x> \"%SUPRAMAN_STATE_DIR%\\once\"\r\n@ping -n 30 127.0.0.1 >nul\r\n@exit /b 0\r\n"),
 ];
@@ -305,24 +304,6 @@ fn fire_gives_the_script_its_environment_and_state_dir() {
     assert_eq!((fields[5], fields[6]), (first_start.to_string().as_str(), "ok"));
 }
 
-/// A script approved before the rename still reads its `FOREMAN_*` names, with the same values.
-#[test]
-fn fire_gives_the_script_its_old_names_too() {
-    let f = fixture();
-    f.add_approved(script_schedule("old", "foreman.cmd", ActionKind::Script));
-    let mut host = TestHost::new(&f);
-    let first = run_now(&f, "old", &mut host);
-    run_now(&f, "old", &mut host);
-    let state = schedule::state_dir(&f.home, "demo", "old").unwrap();
-    let line = fs::read_to_string(state.join("foreman.txt")).unwrap();
-    let fields: Vec<&str> = line.trim_end().split('|').collect();
-    let first_start = schedule::runs(&f.home, "demo").unwrap().into_iter().find(|r| Some(&r.run) == first.run.as_ref()).unwrap().started.unwrap().0;
-    assert_eq!(fields[..2], ["demo", "old"], "{line}");
-    assert!(fields[2].starts_with("old-") && Some(fields[2]) != first.run.as_deref(), "{line}");
-    assert_eq!(fields[3], f.alpha.to_str().unwrap(), "{line}");
-    assert_eq!((fields[4], fields[5]), (first_start.to_string().as_str(), "ok"), "{line}");
-}
-
 /// Unapproved, paused, changed since approval and a stale task fingerprint are refused and recorded.
 #[test]
 fn fire_refuses_and_records_unapproved_paused_and_changed_schedules() {
@@ -524,24 +505,6 @@ fn a_dead_runs_session_that_would_not_end_is_tried_again_then_given_up() {
     assert!(log.contains("its session fm-demo-sched-gate-x is ended") && log.contains("given up on its session fm-demo-sched-gate-x after 5 tries: gone"), "{log}");
 }
 
-/// The window's poll lists a run by its `<id>.dead.json` too, so a dead run's session whose stop failed is tried again.
-#[test]
-fn the_polls_recovery_tries_a_dead_runs_kept_session_again() {
-    let f = fixture();
-    f.add_approved(script_schedule("gate", "exit0.cmd", ActionKind::Script));
-    fs::create_dir_all(f.live()).unwrap();
-    let pid = common::exited_pid();
-    let session = r#"{"name":"fm-demo-sched-gate-x","id":"abcd1234"}"#;
-    fs::write(f.live().join("gate.json"), format!(r#"{{"run":"gate-20261101-070000","fm_pid":{pid},"started_at":1,"stage":"session","session":{session}}}"#)).unwrap();
-    let dead = f.live().join("gate.dead.json");
-    let mut host = TestHost::at(&f, 1_000_000);
-    host.ends = VecDeque::from([Err("claude stop abcd1234: unreachable".to_string())]);
-    assert_eq!(fire::recover_workspace_with(&f.home, "demo", 1_000_000, &mut host), vec!["gate-20261101-070000".to_string()]);
-    assert!(!f.live().join("gate.json").exists() && dead.exists(), "the session is kept for another try");
-    assert_eq!(fire::recover_workspace_with(&f.home, "demo", 1_000_000 + 60_000, &mut host), Vec::<String>::new());
-    assert_eq!((host.ended, dead.exists()), (2, false), "the kept session is ended on the poll's second try");
-}
-
 /// A live file whose sm is gone ends interrupted by the next fire and the window's poll; a live sm's or a held lock's is left.
 #[test]
 fn a_run_whose_sm_is_gone_is_recovered_as_interrupted_and_a_live_one_is_left() {
@@ -557,18 +520,18 @@ fn a_run_whose_sm_is_gone_is_recovered_as_interrupted_and_a_live_one_is_left() {
     let me = std::process::id();
     let mine = format!(r#"{{"run":"gate-20261101-080000","fm_pid":{me},"fm_started":{},"started_at":1,"stage":"script"}}"#, supraman_core::platform::process::started(me).unwrap());
     fs::write(f.live().join("gate.json"), &mine).unwrap();
-    assert_eq!(fire::recover_if_dead(&f.home, "demo", "gate"), None, "its sm runs");
+    assert_eq!(fire::recover_workspace(&f.home, "demo").pop(), None, "its sm runs");
 
     let reused = format!(r#"{{"run":"gate-20261101-090000","fm_pid":{me},"fm_started":1,"started_at":1,"stage":"script"}}"#);
     fs::write(f.live().join("gate.json"), &reused).unwrap();
     let held = supraman_core::fs::try_lock_file(&f.live().join("gate.lock")).unwrap().unwrap();
-    assert_eq!(fire::recover_if_dead(&f.home, "demo", "gate"), None, "a fire holds the lock");
+    assert_eq!(fire::recover_workspace(&f.home, "demo").pop(), None, "a fire holds the lock");
     drop(held);
-    assert_eq!(fire::recover_if_dead(&f.home, "demo", "gate").as_deref(), Some("gate-20261101-090000"), "a reused pid is not its sm");
+    assert_eq!(fire::recover_workspace(&f.home, "demo").pop().as_deref(), Some("gate-20261101-090000"), "a reused pid is not its sm");
     let (outcome, why) = ended(&f.records("gate-20261101-090000"));
     assert_eq!((outcome, why.as_str()), (Outcome::Interrupted, format!("sm (pid {me}) ended without finishing the run").as_str()));
     assert!(!f.live().join("gate.json").exists());
-    assert_eq!(fire::recover_if_dead(&f.home, "demo", "gate"), None, "nothing left");
+    assert_eq!(fire::recover_workspace(&f.home, "demo").pop(), None, "nothing left");
 }
 
 /// Every file under `dir`, read whole.

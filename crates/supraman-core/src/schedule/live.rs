@@ -68,7 +68,7 @@ pub fn fire_log(home: &Path) -> PathBuf {
 
 /// The `SecretStore` key of a schedule's secret `name`.
 pub fn secret_key(workspace: &str, id: &str, name: &str) -> String {
-    format!("foreman/schedule/{workspace}/{id}/{name}")
+    format!("supraman/schedule/{workspace}/{id}/{name}")
 }
 
 /// `text` with each non-empty secret replaced by [`MASK`], then its last `max` bytes (cut on a char boundary).
