@@ -31,7 +31,9 @@ impl FleetView {
         let muted = colors.text_muted;
         let plus = button::toolbar(&self.hits, "new-shell", Icon::Plus.svg(16., muted), false, muted, cx)
             .tooltip(Tooltip::text("New shell"))
-            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.new_shell(window, cx)));
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                this.new_shell(window, cx);
+            }));
         let shells = button::toolbar(&self.hits, "new-shell-menu", Icon::ChevronDown.svg(12., muted), false, muted, cx)
             .tooltip(Tooltip::text("New shell of…"))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_shell_menu(cx)));
