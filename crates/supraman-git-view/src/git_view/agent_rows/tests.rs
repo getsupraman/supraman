@@ -196,7 +196,7 @@ fn a_write_while_a_session_works_here_runs_without_a_question(cx: &mut TestAppCo
 }
 
 #[gpui::test]
-fn a_session_starting_in_another_worktree_shows_its_row_with_the_pills_state_dot_at_once(cx: &mut TestAppContext) {
+fn a_session_starting_in_another_worktree_shows_its_row_with_its_lead_at_once(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let live = Live::default();
     let (view, cx) = open(f.dir.clone(), live.clone(), cx);
@@ -205,7 +205,7 @@ fn a_session_starting_in_another_worktree_shows_its_row_with_the_pills_state_dot
 
     set(&live, vec![session("fm-side", f.worktree.join("src"), Activity::Waiting, None)], &view, cx);
     let ix = row(&view, cx).expect("the session's start reads the worktrees again and lays its row out");
-    assert!(painted(&view, &format!("git-worktree-session-{ix}"), cx) && painted(&view, &format!("git-worktree-state-{ix}"), cx), "the pill with its state's dot");
+    assert!(painted(&view, &format!("git-worktree-session-{ix}-0"), cx) && painted(&view, &format!("git-worktree-state-{ix}-0"), cx), "the session's lead with its state");
     assert_eq!(agents(&view, cx), [], "not a session of this worktree");
 
     set(&live, Vec::new(), &view, cx);

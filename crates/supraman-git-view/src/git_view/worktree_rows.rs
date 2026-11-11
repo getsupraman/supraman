@@ -16,6 +16,7 @@ use super::live::Refresh;
 use super::load::{GraphRow, Wip};
 use super::ref_panel::RefWips;
 use super::{GitView, Load, Selected, TABLE, agent_rows, background, cells, graph};
+use crate::occupancy::LiveSession;
 
 /// What a worktree's WIP row says.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,13 +27,13 @@ pub(crate) struct WorktreeView {
     pub(crate) counts: String,
     /// Ahead of and behind its upstream ([`super::ref_panel::track`]).
     pub(crate) upstream: String,
-    /// The live session working there, whose pill stands in place of `WIP`.
-    pub(crate) session: Option<String>,
+    /// The live sessions working there, whose leads stand in place of `// WIP`.
+    pub(crate) sessions: Vec<LiveSession>,
     pub(crate) detached: bool,
 }
 
 impl WorktreeView {
-    pub(crate) fn of(wip: &WorktreeWip, session: Option<String>) -> WorktreeView {
+    pub(crate) fn of(wip: &WorktreeWip, sessions: Vec<LiveSession>) -> WorktreeView {
         let label = match wip.branch() {
             Some(branch) => format!("on {branch}"),
             None => "Detached HEAD".into(),
@@ -41,7 +42,7 @@ impl WorktreeView {
         let counts = Wip { added: c.added as usize, modified: (c.modified + c.renamed) as usize, deleted: c.deleted as usize, conflicts: 0 }.counts();
         let (ahead, behind) = wip.upstream().map_or((0, 0), |(_, ahead, behind)| (ahead, behind));
         let upstream = super::ref_panel::track(ahead, behind);
-        WorktreeView { label, counts, upstream, session, detached: wip.detached() }
+        WorktreeView { label, counts, upstream, sessions, detached: wip.detached() }
     }
 }
 
@@ -80,7 +81,7 @@ impl GitView {
             reading: wips.is_some_and(|w| w.reading()),
             landed: wips.is_some_and(|w| w.landed()),
             own: top.as_deref().map(path_key),
-            said: self.other_wips(cx).iter().map(|w| (path_key(w.path()), WorktreeView::of(w, None))).collect(),
+            said: self.other_wips(cx).iter().map(|w| (path_key(w.path()), WorktreeView::of(w, Vec::new()))).collect(),
         };
         self.ref_panel.update(cx, |p, cx| p.set_wips(shown, cx));
     }
@@ -112,8 +113,7 @@ impl GitView {
     pub(crate) fn worktree_view(&self, ix: usize, cx: &Context<Self>) -> Option<WorktreeView> {
         let path = self.pages.read(cx).rows.get(ix)?.worktree()?;
         let wip = background::wips(cx.entity_id(), cx)?.read(cx).get(path).cloned()?;
-        let session = self.gate.read(cx).occupancy().who_works_in(path).into_iter().next();
-        Some(WorktreeView::of(&wip, session))
+        Some(WorktreeView::of(&wip, self.sessions_in(path)))
     }
 
     /// Asks the workspace for row `ix`'s worktree's Git tab; a detached worktree's only when `detached_too`.
@@ -134,17 +134,7 @@ impl GitView {
             (1, _) => graph::cell(ix, row, false, palette, &self.hits),
             (0, Some(view)) => self.worktree_ref(ix, &view, palette, cx),
             (2, Some(view)) => {
-                let activity = view.session.as_deref().zip(row.worktree()).and_then(|(name, path)| self.activity_in(path, name));
-                let lead = match view.session {
-                    Some(name) => supraman_ui::tabs::chip(name.into(), cx)
-                        .relative()
-                        .flex()
-                        .items_center()
-                        .gap_1p5()
-                        .children(activity.map(|a| agent_rows::state_dot(a, cx).relative().child(hit_target(&self.hits, format!("git-worktree-state-{ix}")))))
-                        .child(hit_target(&self.hits, format!("git-worktree-session-{ix}"))),
-                    None => div().relative().flex_none().text_color(palette.muted).child("WIP").child(hit_target(&self.hits, format!("git-worktree-wip-{ix}"))),
-                };
+                let lead = self.worktree_leads(ix, &view.sessions, row.worktree(), palette, cx);
                 cells::wip_message(row, lead, view.counts, palette)
             }
             _ => div().into_any_element(),
@@ -162,12 +152,32 @@ impl GitView {
                 MouseButton::Right,
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
                     if let Some(path) = &path {
-                        this.worktree_session_menu(path, e.position, cx);
+                        this.worktree_session_menu(path, 0, e.position, cx);
                     }
                 }),
             )
             .child(cell)
             .into_any_element()
+    }
+
+    /// Each session's [`agent_rows::session_lead`], its right-click that session's menu; `// WIP` while nobody works there.
+    fn worktree_leads(&self, ix: usize, sessions: &[LiveSession], path: Option<&Path>, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        if sessions.is_empty() {
+            return div().relative().flex_none().text_color(palette.muted).child("// WIP").child(hit_target(&self.hits, format!("git-worktree-wip-{ix}"))).into_any_element();
+        }
+        let leads = sessions.iter().enumerate().map(|(n, s)| {
+            let path = path.map(Path::to_path_buf);
+            agent_rows::session_lead(&format!("git-worktree-session-{ix}-{n}"), &format!("git-worktree-state-{ix}-{n}"), s, palette, &self.hits, cx)
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                        if let Some(path) = &path {
+                            this.worktree_session_menu(path, n, e.position, cx);
+                        }
+                    }),
+                )
+        });
+        div().flex().items_center().gap_4().min_w_0().flex_shrink(1.).overflow_hidden().children(leads).into_any_element()
     }
 
     /// The `on <branch>` label, then Open Worktree shown on the row's hover or selection.
