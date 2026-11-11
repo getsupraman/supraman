@@ -138,3 +138,23 @@ fn the_date_and_sha_paint_a_step_under_the_body_muted_in_figures(cx: &mut TestAp
     assert_eq!(text.font_family.as_ref().map(|f| f.to_string()), Some(supraman_ui::fonts::UI.to_string()));
     assert!(text.font_features.is_some(), "tabular figures");
 }
+
+#[gpui::test]
+fn a_pills_connector_and_its_graph_half_are_one_line_of_whole_device_pixels_at_any_scale(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let (view, cx) = open(&f, cx);
+    let ix = row_of(&view, f.sha("second"), cx);
+    for scale in [1., 1.25, 1.5, 2.] {
+        cx.simulate_scale_factor_change(scale);
+        let hits = repaint(&view, cx);
+        let (pill, graph) = (at(&hits, &format!("git-link-{ix}")), at(&hits, &format!("git-graph-link-{ix}")));
+        assert_eq!((pill.top(), pill.size.height), (graph.top(), graph.size.height), "one line at {scale}: {pill:?} {graph:?}");
+        let width = f32::from(crate::git_view::graph::stroke_width(scale));
+        assert!((f32::from(pill.size.height) - width).abs() < 1e-3, "the graph's stroke at {scale}: {pill:?}");
+        let device = |p: Pixels| f32::from(p) * scale;
+        for edge in [device(pill.top()), device(pill.bottom())] {
+            assert!((edge - edge.round()).abs() < 1e-3, "on device pixel rows at {scale}: {pill:?}");
+        }
+        assert!(graph.right() > graph.left() && pill.right() >= graph.left(), "the pill's half reaches the graph's at {scale}: {pill:?} {graph:?}");
+    }
+}

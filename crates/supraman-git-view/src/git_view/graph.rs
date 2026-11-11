@@ -3,7 +3,7 @@
 use gpui::{AnyElement, Bounds, Div, FontWeight, Hsla, SharedString, PathBuilder, Pixels, Window, canvas, div, fill, point, prelude::*, px};
 use supraman_gitman::{Edge, EdgeKind};
 use supraman_ui::fonts;
-use supraman_ui::hit::{HitTargets, hit_target};
+use supraman_ui::hit::{Hit, HitTargets, hit_target};
 use supraman_ui::icon::Icon;
 use supraman_ui::tooltip::Tooltip;
 
@@ -58,13 +58,11 @@ pub(crate) fn cell(ix: usize, row: &GraphRow, connector: bool, palette: &Palette
     let (lane, colour) = (row.row.lane, row.row.colour);
     let link = connector.then(|| palette.connector(colour));
     let shade = palette.band(colour);
+    let hits_link = hits.clone();
     let paint = canvas(|_, _, _| {}, move |bounds, _, window, _| {
         window.paint_quad(fill(band(lane, bounds), shade));
         if let Some(link) = link {
-            line(window, bounds, link, false, |b, mid| {
-                b.move_to(point(bounds.left(), mid));
-                b.line_to(point(bounds.left() + px(lane_x(lane)), mid));
-            });
+            link_line(window, bounds.left(), bounds.left() + px(lane_x(lane)), bounds, link, &hits_link, format!("git-graph-link-{ix}"));
         }
         for (edge, colour) in &edges {
             paint_edge(window, bounds, edge, *colour);
@@ -86,19 +84,46 @@ pub(crate) fn cell(ix: usize, row: &GraphRow, connector: bool, palette: &Palette
         .into_any_element()
 }
 
+/// [`STROKE`] in whole device pixels: every graph line's width and every connector's.
+fn device_stroke(scale: f32) -> f32 {
+    (STROKE * scale).round().max(1.)
+}
+
+pub(crate) fn stroke_width(scale: f32) -> Pixels {
+    px(device_stroke(scale) / scale)
+}
+
+/// `at` moved to where a [`stroke_width`] line centred on it covers whole device pixels.
+pub(crate) fn snap(at: Pixels, scale: f32) -> Pixels {
+    let device = f32::from(at) * scale;
+    let centre = if device_stroke(scale) % 2. == 1. { device.floor() + 0.5 } else { device.round() };
+    px(centre / scale)
+}
+
+/// The horizontal line from `left` to `right` at `bounds`' snapped middle, recorded under `key`: a pill's connector and its graph half.
+pub(crate) fn link_line(window: &mut Window, left: Pixels, right: Pixels, bounds: Bounds<Pixels>, colour: Hsla, hits: &HitTargets, key: String) {
+    let scale = window.scale_factor();
+    let (mid, half) = (snap(bounds.center().y, scale), stroke_width(scale) / 2.);
+    let line = Bounds::from_corners(point(left, mid - half), point(right.max(left), mid + half));
+    window.paint_quad(fill(line, colour));
+    hits.borrow_mut().insert(key, Hit { bounds: line, visible: window.content_mask().bounds });
+}
+
 fn line(window: &mut Window, bounds: Bounds<Pixels>, colour: Hsla, dashed: bool, draw: impl FnOnce(&mut PathBuilder, Pixels)) {
-    let mut b = PathBuilder::stroke(px(STROKE));
+    let scale = window.scale_factor();
+    let mut b = PathBuilder::stroke(stroke_width(scale));
     if dashed {
         b = b.dash_array(&[px(3.), px(3.)]);
     }
-    draw(&mut b, bounds.top() + bounds.size.height / 2.);
+    draw(&mut b, snap(bounds.center().y, scale));
     if let Ok(path) = b.build() {
         window.paint_path(path, colour);
     }
 }
 
 fn paint_edge(window: &mut Window, bounds: Bounds<Pixels>, e: &Edge, colour: Hsla) {
-    let x = |lane: usize| bounds.left() + px(lane_x(lane));
+    let scale = window.scale_factor();
+    let x = |lane: usize| snap(bounds.left() + px(lane_x(lane)), scale);
     let (top, bottom, r) = (bounds.top(), bounds.bottom(), px(RADIUS));
     line(window, bounds, colour, e.dashed, |b, mid| match e.kind {
         EdgeKind::PassThrough => {
