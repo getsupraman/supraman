@@ -319,10 +319,11 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     until(view, cx, WITHIN, "the changed schedule's Inbox entry", |v| painted(v, &later).then_some(())).await?;
     click(view, &later, cx).await?;
     until(view, cx, WITHIN, "the dismissed entry gone", |v| (!painted(v, &later) && v.tray_tooltip() == "Supraman").then_some(())).await?;
-    let kept = std::fs::read_to_string(home.join("schedules").join("waiting-dismissed.json")).unwrap_or_default();
-    if !kept.contains(&format!("{WS}/{ID}@")) {
-        bail!("the dismissal is not kept in the home for a restart: {kept:?}");
-    }
+    let (dismissed, entry) = (home.join("schedules").join("waiting-dismissed.json"), format!("{WS}/{ID}@"));
+    until(view, cx, WITHIN, "the dismissal kept in the home for a restart", |_| {
+        std::fs::read_to_string(&dismissed).ok().filter(|kept| kept.contains(&entry)).map(|_| ())
+    })
+    .await?;
     sm(&["schedule", "edit", WS, ID, "--every", "weekly mon 10:30"])?;
     until(view, cx, WITHIN, "the entry back once the schedule changed again", |v| painted(v, &later).then_some(())).await?;
     double_click(view, &format!("sched-row-{WS}/{ID}"), cx).await?;
