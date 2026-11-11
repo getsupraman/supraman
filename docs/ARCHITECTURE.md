@@ -120,7 +120,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 
 - `list_sessions`, `parse`, `Session::health`/`supervised_health` — `claude agents --json --all` and the health table (crate docs in `lib.rs`).
 - `Claude` (`launch.rs`: `launch`, `resume`, `stop`, `rm`, `remove`, `find_by_name`), `LaunchSpec`, `resume_argv`, `new_session_id`, `name_taken` — the write side; every run goes through `supraman_core::process::run`.
-- `mcp_config_path`, `write_mcp_config`, `workman_mcp_config` — a session's Workman config file under `<home>/mcp/`, with the session-name check; write, read and delete it through these.
+- `mcp_config_path`, `write_mcp_config_helped` — a session's Workman config file under `<home>/mcp/`, with the session-name check and `headersHelper` in place of a token; write, read and delete it through these.
 - `check_supported`, `MIN_VERSION`, `TESTED_VERSION` (`cli.rs`) — the CLI version gate.
 - `daemon_status`, `daemon_mismatch`, `is_elevated` (`daemon.rs`) — whether this process can reach claude's background service. `service_pid` (the roster's `supervisorPid`, since `claude daemon status` reads `NotRunning` from an unelevated process facing an elevated service), `pid_elevated`, `service_elevated` and `task_run_level` give a scheduled task's run level.
 - `peer` — writing into a session's own message pipe (`docs/peer-messaging.md`); `human::send_from_human` picks the pipe or the relay.

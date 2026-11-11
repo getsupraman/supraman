@@ -730,7 +730,7 @@ mod tests {
         let home = dir.path().join("home");
         std::fs::create_dir_all(home.join("supervisor")).unwrap();
         std::fs::write(Hands::path(&home), r#"{"hand-alpha-1":{"sessionId":"h1","role":"hand"},"hand-beta-1":{"sessionId":"h2","role":"hand"}}"#).unwrap();
-        supraman_claude::write_mcp_config(&home.join("mcp"), "hand-alpha-1", "http://127.0.0.1:1/mcp", "wss_old", &[]).unwrap();
+        supraman_claude::write_mcp_config_helped(&home.join("mcp"), "hand-alpha-1", "http://127.0.0.1:1/mcp", "sm", &[]).unwrap();
         let (_, auth) = home_with(dir.path(), None);
         let (hands, notice) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
         assert_eq!(notice, None);

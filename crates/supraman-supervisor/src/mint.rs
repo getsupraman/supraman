@@ -879,7 +879,7 @@ mod tests {
                 "fm-demo-beta":{"sessionId":"9","role":"repo","origin":"https://b.example"}}"#,
         )
         .unwrap();
-        supraman_claude::write_mcp_config(&mcp, "fm-demo-workspace", "http://127.0.0.1:1/mcp", "wss_fake", &[]).unwrap();
+        supraman_claude::write_mcp_config_helped(&mcp, "fm-demo-workspace", "http://127.0.0.1:1/mcp", "sm", &[]).unwrap();
         let mut s = MintedSessions::load(Some(path.clone())).unwrap();
         assert_eq!(s.get("fm-demo-workspace").unwrap().origin, None, "a file from before m5/48");
         s.adopt_origins(&mcp).unwrap();
