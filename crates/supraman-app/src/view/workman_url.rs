@@ -111,12 +111,12 @@ impl FleetView {
         if origins.is_empty() {
             return;
         }
-        let revoke = cx.background_executor().spawn(async move { origins.iter().filter_map(|o| auth.sign_out(o).err()).collect::<Vec<_>>() });
+        let revoke = cx.background_executor().spawn(async move { leave(&auth, &origins) });
         cx.spawn(async move |this, cx| {
             let failed = revoke.await;
             if !failed.is_empty() {
                 this.update(cx, |this, cx| {
-                    this.hand_notices.push(format!("The old server's grant was not revoked: {}", failed.join("; ")));
+                    this.hand_notices.extend(failed);
                     cx.notify();
                 })
                 .ok();
@@ -124,6 +124,11 @@ impl FleetView {
         })
         .detach();
     }
+}
+
+/// The notices of signing out of `origins`: a store that cannot be read or written; a grant not revoked is logged only.
+fn leave(auth: &supraman_workman::Auth, origins: &[String]) -> Vec<String> {
+    origins.iter().filter_map(|o| auth.sign_out(o).err()).map(|e| format!("Cannot sign out of the old server: {e}")).collect()
 }
 
 #[cfg(test)]
@@ -154,5 +159,18 @@ mod tests {
         assert_eq!(switch(&unsigned, "https://other.example"), Switch::Save, "not signed in: saved at once");
         std::fs::remove_file(&path).unwrap();
         assert_eq!(switch(&auth, "https://other.example"), Switch::Save, "no server.json: saved at once");
+    }
+
+    #[test]
+    fn an_old_server_refusing_the_revoke_adds_no_notice() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let fake = FakeWorkman::start(vec![]);
+        let oauth = fake.enable_oauth();
+        let auth = test_auth::signed_in(&home, fake.base());
+        oauth.fail_revoke(true);
+        assert_eq!(leave(&auth, &[fake.base().to_string()]), Vec::<String>::new());
+        assert_eq!(oauth.revoked(), 0, "the fake refused the revoke");
+        assert_eq!(auth.status(fake.base()), supraman_workman::AuthStatus::NotSignedIn, "signed out here all the same");
     }
 }

@@ -10,7 +10,7 @@ use supraman_core::workman_server::{self, ServerJson};
 use supraman_workman::auth::{http_browser, http_browser_with};
 use supraman_workman::closed_base;
 use supraman_workman::fake::{Answer, FakeWorkman, location_query};
-use supraman_workman::{Auth, AuthError, AuthStatus, Client};
+use supraman_workman::{Auth, AuthError, AuthStatus, Client, SignedOut};
 
 fn overview() -> Answer {
     Answer::json(r#"{"asOf":"2026-10-28T10:00:00+00:00","seq":1,"projects":[],"workingNow":[],"inboxCount":0}"#)
@@ -370,18 +370,18 @@ fn signing_out_of_an_unreachable_old_server_is_quick_once_and_blocks_no_other_to
     let asked = std::time::Instant::now();
     auth.access_token(new.base()).unwrap();
     assert!(asked.elapsed() < Duration::from_secs(1), "the new server's token waited {:?} on the revoke", asked.elapsed());
-    let e = revoke.join().unwrap().unwrap_err();
+    let Ok(SignedOut::NotRevoked(e)) = revoke.join().unwrap() else { panic!("the revoke failed, the sign-out did not") };
     assert!(started.elapsed() < Duration::from_secs(8), "{:?}", started.elapsed());
     assert!(e.contains("lapses"), "{e}");
     assert_eq!(auth.status(old.base()), AuthStatus::NotSignedIn, "forgotten even though the revoke failed");
-    assert_eq!(auth.sign_out(old.base()), Ok(()), "nothing left: no second notice");
+    assert_eq!(auth.sign_out(old.base()), Ok(SignedOut::Nothing), "nothing left to revoke");
     assert!(matches!(auth.status(new.base()), AuthStatus::SignedIn { .. }));
 
     let closed = closed_base();
     auth.sign_in(old.base(), &http_browser()).unwrap();
     revoke_at(dir.path(), old.base(), &format!("{closed}/connect/revoke"));
     let started = std::time::Instant::now();
-    assert!(auth.sign_out(old.base()).is_err());
+    assert!(matches!(auth.sign_out(old.base()), Ok(SignedOut::NotRevoked(_))));
     assert!(started.elapsed() < Duration::from_secs(3), "a closed port answers at once: {:?}", started.elapsed());
     drop(silent);
 }

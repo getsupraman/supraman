@@ -503,6 +503,19 @@ mod tests {
     }
 
     #[test]
+    fn a_sign_out_whose_revoke_is_refused_adds_no_notice() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let fake = supraman_workman::fake::FakeWorkman::start(vec![]);
+        let oauth = fake.enable_oauth();
+        let auth = crate::test_auth::signed_in(&home, fake.base());
+        oauth.fail_revoke(true);
+        assert_eq!(sign_out(&auth, None), Vec::<String>::new());
+        assert_eq!(oauth.revoked(), 0, "the fake refused the revoke");
+        assert_eq!(auth.status(fake.base()), supraman_workman::AuthStatus::NotSignedIn);
+    }
+
+    #[test]
     fn finds_the_plugin_above_the_exe() {
         let exe = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/release/supraman.exe");
         let found = find_plugin_dir(&exe).unwrap();
