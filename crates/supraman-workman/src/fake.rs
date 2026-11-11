@@ -816,7 +816,11 @@ impl FakeSessions {
             return Answer::status(409, serde_json::json!({ "error": format!("the session \"{name}\" cannot be taken over from that launcher") }).to_string());
         }
         if row.launched_by != launched_by && takeover.is_none() {
-            return Answer::status(409, serde_json::json!({ "error": format!("the session \"{name}\" belongs to another launcher") }).to_string());
+            let error = format!(
+                "the session name \"{name}\" is held by a session launched by {}, and this mint says {launched_by}; two launchers' sessions cannot share a name, and replace does not override that",
+                row.launched_by
+            );
+            return Answer::status(409, serde_json::json!({ "error": error }).to_string());
         }
         if Self::alive(row, clock.map(|(now, _)| now)) && !replace {
             let error = format!("the session \"{name}\" already has a live token; pass replace: true to revoke it and mint a new one");

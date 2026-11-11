@@ -418,9 +418,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                         Resumed::InPlace => Ok(()),
                         Resumed::Copy(other) => Err(copy_failure(&id, &other)),
                         Resumed::Unknown => {
-                            self.notices.push(format!(
-                                "claude printed {out:?} for the resume of {name} ({id}); the next session list shows whether it woke in place"
-                            ));
+                            log::info!("claude printed {out:?} for the resume of {name} ({id}); the next session list shows whether it woke in place");
                             self.unconfirmed.push((name.clone(), id.clone(), now));
                             Ok(())
                         }
@@ -650,7 +648,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                 Err(e) => Err(e),
             };
             if let Err(e) = result {
-                self.notices.push(format!("Cannot tell Workman the claude session of {name} (session {session_id}): {e}"));
+                log::warn!("Cannot tell Workman the claude session of {name} (session {session_id}): {e}");
             }
             self.save_minted();
         }
@@ -699,7 +697,9 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         };
         self.generations.remove(name);
         let bearer = Bearer::of(self.tokens.token(&m.role).map(|t| t.map(|t| (t.url, t.token))));
-        self.notices.extend(crate::mint::revoke(&self.keeper, &*self.minter, &bearer, name, &m).notices);
+        for notice in crate::mint::revoke(&self.keeper, &*self.minter, &bearer, name, &m).notices {
+            log::warn!("{notice}");
+        }
         self.save_minted();
     }
 

@@ -72,6 +72,7 @@ pub(crate) mod notices;
 mod polls;
 mod reopen;
 mod results;
+mod store_saves;
 mod right;
 pub(crate) mod shells;
 mod sidebar;
@@ -602,15 +603,6 @@ impl FleetView {
         cx.notify();
     }
 
-    pub fn save_off_thread(&self, save: Option<supraman_core::store::Save>, failed: &'static str, cx: &mut Context<Self>) {
-        supraman_ui::store::save_off_thread(save, cx, move |this, saved, cx| {
-            if let Err(e) = saved {
-                this.action_error = Some(format!("{failed}: {e}"));
-                cx.notify();
-            }
-        });
-    }
-
     fn watch_workman(home: Option<PathBuf>, mut recheck: Nudged, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let executor = cx.background_executor().clone();
@@ -790,7 +782,7 @@ impl FleetView {
             self.scheduling.schedule_errors = errors;
             supraman_ui::notices::keep_dismissed(&mut self.scheduling.schedule_errors_dismissed, &self.scheduling.schedule_errors);
             let (_, save) = self.scheduling.waiting_dismissed.prune_keys(&crate::schedules::waiting_keys(&self.scheduling.schedules));
-            self.save_off_thread(save, "Cannot save the dismissed approvals", cx);
+            self.save_pruned(save, "Cannot save the dismissed approvals", cx);
             self.find_asked_schedules();
         }
         let (workspaces, sessions, main_repos, hooks, desired, polled_at) = &before;
@@ -820,7 +812,7 @@ impl FleetView {
         self.mail.relays = report.relays;
         self.mail.messages = report.messages;
         let (_, save) = self.mail.dismissed_messages.prune(&self.mail.messages);
-        self.save_off_thread(save, "Cannot save the dismissed messages", cx);
+        self.save_pruned(save, "Cannot save the dismissed messages", cx);
         for (workspace, on_disk) in report.answered {
             let answered = self.mail.answered.entry(workspace).or_default();
             for (file, line) in on_disk {

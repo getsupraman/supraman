@@ -868,7 +868,7 @@ fn mint_failure_fails_the_launch_without_falling_back_to_the_static_token() {
 }
 
 #[test]
-fn mint_a_failed_revoke_is_a_notice_and_the_file_still_goes() {
+fn mint_a_failed_revoke_is_logged_not_a_notice_and_the_file_still_goes() {
     let dir = tempfile::tempdir().unwrap();
     let (mut sup, minter) = minted_and_stopped(dir.path());
     minter.0.lock().unwrap().revoke_error = Some(MintError::Unreachable { base: "http://127.0.0.1:1".into(), reason: "refused".into() });
@@ -877,8 +877,7 @@ fn mint_a_failed_revoke_is_a_notice_and_the_file_still_goes() {
         sup.tick(&[another()], &mut free(), NOW + t * SECOND);
     }
     let notices = sup.take_notices();
-    assert_eq!(notices.len(), 1, "{notices:?}");
-    assert!(notices[0].starts_with("Cannot revoke the Workman token of fm-demo-workspace (session ws-0)"), "{}", notices[0]);
+    assert!(notices.is_empty(), "{notices:?}");
     assert!(!dir.path().join("workstate-fm-demo-workspace.json").exists());
     assert_eq!(sup.keeper().kept("fm-demo-workspace"), None);
 }
@@ -1495,8 +1494,7 @@ fn a_resume_with_unrecognised_output_is_settled_by_the_next_snapshot() {
     *sup.launcher.output.borrow_mut() = Some("Resumed in the background".into());
     assert_eq!(sup.tick(std::slice::from_ref(&stopped), &mut free(), NOW), []);
     assert!(matches!(sup.launcher().take().as_slice(), [Call::Resume { .. }]));
-    let notices = sup.take_notices();
-    assert!(notices.len() == 1 && notices[0].contains("Resumed in the background") && notices[0].contains("aaaa0001"), "{notices:?}");
+    assert!(sup.take_notices().is_empty(), "an unknown resume output is logged");
     sup.tick(std::slice::from_ref(&copy), &mut free(), NOW + 2 * SECOND);
     let a = sup.memory.get(name).unwrap();
     assert_eq!((a.failures, a.started_at), (1, None));
