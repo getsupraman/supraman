@@ -80,6 +80,18 @@ pub fn toolbar_turning(hits: &HitTargets, key: impl Into<SharedString>, icon: Sv
     frame.child(hit_target(hits, format!("{key}-turning"))).child(crate::icon::turning(icon, ElementId::Name(format!("{key}-turning").into())))
 }
 
+/// A split button: `main` and its `menu` half (a ⌄), each a [`toolbar`] under its own key, joined in one group by a rule.
+pub fn split(main: Stateful<Div>, menu: Stateful<Div>, cx: &App) -> Div {
+    let rule = cx.theme().colors().border;
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .child(main.rounded_r_none())
+        .child(div().flex_none().w(px(1.)).h(px(14.)).bg(rule))
+        .child(menu.rounded_l_none().min_w(px(18.)).px(px(2.)))
+}
+
 /// A small bordered button: one height, the label centred, a lighter fill and border on hover.
 pub fn bordered(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<SharedString>, cx: &App) -> Stateful<Div> {
     let colors = cx.theme().colors();

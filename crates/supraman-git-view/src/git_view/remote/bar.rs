@@ -1,6 +1,6 @@
 //! The toolbar's Pull split button, Push and the progress strip; hit keys `git-pull`, `git-pull-menu`, `git-push`, `git-remote-cancel`.
 
-use gpui::{AnyElement, App, ClickEvent, Context, Div, Entity, SharedString, div, prelude::*};
+use gpui::{App, ClickEvent, Context, Div, Entity, SharedString, Stateful, div, prelude::*};
 use supraman_gitman::write::remote::PullChoice;
 use supraman_ui::button;
 use supraman_ui::icon::Icon;
@@ -71,12 +71,12 @@ impl GitView {
 ")
     }
 
-    fn remote_button(&self, key: &'static str, icon: Icon, caption: SharedString, why_not: Option<String>, tooltip: String, cx: &mut Context<Self>) -> AnyElement {
+    fn remote_button(&self, key: &'static str, icon: Icon, caption: SharedString, why_not: Option<String>, tooltip: String, cx: &mut Context<Self>) -> Stateful<Div> {
         let colors = cx.theme().colors();
         let fg = if why_not.is_none() { colors.text } else { colors.text_muted };
         let button = button::toolbar(&self.hits, key, icon.svg(14., fg), false, fg, cx).child(caption);
         if let Some(why) = why_not {
-            return button::dimmed(button.tooltip(Tooltip::text(why))).into_any_element();
+            return button::dimmed(button.tooltip(Tooltip::text(why)));
         }
         button
             .tooltip(Tooltip::text(tooltip))
@@ -84,7 +84,6 @@ impl GitView {
                 PULL_KEY => this.remote.update(cx, |r, cx| r.pull_default(cx)),
                 _ => this.remote.update(cx, |r, cx| r.push_head(cx)),
             }))
-            .into_any_element()
     }
 
     /// Pull with its ▾, Push, and while a call runs its words, progress and Cancel.
@@ -118,8 +117,7 @@ impl GitView {
             .items_center()
             .gap_1()
             .py_1()
-            .child(self.remote_button(PULL_KEY, Icon::SortDown, caption.into(), pull_why, self.pull_tooltip(choice, cx), cx))
-            .child(menu)
+            .child(button::split(self.remote_button(PULL_KEY, Icon::SortDown, caption.into(), pull_why, self.pull_tooltip(choice, cx), cx), menu, cx))
             .child(self.remote_button(PUSH_KEY, Icon::SortUp, "Push".into(), push_why, push_tip, cx))
             .children(strip)
     }

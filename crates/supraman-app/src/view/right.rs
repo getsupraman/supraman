@@ -1,4 +1,4 @@
-//! The right pane: the tab strip with its new-shell buttons, and the active tab's content.
+//! The right pane: the tab strip with its new-shell split button, and the active tab's content.
 
 pub(in crate::view) mod tab_menu;
 
@@ -29,9 +29,17 @@ impl FleetView {
             })
             .collect();
         let muted = colors.text_muted;
-        let mut bar = tab_strip(
+        let plus = button::toolbar(&self.hits, "new-shell", Icon::Plus.svg(16., muted), false, muted, cx)
+            .tooltip(Tooltip::text("New shell"))
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.new_shell(window, cx)));
+        let shells = button::toolbar(&self.hits, "new-shell-menu", Icon::ChevronDown.svg(12., muted), false, muted, cx)
+            .tooltip(Tooltip::text("New shell of…"))
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_shell_menu(cx)));
+        let new_tab = button::split(plus, shells, cx).into_any_element();
+        let bar = tab_strip(
             &self.hits,
             headers,
+            Some(new_tab),
             self.active,
             || Icon::Close.svg(14., muted),
             |this: &mut Self, id, cx| this.activate_tab(id, cx),
@@ -43,30 +51,6 @@ impl FleetView {
             |this: &mut Self, id, at, cx| this.open_tab_menu(id, at, cx),
             window,
             cx,
-        );
-        bar = bar.child(
-            button::ghost(&self.hits, "new-shell", cx)
-                .flex()
-                .items_center()
-                .justify_center()
-                .h_full()
-                .w(px(36.))
-                .child(Icon::Plus.svg(16., colors.text_muted).group_hover("new-shell", |s| s.text_color(colors.text)))
-                .tooltip(Tooltip::text("New shell"))
-                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                    this.new_shell(window, cx);
-                })),
-        );
-        bar = bar.child(
-            button::ghost(&self.hits, "new-shell-menu", cx)
-                .flex()
-                .items_center()
-                .justify_center()
-                .h_full()
-                .w(px(22.))
-                .child(Icon::ChevronDown.svg(14., colors.text_muted).group_hover("new-shell-menu", |s| s.text_color(colors.text)))
-                .tooltip(Tooltip::text("New shell of…"))
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_shell_menu(cx))),
         );
 
         let content = self.render_tab_content(cx);

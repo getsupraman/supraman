@@ -21,6 +21,19 @@ pub fn tab_width(room: Pixels, tabs: usize) -> Pixels {
     (room / tabs as f32).clamp(TAB_MIN, TAB_MAX)
 }
 
+/// The room the tabs get: the strip's `area` less the owner's `trailing` element; zero while the area is unmeasured.
+pub fn room(area: Pixels, trailing: Pixels) -> Pixels {
+    if area <= px(0.) {
+        return px(0.);
+    }
+    (area - trailing).max(px(0.))
+}
+
+/// Where the trailing element starts: right after the last tab, and at the room's right edge once the tabs overflow.
+pub fn trailing_at(content: Pixels, room: Pixels) -> Pixels {
+    content.min(room)
+}
+
 pub fn max_scroll(content: Pixels, viewport: Pixels) -> Pixels {
     (content - viewport).max(px(0.))
 }
@@ -77,6 +90,16 @@ mod tests {
             let w = tab_width(room, n);
             assert!(w * n as f32 <= room + px(0.01) || w == TAB_MIN, "{n} tabs of {w:?} cut off before the minimum");
         }
+    }
+
+    #[test]
+    fn the_trailing_element_follows_the_last_tab_then_stays_at_the_rooms_edge() {
+        assert_eq!(room(px(1000.), px(60.)), px(940.));
+        assert_eq!(room(px(0.), px(60.)), px(0.), "the area not yet measured");
+        assert_eq!(room(px(40.), px(60.)), px(0.));
+        let r = room(px(1000.), px(60.));
+        assert_eq!(trailing_at(tab_width(r, 2) * 2., r), TAB_MAX * 2., "two tabs: right after the second");
+        assert_eq!(trailing_at(tab_width(r, 30) * 30., r), r, "overflow: at the room's right edge");
     }
 
     #[test]

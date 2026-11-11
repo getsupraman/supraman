@@ -13,7 +13,7 @@ use gpui::{
 };
 use theme::ActiveTheme as _;
 
-pub use fit::{CLOSE_ON_HOVER_BELOW, EDGE, TAB_MAX, TAB_MIN, cut, edge_scroll, max_scroll, revealed, span, tab_width};
+pub use fit::{CLOSE_ON_HOVER_BELOW, EDGE, TAB_MAX, TAB_MIN, cut, edge_scroll, max_scroll, revealed, room, span, tab_width, trailing_at};
 pub use list::{LIST, TabEntry};
 
 use crate::button;
@@ -27,8 +27,10 @@ use crate::tooltip::Tooltip;
 pub const MAX_TITLE: usize = 200;
 /// The strip's viewport: its element id, its hit key, and the key its state is kept under.
 pub const STRIP: &str = "tab-strip";
-/// The ⌄ that lists every tab.
+/// The button at the strip's far right that lists every tab.
 pub const LIST_BUTTON: &str = "tab-strip-list";
+/// The list button's icon, apart from any ⌄ beside the tabs.
+pub const LIST_ICON: Icon = Icon::ListFlat;
 const FADE: Pixels = px(28.);
 
 pub struct TabHeader {
@@ -89,8 +91,10 @@ pub fn chip<V>(title: SharedString, cx: &Context<V>) -> Div {
 #[derive(Default)]
 struct Strip {
     scroll: ScrollHandle,
-    /// The viewport's width as last painted; zero until then.
-    room: Rc<Cell<Pixels>>,
+    /// The width of the tabs and the owner's trailing element together, as last painted; zero until then.
+    area: Rc<Cell<Pixels>>,
+    /// The trailing element's width as last painted.
+    trailing: Rc<Cell<Pixels>>,
     shown_active: Option<u64>,
     reveal: Option<u64>,
     list: Option<Listed>,
@@ -143,10 +147,12 @@ impl Strip {
 }
 
 /// The strip under [`STRIP`], each tab under `tab-<id>` and its × under `close-tab-<id>`; a drop calls `on_move(from, to)`.
+/// `trailing` (the owner's new-tab button) follows the last tab, and stays at the room's right edge once the tabs overflow.
 #[allow(clippy::too_many_arguments)]
 pub fn tab_strip<V: 'static>(
     hits: &HitTargets,
     tabs: Vec<TabHeader>,
+    trailing: Option<AnyElement>,
     active: Option<u64>,
     close_icon: impl Fn() -> Svg,
     on_activate: impl Fn(&mut V, u64, &mut Context<V>) + Clone + 'static,
@@ -161,7 +167,10 @@ pub fn tab_strip<V: 'static>(
     let strip = window.use_keyed_state(STRIP, cx, |_, _| Strip::default());
     let ids: Rc<[u64]> = tabs.iter().map(|t| t.id).collect();
     let entries: Vec<TabEntry> = tabs.iter().map(|t| TabEntry { id: t.id, title: t.title.clone(), active: active == Some(t.id) }).collect();
-    let room = strip.read(cx).room.get();
+    let room = {
+        let s = strip.read(cx);
+        room(s.area.get(), s.trailing.get())
+    };
     let width = tab_width(room, tabs.len());
     let fit = Fit { width, content: width * tabs.len() as f32, room };
     strip.update(cx, |s, _| s.settle(&ids, active, fit));
@@ -180,16 +189,57 @@ pub fn tab_strip<V: 'static>(
         .bg(bar)
         .border_b_1()
         .border_color(border)
-        .child(viewport(hits, &strip, row, fit, bar, cx))
+        .child(area(viewport(hits, &strip, row, fit, bar, cx), trailing, &strip, fit, cx))
         .child(list_button(hits, entries, &strip, on_activate, cx))
 }
 
-/// The tabs' row clipped to the room beside ⌄: it measures that room, fades a cut edge, and scrolls under a drag near one.
-fn viewport<V>(hits: &HitTargets, strip: &Entity<Strip>, row: Stateful<Div>, fit: Fit, bg: Hsla, cx: &Context<V>) -> Stateful<Div> {
-    let (scroll, measured) = {
+/// The tabs' viewport, `room` wide, and the trailing element right after the last tab; it measures both.
+fn area<V>(viewport: Stateful<Div>, trailing: Option<AnyElement>, strip: &Entity<Strip>, fit: Fit, cx: &Context<V>) -> Div {
+    let (area, trail) = {
         let s = strip.read(cx);
-        (s.scroll.clone(), s.room.clone())
+        (s.area.clone(), s.trailing.clone())
     };
+    let measured = fit.room > px(0.);
+    let trailing = trailing.map(|el| {
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .h_full()
+            .pr_1()
+            .when(measured, |d| d.absolute().top_0().left(trailing_at(fit.content, fit.room)))
+            .child(el)
+            .child(width_of(trail))
+    });
+    div()
+        .relative()
+        .flex()
+        .flex_1()
+        .min_w_0()
+        .h_full()
+        .child(if measured { viewport.flex_none().w(fit.room) } else { viewport.flex_1() })
+        .children(trailing)
+        .child(width_of(area))
+}
+
+/// Keeps its parent's painted width in `cell`, and paints again when it changed.
+fn width_of(cell: Rc<Cell<Pixels>>) -> impl IntoElement {
+    canvas(
+        move |bounds, window, _| {
+            if cell.get() != bounds.size.width {
+                cell.set(bounds.size.width);
+                window.refresh();
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
+}
+
+/// The tabs' row clipped to their room: it fades a cut edge and scrolls under a drag near one.
+fn viewport<V>(hits: &HitTargets, strip: &Entity<Strip>, row: Stateful<Div>, fit: Fit, bg: Hsla, cx: &Context<V>) -> Stateful<Div> {
+    let scroll = strip.read(cx).scroll.clone();
     let (cut_left, cut_right) = cut(-scroll.offset().x, fit.room, fit.content);
     let fade = |left: bool| {
         let side = if left { "left" } else { "right" };
@@ -207,24 +257,10 @@ fn viewport<V>(hits: &HitTargets, strip: &Entity<Strip>, row: Stateful<Div>, fit
     div()
         .id(STRIP)
         .relative()
-        .flex_1()
         .min_w_0()
         .h_full()
         .child(row)
         .child(hit_target(hits, STRIP.into()))
-        .child(
-            canvas(
-                move |bounds, window, _| {
-                    if measured.get() != bounds.size.width {
-                        measured.set(bounds.size.width);
-                        window.refresh();
-                    }
-                },
-                |_, _, _, _| {},
-            )
-            .absolute()
-            .size_full(),
-        )
         .when(cut_left, |d| d.child(fade(true)))
         .when(cut_right, |d| d.child(fade(false)))
         .on_drag_move(move |e: &DragMoveEvent<DraggedTab>, _, cx| {
@@ -350,7 +386,7 @@ fn sync_list<V>(strip: &Entity<Strip>, entries: Vec<TabEntry>, cx: &mut Context<
     palette.update(cx, |p, cx| p.set_entries(entries, cx));
 }
 
-/// The ⌄ at the strip's right end and, while open, the list under it.
+/// The list button at the strip's right end, on its own fill, and, while open, the list under it.
 fn list_button<V: 'static>(
     hits: &HitTargets,
     entries: Vec<TabEntry>,
@@ -370,8 +406,9 @@ fn list_button<V: 'static>(
         .w(px(28.))
         .border_l_1()
         .border_color(colors.border)
+        .bg(list_fill(&colors))
         .when(open.is_some(), |d| d.bg(colors.ghost_element_selected))
-        .child(Icon::ChevronDown.svg(14., colors.text_muted).group_hover(LIST_BUTTON, |s| s.text_color(colors.text)))
+        .child(LIST_ICON.svg(14., colors.text_muted).group_hover(LIST_BUTTON, |s| s.text_color(colors.text)))
         .tooltip(Tooltip::text("All tabs"))
         .capture_any_mouse_down(move |e: &MouseDownEvent, _, cx| {
             if e.button == MouseButton::Left {
@@ -391,6 +428,10 @@ fn list_button<V: 'static>(
             )
         })
         .into_any_element()
+}
+
+fn list_fill(colors: &theme::ThemeColors) -> Hsla {
+    colors.element_background
 }
 
 fn toggle_list<V: 'static>(
@@ -541,29 +582,93 @@ mod tests {
 
     struct Tabs {
         hits: HitTargets,
+        count: u64,
         active: Option<u64>,
         menu: Option<(u64, Point<Pixels>)>,
     }
 
+    const NEW_TAB: &str = "new-tab";
+
     impl Render for Tabs {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             self.hits.borrow_mut().clear();
-            let tabs = (1..=3)
+            let tabs = (1..=self.count)
                 .map(|id| TabHeader { id, label: div().child(format!("tab {id}")).into_any_element(), title: format!("tab {id}").into(), tooltip: None })
                 .collect();
-            let strip = tab_strip(&self.hits, tabs, self.active, svg, |this: &mut Tabs, id, _| this.active = Some(id), |_, _, _| {}, |_, _, _, _| {}, |this: &mut Tabs, id, at, _| this.menu = Some((id, at)), window, cx);
+            let new_tab = button::ghost(&self.hits, NEW_TAB, cx).w(px(48.)).h(px(26.)).into_any_element();
+            let strip = tab_strip(&self.hits, tabs, Some(new_tab), self.active, svg, |this: &mut Tabs, id, _| this.active = Some(id), |_, _, _| {}, |_, _, _, _| {}, |this: &mut Tabs, id, at, _| this.menu = Some((id, at)), window, cx);
             div().size_full().child(strip)
         }
     }
 
     fn strip(cx: &mut TestAppContext) -> (Entity<Tabs>, &mut VisualTestContext) {
+        strip_of(3, cx)
+    }
+
+    fn strip_of(count: u64, cx: &mut TestAppContext) -> (Entity<Tabs>, &mut VisualTestContext) {
         cx.update(|cx| {
             crate::init_globals(cx, "test");
             crate::text_input::bind_keys(cx);
         });
-        let (view, cx) = cx.add_window_view(|_, _| Tabs { hits: HitTargets::default(), active: Some(1), menu: None });
+        let (view, cx) = cx.add_window_view(|_, _| Tabs { hits: HitTargets::default(), count, active: Some(1), menu: None });
+        cx.run_until_parked();
+        cx.update(|window, _| window.refresh());
         cx.run_until_parked();
         (view, cx)
+    }
+
+    fn hit_of(view: &Entity<Tabs>, key: &str, cx: &mut VisualTestContext) -> crate::hit::Hit {
+        view.read_with(cx, |v, _| v.hits.borrow().get(key).copied()).unwrap_or_else(|| panic!("{key} paints"))
+    }
+
+    fn activate(view: &Entity<Tabs>, id: u64, cx: &mut VisualTestContext) {
+        view.update(cx, |v, cx| {
+            v.active = Some(id);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn with_few_tabs_the_new_tab_button_follows_the_last_tab_and_the_list_button_ends_the_strip(cx: &mut TestAppContext) {
+        let (view, cx) = strip_of(2, cx);
+        let (last, new_tab, list, strip) = (hit_of(&view, "tab-2", cx), hit_of(&view, NEW_TAB, cx), hit_of(&view, LIST_BUTTON, cx), hit_of(&view, STRIP, cx));
+        assert!((new_tab.bounds.left() - last.bounds.right()).abs() <= crate::hit::SNAP, "the new-tab button ({:?}) starts at the last tab's right edge ({:?})", new_tab.bounds, last.bounds);
+        assert!(new_tab.bounds.right() < list.bounds.left() - px(100.), "the new-tab button sits apart from the list button");
+        assert!((list.bounds.right() - cx.update(|window, _| window.viewport_size().width)).abs() <= px(1.), "the list button ends the strip: {:?}", list.bounds);
+        assert!(new_tab.fully_visible() && list.fully_visible());
+        assert!(strip.bounds.right() <= list.bounds.left() + px(1.));
+    }
+
+    #[gpui::test]
+    fn with_tabs_overflowing_the_new_tab_button_stays_whole_at_the_rooms_right_edge_and_the_last_tab_is_revealed_beside_it(cx: &mut TestAppContext) {
+        let (view, cx) = strip_of(40, cx);
+        let (strip, new_tab) = (hit_of(&view, STRIP, cx), hit_of(&view, NEW_TAB, cx));
+        assert_eq!(tab_width(strip.bounds.size.width, 40), TAB_MIN, "40 tabs overflow the room");
+        assert!(new_tab.fully_visible(), "the new-tab button is whole in view: {new_tab:?}");
+        assert!(new_tab.bounds.left() >= strip.bounds.right() - px(1.), "it is never under the tabs: {new_tab:?} past {:?}", strip.bounds);
+        assert!(hit_of(&view, "tab-1", cx).fully_visible());
+        assert!(view.read_with(cx, |v, _| v.hits.borrow().contains_key(&format!("{STRIP}-fade-right"))), "the right edge is cut and fades");
+        activate(&view, 40, cx);
+        let last = hit_of(&view, "tab-40", cx);
+        assert!(last.fully_visible(), "the active last tab is scrolled whole into view: {last:?}");
+        assert!(last.bounds.right() <= hit_of(&view, NEW_TAB, cx).bounds.left() + px(1.), "the last tab ends left of the new-tab button");
+        assert!(!hit_of(&view, "tab-1", cx).fully_visible());
+        view.read_with(cx, |v, _| v.hits.borrow_mut().remove(&format!("{STRIP}-fade-left")));
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert!(view.read_with(cx, |v, _| v.hits.borrow().contains_key(&format!("{STRIP}-fade-left"))), "scrolled: the left edge fades");
+        assert!(hit_of(&view, NEW_TAB, cx).fully_visible());
+    }
+
+    #[gpui::test]
+    fn the_list_button_has_its_own_fill_and_icon(cx: &mut TestAppContext) {
+        let (_, cx) = strip(cx);
+        let colors = cx.update(|_, cx| cx.theme().colors().clone());
+        assert_ne!(list_fill(&colors), colors.tab_bar_background);
+        assert_ne!(LIST_ICON, Icon::ChevronDown, "not the shell menu's ⌄");
     }
 
     fn list_open(view: &Entity<Tabs>, cx: &mut VisualTestContext) -> bool {
