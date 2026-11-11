@@ -337,26 +337,37 @@ fn unknown(why: String) -> Report {
     Report { run: None, outcome: None, why, exit: EXIT_UNKNOWN }
 }
 
-fn fire_inner(req: &Request, host: &mut dyn Host) -> Report {
+/// The schedule a request names, its folder and its live files.
+struct Target {
+    workspace: Workspace,
+    schedule: Schedule,
+    folder: PathBuf,
+    live: Paths,
+}
+
+fn target(req: &Request) -> Result<Target, Report> {
     let home = req.home;
-    let w = match Registry::at(home).load(req.workspace) {
-        Ok(w) => w,
-        Err(e) => return unknown(e.to_string()),
-    };
+    let w = Registry::at(home).load(req.workspace).map_err(|e| unknown(e.to_string()))?;
     let s = match schedule::load(home, &w.name).map(|all| all.into_iter().find(|s| s.id == req.id)) {
         Ok(Some(s)) => s,
-        Ok(None) => return unknown(format!("workspace {} has no schedule {}", w.name, req.id)),
-        Err(e) => return unknown(e.to_string()),
+        Ok(None) => return Err(unknown(format!("workspace {} has no schedule {}", w.name, req.id))),
+        Err(e) => return Err(unknown(e.to_string())),
     };
     let Some(folder) = w.folder(&s.folder).map(|f| f.path.clone()) else {
-        return unknown(format!("workspace {} has no folder {}", w.name, s.folder));
+        return Err(unknown(format!("workspace {} has no folder {}", w.name, s.folder)));
     };
-    let live = match schedule::live_dir(home, &w.name) {
-        Ok(dir) => Paths::new(dir, &s.id),
-        Err(e) => return unknown(e.to_string()),
+    let live = schedule::live_dir(home, &w.name).map(|dir| Paths::new(dir, &s.id)).map_err(|e| unknown(e.to_string()))?;
+    Ok(Target { workspace: w, schedule: s, folder, live })
+}
+
+fn fire_inner(req: &Request, host: &mut dyn Host) -> Report {
+    let t = match target(req) {
+        Ok(t) => t,
+        Err(report) => return report,
     };
+    let (home, w, s, live) = (req.home, &t.workspace, &t.schedule, &t.live);
     let fired_ms = host.now_ms();
-    let stamp = fresh_stamp(home, &w.name, &s.id, &live, fired_ms);
+    let stamp = fresh_stamp(home, &w.name, &s.id, live, fired_ms);
     let mut rec = Recorder {
         home,
         workspace: &w.name,
@@ -367,58 +378,18 @@ fn fire_inner(req: &Request, host: &mut dyn Host) -> Report {
         fired_ms,
         started: false,
     };
-
-    if s.status != Status::Active {
-        let status = if s.status == Status::Paused { "paused" } else { "pending: it was never approved, or changed since" };
-        return rec.end(host.now_ms(), Outcome::Refused, format!("the schedule is {status}"), EXIT_REFUSED);
-    }
-    match schedule::verify_approval(host.store(), &w, &s) {
-        Ok(c) => rec.fingerprint = c.fingerprint,
-        Err(refusal) => {
-            return rec.end(host.now_ms(), Outcome::Refused, refusal.to_string(), EXIT_REFUSED);
-        }
-    }
-    if req.fingerprint.is_some_and(|f| f != rec.fingerprint) {
-        let why = "the task's fingerprint is not the approved one; the task is out of date until the Supraman window syncs it";
-        return rec.end(host.now_ms(), Outcome::Refused, why, EXIT_REFUSED);
+    if let Some(report) = refused(req, host, w, s, &mut rec).or_else(|| skipped(req, host, s, &mut rec)) {
+        return report;
     }
 
-    if req.trigger == Fired::Task
-        && s.policy.catch_up == CatchUp::Skip
-        && let Some(now) = Local.timestamp_millis_opt(fired_ms).single()
-        && let Some(prev) = schedule::previous_fire(&s.trigger, &now)
-        && fired_ms - prev.timestamp_millis() > CATCH_UP_GRACE_MS
-    {
-        return rec.ended(host.now_ms(), Outcome::Skipped, format!("missed: the start at {} is more than 10 minutes ago", prev.format("%Y-%m-%d %H:%M")));
-    }
-
-    if s.action.kind != ActionKind::Script {
-        let mut polls = 0;
-        loop {
-            match host.busy(home) {
-                Ok(false) => break,
-                Ok(true) if polls == BUDGET_POLLS => {
-                    return rec.ended(host.now_ms(), Outcome::Skipped, "busy: max_working sessions were mid-turn for 30 minutes");
-                }
-                Ok(true) => {}
-                Err(e) => {
-                    log(home, &format!("{}/{} {}: cannot read the budget, firing anyway: {e}", w.name, s.id, rec.run));
-                    break;
-                }
-            }
-            host.sleep(BUDGET_POLL);
-            polls += 1;
-        }
-    }
-
-    let _lock = match overlap(&live, s.policy.overlap) {
+    let _lock = match overlap(live, s.policy.overlap) {
         Ok(lock) => lock,
         Err(Overlapped::Skip(why)) => return rec.ended(host.now_ms(), Outcome::Skipped, why),
         Err(Overlapped::Io(why)) => return rec.ended(host.now_ms(), Outcome::Failed, why),
     };
     let _ = fs::remove_file(&live.restart);
     let now = host.now_ms();
-    recover_dead_run(home, &w.name, &s.id, &live, now, host);
+    recover_dead_run(home, &w.name, &s.id, live, now, host);
 
     let last = last_run(home, &w.name, &s.id);
     let started_ms = host.now_ms();
@@ -433,38 +404,100 @@ fn fire_inner(req: &Request, host: &mut dyn Host) -> Report {
     live_file.stage(if s.action.kind == ActionKind::Session { "session" } else { "script" });
     rec.start(started_ms);
 
-    let ctx = RunCtx { home, workspace: &w, schedule: &s, run: &run, stamp: &stamp, fired_ms };
-    let plain = |outcome, why: String| SessionEnd { outcome, why, tokens: None, recorded: false };
+    let ctx = RunCtx { home, workspace: w, schedule: s, run: &run, stamp: &stamp, fired_ms };
+    let mut out = SessionLog { rec: &mut rec, live: &mut live_file };
     let end = match s.action.kind {
-        ActionKind::Session => host.session(&ctx, None, &mut SessionLog { rec: &mut rec, live: &mut live_file }),
-        kind => match secrets(host.store(), &w.name, &s) {
-            Err(why) => plain(Outcome::Failed, why),
-            Ok(secrets) => {
-                let env = ScriptEnv { home, workspace: &w.name, id: &s.id, run: &run, folder: &folder, last };
-                let (end, stage) = script_stage(&env, &s, &secrets, &live.restart, host);
-                if let Some(stage) = stage {
-                    rec.stage(host.now_ms(), stage);
-                }
-                match end {
-                    ScriptEnd::Gate(_) | ScriptEnd::Nothing if kind == ActionKind::Script => plain(Outcome::Ok, String::new()),
-                    ScriptEnd::Gate(stdout) => {
-                        live_file.stage("session");
-                        host.session(&ctx, Some(&stdout), &mut SessionLog { rec: &mut rec, live: &mut live_file })
-                    }
-                    ScriptEnd::Nothing => plain(Outcome::NothingToDo, String::new()),
-                    ScriptEnd::Failed(why) => plain(Outcome::Failed, why),
-                    ScriptEnd::Restarted => plain(Outcome::Interrupted, "restarted".into()),
-                }
-            }
-        },
+        ActionKind::Session => host.session(&ctx, None, &mut out),
+        _ => script_run(&ctx, &t.folder, last, &live.restart, host, &mut out),
     };
-    let report = if end.recorded {
+    let report = record(&mut rec, end, host);
+    let _ = fs::remove_file(&live.json);
+    report
+}
+
+/// The refusal of a schedule that is not active, whose approval does not verify, or whose task is out of date.
+fn refused(req: &Request, host: &mut dyn Host, w: &Workspace, s: &Schedule, rec: &mut Recorder<'_>) -> Option<Report> {
+    if s.status != Status::Active {
+        let status = if s.status == Status::Paused { "paused" } else { "pending: it was never approved, or changed since" };
+        return Some(rec.end(host.now_ms(), Outcome::Refused, format!("the schedule is {status}"), EXIT_REFUSED));
+    }
+    match schedule::verify_approval(host.store(), w, s) {
+        Ok(c) => rec.fingerprint = c.fingerprint,
+        Err(refusal) => {
+            return Some(rec.end(host.now_ms(), Outcome::Refused, refusal.to_string(), EXIT_REFUSED));
+        }
+    }
+    if req.fingerprint.is_some_and(|f| f != rec.fingerprint) {
+        let why = "the task's fingerprint is not the approved one; the task is out of date until the Supraman window syncs it";
+        return Some(rec.end(host.now_ms(), Outcome::Refused, why, EXIT_REFUSED));
+    }
+    None
+}
+
+/// The skip of a missed start under `catch_up = skip`, or of a session while the budget stays full.
+fn skipped(req: &Request, host: &mut dyn Host, s: &Schedule, rec: &mut Recorder<'_>) -> Option<Report> {
+    let fired_ms = rec.fired_ms;
+    if req.trigger == Fired::Task
+        && s.policy.catch_up == CatchUp::Skip
+        && let Some(now) = Local.timestamp_millis_opt(fired_ms).single()
+        && let Some(prev) = schedule::previous_fire(&s.trigger, &now)
+        && fired_ms - prev.timestamp_millis() > CATCH_UP_GRACE_MS
+    {
+        return Some(rec.ended(host.now_ms(), Outcome::Skipped, format!("missed: the start at {} is more than 10 minutes ago", prev.format("%Y-%m-%d %H:%M"))));
+    }
+    if s.action.kind == ActionKind::Script {
+        return None;
+    }
+    let mut polls = 0;
+    loop {
+        match host.busy(req.home) {
+            Ok(false) => return None,
+            Ok(true) if polls == BUDGET_POLLS => {
+                return Some(rec.ended(host.now_ms(), Outcome::Skipped, "busy: max_working sessions were mid-turn for 30 minutes"));
+            }
+            Ok(true) => {}
+            Err(e) => {
+                log(req.home, &format!("{}/{} {}: cannot read the budget, firing anyway: {e}", rec.workspace, s.id, rec.run));
+                return None;
+            }
+        }
+        host.sleep(BUDGET_POLL);
+        polls += 1;
+    }
+}
+
+/// The script stage, then the session stage when the script hands its stdout over.
+fn script_run(ctx: &RunCtx, folder: &Path, last: Option<(i64, Option<Outcome>)>, restart: &Path, host: &mut dyn Host, out: &mut SessionLog) -> SessionEnd {
+    let (w, s) = (ctx.workspace, ctx.schedule);
+    let plain = |outcome, why: String| SessionEnd { outcome, why, tokens: None, recorded: false };
+    let secrets = match secrets(host.store(), &w.name, s) {
+        Ok(secrets) => secrets,
+        Err(why) => return plain(Outcome::Failed, why),
+    };
+    let env = ScriptEnv { home: ctx.home, workspace: &w.name, id: &s.id, run: ctx.run, folder, last };
+    let (end, stage) = script_stage(&env, s, &secrets, restart, host);
+    if let Some(stage) = stage {
+        out.rec.stage(host.now_ms(), stage);
+    }
+    match end {
+        ScriptEnd::Gate(_) | ScriptEnd::Nothing if s.action.kind == ActionKind::Script => plain(Outcome::Ok, String::new()),
+        ScriptEnd::Gate(stdout) => {
+            out.live.stage("session");
+            host.session(ctx, Some(&stdout), out)
+        }
+        ScriptEnd::Nothing => plain(Outcome::NothingToDo, String::new()),
+        ScriptEnd::Failed(why) => plain(Outcome::Failed, why),
+        ScriptEnd::Restarted => plain(Outcome::Interrupted, "restarted".into()),
+    }
+}
+
+/// The run's report: the session stage's own end, else `end` recorded now.
+fn record(rec: &mut Recorder<'_>, end: SessionEnd, host: &mut dyn Host) -> Report {
+    if end.recorded {
         Report { run: Some(rec.run.clone()), outcome: Some(end.outcome), why: end.why, exit: exit_of(end.outcome) }
     } else {
         rec.end_with(host.now_ms(), end.outcome, end.why, end.tokens, exit_of(end.outcome))
-    };
-    let _ = fs::remove_file(&live.json);
-    report
+    }
 }
 
 /// One schedule's files in `schedules/live/<ws>/`.
