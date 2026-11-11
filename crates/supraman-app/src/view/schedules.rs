@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use supraman_core::schedule::{self, Clock, Day, ForeignTask, Overlap, Profile, Registrar, Schedule, Span, Status, SyncTarget, Trigger};
-use supraman_core::secret::SecretStore;
+use supraman_core::secret::default_store;
 use supraman_core::{Workspace, process};
 use supraman_ui::button;
 use supraman_ui::details::{self, Section};
@@ -152,10 +152,11 @@ impl ScheduleEdit {
     }
 }
 
-fn sync_now(home: &Path, registrar: &dyn Registrar, store: &dyn SecretStore, workspace: &Workspace) -> Result<schedule::Synced, String> {
+fn sync_now(home: &Path, registrar: &dyn Registrar, workspace: &Workspace) -> Result<schedule::Synced, String> {
     let schedules = schedule::load(home, &workspace.name).map_err(|e| e.to_string())?;
     let smw = schedule::smw_exe();
-    let target = SyncTarget { home, store, level: supraman_claude::task_run_level(), smw: &smw, now_ms: supraman_core::time::now_ms() };
+    let store = default_store(home);
+    let target = SyncTarget { home, store: &*store, level: supraman_claude::task_run_level(), smw: &smw, now_ms: supraman_core::time::now_ms() };
     schedule::sync(registrar, &target, workspace, &schedules).map_err(|e| format!("Task Scheduler refused the sync of {}: {e}", workspace.name))
 }
 
@@ -245,14 +246,13 @@ impl FleetView {
 
     /// The app's only approval (see C100).
     pub fn approve_schedule(&mut self, workspace: String, id: String, fingerprint: String, cx: &mut Context<Self>) {
-        let store = self.scheduling.schedule_store.clone();
         self.change_schedule(workspace, id, "approved; its task is registered", cx, move |home, w, id| {
             let s = schedule::load(home, &w.name).map_err(|e| e.to_string())?.into_iter().find(|s| s.id == id).ok_or("the schedule is gone")?;
             let now = schedule::covered(w, &s).map_err(|e| e.to_string())?;
             if now.fingerprint != fingerprint {
                 return Err("it changed after the page showed it: read the page again, then Approve".into());
             }
-            schedule::approve(home, &*store, w, id, supraman_core::time::now_ms()).map(|_| ()).map_err(|e| e.to_string())
+            schedule::approve(home, &*default_store(home), w, id, supraman_core::time::now_ms()).map(|_| ()).map_err(|e| e.to_string())
         });
     }
 
@@ -303,11 +303,11 @@ impl FleetView {
         let (Some(home), Some(w)) = (self.home.clone(), self.registered_workspace(&workspace)) else {
             return;
         };
-        let (registrar, store) = (self.scheduling.registrar.clone(), self.scheduling.schedule_store.clone());
+        let registrar = self.scheduling.registrar.clone();
         let row = key(&workspace, &id);
         let task = cx.background_executor().spawn(async move {
             edit(&home, &w, &id).map_err(Failed::Edit)?;
-            sync_now(&home, &*registrar, &*store, &w).map_err(Failed::Sync)?;
+            sync_now(&home, &*registrar, &w).map_err(Failed::Sync)?;
             Ok::<_, Failed>(id)
         });
         let ws = workspace;
@@ -475,7 +475,7 @@ impl FleetView {
         if let Some(edit) = &mut self.scheduling.schedule_edit {
             edit.saving = true;
         }
-        let (registrar, store) = (self.scheduling.registrar.clone(), self.scheduling.schedule_store.clone());
+        let registrar = self.scheduling.registrar.clone();
         let task = {
             let (w, id) = (w.clone(), id.clone());
             cx.background_executor().spawn(async move {
@@ -485,7 +485,7 @@ impl FleetView {
                     Ok(s.status)
                 })
                 .map_err(|e| e.to_string())?;
-                Ok::<_, String>((status, sync_now(&home, &*registrar, &*store, &w)))
+                Ok::<_, String>((status, sync_now(&home, &*registrar, &w)))
             })
         };
         cx.spawn(async move |this, cx| {

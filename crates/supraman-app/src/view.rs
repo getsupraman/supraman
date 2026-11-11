@@ -471,7 +471,7 @@ impl FleetView {
         let work_inbox = WorkInbox::shared(home.clone(), cx);
         Self::observe_inbox(&work_inbox, cx);
         let hands = home.as_deref().map(|home| Self::open_hands(home, cx));
-        let scheduling = schedule_state::ScheduleState::new(home.as_deref());
+        let scheduling = schedule_state::ScheduleState::new();
         let claude_dir = claude_dir_or(CLAUDE_DIR_OVERRIDE.get().map(PathBuf::as_path));
         Self::watch_transcripts(claude_dir.clone(), home.as_deref().map(|h| h.join(TRANSCRIPTS_CACHE)), transcripts_nudged, cx);
         let desired_writes = Self::desired_writer(cx);

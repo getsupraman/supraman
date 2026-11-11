@@ -1,8 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::sync::Arc;
-
-use supraman_core::secret::{MemoryStore, SecretStore, default_store};
 
 use super::schedules::{ScheduleEdit, SharedRegistrar};
 use crate::dismissed_messages::DismissedMessages;
@@ -20,14 +17,13 @@ pub struct ScheduleState {
     pub other_schedules: Option<supraman_core::schedule::Foreign>,
     pub other_scan_error: Option<String>,
     pub(crate) other_scans: u64,
-    pub schedule_store: Arc<dyn SecretStore>,
     pub schedule_edit: Option<ScheduleEdit>,
     pub runs_dismissed: DismissedMessages,
     pub waiting_dismissed: DismissedMessages,
 }
 
 impl ScheduleState {
-    pub fn new(home: Option<&Path>) -> Self {
+    pub fn new() -> Self {
         Self {
             schedules: BTreeMap::new(),
             schedule_errors: Vec::new(),
@@ -37,10 +33,6 @@ impl ScheduleState {
             other_schedules: None,
             other_scan_error: None,
             other_scans: 0,
-            schedule_store: match home {
-                Some(h) => default_store(h),
-                None => Arc::new(MemoryStore::default()),
-            },
             schedule_edit: None,
             runs_dismissed: DismissedMessages::default(),
             waiting_dismissed: DismissedMessages::default(),
