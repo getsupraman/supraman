@@ -81,6 +81,8 @@ pub struct SettingsView {
     gitman: Entity<gitman::GitmanPage>,
     /// The extra plugin dirs without a `.claude-plugin/plugin.json`, found with the settings they came with.
     missing_plugins: Vec<PathBuf>,
+    /// `None` until read.
+    elevated: Option<bool>,
 }
 
 pub fn apply_theme(home: Option<&Path>, cx: &mut App) -> Option<String> {
@@ -169,10 +171,12 @@ impl SettingsView {
             saves: Default::default(),
             gitman,
             missing_plugins: Vec::new(),
+            elevated: None,
         };
         if this.mono_fonts.is_none() {
             this.find_mono_fonts(cx);
         }
+        this.read_elevation(cx);
         this.reload(cx);
         if let Some(url) = this.workman.checked_url().map(str::to_string) {
             this.url_input.update(cx, |input, cx| input.set_text(&url, cx));
@@ -253,6 +257,18 @@ impl SettingsView {
                     }
                     Err(e) => this.error = Some(format!("Cannot read settings.toml: {e}")),
                 }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn read_elevation(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let elevated = cx.background_spawn(async move { supraman_core::platform::process::is_elevated() }).await;
+            this.update(cx, |this, cx| {
+                this.elevated = Some(elevated);
                 cx.notify();
             })
             .ok();

@@ -21,7 +21,7 @@ pub use cli::{
     list_sessions, parse_version,
 };
 pub use daemon::{
-    DaemonReach, UNREACHABLE, daemon_mismatch, daemon_status, elevation_mismatch, is_elevated, parse_daemon_status, pid_elevated, service_elevated, service_pid,
+    DaemonReach, UNREACHABLE, daemon_mismatch, daemon_status, elevation_mismatch, parse_daemon_status, service_elevated, service_pid,
     task_run_level,
 };
 pub use error::{ClaudeError, Result};
