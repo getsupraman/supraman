@@ -1,3 +1,4 @@
+mod focus;
 mod paint;
 mod stream;
 

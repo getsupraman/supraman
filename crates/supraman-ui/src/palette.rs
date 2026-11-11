@@ -312,16 +312,16 @@ impl<T: Entry> Palette<T> {
         }
     }
 
-    fn render_row(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn render_row(&mut self, ix: usize, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let Some((entry, marks)) = self.shown.get(ix).cloned() else { return div().into_any_element() };
         let on = ix == self.selected;
-        let colors = cx.theme().colors().clone();
+        let selection = crate::themes::selection(cx.theme().colors(), self.input.focus_handle(cx).contains_focused(window, cx));
         let body = (self.paint)(&entry, &marks, on, cx);
         let row = button::ghost(&self.hits, self.row_key(&entry.key()), cx)
             .w_full()
             .px_3()
             .py(px(5.))
-            .when(on, |d| d.bg(colors.element_selected).child(hit_target(&self.hits, format!("{}-selected", self.id))))
+            .when(on, |d| d.bg(selection).child(hit_target(&self.hits, format!("{}-selected", self.id))))
             .child(body)
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.selected = ix;
@@ -363,7 +363,7 @@ impl<T: Entry> Palette<T> {
             let empty = mode.map_or_else(|| SharedString::from("Nothing matches."), |m| m.empty.clone());
             return line().child(hit_target(&self.hits, format!("{}-empty", self.id))).child(empty).into_any_element();
         }
-        gpui::list(self.list.state(), cx.processor(|this: &mut Self, ix: usize, _, cx| this.render_row(ix, cx))).w_full().h(px(LIST_HEIGHT)).into_any_element()
+        gpui::list(self.list.state(), cx.processor(|this: &mut Self, ix: usize, window, cx| this.render_row(ix, window, cx))).w_full().h(px(LIST_HEIGHT)).into_any_element()
     }
 }
 
