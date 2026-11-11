@@ -22,6 +22,7 @@ const PILL_PAD: f32 = 8.;
 const PILL_GAP: f32 = 6.;
 /// A cut name keeps its first letter and the ellipsis.
 const NAME_MIN: f32 = 22.;
+const ICON_SLACK: f32 = 2.;
 /// The body gives up its width long before the summary does.
 const BODY_SHRINK: f32 = 1000.;
 
@@ -137,13 +138,13 @@ pub(crate) fn current_mark(colour: Hsla, size: f32) -> Svg {
     Icon::Check.svg(size, colour)
 }
 
-/// A pill's icons on one line, laid out from the last after an empty first item: an icon without room wraps whole onto the hidden second line, the first icons before the last.
+/// A pill's icons laid out from the last after an empty first item: one without room wraps whole onto the hidden second line, the slack before any.
 fn icons(key: &str, icons: Vec<Icon>, colour: Hsla, hits: &HitTargets) -> Div {
     let last = icons.len().saturating_sub(1);
     let shown = icons.into_iter().enumerate().rev().map(|(n, i)| {
         div().relative().flex_none().when(n < last, |d| d.mr(px(PILL_GAP))).child(i.svg(PILL_ICON, colour)).child(hit_target(hits, format!("{key}-icon-{n}")))
     });
-    div().flex().flex_row_reverse().flex_wrap().justify_end().min_w_0().h(px(PILL_ICON)).overflow_hidden().child(div().flex_none().w(px(0.)).h(px(PILL_ICON))).children(shown)
+    div().flex().flex_row_reverse().flex_wrap().justify_end().min_w_0().h(px(PILL_ICON)).overflow_hidden().child(div().flex_none().w(px(0.)).h(px(PILL_ICON))).children(shown).child(div().flex_none().w(px(ICON_SLACK)).h(px(PILL_ICON)))
 }
 
 /// A pill of row `ix`'s group `group`: its menu, double-click checkout, drag and drop.
