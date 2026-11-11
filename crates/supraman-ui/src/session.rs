@@ -2,8 +2,10 @@
 
 use std::path::PathBuf;
 
-use gpui::{AnyElement, Div, SharedString, div, prelude::*};
+use gpui::{AnyElement, Div, div, prelude::*, px};
 
+use crate::clipped::clipped;
+use crate::ink;
 use crate::marks::{self, Activity, Mark};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,15 +19,18 @@ pub struct LiveSession {
     pub attach: Option<String>,
 }
 
-/// A session's lead in a row: `mark`'s dot, `name`, then `counts` (the owner's, such as `is working here`).
-pub fn lead(mark: Mark, name: &str, counts: Option<AnyElement>) -> Div {
+/// A session's lead in a row: `mark`'s dot, `name` cut under `<key>-name`, then `slot` (the owner's, such as `is working here`).
+/// A narrow row cuts the name; the slot shrinks as the owner styles it (`flex_none` keeps it whole).
+pub fn lead(key: &str, mark: Mark, name: &str, slot: Option<AnyElement>) -> Div {
     div()
         .flex()
         .items_center()
         .gap_1p5()
-        .min_w_0()
+        .min_w(px(marks::DOT))
+        .flex_shrink(1.)
+        .overflow_hidden()
         .whitespace_nowrap()
-        .child(marks::dot(mark))
-        .child(SharedString::from(name.to_string()))
-        .children(counts)
+        .child(div().flex_none().child(ink::mark(marks::dot(mark))))
+        .child(clipped(format!("{key}-name"), name.to_string(), false).flex_shrink(1.))
+        .children(slot)
 }

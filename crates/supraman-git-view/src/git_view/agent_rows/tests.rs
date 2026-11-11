@@ -4,12 +4,12 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gpui::{Entity, MouseButton, TestAppContext, VisualTestContext};
+use gpui::{Entity, MouseButton, TestAppContext, VisualTestContext, px};
 use supraman_gitman::fixture::Fixture;
 use supraman_gitman::write::{Call, LockSet, Resource};
 use supraman_ui::marks::Activity;
 
-use crate::git_view::test_support::{self, Opts, painted, press, redraw};
+use crate::git_view::test_support::{self, Opts, painted, press, redraw, repaint};
 use super::super::{GitView, Selected};
 use super::{AgentMenu, AttachAgent};
 use crate::occupancy::{Live, LiveSession};
@@ -159,6 +159,23 @@ fn right_clicking_an_agent_row_asks_the_fleet_for_its_sessions_menu(cx: &mut Tes
     cx.update(|_, cx| cx.subscribe(&view, move |_, e: &AgentMenu, _| seen.borrow_mut().push(e.session.clone())).detach());
     press(&view, "git-agent-0", MouseButton::Right, 1, cx);
     assert_eq!(*heard.borrow(), [alpha], "the session's menu is the fleet's");
+}
+
+#[gpui::test]
+fn in_a_narrow_column_the_leads_name_is_cut_with_an_ellipsis_and_nothing_overlaps(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    std::fs::write(f.dir.join("new.txt"), b"new\n").unwrap();
+    let live = Live::default();
+    let (view, cx) = test_support::open(&f.dir, Opts::default().following(live.clone()).background().size(900., 600.), cx);
+    let long = "fm-a-session-whose-name-is-far-too-long-for-the-message-column";
+    set(&live, vec![session(long, f.dir.clone(), Activity::Working, None)], &view, cx);
+    let hits = repaint(&view, cx);
+    let name = supraman_ui::clipped::cut_at("git-agent-0-name").expect("the name painted cut, with an ellipsis and its tooltip");
+    let hits = hits.borrow();
+    let (lead, state) = (&hits["git-agent-0"], &hits["git-agent-state-0"]);
+    assert!(lead.fully_visible(), "the lead inside its cell: {lead:?}");
+    assert!(name.left() >= lead.bounds.left() && name.right() <= state.bounds.left(), "the name {name:?} ends before its state {state:?}");
+    assert!(state.bounds.size.width > px(0.) && state.bounds.right() <= lead.bounds.right(), "its state {state:?} inside the lead {lead:?}");
 }
 
 #[gpui::test]

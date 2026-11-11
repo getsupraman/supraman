@@ -10,6 +10,7 @@ use supraman_gitman::Row;
 use supraman_ui::details::{self, Page, Section};
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::marks::{self, Activity, Mark};
+use supraman_ui::clipped::clipped;
 use supraman_ui::session;
 use supraman_ui::tooltip::Tooltip;
 use supraman_ui::{button, placeholder};
@@ -222,7 +223,7 @@ impl GitView {
         self.agents.live.as_ref()?.working_in(path).into_iter().find(|s| s.name == name).map(|s| s.activity)
     }
 
-    /// Row `ix`'s cell of column `col` for an agent row: the bot node, then the session's lead and `is working here`.
+    /// Row `ix`'s cell of column `col` for an agent row: the bot node, then the session's lead with its state's word.
     pub(super) fn agent_cell(&mut self, ix: usize, col: usize, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let rows = self.pages.read(cx).rows.clone();
         let row = &rows[ix];
@@ -231,12 +232,15 @@ impl GitView {
         let cell = match (col, &session) {
             (1, _) => graph::cell(ix, row, false, palette, &self.hits),
             (2, Some(s)) => {
-                let here = div().text_color(palette.muted).child("is working here").into_any_element();
-                let lead = session::lead(Mark::Filled(s.activity.color(cx)), &s.name, Some(here))
+                let state = clipped(format!("git-agent-state-{ix}"), s.activity.word(), false)
+                    .text_color(palette.muted)
+                    .child(hit_target(&self.hits, format!("git-agent-state-{ix}")))
+                    .into_any_element();
+                let lead = session::lead(&format!("git-agent-{ix}"), Mark::Filled(s.activity.color(cx)), &s.name, Some(state))
                     .relative()
                     .text_color(palette.text)
                     .child(hit_target(&self.hits, format!("git-agent-{ix}")));
-                cells::wip_message(row, lead, s.activity.word().to_string(), palette)
+                cells::wip_message(row, lead, String::new(), palette)
             }
             _ => div().into_any_element(),
         };
