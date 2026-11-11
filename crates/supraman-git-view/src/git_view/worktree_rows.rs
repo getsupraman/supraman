@@ -24,7 +24,7 @@ use crate::occupancy::LiveSession;
 /// What a worktree's WIP row says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WorktreeView {
-    /// `on <branch>` or `Detached HEAD`.
+    /// Its branch or `Detached HEAD`, its pill's name.
     pub(crate) label: String,
     /// `None` when detached.
     pub(crate) branch: Option<String>,
@@ -44,7 +44,7 @@ pub(crate) struct WorktreeView {
 impl WorktreeView {
     pub(crate) fn of(wip: &WorktreeWip, sessions: Vec<LiveSession>) -> WorktreeView {
         let label = match wip.branch() {
-            Some(branch) => format!("on {branch}"),
+            Some(branch) => branch.to_string(),
             None => "Detached HEAD".into(),
         };
         let counts = wip.counts();
@@ -202,15 +202,12 @@ impl GitView {
         div().flex().items_center().gap_4().min_w_0().flex_shrink(1.).overflow_hidden().children(leads).into_any_element()
     }
 
-    /// The `on <branch>` label, then Open Worktree shown on the row's hover or selection.
+    /// Its branch's pill, the worktree's icon last, then Open Worktree shown on the row's hover or selection.
     fn worktree_ref(&self, ix: usize, view: &WorktreeView, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let colour = self.pages.read(cx).rows[ix].row.colour;
-        let label = cells::pill_box(colour, palette)
-            .relative()
-            .text_color(palette.muted)
-            .child(Icon::Worktree.svg(12., palette.muted))
-            .child(SharedString::from(view.label.clone()))
-            .child(hit_target(&self.hits, format!("git-worktree-ref-{ix}")));
+        let icons = if view.detached { vec![Icon::Worktree] } else { vec![Icon::Local, Icon::Worktree] };
+        let face = cells::Face { head: false, name: view.label.clone().into(), icons };
+        let label = cells::pill(format!("git-worktree-label-{ix}"), face, colour, palette, &self.hits).relative().child(hit_target(&self.hits, format!("git-worktree-ref-{ix}")));
         let selected = self.table.selected() == Some(ix);
         let open = button::revealed(&self.hits, format!("git-worktree-open-{ix}"), Icon::GitGraph.svg(12., palette.muted), px(18.), supraman_ui::table::row_group(TABLE), selected, cx)
             .tooltip(Tooltip::text("Open Worktree"))
