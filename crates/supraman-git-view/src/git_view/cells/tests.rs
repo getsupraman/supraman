@@ -72,36 +72,54 @@ fn a_hovered_pill_fills_stronger_in_every_lane(cx: &mut TestAppContext) {
     }
 }
 
-#[gpui::test]
-fn at_a_narrow_branch_column_every_pill_is_cut_inside_it(cx: &mut TestAppContext) {
-    let f = Fixture::copy();
-    let (view, cx) = open(&f, cx);
-    let divider = at(&repaint(&view, cx), "git-divider-refs").center();
-    let to = divider - gpui::point(at(&repaint(&view, cx), "git-col-refs").size.width - px(80.), px(0.));
+/// The Branch / Tag column dragged to `width`, as a hand does; the hits of the frame after.
+fn narrow(view: &Entity<GitView>, width: f32, cx: &mut VisualTestContext) -> HitTargets {
+    let hits = repaint(view, cx);
+    let divider = at(&hits, "git-divider-refs").center();
+    let to = divider - gpui::point(at(&hits, "git-col-refs").size.width - px(width), px(0.));
     cx.simulate_mouse_down(divider, MouseButton::Left, Modifiers::none());
     cx.simulate_mouse_move(divider - gpui::point(px(10.), px(0.)), MouseButton::Left, Modifiers::none());
     cx.simulate_mouse_move(to, MouseButton::Left, Modifiers::none());
     cx.simulate_mouse_up(to, MouseButton::Left, Modifiers::none());
-    let hits = repaint(&view, cx);
-    let column = at(&hits, "git-col-refs");
+    repaint(view, cx)
+}
+
+/// Each icon of the pill named `name` is painted whole inside `pill`, or not at all.
+fn icons_whole(hits: &HitTargets, name: &str, pill: Bounds<Pixels>) {
+    for (key, hit) in hits.borrow().iter().filter(|(k, _)| k.starts_with(&format!("{name}-icon-"))) {
+        let clip = hit.bounds.intersect(&hit.visible).size;
+        let hidden = clip.width <= px(0.) || clip.height <= px(0.);
+        assert!(hidden || (hit.fully_visible() && hit.bounds.left() >= pill.left() && hit.bounds.right() <= pill.right()), "{key} painted whole inside its pill or not at all: {hit:?} {pill:?}");
+    }
+}
+
+#[gpui::test]
+fn at_a_narrow_branch_column_every_pill_is_cut_inside_it_and_drops_whole_icons(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let (view, cx) = open(&f, cx);
     let rows = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().enumerate().filter(|(_, r)| !r.row.refs.is_empty()).map(|(i, _)| i).collect::<Vec<_>>());
-    assert!(rows.len() >= 3 && column.size.width < px(100.), "{rows:?} {column:?}");
+    let w = worktree_row(&view, cx);
+    let pills: Vec<(String, String)> = rows.iter().map(|ix| (format!("git-pill-{ix}"), format!("git-ref-{ix}"))).chain([(format!("git-worktree-ref-{w}"), format!("git-worktree-label-{w}"))]).collect();
+    assert!(rows.len() >= 3, "{rows:?}");
+    for width in (64..=160).step_by(3) {
+        let hits = narrow(&view, width as f32, cx);
+        for (pill, name) in &pills {
+            icons_whole(&hits, name, at(&hits, pill));
+        }
+    }
+
+    let hits = narrow(&view, 80., cx);
+    let column = at(&hits, "git-col-refs");
+    assert!(column.size.width < px(100.), "{column:?}");
     let head = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| r.row.refs.first().is_some_and(|g| g.head()))).expect("HEAD's row");
     let shown = |key: &str| hits.borrow().get(key).is_some_and(|h| h.fully_visible());
     assert!(!shown(&format!("git-ref-{head}-icon-0")) && shown(&format!("git-ref-{head}-text")), "HEAD's pill, its ✓ and cut name filling it, has no room for an icon");
-    let w = worktree_row(&view, cx);
     let tree = (shown(&format!("git-worktree-label-{w}-icon-0")), shown(&format!("git-worktree-label-{w}-icon-1")));
     assert!(tree.1 || !tree.0, "the worktree's icon is the last to go: {tree:?}");
-    let pills = rows.iter().map(|ix| (format!("git-pill-{ix}"), format!("git-ref-{ix}"))).chain([(format!("git-worktree-ref-{w}"), format!("git-worktree-label-{w}"))]);
-    for (pill, name) in pills {
-        let shown = at(&hits, &pill);
+    for (pill, name) in &pills {
+        let shown = at(&hits, pill);
         assert!(shown.left() >= column.left() && shown.right() <= column.right(), "{pill} inside its column: {shown:?} {column:?}");
-        let cut = cut_at(&name).unwrap_or_else(|| panic!("{name} is cut: {shown:?} {column:?}"));
-        for (key, hit) in hits.borrow().iter().filter(|(k, _)| k.starts_with(&format!("{name}-icon-"))) {
-            let clip = hit.bounds.intersect(&hit.visible).size;
-            let hidden = clip.width <= px(0.) || clip.height <= px(0.);
-            assert!(hidden || (hit.fully_visible() && hit.bounds.left() >= shown.left() && hit.bounds.right() <= shown.right()), "{key} painted whole inside its pill or not at all: {hit:?} {shown:?}");
-        }
+        let cut = cut_at(name).unwrap_or_else(|| panic!("{name} is cut: {shown:?} {column:?}"));
         assert!(cut.right() <= shown.right() && cut.size.width >= px(super::NAME_MIN), "{name}'s first letter and … inside its pill: {cut:?} {shown:?}");
     }
 }
