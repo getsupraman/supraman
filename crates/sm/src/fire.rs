@@ -488,7 +488,7 @@ impl Paths {
     }
 }
 
-/// The session of a dead run whose stop failed: `<id>.dead.json`, tried again by [`recover_if_dead`].
+/// The session of a dead run whose stop failed: `<id>.dead.json`, tried again by [`recover_if_dead_with`].
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct DeadSession {
     run: String,
@@ -570,27 +570,13 @@ fn overlap(live: &Paths, policy: Overlap) -> Result<fs::File, Overlapped> {
     }
 }
 
-/// A live file whose sm is gone, recovered as `interrupted` while no fire holds the overlap lock (scheduler.md, step 11); the run id.
-pub fn recover_if_dead(home: &Path, workspace: &str, id: &str) -> Option<String> {
-    let live = Paths::new(schedule::live_dir(home, workspace).ok()?, id);
-    if !live.json.exists() && !live.dead.exists() {
-        return None;
-    }
-    recover_if_dead_with(home, workspace, id, supraman_core::time::now_ms(), &mut RealHost::new(home))
-}
-
-/// [`recover_if_dead`] for each schedule of `workspace` with a live or a dead file; the runs recovered.
+/// [`recover_if_dead_with`] now for each schedule of `workspace` with a live or a dead file; the runs recovered.
 pub fn recover_workspace(home: &Path, workspace: &str) -> Vec<String> {
     let ids = live_ids(home, workspace);
     if ids.is_empty() {
         return Vec::new();
     }
     recover_ids(home, workspace, ids, supraman_core::time::now_ms(), &mut RealHost::new(home))
-}
-
-/// [`recover_workspace`] at `now` through `host`.
-pub fn recover_workspace_with(home: &Path, workspace: &str, now: i64, host: &mut dyn Host) -> Vec<String> {
-    recover_ids(home, workspace, live_ids(home, workspace), now, host)
 }
 
 fn recover_ids(home: &Path, workspace: &str, ids: std::collections::BTreeSet<String>, now: i64, host: &mut dyn Host) -> Vec<String> {
@@ -612,7 +598,8 @@ fn live_ids(home: &Path, workspace: &str) -> std::collections::BTreeSet<String> 
         .collect()
 }
 
-/// [`recover_if_dead`] at `now` through `host`; it also tries a dead run's kept session again.
+/// A live file whose sm is gone, recovered as `interrupted` while no fire holds the overlap lock (scheduler.md, step 11),
+/// at `now` through `host`; it also tries a dead run's kept session again. The run id.
 pub fn recover_if_dead_with(home: &Path, workspace: &str, id: &str, now: i64, host: &mut dyn Host) -> Option<String> {
     let live = Paths::new(schedule::live_dir(home, workspace).ok()?, id);
     if live.dead.exists()
