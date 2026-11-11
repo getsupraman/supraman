@@ -22,7 +22,8 @@ use supraman_ui::hit::HitTargets;
 use files::FileAct;
 
 use super::details::reword::kept_words;
-use super::write_gate::{STILL_OPENING, WriteGate, Writes, Written, capitalised};
+use super::write_gate::{STILL_OPENING, WriteGate, Writes, Written};
+use supraman_core::text::capitalised;
 
 /// What a commit's, the WIP row's or a file's menu item does.
 #[derive(Debug, Clone, PartialEq, Eq)]

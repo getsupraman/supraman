@@ -161,7 +161,7 @@ impl WorkView {
                     .py(px(5.))
                     .border_t_1()
                     .border_color(colors.border_variant)
-                    .child(div().pt(px(6.)).child(dot(Mark::Filled(error), 7.)))
+                    .child(div().pt(px(6.)).child(dot(Mark::Filled(error))))
                     .child(
                         div()
                             .flex_1()
@@ -229,7 +229,7 @@ impl WorkView {
                     .py(px(5.))
                     .border_t_1()
                     .border_color(colors.border_variant)
-                    .child(div().pt(px(6.)).child(dot(Mark::Filled(info), 7.)))
+                    .child(div().pt(px(6.)).child(dot(Mark::Filled(info))))
                     .child(
                         div()
                             .flex_1()
@@ -359,7 +359,7 @@ impl WorkView {
         let colors = cx.theme().colors();
         let mut line = div().relative().flex().flex_wrap().gap_3().text_xs().text_color(colors.text_muted).child(hit_target(&self.hits, "work-legend".into()));
         for (key, label) in LEGEND {
-            line = line.child(div().flex().items_center().gap_1().child(dot(key.mark(cx), 8.)).child(label));
+            line = line.child(div().flex().items_center().gap_1().child(dot(key.mark(cx))).child(label));
         }
         line.into_any_element()
     }

@@ -238,7 +238,7 @@ impl WorkView {
             div()
                 .flex()
                 .flex_col()
-                .child(div().flex().items_center().gap_2().text_sm().font_weight(FontWeight::SEMIBOLD).child(dot(supraman_ui::marks::Mark::Filled(mark), 7.)).child(SharedString::from(title.to_string())))
+                .child(div().flex().items_center().gap_2().text_sm().font_weight(FontWeight::SEMIBOLD).child(dot(supraman_ui::marks::Mark::Filled(mark))).child(SharedString::from(title.to_string())))
                 .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(sub.to_string())))
         };
         let mut reported = div().flex_1().min_w_0().flex().flex_col().gap_2().child(head("What the agent reported", "From work_report. A claim, not proof.", status.warning));

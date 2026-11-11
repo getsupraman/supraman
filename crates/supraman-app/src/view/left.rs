@@ -15,6 +15,7 @@ use supraman_ui::tabs::DraggedSession;
 use theme::ActiveTheme as _;
 
 use supraman_ui::icon::Icon;
+use supraman_ui::marks::{self, Mark};
 use supraman_ui::tooltip::Tooltip;
 use super::{Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE};
 use supraman_ui::clipped::clipped;
@@ -140,15 +141,6 @@ pub fn inbox_buttons(need: &NeedsYou) -> Vec<(String, &'static str, InboxButton)
         _ => {}
     }
     buttons
-}
-
-fn health_color(health: &Health, cx: &gpui::App) -> Hsla {
-    let status = cx.theme().status();
-    match (fleet::activity(health), health) {
-        (Some(activity), _) => activity.color(cx),
-        (None, Health::Unknown) => status.hint,
-        (None, _) => cx.theme().colors().text_disabled,
-    }
 }
 
 fn icon_button(hits: &HitTargets, key: &'static str, icon: Icon, tip: impl Into<SharedString>, on: bool, cx: &gpui::App) -> Stateful<Div> {
@@ -850,10 +842,7 @@ impl FleetView {
             Health::Blocked { waiting_for: Some(why) } => Some(format!("waiting for: {why}")),
             _ => None,
         });
-        let dot = match live {
-            Some(r) => div().size(px(8.)).rounded_full().bg(health_color(&r.health, cx)),
-            None => div().size(px(8.)).rounded_full().border_1().border_color(colors.text_disabled),
-        };
+        let dot = marks::dot(own.map_or(Mark::Ring(colors.text_disabled), |r| fleet::State::of_row(r).mark(cx)));
         let relay_glyph = self.relay_glyph(&w, cx);
 
         let buttons = self.workspace_buttons(workspace, &group, shown, cx);
@@ -1161,20 +1150,20 @@ impl FleetView {
         let colors = cx.theme().colors().clone();
         let s = &row.session;
         let at = row.scope(workspace);
-        let dot = if row.foreign { colors.text_muted } else { health_color(&row.health, cx) };
-        let state = if row.foreign || matches!(row.health, Health::Stopped | Health::Orphaned { .. }) { secondary(cx) } else { dot };
+        let state = fleet::State::of_row(row);
+        let mark = if row.foreign { state.mark(cx).in_color(colors.text_muted) } else { state.mark(cx) };
+        let word_color = if row.foreign || !matches!(state, fleet::State::Live(_)) { secondary(cx) } else { mark.color() };
         let marks = self.sidebar.search_marks.get(&s.session_id);
         let tree_key = format!("session-{}{at}", s.session_id);
         let star = self.session_star(row, &at, cx);
         let action = self.session_open(workspace, repo, row, cx);
-        let state_word = if row.closed { "closed".to_string() } else { fleet::health_label(&row.health) };
         div()
             .flex()
             .items_center()
             .gap(grid::gap())
             .h(px(SESSION_LINE))
-            .child(disclosure(None, dot))
-            .child(icon_slot(&self.hits, &tree_key, Some(Icon::Claude.slotted(grid::ICON, dot).into_any_element())))
+            .child(disclosure(None, colors.text_muted))
+            .child(icon_slot(&self.hits, &tree_key, Some(marks::dot(mark).into_any_element())))
             .child(tree_label(&self.hits, &tree_key, self.session_name(row, &at, marks, cx)))
             .when_some(marks.and_then(|m| m.id.clone()), |d, id| {
                 let key = format!("session-id-{}{at}", s.id);
@@ -1195,7 +1184,7 @@ impl FleetView {
                     .text_xs()
                     .text_color(secondary(cx))
                     .child(SharedString::from(format!("{} · ", s.kind.as_str())))
-                    .child(div().text_color(state).child(SharedString::from(state_word))),
+                    .child(div().text_color(word_color).child(SharedString::from(state.word()))),
             )
             .when_some(row.also_in.clone(), |d, owner| {
                 d.child(
@@ -1221,7 +1210,7 @@ impl FleetView {
 
     fn session_name(&self, row: &SessionRow, at: &str, marks: Option<&crate::search::Marks>, cx: &mut Context<Self>) -> Stateful<Div> {
         let s = &row.session;
-        let name = if s.name.is_empty() { "(unnamed)".to_string() } else { s.name.clone() };
+        let name = fleet::display_name(s).to_string();
         let name_el = match marks {
             Some(m) if !s.name.is_empty() => supraman_ui::matcher::highlighted(format!("session-name-{}{at}", s.id), name, &m.name, cx),
             _ => clipped(format!("session-name-{}{at}", s.id), name, false),

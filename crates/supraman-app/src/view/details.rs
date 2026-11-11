@@ -278,15 +278,10 @@ impl FleetView {
             MenuTarget::Session { workspace, repo, .. } => {
                 let (title, sections) = self.session_sections(page, cx)?;
                 let row = page.seen.as_ref()?;
-                let (words, asks) = row_details::session_pill(row, page.listed);
-                let color = match (asks, &row.health) {
-                    (true, _) => status.warning,
-                    _ if !page.listed || row.closed => colors.text_muted,
-                    (false, h) if crate::fleet::is_alive(h) => status.success,
-                    _ => colors.text_muted,
-                };
+                let words = row_details::session_pill(row, page.listed);
+                let color = if page.listed { crate::fleet::State::of_row(row).mark(cx).color() } else { colors.text_muted };
                 let items = if page.listed { self.session_menu(workspace, repo, row, None, cx) } else { Vec::new() };
-                (title, (words.to_string(), color), sections, items)
+                (title, (words, color), sections, items)
             }
             MenuTarget::Workspace(w) => {
                 let (node, sections) = self.workspace_sections(w, cx)?;

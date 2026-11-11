@@ -15,7 +15,7 @@ use supraman_ui::{button, placeholder};
 
 use super::colours::Palette;
 use super::load::{self, GraphRow};
-use super::write_gate::capitalised;
+use supraman_core::text::capitalised;
 use super::{GitView, Selected, background, cells, graph};
 use crate::occupancy::{Live, LiveSession};
 
@@ -251,7 +251,7 @@ impl GitView {
 
 /// A session's state as its dot: the sidebar's status colours.
 pub(super) fn state_dot(activity: Activity, cx: &App) -> gpui::Div {
-    marks::dot(Mark::Filled(activity.color(cx)), 8.)
+    marks::dot(Mark::Filled(activity.color(cx)))
 }
 
 #[cfg(test)]

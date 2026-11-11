@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use supraman_claude::{Health, Kind, Status};
 use supraman_ui::details::Section;
 
-use crate::fleet::{self, Open, SessionRow};
+use crate::fleet::{self, Open, SessionRow, State};
+use supraman_core::text::capitalised;
+use supraman_ui::marks::Activity;
 use supraman_core::time::{ago, date_words};
 
 /// Who launched a session, as far as this window can tell.
@@ -56,36 +58,27 @@ pub struct SessionFacts<'a> {
 }
 
 pub fn session_title(row: &SessionRow) -> String {
-    if row.session.name.is_empty() { format!("Session {}", fleet::short_id(&row.session)) } else { row.session.name.clone() }
+    fleet::display_name(&row.session).to_string()
 }
 
-/// The pill's words, and whether the session asks for someone.
-pub fn session_pill(row: &SessionRow, listed: bool) -> (&'static str, bool) {
-    match &row.health {
-        _ if !listed => ("Not listed", false),
-        _ if row.closed => ("Closed", false),
-        Health::Blocked { .. } => ("Blocked", true),
-        Health::Orphaned { .. } => ("Interrupted", true),
-        Health::Running => ("Running", false),
-        Health::Idle => ("Idle", false),
-        Health::Stopped => ("Stopped", false),
-        Health::Unknown => ("Unknown", false),
-    }
+/// The pill's words: the state's, or that the last poll no longer lists it.
+pub fn session_pill(row: &SessionRow, listed: bool) -> String {
+    if listed { capitalised(State::of_row(row).word()) } else { "Not listed".to_string() }
 }
 
 fn state_words(row: &SessionRow) -> String {
-    if row.closed {
-        return "Closed: its process ended; the transcript stays and it can be resumed".to_string();
-    }
-    match &row.health {
-        Health::Running => "Running: working on a turn".to_string(),
-        Health::Blocked { waiting_for: Some(w) } => format!("Blocked: waits for {w}"),
-        Health::Blocked { waiting_for: None } => "Blocked: waits for an answer".to_string(),
-        Health::Idle => "Idle: waits for a prompt".to_string(),
-        Health::Stopped => "Stopped: no process runs it".to_string(),
-        Health::Orphaned { last_state } => format!("Interrupted: the process ended while the session was {}", last_state.as_str()),
-        Health::Unknown => "Unknown".to_string(),
-    }
+    let state = State::of_row(row);
+    let said = match (&row.health, state) {
+        (_, State::Closed) => "its process ended; the transcript stays and it can be resumed".to_string(),
+        (_, State::Live(Activity::Working)) => "on a turn".to_string(),
+        (Health::Blocked { waiting_for: Some(w) }, _) => format!("for {w}"),
+        (_, State::Live(Activity::Waiting)) => "for an answer".to_string(),
+        (_, State::Live(Activity::Idle)) => "waits for a prompt".to_string(),
+        (_, State::Stopped) => "no process runs it".to_string(),
+        (Health::Orphaned { last_state }, _) => format!("the process ended while the session was {}", last_state.as_str()),
+        _ => return capitalised(state.word()),
+    };
+    format!("{}: {said}", capitalised(state.word()))
 }
 
 fn reported(row: &SessionRow) -> Option<String> {
@@ -110,7 +103,7 @@ pub fn session(f: &SessionFacts, now_ms: i64) -> Vec<Section> {
     if !f.listed {
         session = session.text("The last poll no longer lists it; this is the session as it was last seen.");
     }
-    session = session.row("Name", if s.name.is_empty() { "(unnamed)".to_string() } else { s.name.clone() }).row(
+    session = session.row("Name", fleet::display_name(s)).row(
         "Kind",
         match &s.kind {
             Kind::Background => "Background: claude's daemon runs it".to_string(),
@@ -155,10 +148,10 @@ pub fn session(f: &SessionFacts, now_ms: i64) -> Vec<Section> {
 
     let mut place = Section::new("where", "Where").row("Workspace", f.workspace.to_string());
     place = match f.folder {
-        Some((name, path)) => place.row("Folder", format!("{name} ({})", path.display())),
+        Some((_, path)) => place.path("Folder", path),
         None => place.row("Folder", format!("none of {}'s folders", f.workspace)),
     };
-    place = place.row("Working directory", s.cwd.display().to_string());
+    place = place.path("Working directory", &s.cwd);
     if let Some(b) = &f.disk.branch {
         place = place.row("Branch", b.clone());
     }
@@ -321,7 +314,7 @@ mod tests {
                 "Session",
                 "Name  fm-demo-workspace",
                 "Kind  Background: claude's daemon runs it",
-                "State  Running: working on a turn",
+                "State  Working: on a turn",
                 "claude reports  state working, status busy",
                 &started,
                 &written,
@@ -333,8 +326,8 @@ mod tests {
                 "",
                 "Where",
                 "Workspace  demo",
-                r"Folder  Alpha (C:\nowhere\demo)",
-                r"Working directory  C:\nowhere\demo",
+                "Folder  C:/nowhere/demo",
+                "Working directory  C:/nowhere/demo",
                 "Branch  main",
                 "",
                 "Workman",
@@ -358,12 +351,12 @@ mod tests {
         f.claimed = None;
         let sections = session(&f, NOW);
         let page = text("x", &sections);
-        assert!(page.contains("\nState  Blocked: waits for permission prompt\n"), "{page}");
+        assert!(page.contains("\nState  Waiting: for permission prompt\n"), "{page}");
         assert!(page.contains("\nLast activity  turn ended 12 s ago\n"), "{page}");
         assert!(page.contains("\nOpen the workspace's Work tab to see what it claims."), "{page}");
         assert!(page.ends_with("\nNo transcript found under claude's projects folder."), "{page}");
         assert!(sections[0].lines.contains(&supraman_ui::details::Line::Link { label: "Started by".into(), value: "a run of schedule nightly".into(), target: "nightly".into() }));
-        assert_eq!(session_pill(&r, true), ("Blocked", true));
+        assert_eq!(session_pill(&r, true), "Waiting");
     }
 
     #[test]
@@ -376,10 +369,10 @@ mod tests {
         f.listed = false;
         f.started_by = StartedBy::Outside;
         let page = text(&session_title(&r), &session(&f, NOW));
-        assert!(page.starts_with("Session 77aa88bb\n\nSession\nThe last poll no longer lists it"), "{page}");
-        assert!(page.contains("\nName  (unnamed)\n") && page.contains("\nState  Closed: its process ended") && !page.contains("\nStarted  "), "{page}");
+        assert!(page.starts_with("77aa88bb\n\nSession\nThe last poll no longer lists it"), "{page}");
+        assert!(page.contains("\nName  77aa88bb\n") && page.contains("\nState  Closed: its process ended") && !page.contains("\nStarted  "), "{page}");
         assert!(page.contains("\nStarted by  outside Supraman\n"), "{page}");
-        assert_eq!(session_pill(&r, false), ("Not listed", false));
+        assert_eq!(session_pill(&r, false), "Not listed");
         let gone = row(Health::Orphaned { last_state: supraman_claude::SessionState::Working });
         assert!(text("x", &session(&facts(&gone, &disk), NOW)).contains("\nState  Interrupted: the process ended while the session was working\n"));
     }

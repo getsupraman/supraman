@@ -7,6 +7,8 @@ use theme::ActiveTheme as _;
 /// A strip over this many items is a plain bar.
 pub const SQUARES_MAX: usize = 40;
 const SQUARE: f32 = 11.;
+/// Every state dot's side: a session's, a workspace's, an item's.
+pub const DOT: f32 = 8.;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Mark {
@@ -19,6 +21,14 @@ impl Mark {
     pub fn color(self) -> Hsla {
         match self {
             Mark::Filled(c) | Mark::Ring(c) => c,
+        }
+    }
+
+    /// The same shape in `color`: a mark muted, such as another Supraman's session.
+    pub fn in_color(self, color: Hsla) -> Mark {
+        match self {
+            Mark::Filled(_) => Mark::Filled(color),
+            Mark::Ring(_) => Mark::Ring(color),
         }
     }
 }
@@ -59,8 +69,8 @@ fn shape(mark: Mark, side: f32) -> Div {
     }
 }
 
-pub fn dot(mark: Mark, side: f32) -> Div {
-    shape(mark, side).rounded_full()
+pub fn dot(mark: Mark) -> Div {
+    shape(mark, DOT).rounded_full()
 }
 
 /// One rounded square per mark, in order, wrapping; over [`SQUARES_MAX`] marks a bar of runs of equal marks.

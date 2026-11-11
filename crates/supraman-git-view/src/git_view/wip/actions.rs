@@ -14,7 +14,8 @@ use super::compose::{self, Act};
 use super::{Section, WipPanel, sections};
 use crate::git_view::details::reword::kept_words;
 use crate::git_view::details::{FileView, PanelEvent};
-use crate::git_view::write_gate::{Written, capitalised};
+use crate::git_view::write_gate::Written;
+use supraman_core::text::capitalised;
 
 /// A write the panel asks about first.
 #[derive(Debug, Clone, PartialEq, Eq)]
