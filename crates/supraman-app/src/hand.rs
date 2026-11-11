@@ -10,7 +10,7 @@ use supraman_core::platform::shell::launch::{encoded_command, runner};
 use supraman_core::platform::shell::quote;
 use supraman_core::paths::{path_key, within};
 use supraman_core::{Workspace, owners};
-use supraman_supervisor::{Bearer, HAND_ROLE, HttpMinter, Keeper, LaunchConfig, MintError, MintRepo, MintRequest, Minted, MintedSession, MintedSessions, Minter, git_repo, launched_by, mint_as};
+use supraman_supervisor::{Bearer, HAND_ROLE, HttpMinter, Keeper, LaunchConfig, MintError, MintRepo, MintRequest, Minted, MintedSession, MintedSessions, Minter, former_holder, git_repo, launched_by, mint_as};
 use supraman_workman::Auth;
 
 pub const EXTERNAL_ROLE: &str = "hand";
@@ -204,10 +204,12 @@ struct Pending {
 }
 
 impl Pending {
-    /// A 409 is never taken: a name from `fresh` is tried instead, up to [`FRESH_TRIES`], and the notice says so.
+    /// A 409 from our own former label takes the row over once ([`former_holder`]); any other 409 tries a name
+    /// from `fresh` instead, up to [`FRESH_TRIES`], said in the log only.
     fn mint(&mut self, mut fresh: impl FnMut(&str, &[String], &str) -> Option<String>) -> Result<Minted, MintError> {
         let wanted = self.request.name.clone();
         let mut tried = vec![wanted.clone()];
+        let mut took_over = false;
         loop {
             let minted = mint_as(&*self.minter, &self.base, &self.bearer, &self.request, self.former.as_deref());
             log::info!(
@@ -220,15 +222,23 @@ impl Pending {
             );
             match minted {
                 Err(MintError::Refused { status: 409, reason }) => {
+                    if !took_over && let Some(held) = former_holder(&reason, &self.request.launched_by) {
+                        took_over = true;
+                        self.request.takeover_from = Some(held);
+                        self.request.replace = true;
+                        self.former = None;
+                        continue;
+                    }
                     let next = (tried.len() <= FRESH_TRIES).then(|| fresh(&wanted, &tried, &self.name)).flatten();
                     let Some(next) = next else {
                         return Err(MintError::Refused { status: 409, reason });
                     };
-                    self.notice = Some(format!("Workman session {next}, not {wanted}: {reason}"));
+                    log::info!("hand mint {}: Workman session {next}, not {wanted}: {reason}", self.name);
                     tried.push(next.clone());
                     self.name = next.clone();
                     self.request.name = next;
                     self.request.replace = false;
+                    self.request.takeover_from = None;
                     self.former = None;
                 }
                 other => return other,
@@ -1270,11 +1280,71 @@ mod tests {
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
         let Launch::Minted { name, session, notice, .. } = hands.launch(Path::new(r"C:\demo\alpha"), Some("nomos-0c")) else { panic!() };
         assert_eq!((name.as_str(), session.as_str()), ("hand-alpha-1", "hand-alpha-1"));
-        assert!(notice.unwrap().starts_with("Workman session hand-alpha-1, not nomos-0c: "));
+        assert_eq!(notice, None);
         let names: Vec<String> = (0..2)
             .map(|_| serde_json::from_str::<serde_json::Value>(&seen.recv_timeout(WAIT).unwrap().2).unwrap()["name"].as_str().unwrap().to_string())
             .collect();
         assert_eq!(names, ["nomos-0c", "hand-alpha-1"]);
+    }
+
+    /// `hand-alpha-1` minted under `launcher` with the hands' own bearer, the row a [+] tab's first mint meets.
+    fn held_by(hands: &Hands, base: &str, launcher: &str) -> Minted {
+        let (_, bearer) = hands.bearer().unwrap().unwrap();
+        let request = MintRequest {
+            name: "hand-alpha-1".into(),
+            role: ROLE.into(),
+            launched_by: launcher.into(),
+            origin: format!("{launcher}/alpha"),
+            cwd: r"C:\demo\alpha".into(),
+            external_role: EXTERNAL_ROLE.into(),
+            replace: false,
+            repo: None,
+            claude_session_id: None,
+            takeover_from: None,
+        };
+        HttpMinter::default().mint(base, &bearer, &request).unwrap()
+    }
+
+    fn posted(fake: &FakeWorkman) -> Vec<serde_json::Value> {
+        fake.seen().iter().filter(|s| s.method == "POST" && s.target == "/api/agent-sessions").map(|s| serde_json::from_str(&s.body).unwrap()).collect()
+    }
+
+    #[test]
+    fn a_name_held_by_our_former_foreman_label_is_taken_over_and_kept_without_a_notice() {
+        let dir = tempfile::tempdir().unwrap();
+        let (fake, sessions) = session_workman();
+        let (home, auth) = home_with(dir.path(), Some(fake.base()));
+        let (mut hands, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo, memory());
+        let old = held_by(&hands, fake.base(), "foreman/hand");
+
+        let Launch::Minted { name, session, notice, .. } = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!() };
+        assert_eq!((name.as_str(), session.as_str(), notice), ("hand-alpha-1", "hand-alpha-1", None));
+        let posts = posted(&fake);
+        assert_eq!(posts.len(), 3, "the foreman row, the 409, one takeover: {posts:?}");
+        assert_eq!(posts[1].get("takeoverFrom"), None);
+        assert_eq!((&posts[2]["name"], &posts[2]["launchedBy"], &posts[2]["takeoverFrom"], &posts[2]["replace"]), (&"hand-alpha-1".into(), &"supraman/hand".into(), &"foreman/hand".into(), &true.into()));
+        assert!(!sessions.live(&old.token), "the foreman row's token is replaced");
+        assert!(sessions.token_of("hand-alpha-1").is_some());
+    }
+
+    #[test]
+    fn a_name_held_by_another_launcher_takes_the_next_name_logged_without_a_notice_and_takes_nothing_over() {
+        captured();
+        let dir = tempfile::tempdir().unwrap();
+        let (fake, sessions) = session_workman();
+        let (home, auth) = home_with(dir.path(), Some(fake.base()));
+        let (mut hands, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo, memory());
+        let old = held_by(&hands, fake.base(), "elsewhere/hand");
+
+        let Launch::Minted { name, session, notice, .. } = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!() };
+        assert_eq!((name.as_str(), session.as_str(), notice), ("hand-alpha-2", "hand-alpha-2", None));
+        let posts = posted(&fake);
+        assert_eq!(posts.iter().map(|p| p["name"].as_str().unwrap()).collect::<Vec<_>>(), ["hand-alpha-1", "hand-alpha-1", "hand-alpha-2"]);
+        assert!(posts.iter().all(|p| p.get("takeoverFrom").is_none()), "{posts:?}");
+        assert!(sessions.live(&old.token), "the other launcher's row is untouched");
+        let lines: Vec<String> = captured().into_iter().filter(|l| l.contains("launched by elsewhere/hand") && l.contains("Workman session hand-alpha-2, not hand-alpha-1: ")).collect();
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].starts_with("hand mint hand-alpha-1: "), "{lines:?}");
     }
 
     #[test]
@@ -1657,7 +1727,7 @@ mod tests {
         let Launch::Minted { session, notice, .. } = reopened.launch_for(alpha, Some("mw-workflow"), Some(SID)) else { panic!() };
         assert!(sessions.live(&held), "the claude still running under mw-workflow keeps its token");
         assert_eq!(session, "hand-alpha-2");
-        assert!(notice.as_deref().is_some_and(|n| n.starts_with("Workman session hand-alpha-2, not mw-workflow: ") && n.contains("already has a live token")), "{notice:?}");
+        assert_eq!(notice, None);
         assert!(config.exists());
         assert!(sessions.token_of("hand-alpha-2").is_some());
     }

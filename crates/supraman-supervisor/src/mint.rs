@@ -64,6 +64,13 @@ pub fn mint_as(minter: &dyn Minter, base: &str, bearer: &str, request: &MintRequ
     }
 }
 
+/// The holder a launcher 409 names (`… is held by a session launched by <label>, and this mint says …`) when it is
+/// `launched_by`'s own former label, the `takeoverFrom` that moves the row; any other holder is `None`.
+pub fn former_holder(reason: &str, launched_by: &str) -> Option<String> {
+    let held = reason.split_once("is held by a session launched by ")?.1.split_once(", and this mint says ")?.0;
+    (held != launched_by && relabelled(held) == launched_by).then(|| held.to_string())
+}
+
 /// `repo:{root, remote?}` of a mint, as git prints them; Workman normalises both.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MintRepo {
@@ -1063,6 +1070,16 @@ mod tests {
     }
 
     #[test]
+    fn only_our_own_former_label_holding_a_name_is_a_takeover() {
+        let said = |held: &str| format!("the session name \"hand-a-2\" is held by a session launched by {held}, and this mint says supraman/hand; two launchers' sessions cannot share a name");
+        assert_eq!(former_holder(&said("foreman/hand"), "supraman/hand").as_deref(), Some("foreman/hand"));
+        for held in ["foreman/other", "elsewhere/hand", "no launcher", "supraman/hand", "foreman"] {
+            assert_eq!(former_holder(&said(held), "supraman/hand"), None, "{held}");
+        }
+        assert_eq!(former_holder("the session \"x\" already has a live token", "supraman/hand"), None);
+    }
+
+    #[test]
     fn a_mint_without_a_former_label_is_one_plain_call_and_its_409_stands() {
         let fake = FakeWorkman::start(Vec::new());
         fake.enable_sessions();
@@ -1070,7 +1087,7 @@ mod tests {
         minter.mint(fake.base(), "fake-static", &request()).unwrap();
         let ours = MintRequest { launched_by: launched_by("demo"), replace: false, ..request() };
         let e = mint_as(&minter, fake.base(), "fake-static", &ours, None).unwrap_err();
-        assert!(matches!(&e, MintError::Refused { status: 409, reason } if reason.contains("another launcher")), "{e:?}");
+        assert!(matches!(&e, MintError::Refused { status: 409, reason } if reason.contains("two launchers' sessions cannot share a name")), "{e:?}");
         let e = mint_as(&minter, fake.base(), "fake-static", &ours, Some("supraman/demo")).unwrap_err();
         assert!(matches!(&e, MintError::Refused { status: 409, .. }), "the same label is no takeover: {e:?}");
         assert!(mints(&fake).iter().all(|m| m.get("takeoverFrom").is_none()));
