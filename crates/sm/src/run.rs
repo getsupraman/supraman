@@ -76,76 +76,14 @@ pub fn report_path(live_dir: &Path, id: &str) -> PathBuf {
 /// Steps 8 to 10 for the run in `ctx`; `gate` is the script's stdout when it exited 10.
 pub fn session_stage(ctx: &RunCtx, gate: Option<&str>, host: &mut dyn SessionHost, log: &mut dyn RunLog) -> SessionEnd {
     let (w, s) = (ctx.workspace, ctx.schedule);
-    let Some(folder) = w.folder(&s.folder) else {
-        return SessionEnd::failed(format!("workspace {} has no folder {}", w.name, s.folder));
-    };
-    let live_dir = match schedule::live_dir(ctx.home, &w.name) {
-        Ok(dir) => dir,
-        Err(e) => return SessionEnd::failed(e.to_string()),
-    };
-    let report = report_path(&live_dir, &s.id);
-    let _ = fs::remove_file(&report);
-
-    if let Err(why) = git_accepts(&folder.path, s.action.worktree) {
-        return SessionEnd::failed(why);
-    }
-    let worktree = if s.action.worktree {
-        let path = schedule::run_worktree(&folder.path, &s.id, ctx.stamp);
-        if let Err(why) = add_worktree(&folder.path, &path, &schedule::run_branch(&s.id, ctx.stamp)) {
-            return SessionEnd::failed(why);
-        }
-        Some(path)
-    } else {
-        None
-    };
-
-    let mut spec = match crate::schedule::run_spec(ctx.home, w, s, ctx.stamp, host.plugin_dir().as_deref()) {
-        Ok(spec) => spec,
-        Err(e) => return SessionEnd::failed(crate::failure_text(e)),
-    };
-    if let Some(stdout) = gate {
-        spec.prompt.push_str(&format!("\n\n<gate-output>\n{}\n</gate-output>", capped(stdout)));
-    }
-    let keeper = Keeper::open(ctx.home);
-    let mut mint = match mint(ctx, &spec, host) {
-        Ok(m) => m,
+    let (spec, report, worktree) = match prepare(ctx, gate, host) {
+        Ok(prepared) => prepared,
         Err(why) => return SessionEnd::failed(why),
     };
-    let url = mint.is_none().then(|| host.tokens().mcp_url());
-    let without_workstate = match &url {
-        None => None,
-        Some(Ok(_)) => Some("Supraman is not signed in to Workman: the run has no Workman token".to_string()),
-        Some(Err(not_set_up)) => Some(format!("{not_set_up}; the run has no Workman")),
+    let Launched { spec, row, mint, without_workstate } = match launch_with_token(ctx, spec, host) {
+        Ok(launched) => launched,
+        Err(why) => return SessionEnd::failed(why),
     };
-    let helped = match (&mint, url) {
-        (Some(m), _) => keeper.launch(spec.clone(), &m.url, &m.token, m.expires_at.as_deref()),
-        (None, url) => keeper.launch_unminted(spec.clone(), url.and_then(Result::ok).as_deref()),
-    };
-    match helped {
-        Ok(with) => spec = with,
-        Err(why) => {
-            end_mint(host, &keeper, ctx.home, &spec.name, mint.as_ref());
-            return SessionEnd::failed(why);
-        }
-    }
-
-    if let Err(e) = host.claude().launch(&spec) {
-        end_mint(host, &keeper, ctx.home, &spec.name, mint.as_ref());
-        return SessionEnd::failed(format!("cannot launch {}: {e}", spec.name));
-    }
-    let row = match find_row(host, &spec.name) {
-        Some(row) => row,
-        None => {
-            end_mint(host, &keeper, ctx.home, &spec.name, mint.as_ref());
-            return SessionEnd::failed(format!("{} launched, but no session of that name showed within {}s", spec.name, FIND_WITHIN.as_secs()));
-        }
-    };
-    if let Some(m) = &mut mint
-        && !row.session_id.is_empty()
-        && let Err(e) = m.bind(ctx.home, &spec.name, &row.session_id)
-    {
-        crate::fire::log(ctx.home, &format!("{}/{} {}: {e}", w.name, s.id, ctx.run));
-    }
     let workstate_session = mint.as_ref().map(|m| m.session_id.clone());
     log.session(&LiveSession {
         name: spec.name.clone(),
@@ -184,6 +122,78 @@ pub fn session_stage(ctx: &RunCtx, gate: Option<&str>, host: &mut dyn SessionHos
         end.why = "the session finished".into();
     }
     end
+}
+
+/// The run's spec with the gate's capped stdout, its report path cleared, and its worktree when the profile asks for one.
+fn prepare(ctx: &RunCtx, gate: Option<&str>, host: &mut dyn SessionHost) -> Result<(LaunchSpec, PathBuf, Option<PathBuf>), String> {
+    let (w, s) = (ctx.workspace, ctx.schedule);
+    let Some(folder) = w.folder(&s.folder) else {
+        return Err(format!("workspace {} has no folder {}", w.name, s.folder));
+    };
+    let live_dir = schedule::live_dir(ctx.home, &w.name).map_err(|e| e.to_string())?;
+    let report = report_path(&live_dir, &s.id);
+    let _ = fs::remove_file(&report);
+
+    git_accepts(&folder.path, s.action.worktree)?;
+    let worktree = if s.action.worktree {
+        let path = schedule::run_worktree(&folder.path, &s.id, ctx.stamp);
+        add_worktree(&folder.path, &path, &schedule::run_branch(&s.id, ctx.stamp))?;
+        Some(path)
+    } else {
+        None
+    };
+
+    let mut spec = crate::schedule::run_spec(ctx.home, w, s, ctx.stamp, host.plugin_dir().as_deref()).map_err(crate::failure_text)?;
+    if let Some(stdout) = gate {
+        spec.prompt.push_str(&format!("\n\n<gate-output>\n{}\n</gate-output>", capped(stdout)));
+    }
+    Ok((spec, report, worktree))
+}
+
+struct Launched {
+    spec: LaunchSpec,
+    row: Session,
+    mint: Option<Mint>,
+    without_workstate: Option<String>,
+}
+
+/// The run's token minted and kept, its helped config written, the session launched and found; a failure ends the mint.
+fn launch_with_token(ctx: &RunCtx, mut spec: LaunchSpec, host: &mut dyn SessionHost) -> Result<Launched, String> {
+    let keeper = Keeper::open(ctx.home);
+    let mut mint = mint(ctx, &spec, host)?;
+    let url = mint.is_none().then(|| host.tokens().mcp_url());
+    let without_workstate = match &url {
+        None => None,
+        Some(Ok(_)) => Some("Supraman is not signed in to Workman: the run has no Workman token".to_string()),
+        Some(Err(not_set_up)) => Some(format!("{not_set_up}; the run has no Workman")),
+    };
+    let helped = match (&mint, url) {
+        (Some(m), _) => keeper.launch(spec.clone(), &m.url, &m.token, m.expires_at.as_deref()),
+        (None, url) => keeper.launch_unminted(spec.clone(), url.and_then(Result::ok).as_deref()),
+    };
+    match helped {
+        Ok(with) => spec = with,
+        Err(why) => {
+            end_mint(host, &keeper, ctx.home, &spec.name, mint.as_ref());
+            return Err(why);
+        }
+    }
+
+    if let Err(e) = host.claude().launch(&spec) {
+        end_mint(host, &keeper, ctx.home, &spec.name, mint.as_ref());
+        return Err(format!("cannot launch {}: {e}", spec.name));
+    }
+    let Some(row) = find_row(host, &spec.name) else {
+        end_mint(host, &keeper, ctx.home, &spec.name, mint.as_ref());
+        return Err(format!("{} launched, but no session of that name showed within {}s", spec.name, FIND_WITHIN.as_secs()));
+    };
+    if let Some(m) = &mut mint
+        && !row.session_id.is_empty()
+        && let Err(e) = m.bind(ctx.home, &spec.name, &row.session_id)
+    {
+        crate::fire::log(ctx.home, &format!("{}/{} {}: {e}", ctx.workspace.name, ctx.schedule.id, ctx.run));
+    }
+    Ok(Launched { spec, row, mint, without_workstate })
 }
 
 /// git's refusal of a folder owned by another user, with the one command that fixes it (scheduler.md, probe (c)).
