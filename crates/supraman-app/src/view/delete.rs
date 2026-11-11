@@ -8,6 +8,7 @@ use supraman_claude::{
     now_ms,
 };
 use gpui::Context;
+use supraman_core::text::count;
 
 use super::FleetView;
 use super::menu::{Confirm, Confirmed};
@@ -191,11 +192,7 @@ impl FleetView {
     }
 
     fn ask_discard(&mut self, session: Session, refusal: RmRefusal) {
-        let commits = match refusal.unpushed {
-            Some(1) => "1 unpushed commit".to_string(),
-            Some(n) => format!("{n} unpushed commits"),
-            None => "unpushed commits".to_string(),
-        };
+        let commits = unpushed(refusal.unpushed);
         let at = refusal.worktree.as_deref().map(|w| format!(" in {}", w.display())).unwrap_or_default();
         match refusal.discard {
             Some(value) => {
@@ -241,8 +238,8 @@ impl FleetView {
                     let n = sessions.len();
                     Confirm::ask(
                         format!(
-                            "Delete {n} closed background session{} of {workspace}? claude rm removes each, then its transcript is deleted. A session with unpushed commits is kept, never discarded.{skip}",
-                            if n == 1 { "" } else { "s" }
+                            "Delete {} of {workspace}? claude rm removes each, then its transcript is deleted. A session with unpushed commits is kept, never discarded.{skip}",
+                            count(n, "closed background session", "closed background sessions")
                         ),
                         format!("Delete {n}"),
                         Confirmed::DeleteClosed { workspace, sessions, skipped },
@@ -272,14 +269,14 @@ impl FleetView {
                     match outcome {
                         Outcome::Deleted(_) => deleted.push(s.session_id.clone()),
                         Outcome::Kept(r) => {
-                            let commits = r.unpushed.map_or("unpushed commits".to_string(), |n| format!("{n} unpushed commit{}", if n == 1 { "" } else { "s" }));
+                            let commits = unpushed(r.unpushed);
                             skipped.push((label(&s), format!("{commits}, kept by claude rm")));
                         }
                         Outcome::Failed(e) => failed.push(e),
                     }
                 }
                 this.forget_rows(&deleted, cx);
-                let mut text = format!("Deleted {} closed background session{} of {workspace}.", deleted.len(), if deleted.len() == 1 { "" } else { "s" });
+                let mut text = format!("Deleted {} of {workspace}.", count(deleted.len(), "closed background session", "closed background sessions"));
                 if !skipped.is_empty() {
                     text.push_str(&format!(" Skipped {}: {}.", skipped.len(), listed(&skipped)));
                 }
@@ -336,6 +333,11 @@ impl FleetView {
         self.listing.closed.retain(|s| !deleted.contains_key(&s.session_id));
         self.invalidate_tree();
     }
+}
+
+/// `3 unpushed commits`, or `unpushed commits` when claude rm gave no number.
+fn unpushed(n: Option<u32>) -> String {
+    n.map_or("unpushed commits".to_string(), |n| count(n as usize, "unpushed commit", "unpushed commits"))
 }
 
 #[cfg(test)]

@@ -43,7 +43,7 @@ fn commit_details_show_a_commit_a_merge_and_the_root(cx: &mut TestAppContext) {
     assert!(s.body.starts_with("The old name no longer fits."), "{}", s.body);
     assert_eq!(s.parents, [SharedString::from(f.sha("second").to_string())]);
     assert_eq!(names(&s.co_authors), ["Bea Two", "Cy Three"]);
-    assert_eq!(s.counts, Counts { renamed: 1, ..Counts::default() });
+    assert_eq!(s.counts, WipCounts { renamed: 1, ..WipCounts::default() });
     assert_eq!(s.authored_ms, 1_700_000_000_000 + 3 * 60_000, "the third commit's time");
     let authored = render::authored(&s);
     assert_eq!(authored, supraman_core::time::stamp(s.authored_ms), "the author's date reads as the graph's date column");
@@ -59,7 +59,7 @@ fn commit_details_show_a_commit_a_merge_and_the_root(cx: &mut TestAppContext) {
     assert_eq!(s.summary.as_ref(), "Merge feature");
     assert_eq!(s.parents.iter().map(|p| p.as_ref()).collect::<Vec<_>>(), [f.sha("main_work"), f.sha("rename")]);
     assert!(s.co_authors.is_empty());
-    assert_eq!((s.counts, s.changes[0].path.as_str()), (Counts { renamed: 1, ..Counts::default() }, "new.txt"), "against its first parent");
+    assert_eq!((s.counts, s.changes[0].path.as_str()), (WipCounts { renamed: 1, ..WipCounts::default() }, "new.txt"), "against its first parent");
     let painted = repaint(&view, cx);
     assert!(painted.borrow().contains_key("commit-parent-1") && !painted.borrow().contains_key("commit-coauthor-0"));
     let second = painted.borrow()["commit-parent-1"].bounds.center();
@@ -79,7 +79,7 @@ fn commit_details_show_a_commit_a_merge_and_the_root(cx: &mut TestAppContext) {
     select(&view, f.sha("root"), cx);
     let s = shown(&panel, cx);
     assert_eq!((s.summary.as_ref(), s.body.as_ref(), s.parents.len()), ("Root", "", 0));
-    assert_eq!(s.counts, Counts { added: 4, ..Counts::default() });
+    assert_eq!(s.counts, WipCounts { added: 4, ..WipCounts::default() });
     assert!(!repaint(&view, cx).borrow().contains_key("commit-parent-0"), "the root has no parent");
 
     view.update(cx, |v, cx| {
@@ -124,7 +124,7 @@ fn commit_details_list_path_tree_and_all_files_with_marks_badges_and_the_filter(
     let panel = panel_of(&view, cx);
     select(&view, &sha, cx);
     let s = shown(&panel, cx);
-    assert_eq!(s.counts, Counts { modified: 1, added: 4, deleted: 1, renamed: 0 });
+    assert_eq!(s.counts, WipCounts { modified: 1, added: 4, deleted: 1, ..WipCounts::default() });
 
     panel.update(cx, |p, cx| p.set_view(FileView::Path, cx));
     let painted = repaint(&view, cx);
@@ -142,8 +142,8 @@ fn commit_details_list_path_tree_and_all_files_with_marks_badges_and_the_filter(
     redraw(&view, cx);
     assert_eq!(visible(&panel, cx), ["docs", "docs/guide.md", "src", "src/app", "src/app/lib.rs", "src/app/main.rs", "src/util.rs", "a.txt", "b.txt"]);
     let badge = |path: &str, cx: &mut VisualTestContext| panel.read_with(cx, |p, _| p.tree().0.aggregate(path));
-    assert_eq!(badge("src", cx), Some(Counts { added: 3, ..Counts::default() }), "a folder counts its whole subtree");
-    assert_eq!(badge("src/app", cx), Some(Counts { added: 2, ..Counts::default() }));
+    assert_eq!(badge("src", cx), Some(WipCounts { added: 3, ..WipCounts::default() }), "a folder counts its whole subtree");
+    assert_eq!(badge("src/app", cx), Some(WipCounts { added: 2, ..WipCounts::default() }));
     let painted = repaint(&view, cx);
     for folder in ["docs", "src", "src/app"] {
         assert!(!painted.borrow().contains_key(&format!("commit-badges-{folder}")), "open {folder} shows no counters");
@@ -167,7 +167,7 @@ fn commit_details_list_path_tree_and_all_files_with_marks_badges_and_the_filter(
     for path in ["bin.dat", "old.txt"] {
         assert!(painted.borrow().contains_key(&format!("commit-tree-row-{path}")) && !painted.borrow().contains_key(&format!("commit-mark-{path}")), "unchanged {path} has no mark");
     }
-    assert_eq!(badge("src", cx), Some(Counts { added: 3, ..Counts::default() }));
+    assert_eq!(badge("src", cx), Some(WipCounts { added: 3, ..WipCounts::default() }));
     let x = |path: &str| painted.borrow().get(&format!("commit-name-{path}")).map(|h| h.bounds.left()).unwrap_or_else(|| panic!("{path}'s name paints"));
     for path in ["src", "a.txt", "bin.dat"] {
         assert_eq!(x(path), x("docs"), "{path}'s name at the top-level folders' names, marked or not");
@@ -262,7 +262,7 @@ fn commit_details_show_a_stash_its_branch_time_and_files_against_its_base(cx: &m
     assert_eq!(s.stash.as_ref().map(|s| s.branch.as_str()), Some("feature"));
     assert_eq!(s.parents, [SharedString::from(f.sha("rename").to_string())], "only the base, not the index commit");
     assert_eq!(s.authored_ms, stash.time * 1000);
-    assert_eq!((s.counts, s.changes[0].path.as_str()), (Counts { modified: 1, ..Counts::default() }, "new.txt"));
+    assert_eq!((s.counts, s.changes[0].path.as_str()), (WipCounts { modified: 1, ..WipCounts::default() }, "new.txt"));
     let painted = repaint(&view, cx);
     assert!(painted.borrow().contains_key("commit-sha") && painted.borrow().contains_key("commit-parent-0"));
     assert!(!painted.borrow().contains_key("commit-parent-1"));

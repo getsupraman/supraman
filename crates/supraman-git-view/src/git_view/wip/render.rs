@@ -15,7 +15,7 @@ use theme::ActiveTheme as _;
 use super::{Ask, Branch, Section, Shown, State, WipPanel, file_changes};
 use crate::git_view::GitView;
 use crate::git_view::commit::files::{FileClick, Listed};
-use crate::git_view::cells::pill_box;
+use crate::git_view::cells;
 use crate::git_view::colours::{Palette, blend};
 use crate::git_view::details::{FileView, PANEL_STEP, PanelEvent, files, placeholder};
 use crate::git_view::keys::{StageSelected, UnstageSelected, WIP_LIST_CONTEXT};
@@ -48,11 +48,11 @@ impl WipPanel {
     fn header(&self, shown: &Shown, cx: &mut Context<Self>) -> Div {
         let palette = Palette::of(cx.theme());
         let name = match &shown.branch {
-            Branch::Named(name) => Some(name.clone()),
-            Branch::Detached(sha) => sha.clone(),
+            Branch::Named(name) => Some(name.as_str()),
+            Branch::Detached => None,
         };
-        let pill = name.map(|n| pill_box(self.colour, &palette).id("wip-branch").child(supraman_ui::ink::text(SharedString::from(n))));
-        let words = div().flex_1().flex().justify_center().items_center().gap_1p5().min_w_0().child(div().id("wip-header").child(Self::header_words(shown))).children(pill);
+        let branch = cells::branch_header("wip", name, &shown.track, self.colour, &palette, &self.hits);
+        let words = div().flex_1().flex().justify_center().items_center().gap_1p5().min_w_0().child(div().id("wip-header").flex_none().child(Self::header_words(shown))).child(branch);
         div().flex().flex_none().items_center().py_1p5().px_2().text_color(palette.text).child(self.discard_all_button(cx)).child(words).child(div().w(px(24.)))
     }
 

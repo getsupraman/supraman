@@ -6,7 +6,7 @@ use std::sync::Arc;
 use gpui::SharedString;
 use super::ref_panel::{self, Walk};
 use super::splice::{self, Loaded};
-use supraman_gitman::{ChangeKind, Commit, EntryKind, FIRST_PAGE, Head, History, Layout, Located, NEXT_PAGE, Refs, Repo, Row, Stash, Status, TabSettings, WorktreeRow};
+use supraman_gitman::{Commit, FIRST_PAGE, Head, History, Layout, Located, NEXT_PAGE, Refs, Repo, Row, Stash, Status, TabSettings, WipCounts, WorktreeRow};
 
 /// One row of the graph, its texts ready to paint.
 #[derive(Debug, Clone)]
@@ -44,50 +44,6 @@ impl GraphRow {
 
     pub(crate) fn stash(&self) -> Option<&Arc<Stash>> {
         self.row.stash.as_ref()
-    }
-}
-
-/// The work in progress the WIP row counts.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct Wip {
-    pub(crate) added: usize,
-    pub(crate) modified: usize,
-    pub(crate) deleted: usize,
-    /// The conflicted paths among them.
-    pub(crate) conflicts: usize,
-}
-
-impl Wip {
-    /// Each changed path once: added if either side adds it, else deleted if either deletes it, else modified.
-    pub(crate) fn of(status: &Status) -> Wip {
-        let mut wip = Wip::default();
-        for e in &status.entries {
-            wip.conflicts += usize::from(e.kind == EntryKind::Unmerged);
-            let sides = [e.staged, e.unstaged];
-            if e.kind == EntryKind::Untracked || sides.contains(&Some(ChangeKind::Added)) {
-                wip.added += 1;
-            } else if sides.contains(&Some(ChangeKind::Deleted)) {
-                wip.deleted += 1;
-            } else {
-                wip.modified += 1;
-            }
-        }
-        wip
-    }
-
-    /// The changed paths.
-    pub(crate) fn total(&self) -> usize {
-        self.added + self.modified + self.deleted
-    }
-
-    /// `+1 ✎2 −1`, the zero counts left out.
-    pub(crate) fn counts(&self) -> String {
-        [(self.added, "+"), (self.modified, "✎"), (self.deleted, "−")]
-            .iter()
-            .filter(|(n, _)| *n > 0)
-            .map(|(n, mark)| format!("{mark}{n}"))
-            .collect::<Vec<_>>()
-            .join(" ")
     }
 }
 
@@ -137,7 +93,7 @@ pub(crate) struct First {
     pub(crate) all: Arc<Refs>,
     pub(crate) tips: Vec<String>,
     pub(crate) heads: Heads,
-    pub(crate) wip: Option<Wip>,
+    pub(crate) wip: Option<WipCounts>,
     pub(crate) status: Arc<Status>,
     pub(crate) page: Page,
     /// The walk read, its hidden and soloed refs.
@@ -210,7 +166,7 @@ pub(crate) fn read(repo: Repo, walk: &Walk, loaded: Option<&Loaded>, worktrees: 
         let rows = layout.extend_with(loaded.commits[from..].iter().map(|(sha, parents)| (sha.as_ref(), parents.as_slice())));
         Kept { from, rows, layout, more: loaded.more }
     });
-    let wip = page.rows.first().filter(|r| r.wip()).map(|_| Wip::of(&status));
+    let wip = page.rows.first().filter(|r| r.wip()).map(|_| WipCounts::of(&status.entries));
     let history = (kept.is_none() && page.more).then_some(walker);
     Ok(First { repo, heads: Heads::of(&walked), refs: ref_panel::build(&refs), all: Arc::new(refs.clone()), tips, wip, status: Arc::new(status), page, walk: walk.clone(), kept, history, settings: None })
 }
@@ -220,10 +176,10 @@ fn dirty(status: &Status) -> bool {
 }
 
 /// The WIP row's counts, `None` for a clean tree, and the status they count.
-pub(crate) fn wip(repo: &Repo) -> Result<(Option<Wip>, Arc<Status>), String> {
+pub(crate) fn wip(repo: &Repo) -> Result<(Option<WipCounts>, Arc<Status>), String> {
     let _index = supraman_gitman::write::refresh_lock(repo);
     let status = supraman_gitman::status(repo).map_err(|e| e.to_string())?;
-    Ok((dirty(&status).then(|| Wip::of(&status)), Arc::new(status)))
+    Ok((dirty(&status).then(|| WipCounts::of(&status.entries)), Arc::new(status)))
 }
 
 fn lay_out(history: supraman_gitman::Page, mut layout: Layout) -> Page {

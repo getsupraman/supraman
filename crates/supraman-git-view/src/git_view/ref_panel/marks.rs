@@ -12,6 +12,7 @@ use theme::ActiveTheme as _;
 
 use super::overlay::OVERLAY;
 use super::{Entry, Keys, RefEvent, RefPanel, Section};
+use crate::git_view::cells;
 use crate::git_view::stash::{self, StashAct, StashRef};
 use supraman_ui::themes::secondary;
 
@@ -68,8 +69,8 @@ impl RefPanel {
         let (accent, muted) = (colors.text_accent, secondary(cx.theme().colors()));
         let (icon, colour, shown, tip, keys, solos) = match self.mark_of(hide, solo, current)? {
             Mark::Current => {
-                let tick = button::tick(true, accent, cx).size(px(12.));
-                return Some(div().relative().flex().items_center().child(tick).child(hit_target(&self.hits, key)).into_any_element());
+                let mark = cells::current_mark(accent);
+                return Some(div().relative().flex().items_center().child(mark).child(hit_target(&self.hits, key)).into_any_element());
             }
             Mark::Soloed(keys) => (Icon::Solo, accent, true, "Stop soloing", keys, true),
             Mark::Hidden(keys) => (Icon::EyeOff, muted, true, "Show in the graph", keys, false),

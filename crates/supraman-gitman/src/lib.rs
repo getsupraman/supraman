@@ -35,4 +35,4 @@ pub use remotes::{Link, Remote, mask_userinfo, remotes, web_link};
 pub use repo::{GitError, Repo};
 pub use stash::{Stash, stashes};
 pub use status::{BranchStatus, Conflict, Entry, EntryKind, Operation, Status, status, status_first};
-pub use wips::{WipCounts, WipRead, WorktreeWip, wips};
+pub use wips::{WipCounts, WipRead, WorktreeWip, count_mark, wips};

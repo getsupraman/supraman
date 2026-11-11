@@ -16,7 +16,8 @@ use supraman_ui::themes::secondary;
 use supraman_ui::tree::Order;
 use theme::ActiveTheme as _;
 
-use super::colours::blend;
+use super::cells;
+use super::colours::{Palette, blend};
 use super::details::{FileView, PANEL_STEP, files, placeholder, sort_changes};
 use super::diff::{Of, Target};
 use super::wip::{List, Section, of_status};
@@ -262,21 +263,21 @@ impl WorktreePanel {
 }
 
 impl WorktreePanel {
-    /// The folder, `on <branch>` or `Detached HEAD` with its upstream's ahead and behind and the counts, and Open Worktree.
+    /// The folder, its [`cells::branch_header`] and the counts, and Open Worktree.
     fn header(&self, shown: &Shown, cx: &mut Context<Self>) -> Div {
         let colors = cx.theme().colors().clone();
         let folder = supraman_core::paths::normalize(&shown.path);
         let path = div().relative().flex().min_w_0().child(path_label("worktree-path-dir", &folder, secondary(&colors), colors.text)).child(hit_target(&self.hits, "worktree-path".into()));
-        let said = |key: &str, words: &str| div().relative().flex_none().child(SharedString::from(words.to_string())).child(hit_target(&self.hits, key.into()));
-        let branch = said("worktree-branch", &shown.said.label).text_color(colors.text_muted).flex().items_center().gap_1().child(Icon::Worktree.svg(12., colors.text_muted));
+        let said = &shown.said;
+        let palette = Palette::of(cx.theme());
+        let counts = div().relative().flex_none().text_color(colors.text_muted).child(SharedString::from(said.counts.clone())).child(hit_target(&self.hits, "worktree-counts".into()));
         let words = div()
             .flex()
             .items_center()
             .gap_2()
             .min_w_0()
-            .child(branch)
-            .when(!shown.said.upstream.is_empty(), |d| d.child(said("worktree-upstream", &shown.said.upstream)))
-            .when(!shown.said.counts.is_empty(), |d| d.child(said("worktree-counts", &shown.said.counts)));
+            .child(cells::branch_header("worktree", said.branch.as_deref(), &said.upstream, said.colour, &palette, &self.hits))
+            .when(!said.counts.is_empty(), |d| d.child(counts));
         let open = button::bordered(&self.hits, "worktree-open", "Open Worktree", cx).on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(WorktreeEvent::Open)));
         let line = div().flex().items_center().justify_between().gap_2().child(words).child(open);
         div().flex().flex_col().flex_none().gap_1().px_2().py_1p5().text_color(colors.text).child(path).child(line)

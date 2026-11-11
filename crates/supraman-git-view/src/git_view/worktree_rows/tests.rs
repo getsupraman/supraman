@@ -173,3 +173,20 @@ fn every_session_in_a_worktree_has_its_lead_on_its_row_its_word_in_its_tooltip_a
     press(&view, &format!("git-worktree-ref-{ix}"), MouseButton::Right, 1, cx);
     assert_eq!(*seen.borrow(), ["fm-beta", "fm-alpha"], "a lead's right-click is its session's menu, the rest of the row the first's");
 }
+
+#[gpui::test]
+fn a_conflicted_worktree_row_shows_the_conflict_node_and_its_upstreams_ahead_and_behind(cx: &mut TestAppContext) {
+    let (f, _) = fixture();
+    f.cherry_pick_conflict();
+    f.at(&f.worktree, &["branch", "-q", "-u", "origin/main"]);
+    let (view, cx) = open(&f, occupancy::Live::default(), cx);
+    reread(&view, cx);
+
+    let side = row_of(&view, &f.worktree, cx);
+    let said = view.update(cx, |v, cx| v.worktree_view(side, cx)).expect("read");
+    assert_eq!(said.conflicted, 1, "a.txt");
+    assert!(!said.upstream.is_empty(), "side and origin/main differ");
+    for key in [format!("git-conflict-node-{side}"), format!("git-worktree-upstream-{side}")] {
+        assert!(painted(&view, &key, cx), "{key}");
+    }
+}

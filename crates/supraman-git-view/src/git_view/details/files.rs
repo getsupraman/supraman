@@ -15,7 +15,8 @@ use supraman_ui::tooltip::Tooltip;
 use supraman_ui::tree::{Item, LEAD, Order, Row, TreeList, TreeState};
 use theme::ActiveTheme as _;
 
-use super::{Counts, FileView, Mark};
+use super::{FileView, Mark};
+use supraman_gitman::WipCounts;
 use supraman_ui::themes::secondary;
 
 const ROW: f32 = 24.;
@@ -87,18 +88,18 @@ pub(crate) fn tally(parts: impl IntoIterator<Item = (ChangeKind, String)>, cx: &
 }
 
 /// A closed folder's counts, painted under `<list>-badges-<path>`.
-fn badges(counts: &Counts, key: String, hits: &HitTargets, cx: &App) -> Div {
+fn badges(counts: &WipCounts, key: String, hits: &HitTargets, cx: &App) -> Div {
     tally(counts.parts().into_iter().map(|(kind, n)| (kind, n.to_string())), cx).relative().ml(px(NAME_GAP)).text_color(cx.theme().colors().text_muted).child(hit_target(hits, key))
 }
 
 /// A row's name, painted under `<list>-name-<path>`.
-fn name(list: &str, row: &Row<'_, Mark, Counts>, colour: Hsla, hits: &HitTargets) -> Stateful<Div> {
+fn name(list: &str, row: &Row<'_, Mark, WipCounts>, colour: Hsla, hits: &HitTargets) -> Stateful<Div> {
     let kind = if matches!(row.item, Item::File(_)) { "file" } else { "folder" };
     clipped(format!("{list}-{kind}-{}", row.path), row.name.clone(), false).text_color(colour).child(hit_target(hits, format!("{list}-name-{}", row.path)))
 }
 
 /// A folder's name muted, its badges only while it is closed, and a file's bright.
-fn tree_row(list: &str, row: Row<'_, Mark, Counts>, hits: &HitTargets, cx: &App) -> AnyElement {
+fn tree_row(list: &str, row: Row<'_, Mark, WipCounts>, hits: &HitTargets, cx: &App) -> AnyElement {
     let row_div = div().flex().items_center().min_w_0();
     match row.item {
         Item::File(_) => row_div.child(name(list, &row, cx.theme().colors().text, hits)).into_any_element(),
@@ -130,7 +131,7 @@ fn with_tail<V: 'static>(this: &mut V, row: Div, tail: &Option<Tail<V>>, path: &
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn tree_list<V: 'static>(
     list: &'static str,
-    tree: &TreeState<Mark, Counts>,
+    tree: &TreeState<Mark, WipCounts>,
     hits: &HitTargets,
     picked: impl Fn(&mut V, &SharedString, &mut Context<V>) + 'static,
     tail: Option<Tail<V>>,

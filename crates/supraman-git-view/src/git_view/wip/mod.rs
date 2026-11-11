@@ -3,7 +3,7 @@
 mod actions;
 pub(crate) mod compose;
 mod compose_render;
-mod conflicts;
+pub(crate) mod conflicts;
 mod load;
 mod render;
 
@@ -21,7 +21,8 @@ use supraman_ui::stall;
 use supraman_ui::table::TableState;
 use supraman_ui::tree::{Order, TreeState};
 
-use super::details::{Counts, FileView, PanelEvent, sort_changes};
+use super::details::{FileView, PanelEvent, sort_changes};
+use supraman_gitman::WipCounts;
 use super::diff::{Of, Target};
 use super::write_gate::{WriteGate, Writes};
 
@@ -33,6 +34,7 @@ pub(crate) use render::banner;
 #[derive(Debug, Clone)]
 pub(crate) struct Shown {
     pub(crate) branch: Branch,
+    pub(crate) track: String,
     pub(crate) total: usize,
     pub(crate) conflicted: Vec<FileChange>,
     pub(crate) unstaged: Vec<FileChange>,
@@ -70,7 +72,7 @@ pub(crate) enum State {
 
 /// One list's view state.
 pub(crate) struct List {
-    pub(crate) tree: TreeState<Option<ChangeKind>, Counts>,
+    pub(crate) tree: TreeState<Option<ChangeKind>, WipCounts>,
     pub(crate) paths: TableState,
     pub(crate) open: bool,
 }
@@ -235,7 +237,7 @@ impl WipPanel {
                         list.paths.select(None);
                     }
                 }
-                let shown = Shown { branch: l.branch, total: l.total, conflicted: l.conflicted, unstaged: l.unstaged, staged: l.staged, state: l.state, under_way: l.under_way, conflicts: l.conflicts };
+                let shown = Shown { branch: l.branch, track: l.track, total: l.total, conflicted: l.conflicted, unstaged: l.unstaged, staged: l.staged, state: l.state, under_way: l.under_way, conflicts: l.conflicts };
                 if before != Some(shown.state) {
                     self.fill_merge_message(&shown, cx);
                 }
@@ -345,10 +347,6 @@ impl WipPanel {
 
     /// The header's words before the branch: `3 file changes on`.
     pub(crate) fn header_words(shown: &Shown) -> SharedString {
-        let on = match shown.branch {
-            Branch::Named(_) => "on",
-            Branch::Detached(_) => "on detached HEAD",
-        };
-        format!("{} {on}", file_changes(shown.total)).into()
+        format!("{} on", file_changes(shown.total)).into()
     }
 }

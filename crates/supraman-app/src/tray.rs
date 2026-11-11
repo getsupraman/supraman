@@ -8,6 +8,7 @@ use gpui::{App, Entity, PromptLevel, Window};
 use crate::view::FleetView;
 #[cfg(windows)]
 use supraman_core::platform::desktop;
+use supraman_core::text::count;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
@@ -42,7 +43,7 @@ fn quit(fleet: &Entity<FleetView>, window: &mut Window, cx: &mut App) {
     }
     let detail = format!(
         "{} started ({}): nothing restarts or delivers for them until Supraman runs again. Their sessions keep running.",
-        if started.len() == 1 { "1 workspace is".to_string() } else { format!("{} workspaces are", started.len()) },
+        count(started.len(), "workspace is", "workspaces are"),
         started.join(", ")
     );
     let answer = window.prompt(PromptLevel::Warning, "Quit Supraman and stop supervising?", Some(&detail), &["Quit", "Cancel"], cx);

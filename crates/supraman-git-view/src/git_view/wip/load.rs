@@ -3,19 +3,20 @@
 use supraman_core::text::count;
 use std::collections::HashMap;
 
-use supraman_gitman::{ChangeKind, Conflict, EntryKind, FileChange, OperationState, Repo, Status, UnderWay, short_sha};
+use supraman_gitman::{ChangeKind, Conflict, EntryKind, FileChange, OperationState, Repo, Status, UnderWay};
 use supraman_ui::tree::{Order, Tree};
 
-use crate::git_view::details::{Counts, sort_changes};
+use crate::git_view::details::sort_changes;
+use supraman_gitman::WipCounts;
 use crate::git_view::diff::{Of, Target};
+use crate::git_view::ref_panel::upstream_track;
 
-pub(crate) type FileTree = Tree<Option<ChangeKind>, Counts>;
+pub(crate) type FileTree = Tree<Option<ChangeKind>, WipCounts>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Branch {
     Named(String),
-    /// HEAD's commit, cut to 7, while detached; `None` before the first commit.
-    Detached(Option<String>),
+    Detached,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +61,8 @@ impl Section {
 
 pub(crate) struct Loaded {
     pub(crate) branch: Branch,
+    /// Ahead of and behind its upstream ([`upstream_track`]).
+    pub(crate) track: String,
     /// Changed paths, each once whether staged, unstaged or both.
     pub(crate) total: usize,
     pub(crate) conflicted: Vec<FileChange>,
@@ -100,7 +103,7 @@ pub(crate) fn sections(status: &Status) -> (Vec<FileChange>, Vec<FileChange>) {
 }
 
 fn tree(files: &[FileChange], order: Order) -> FileTree {
-    Tree::build(files.iter().map(|c| (c.path.clone(), Some(c.kind))), Counts::add, order)
+    Tree::build(files.iter().map(|c| (c.path.clone(), Some(c.kind))), WipCounts::add, order)
 }
 
 pub(crate) fn load(repo: &Repo, order: Order) -> Result<Loaded, String> {
@@ -112,7 +115,7 @@ pub(crate) fn load(repo: &Repo, order: Order) -> Result<Loaded, String> {
 pub(crate) fn of_status(status: &Status, order: Order) -> Loaded {
     let branch = match &status.branch.head {
         Some(name) => Branch::Named(name.clone()),
-        None => Branch::Detached(status.branch.oid.as_ref().map(|oid| short_sha(oid).to_string())),
+        None => Branch::Detached,
     };
     let (unstaged, mut staged) = sections(status);
     let (mut conflicted, mut unstaged): (Vec<FileChange>, Vec<FileChange>) = unstaged.into_iter().partition(|f| f.kind == ChangeKind::Unmerged);
@@ -123,6 +126,7 @@ pub(crate) fn of_status(status: &Status, order: Order) -> Loaded {
     let conflicts = status.entries.iter().filter_map(|e| Some((e.path.clone(), e.conflict()?))).collect();
     Loaded {
         branch,
+        track: upstream_track(&status.branch),
         total: status.entries.len(),
         conflicted,
         unstaged,

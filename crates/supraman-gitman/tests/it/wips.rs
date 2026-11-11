@@ -38,7 +38,7 @@ fn each_other_worktree_has_its_head_branch_counts_upstream_and_files() {
     let wt = of(&wips, &f.worktree);
     let wt_head = git_in(&f.git, &f.worktree, &["rev-parse", "HEAD"], &[], None);
     assert_eq!((wt.head(), wt.branch(), wt.detached()), (Some(wt_head.as_str()), Some("side"), false));
-    assert_eq!(wt.counts(), WipCounts { added: 1, deleted: 1, modified: 1, renamed: 1 });
+    assert_eq!(wt.counts(), WipCounts { added: 1, deleted: 1, modified: 0, renamed: 1, conflicted: 1 });
     let counts = git_in(&f.git, &f.worktree, &["rev-list", "--left-right", "--count", "HEAD...origin/main"], &[], None);
     let (ahead, behind) = counts.split_once('\t').unwrap();
     assert_eq!(wt.upstream(), Some(("origin/main", ahead.parse().unwrap(), behind.parse().unwrap())));
@@ -49,7 +49,7 @@ fn each_other_worktree_has_its_head_branch_counts_upstream_and_files() {
 
     let det = of(&wips, &det);
     assert_eq!((det.head(), det.branch(), det.detached(), det.upstream()), (Some(f.sha("second")), None, true, None));
-    assert_eq!(det.counts(), WipCounts { added: 1, deleted: 0, modified: 1, renamed: 0 });
+    assert_eq!(det.counts(), WipCounts { added: 1, modified: 1, ..WipCounts::default() });
     let mut files: Vec<&str> = det.files().iter().map(|e| e.path.as_str()).collect();
     files.sort();
     assert_eq!(files, ["a.txt", "new.md"]);

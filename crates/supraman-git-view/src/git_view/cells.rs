@@ -1,6 +1,6 @@
 //! The Branch / Tag, Commit Message, Date and Sha cells.
 
-use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Div, MouseButton, MouseDownEvent, SharedString, Stateful, deferred, div, prelude::*, px, relative};
+use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Div, Hsla, MouseButton, MouseDownEvent, SharedString, Stateful, Svg, deferred, div, prelude::*, px, relative};
 use supraman_gitman::{RefGroup, RefKind, Row, short_sha};
 use supraman_ui::clipped::clipped;
 use supraman_ui::fonts;
@@ -62,6 +62,21 @@ pub(crate) fn pill_box(colour: usize, palette: &Palette) -> Div {
     div().flex().items_center().gap_1().min_w_0().h(px(PILL)).px_1p5().rounded(px(4.)).bg(palette.pill(colour)).text_color(palette.text).text_xs()
 }
 
+/// A panel's header branch: its pill in lane `colour`, or `Detached HEAD`, then [`super::ref_panel::track`]'s words; painted under `<key>-branch` and `<key>-upstream`.
+pub(crate) fn branch_header(key: &str, branch: Option<&str>, track: &str, colour: usize, palette: &Palette, hits: &HitTargets) -> Div {
+    let shown = match branch {
+        Some(name) => pill_box(colour, palette).child(ink::text(clipped(format!("{key}-branch-name"), SharedString::from(name.to_string()), false))),
+        None => div().flex_none().text_color(palette.muted).child("Detached HEAD"),
+    };
+    div()
+        .flex()
+        .items_center()
+        .gap_1p5()
+        .min_w_0()
+        .child(shown.relative().child(hit_target(hits, format!("{key}-branch"))))
+        .when(!track.is_empty(), |d| d.child(div().relative().flex_none().whitespace_nowrap().text_color(palette.muted).child(SharedString::from(track.to_string())).child(hit_target(hits, format!("{key}-upstream")))))
+}
+
 /// The icons after a pill's name: its refs' kinds, a linked worktree's last (GitKraken's order).
 pub(crate) fn kind_icons(group: &RefGroup) -> Vec<Icon> {
     let mut kinds: Vec<RefKind> = group.refs.iter().map(|r| r.kind).collect();
@@ -70,11 +85,16 @@ pub(crate) fn kind_icons(group: &RefGroup) -> Vec<Icon> {
     kinds.into_iter().map(kind_icon).collect()
 }
 
+/// The current branch's mark: the graph's HEAD pill and the ref panel's current row.
+pub(crate) fn current_mark(colour: Hsla) -> Svg {
+    Icon::Check.svg(12., colour)
+}
+
 /// The HEAD mark, the name (painted under `<key>-text`), then the kinds of its refs.
 fn pill(key: String, group: &RefGroup, colour: usize, palette: &Palette, hits: &HitTargets) -> Div {
     let text = hit_target(hits, format!("{key}-text"));
     pill_box(colour, palette)
-        .when(group.head(), |d| d.child(Icon::Check.svg(12., palette.text)))
+        .when(group.head(), |d| d.child(current_mark(palette.text)))
         .child(ink::text(clipped(key, group.name.clone(), false).child(text)))
         .children(kind_icons(group).into_iter().map(|k| div().flex_none().child(k.svg(12., palette.text))))
 }
@@ -182,9 +202,9 @@ pub(crate) fn message(ix: usize, row: &GraphRow, wip: Option<&str>, palette: &Pa
 }
 
 /// The WIP row's message cell: the summary's `field`, then the counts muted, after the lane's bar.
-pub(crate) fn wip_message(row: &GraphRow, field: impl IntoElement, counts: String, palette: &Palette) -> AnyElement {
+pub(crate) fn wip_message(row: &GraphRow, field: impl IntoElement, counts: impl IntoElement, palette: &Palette) -> AnyElement {
     let bar = div().absolute().left(px(-CELL_PAD)).w(px(BAR)).top(px(GAP / 2.)).bottom(px(GAP / 2.)).bg(palette.lane(row.row.colour));
-    let counts = div().flex_none().whitespace_nowrap().text_color(palette.muted).child(SharedString::from(counts));
+    let counts = div().flex_none().whitespace_nowrap().text_color(palette.muted).child(counts);
     div().relative().size_full().flex().items_center().gap_2().overflow_hidden().child(bar).child(field).child(counts).into_any_element()
 }
 
