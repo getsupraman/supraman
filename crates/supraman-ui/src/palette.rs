@@ -327,11 +327,11 @@ impl<T: Entry> Palette<T> {
             self.selection_shown = Some(selection);
         }
         let body = (self.paint)(&entry, &marks, on, cx);
-        let row = button::ghost(&self.hits, self.row_key(&entry.key()), cx)
+        let row = button::row(&self.hits, self.row_key(&entry.key()), on.then_some(selection), cx)
             .w_full()
             .px_3()
             .py(px(5.))
-            .when(on, |d| d.bg(selection).child(hit_target(&self.hits, format!("{}-selected", self.id))))
+            .when(on, |d| d.child(hit_target(&self.hits, format!("{}-selected", self.id))))
             .child(body)
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.selected = ix;
@@ -507,5 +507,36 @@ mod tests {
         cx.run_until_parked();
         cx.update(|_, _| ());
         assert_eq!(palette.read_with(cx, |p, _| p.selection_shown()), Some(crate::themes::selection(&colors, false)));
+    }
+
+    /// The fills painted under the middle of the row `key`, given hit key `p-row-<key>`, while the pointer rests on it.
+    fn hovered_fills(palette: &Entity<Palette<E>>, key: &str, cx: &mut gpui::VisualTestContext) -> Vec<gpui::Background> {
+        let hits = palette.read_with(cx, |p, _| p.hits.clone());
+        let row = hits.borrow().get(&format!("p-row-{key}")).map(|h| h.bounds).unwrap_or_else(|| panic!("row {key} paints"));
+        cx.simulate_mouse_move(row.center(), None, gpui::Modifiers::none());
+        palette.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        cx.update(|window, _| {
+            let middle = row.center().scale(window.scale_factor());
+            window.painted_quads().into_iter().filter(|q| q.bounds.contains(&middle) && q.content_mask.bounds.contains(&middle)).map(|q| q.background).collect()
+        })
+    }
+
+    #[gpui::test]
+    fn a_hovered_selected_row_keeps_the_selection_fill_and_another_row_takes_the_hover(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| crate::init_globals(cx, "test"));
+        let paint: Paint<E> = Rc::new(|e: &E, _, _, _| div().child(e.0).into_any_element());
+        let (palette, cx) = cx.add_window_view(|window, cx| {
+            let palette = Palette::new("p", HitTargets::default(), vec![E("one"), E("two")], paint, window, cx);
+            palette.focus(window, cx);
+            palette
+        });
+        cx.run_until_parked();
+        let colors = cx.update(|_, cx| cx.theme().colors().clone());
+        let (selection, hover) = (gpui::Background::from(crate::themes::selection(&colors, true)), gpui::Background::from(colors.ghost_element_hover));
+        let selected = hovered_fills(&palette, "one", cx);
+        assert!(selected.contains(&selection) && !selected.contains(&hover), "the selected row under the pointer is painted in the selection: {selected:?}");
+        let other = hovered_fills(&palette, "two", cx);
+        assert!(other.contains(&hover) && !other.contains(&selection), "an unselected row under the pointer takes the hover: {other:?}");
     }
 }

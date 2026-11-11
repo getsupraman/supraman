@@ -28,6 +28,14 @@ pub fn ghost(hits: &HitTargets, key: impl Into<SharedString>, cx: &App) -> State
     base(hits, key.into(), |s| s.bg(colors.ghost_element_hover), colors.ghost_element_active)
 }
 
+/// A [`ghost`] list row; while it is the selected one it is filled `selected` and its hover is off.
+pub fn row(hits: &HitTargets, key: impl Into<SharedString>, selected: Option<Hsla>, cx: &App) -> Stateful<Div> {
+    match selected {
+        Some(fill) => base(hits, key.into(), move |s| s.bg(fill), cx.theme().colors().ghost_element_active).bg(fill),
+        None => ghost(hits, key, cx),
+    }
+}
+
 /// A square ghost button around `icon`, which takes the text colour on hover.
 pub fn icon(hits: &HitTargets, key: impl Into<SharedString>, icon: Svg, side: Pixels, cx: &App) -> Stateful<Div> {
     let key = key.into();

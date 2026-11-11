@@ -18,7 +18,7 @@ impl WorkView {
     fn nav_entry(&self, key: &str, icon: Icon, label: &str, on: bool, badge: Option<usize>, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let colors = cx.theme().colors().clone();
         let error = cx.theme().status().error;
-        button::ghost(&self.hits, key.to_string(), cx)
+        button::row(&self.hits, key.to_string(), on.then_some(colors.element_selected), cx)
             .flex()
             .items_center()
             .gap_2()
@@ -27,7 +27,6 @@ impl WorkView {
             .py(px(3.))
             .rounded_sm()
             .text_sm()
-            .when(on, |d| d.bg(colors.element_selected))
             .child(icon.svg(14., colors.icon_muted))
             .child(div().flex_1().min_w_0().child(SharedString::from(label.to_string())))
             .children(badge.filter(|n| *n > 0).map(|n| {
@@ -131,7 +130,7 @@ impl WorkView {
         let r = &run.rollup;
         let parts = [(r.done, status.success), (r.in_progress + r.review, status.info), (r.blocked, status.error)];
         let id = run.item.id.clone();
-        button::ghost(&self.hits, format!("work-nav-run-{qref}"), cx)
+        button::row(&self.hits, format!("work-nav-run-{qref}"), on.then_some(colors.element_selected), cx)
             .flex()
             .flex_col()
             .gap(px(3.))
@@ -139,7 +138,6 @@ impl WorkView {
             .px_2()
             .py(px(3.))
             .rounded_sm()
-            .when(on, |d| d.bg(colors.element_selected))
             .child(
                 div()
                     .flex()
