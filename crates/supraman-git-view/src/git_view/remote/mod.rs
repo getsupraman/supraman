@@ -33,6 +33,7 @@ pub(crate) use menu::RemoteFacts;
 
 pub(crate) const DETACHED: &str = "HEAD is detached: check out a branch first";
 pub(crate) const NO_REMOTE: &str = "This repository has no remote";
+const FORCE_PUSH: &str = "Force Push";
 
 /// What a remote item or the toolbar asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,13 +94,13 @@ impl Ask {
     fn question(&self) -> Confirm<Ask> {
         let ask = |text: String, yes: &str| Confirm::ask(text, yes, self.clone());
         match self {
-            Ask::Behind { local, remote, branch } => ask(format!("{remote}/{branch} has commits {local} lacks. Pull them first, or force the push with lease, dropping them from {remote}?"), "Pull")
-                .or("Force with lease", Ask::Force { local: local.clone(), remote: remote.clone(), branch: branch.clone(), force: Force::Lease })
+            Ask::Behind { local, remote, branch } => ask(format!("'refs/heads/{local}' is behind 'refs/remotes/{remote}/{branch}'. Update your branch by doing a Pull."), bar::words(PullChoice::FastForwardIfPossible))
+                .or(FORCE_PUSH, Ask::Force { local: local.clone(), remote: remote.clone(), branch: branch.clone(), force: Force::Lease })
                 .danger_alt(),
-            Ask::Stale { local, remote, branch } => ask(format!("{remote}/{branch} moved since this repository last fetched it. Fetch first, or force the push anyway?"), "Fetch")
-                .or("Force anyway", Ask::Force { local: local.clone(), remote: remote.clone(), branch: branch.clone(), force: Force::Anyway })
+            Ask::Stale { local, remote, branch } => ask(format!("'refs/remotes/{remote}/{branch}' has changed since your last fetch. Update it by doing a Fetch."), "Fetch")
+                .or(FORCE_PUSH, Ask::Force { local: local.clone(), remote: remote.clone(), branch: branch.clone(), force: Force::Anyway })
                 .danger_alt(),
-            Ask::Force { local, remote, branch, .. } => ask(format!("Force push {local} to {remote}/{branch}? The commits only {remote} holds are lost there."), "Force push").danger(),
+            Ask::Force { .. } => ask("Force push is destructive and rewrites history.".into(), FORCE_PUSH).danger(),
             Ask::Delete { remote, refname } => ask(format!("Delete {} from {remote}? It cannot be undone.", short(refname)), "Delete").danger(),
             Ask::RemoveRemote(name) => ask(format!("Remove the remote {name} and its remote-tracking branches? It cannot be undone."), "Remove").danger(),
         }
@@ -286,6 +287,16 @@ impl RemoteActions {
     #[cfg(test)]
     pub(crate) fn asking(&self) -> Option<&str> {
         self.writes.asked()
+    }
+
+    /// The question's answers as the band paints them, each with whether it destroys something, and what Enter answers.
+    #[cfg(test)]
+    pub(crate) fn answers(&self) -> Option<(Vec<(String, bool)>, Answer)> {
+        let c = self.writes.asking.as_ref()?;
+        let mut all = vec![(c.yes.clone(), c.danger)];
+        all.extend(c.alt.as_ref().map(|(w, _)| (w.clone(), c.alt_danger)));
+        all.push(("Cancel".into(), false));
+        Some((all, c.default_answer()))
     }
 
     #[cfg(test)]
