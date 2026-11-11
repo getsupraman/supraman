@@ -288,7 +288,8 @@ async fn steps(view: &Entity<FleetView>, home: &Path, fake: &FakeWorkman, cx: &m
 
     click(view, "update-dismiss", cx).await?;
     until(view, cx, WITHIN, "the update banner gone after ×", |v| (!painted(v)).then_some(())).await?;
-    if updates::dismissed(home).map(|v| v.to_string()).as_deref() != Some(VERSION) {
+    let kept = |_: &FleetView| (updates::dismissed(home).map(|v| v.to_string()).as_deref() == Some(VERSION)).then_some(());
+    if until(view, cx, WITHIN, "the home keeps the dismissed version", kept).await.is_err() {
         bail!("the home keeps dismissed {:?}, not {VERSION}", updates::dismissed(home));
     }
     Ok(format!(
