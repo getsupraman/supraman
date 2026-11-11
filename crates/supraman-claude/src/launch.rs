@@ -140,7 +140,7 @@ pub fn write_mcp_config_helped(dir: &Path, agent: &str, url: &str, helper: &str,
         }
     });
     add_servers(&mut config, servers);
-    supraman_core::fs::write_atomic_prepared(&path, config.to_string(), restrict_to_owner)?;
+    supraman_core::fs::write_atomic_prepared(&path, config.to_string(), supraman_core::platform::secret::restrict_to_owner)?;
     Ok(path)
 }
 
@@ -157,7 +157,7 @@ pub fn write_mcp_config_servers(dir: &Path, agent: &str, servers: &[(String, Str
     let path = mcp_config_path(dir, agent)?;
     let mut config = serde_json::json!({ "mcpServers": {} });
     add_servers(&mut config, servers);
-    supraman_core::fs::write_atomic_prepared(&path, config.to_string(), restrict_to_owner)?;
+    supraman_core::fs::write_atomic_prepared(&path, config.to_string(), supraman_core::platform::secret::restrict_to_owner)?;
     Ok(path)
 }
 
@@ -205,38 +205,6 @@ pub fn mcp_config_url(dir: &Path, agent: &str) -> Option<String> {
     let text = std::fs::read_to_string(mcp_config_path(dir, agent).ok()?).ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
     v["mcpServers"][MCP_SERVER]["url"].as_str().map(str::to_string)
-}
-
-#[cfg(windows)]
-const ICACLS_TIMEOUT: Duration = Duration::from_secs(30);
-
-#[cfg(windows)]
-fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
-    let user = supraman_core::platform::paths::user_name().ok_or_else(|| std::io::Error::other("USERNAME is not set"))?;
-    let out = process::run(
-        // an elevated process's file also carries explicit SYSTEM and Administrators entries
-        process::command("icacls")
-            .arg(path)
-            .args(["/inheritance:r", "/grant:r", &format!("{user}:F"), "/remove:g", "*S-1-5-18", "*S-1-5-32-544"]),
-        ICACLS_TIMEOUT,
-        Kill::Tree,
-    )
-    .map_err(|e| std::io::Error::other(format!("icacls {}: {e}", path.display())))?;
-    if out.success() {
-        Ok(())
-    } else {
-        Err(std::io::Error::other(format!(
-            "icacls {}: {}",
-            path.display(),
-            out.stdout.trim()
-        )))
-    }
-}
-
-#[cfg(unix)]
-fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
 }
 
 /// The `claude` program. Injectable so tests run a fake.

@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use crate::platform::secret::{seal, unseal};
+
 /// Errors never carry the secret.
 pub trait SecretStore: Send + Sync {
     fn get(&self, key: &str) -> Result<Option<String>, String>;
@@ -34,32 +36,19 @@ impl SecretStore for MemoryStore {
 
 /// `home`'s [`FileStore`].
 pub fn default_store(home: &Path) -> Arc<dyn SecretStore> {
-    #[cfg(windows)]
-    {
-        Arc::new(FileStore::new(home))
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = home;
-        Arc::new(MemoryStore::default())
-    }
+    Arc::new(FileStore::new(home))
 }
 
-/// DPAPI's optional entropy: another program of the same user cannot unprotect the files without it.
-#[cfg(windows)]
-const ENTROPY: &[u8] = b"Foreman/WorkState refresh token";
 /// Tries of a file operation that a scanner or a concurrent reader holds up.
-#[cfg(windows)]
 const TRIES: u32 = 8;
 
 /// `<home>/oauth/secrets/<sha256 of key>.bin`, each the key's secret sealed with DPAPI for the current
-/// user. `set` and `delete` rely on the caller holding `refresh.lock` (`supraman_workman::auth`).
-#[cfg(windows)]
+/// user ([`crate::platform::secret`]). `set` and `delete` rely on the caller holding `refresh.lock`
+/// (`supraman_workman::auth`).
 pub struct FileStore {
     dir: std::path::PathBuf,
 }
 
-#[cfg(windows)]
 impl FileStore {
     pub fn new(home: &Path) -> Self {
         Self { dir: home.join("oauth").join("secrets") }
@@ -71,7 +60,6 @@ impl FileStore {
     }
 }
 
-#[cfg(windows)]
 impl SecretStore for FileStore {
     fn get(&self, key: &str) -> Result<Option<String>, String> {
         let path = self.path(key);
@@ -80,13 +68,13 @@ impl SecretStore for FileStore {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
         };
-        let plain = dpapi(&sealed, false).map_err(|e| format!("cannot decrypt {}: {}", path.display(), e.message()))?;
+        let plain = unseal(&sealed).map_err(|e| format!("cannot decrypt {}: {e}", path.display()))?;
         String::from_utf8(plain).map(Some).map_err(|_| format!("{} does not hold text", path.display()))
     }
 
     fn set(&self, key: &str, secret: &str) -> Result<(), String> {
         let path = self.path(key);
-        let sealed = dpapi(secret.as_bytes(), true).map_err(|e| format!("cannot encrypt the secret: {}", e.message()))?;
+        let sealed = seal(secret.as_bytes()).map_err(|e| format!("cannot encrypt the secret: {e}"))?;
         crate::fs::write_atomic(&path, &sealed).map_err(|e| format!("cannot write {}: {e}", path.display()))
     }
 
@@ -102,7 +90,6 @@ impl SecretStore for FileStore {
 }
 
 /// `op` again while it fails with PermissionDenied or a sharing violation, up to [`TRIES`] times.
-#[cfg(windows)]
 fn retrying<T>(mut op: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
     const ERROR_SHARING_VIOLATION: i32 = 32;
     let mut tried = 1;
@@ -114,29 +101,6 @@ fn retrying<T>(mut op: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T>
             }
             done => return done,
         }
-    }
-}
-
-/// CryptProtectData (`seal`) or CryptUnprotectData, current-user scope, with [`ENTROPY`].
-#[cfg(windows)]
-fn dpapi(data: &[u8], seal: bool) -> windows::core::Result<Vec<u8>> {
-    use windows::Win32::Foundation::{HLOCAL, LocalFree};
-    use windows::Win32::Security::Cryptography::{CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData, CryptUnprotectData};
-    use windows::core::PCWSTR;
-    let input = CRYPT_INTEGER_BLOB { cbData: data.len() as u32, pbData: data.as_ptr().cast_mut() };
-    let entropy = CRYPT_INTEGER_BLOB { cbData: ENTROPY.len() as u32, pbData: ENTROPY.as_ptr().cast_mut() };
-    let mut out = CRYPT_INTEGER_BLOB::default();
-    // SAFETY: `input` and `entropy` point at buffers that outlive the call and are only read; on success
-    // `out` holds a LocalAlloc'd buffer of `cbData` bytes, freed once copied.
-    unsafe {
-        if seal {
-            CryptProtectData(&input, PCWSTR::null(), Some(&entropy), None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut out)?;
-        } else {
-            CryptUnprotectData(&input, None, Some(&entropy), None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut out)?;
-        }
-        let bytes = std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec();
-        LocalFree(Some(HLOCAL(out.pbData.cast())));
-        Ok(bytes)
     }
 }
 
@@ -174,8 +138,8 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let dir = home.path().join("oauth").join("secrets");
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(FILE), dpapi(b"fake-rt-today", true).unwrap()).unwrap();
-        assert_eq!(ENTROPY, b"Foreman/WorkState refresh token");
+        std::fs::write(dir.join(FILE), seal(b"fake-rt-today").unwrap()).unwrap();
+        assert_eq!(crate::platform::secret::ENTROPY, b"Foreman/WorkState refresh token");
         let store = FileStore::new(home.path());
         assert_eq!(store.path(KEY), dir.join(FILE));
         assert_eq!(store.get(KEY).unwrap().as_deref(), Some("fake-rt-today"));

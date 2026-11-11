@@ -6,6 +6,7 @@ pub mod locale;
 pub mod open;
 pub mod paths;
 pub mod process;
+pub mod secret;
 pub mod shell;
 
 /// What a stub says off Windows, the one platform implemented.
