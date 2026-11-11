@@ -81,10 +81,16 @@ async fn post_click(view: &Entity<FleetView>, key: &str, dx: f32, cx: &mut Async
 pub(crate) async fn post_keys(keys: &[&str], cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     // a held modifier would turn End into Alt+End
     let stale = win::held_modifiers();
-    if !stale.is_empty() {
+    let caps = win::caps_lock_on();
+    if !stale.is_empty() || caps {
         let live = win::pressed_modifiers();
-        win::clear_held_modifiers()?;
-        println!("keys: {stale:?} held in the UI thread's key state (held on the keyboard: {live:?}); cleared there before posting {keys:?}");
+        win::clear_key_state()?;
+        if !stale.is_empty() {
+            println!("keys: {stale:?} held in the UI thread's key state (held on the keyboard: {live:?}); cleared there before posting {keys:?}");
+        }
+        if caps {
+            println!("keys: Caps Lock on in the UI thread's key state; turned off there before posting {keys:?}");
+        }
     }
     let started = Instant::now();
     while !win::held_modifiers().is_empty() {
