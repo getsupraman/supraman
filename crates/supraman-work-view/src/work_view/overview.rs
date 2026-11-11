@@ -3,6 +3,7 @@
 use supraman_core::text::count;
 use gpui::{ClickEvent, FontWeight, Hsla};
 use supraman_core::time::{self, rfc3339_ms};
+use supraman_ui::placeholder::placeholder;
 use supraman_ui::hit::hit_target;
 use supraman_ui::marks::{Mark, dot};
 use supraman_ui::clipped::clipped;
@@ -147,7 +148,7 @@ impl WorkView {
         let colors = cx.theme().colors().clone();
         let mut card = self.card("Needs you", Some(needs.len()), cx).flex_1().min_w(px(320.));
         if needs.is_empty() {
-            card = card.child(div().px_3().pb_3().text_sm().text_color(colors.text_muted).child("Nothing needs you."));
+            card = card.child(placeholder("Nothing needs you.", Vec::<SharedString>::new(), cx).px_3().pb_3());
         }
         for c in needs.iter().take(NEEDS_SHOWN) {
             let id = c.item_id.clone();
@@ -196,7 +197,7 @@ impl WorkView {
         let live = (self.link.live)();
         let mut card = self.card("Working now", Some(claims.len()), cx);
         if claims.is_empty() {
-            card = card.child(div().px_3().pb_3().text_sm().text_color(colors.text_muted).child("No one holds a claim."));
+            card = card.child(placeholder("No one holds a claim.", Vec::<SharedString>::new(), cx).px_3().pb_3());
         }
         for claim in claims {
             let qref = claim.item.qualified_ref.clone();

@@ -1,6 +1,7 @@
 //! The middle column's run page: breadcrumb, done line, prompt chips, squares, filter and a row per item.
 
 use gpui::{ClickEvent, FontWeight};
+use supraman_ui::placeholder::placeholder;
 use supraman_ui::clipped::clamped;
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
@@ -42,8 +43,8 @@ impl WorkView {
         let root = div().id("work-list").size_full().flex().flex_col().gap_2().px_5().pt_4().pb_6().overflow_y_scroll().track_scroll(&self.list_scroll);
         let board = match self.boards.get(run) {
             Some(BoardState::Ready(board)) => board,
-            Some(BoardState::Failed(message)) => return root.child(div().text_color(cx.theme().status().error).child(SharedString::from(message.clone()))).into_any_element(),
-            _ => return root.child(div().text_color(colors.text_muted).child("Reading the run…")).into_any_element(),
+            Some(BoardState::Failed(message)) => return root.child(placeholder("Cannot show this run", [message.clone()], cx).size_full()).into_any_element(),
+            _ => return root.child(placeholder("Reading the run…", Vec::<SharedString>::new(), cx).size_full()).into_any_element(),
         };
         let project = board.project.as_ref().map(|p| p.title.clone()).unwrap_or_default();
         let crumb = div()

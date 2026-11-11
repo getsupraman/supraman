@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use gpui::{ClickEvent, FontWeight, Hsla};
 use supraman_core::time::{near, rfc3339_local, rfc3339_ms};
+use supraman_ui::placeholder::placeholder;
 use supraman_ui::details::{self, Section};
 use supraman_ui::hit::hit_target;
 use supraman_ui::marks::dot;
@@ -241,7 +242,7 @@ impl WorkView {
         };
         let mut reported = div().flex_1().min_w_0().flex().flex_col().gap_2().child(head("What the agent reported", "From work_report. A claim, not proof.", status.warning));
         if page.reports.is_empty() && own.is_empty() {
-            reported = reported.child(div().text_sm().text_color(colors.text_muted).child("No reports."));
+            reported = reported.child(placeholder("No reports.", Vec::<SharedString>::new(), cx).py_3());
         }
         for r in &page.reports {
             reported = reported.child(self.render_report(r, cx));
@@ -251,7 +252,7 @@ impl WorkView {
         }
         let mut verified = div().flex_1().min_w_0().flex().flex_col().gap_2().child(head("What was verified", "From work_verify, run by someone other than the author.", status.success));
         if proven.is_empty() {
-            verified = verified.child(div().text_sm().text_color(colors.text_muted).child("Nothing verified yet."));
+            verified = verified.child(placeholder("Nothing verified yet.", Vec::<SharedString>::new(), cx).py_3());
         }
         for (i, v) in proven {
             verified = verified.child(self.render_verification(i, v, cx));
@@ -325,7 +326,7 @@ impl WorkView {
         let colors = cx.theme().colors().clone();
         let mut out = div().flex().flex_col().py_3();
         if page.events.is_empty() {
-            out = out.child(div().text_sm().text_color(colors.text_muted).child("No activity yet."));
+            out = out.child(placeholder("No activity yet.", Vec::<SharedString>::new(), cx).py_3());
         }
         for e in page.events.iter().rev() {
             out = out.child(
