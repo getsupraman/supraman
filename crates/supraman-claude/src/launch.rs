@@ -45,14 +45,7 @@ impl LaunchSpec {
         }
     }
 
-    /// A per-session `wss_` token in an owner-only `<dir>/workstate-<agent>.json`, under `--strict-mcp-config`.
-    pub fn with_minted_token(mut self, dir: &Path, agent: &str, url: &str, token: &str) -> std::io::Result<Self> {
-        self.mcp_config = Some(write_mcp_config_with(dir, agent, url, token, &[], &self.mcp_servers)?);
-        self.strict_mcp_config = true;
-        Ok(self)
-    }
-
-    /// [`Self::with_minted_token`] whose token `helper` prints ([`write_mcp_config_helped`]): no token in the file.
+    /// `agent`'s owner-only config under `--strict-mcp-config`, whose token `helper` prints ([`write_mcp_config_helped`]).
     pub fn with_helped_config(mut self, dir: &Path, agent: &str, url: &str, helper: &str) -> std::io::Result<Self> {
         self.mcp_config = Some(write_mcp_config_helped(dir, agent, url, helper, &self.mcp_servers)?);
         self.strict_mcp_config = true;
@@ -133,61 +126,21 @@ pub struct SessionIdentity {
 /// The `mcpServers` key of a session's Workman server; a [+] session's entry overrides the user-scope one of that name.
 pub const MCP_SERVER: &str = "workman";
 
-/// The [`MCP_SERVER`] entry with the token and `headers` written in, shaped like the workman plugin's `plugin.mcp.json`.
-pub fn workman_mcp_config(url: &str, token: &str, headers: &[(&str, String)]) -> String {
-    workman_mcp_config_with(url, token, headers, &[])
-}
-
-/// How a session's Workman server authenticates: a static header, or a command claude runs at each connect.
-enum Authorization<'a> {
-    Token(&'a str),
-    Helper(&'a str),
-}
-
-fn workman_mcp_config_with(url: &str, token: &str, headers: &[(&str, String)], servers: &[(String, String)]) -> String {
-    workman_mcp_config_auth(url, Authorization::Token(token), headers, servers)
-}
-
-fn workman_mcp_config_auth(url: &str, auth: Authorization, headers: &[(&str, String)], servers: &[(String, String)]) -> String {
-    let mut map = serde_json::Map::new();
-    if let Authorization::Token(token) = auth {
-        map.insert("Authorization".into(), format!("Bearer {token}").into());
-    }
-    for (k, v) in headers {
-        map.insert((*k).into(), v.clone().into());
-    }
+/// Writes `<dir>/workstate-<agent>.json` owner-only, its `Authorization` from `helper`, claude's `headersHelper`: no token in the file.
+pub fn write_mcp_config_helped(dir: &Path, agent: &str, url: &str, helper: &str, servers: &[(String, String)]) -> std::io::Result<PathBuf> {
+    let path = mcp_config_path(dir, agent)?;
     let mut config = serde_json::json!({
         "mcpServers": {
             (MCP_SERVER): {
                 "type": "http",
                 "url": url,
-                "headers": map
+                "headers": {},
+                "headersHelper": helper
             }
         }
     });
-    if let Authorization::Helper(command) = auth {
-        config["mcpServers"][MCP_SERVER]["headersHelper"] = command.into();
-    }
     add_servers(&mut config, servers);
-    config.to_string()
-}
-
-/// Writes `<dir>/workstate-<agent>.json`, staged owner-only then renamed, so no one else reads the token nor sees it empty.
-pub fn write_mcp_config(dir: &Path, agent: &str, url: &str, token: &str, headers: &[(&str, String)]) -> std::io::Result<PathBuf> {
-    write_mcp_config_with(dir, agent, url, token, headers, &[])
-}
-
-/// [`write_mcp_config`] with `servers` beside Workman's, never in its place.
-pub fn write_mcp_config_with(dir: &Path, agent: &str, url: &str, token: &str, headers: &[(&str, String)], servers: &[(String, String)]) -> std::io::Result<PathBuf> {
-    let path = mcp_config_path(dir, agent)?;
-    supraman_core::fs::write_atomic_prepared(&path, workman_mcp_config_with(url, token, headers, servers), restrict_to_owner)?;
-    Ok(path)
-}
-
-/// [`write_mcp_config`] whose `Authorization` comes from `helper`, claude's `headersHelper`: no token in the file.
-pub fn write_mcp_config_helped(dir: &Path, agent: &str, url: &str, helper: &str, servers: &[(String, String)]) -> std::io::Result<PathBuf> {
-    let path = mcp_config_path(dir, agent)?;
-    supraman_core::fs::write_atomic_prepared(&path, workman_mcp_config_auth(url, Authorization::Helper(helper), &[], servers), restrict_to_owner)?;
+    supraman_core::fs::write_atomic_prepared(&path, config.to_string(), restrict_to_owner)?;
     Ok(path)
 }
 
@@ -247,7 +200,7 @@ pub fn mcp_config_path(dir: &Path, agent: &str) -> std::io::Result<PathBuf> {
     Ok(dir.join(format!("workstate-{agent}.json")))
 }
 
-/// The Workman URL in the config [`write_mcp_config`] wrote for `agent`; `None` when it is gone or unreadable.
+/// The Workman URL in the config [`write_mcp_config_helped`] wrote for `agent`; `None` when it is gone or unreadable.
 pub fn mcp_config_url(dir: &Path, agent: &str) -> Option<String> {
     let text = std::fs::read_to_string(mcp_config_path(dir, agent).ok()?).ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
@@ -259,7 +212,7 @@ const ICACLS_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[cfg(windows)]
 fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
-    let user = std::env::var("USERNAME").map_err(|_| std::io::Error::other("USERNAME is not set"))?;
+    let user = supraman_core::platform::paths::user_name().ok_or_else(|| std::io::Error::other("USERNAME is not set"))?;
     let out = process::run(
         // an elevated process's file also carries explicit SYSTEM and Administrators entries
         process::command("icacls")
@@ -579,41 +532,34 @@ mod tests {
     }
 
     #[test]
-    fn minted_token_lands_in_an_owner_only_file_per_session_not_in_argv() {
+    fn a_helped_config_lands_in_an_owner_only_file_per_session_not_in_argv() {
         let dir = tempfile::tempdir().unwrap();
         let mcp = dir.path().join("mcp");
         let spec = LaunchSpec::new("fm-demo-alpha", "C:\\", "hi")
-            .with_minted_token(&mcp, "fm-demo-alpha", "https://ws.example/mcp", "fake-token")
+            .with_helped_config(&mcp, "fm-demo-alpha", "https://ws.example/mcp", "sm")
             .unwrap();
         let path = mcp.join("workstate-fm-demo-alpha.json");
         assert_eq!(spec.mcp_config.as_deref(), Some(path.as_path()));
         assert!(spec.strict_mcp_config);
         assert!(spec.env.is_empty());
-        let argv = strs(&spec.argv()).join(" ");
-        assert!(!argv.contains("fake-token"), "{argv}");
         let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        let ws = &v["mcpServers"]["workman"];
         assert!(v["mcpServers"].get("workstate").is_none(), "{v}");
-        assert_eq!(ws["type"], "http");
-        assert_eq!(ws["url"], "https://ws.example/mcp");
-        assert_eq!(ws["headers"], serde_json::json!({ "Authorization": "Bearer fake-token" }));
+        assert_eq!(v["mcpServers"]["workman"]["type"], "http");
         assert_eq!(mcp_config_url(&mcp, "fm-demo-alpha").as_deref(), Some("https://ws.example/mcp"));
         assert_eq!(mcp_config_url(&mcp, "fm-demo-beta"), None);
         #[cfg(windows)]
         {
             let acl = supraman_core::process::command("icacls").arg(&path).output().unwrap();
             let acl = String::from_utf8_lossy(&acl.stdout);
-            let user = std::env::var("USERNAME").unwrap();
+            let user = supraman_core::platform::paths::user_name().unwrap();
             let grants: Vec<&str> = acl.lines().filter(|l| l.contains(":(")).collect();
             assert_eq!(grants.len(), 1, "{acl}");
             assert!(grants[0].contains(&format!("{user}:(F)")), "{acl}");
         }
-        let path_b = write_mcp_config(&mcp, "fm-demo-beta", "http://x/mcp", "fake-token", &[("X-Extra", "1".into())]).unwrap();
+        let path_b = write_mcp_config_helped(&mcp, "fm-demo-beta", "http://x/mcp", "sm", &[]).unwrap();
         assert_ne!(path_b, path, "one file per session");
-        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path_b).unwrap()).unwrap();
-        assert_eq!(v["mcpServers"]["workman"]["headers"]["X-Extra"], "1");
         for bad in ["", "..", "../x", r"a\b", "a b"] {
-            assert!(write_mcp_config(&mcp, bad, "u", "fake-token", &[]).is_err(), "{bad:?}");
+            assert!(write_mcp_config_helped(&mcp, bad, "u", "sm", &[]).is_err(), "{bad:?}");
             assert!(mcp_config_path(&mcp, bad).is_err(), "{bad:?}");
         }
         assert_eq!(mcp_config_path(&mcp, "fm-demo-beta").unwrap(), path_b);
@@ -700,12 +646,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let agents = r#"{"command":"node","args":["C:/p/agents.mjs"]}"#.to_string();
         let servers = [("agents".to_string(), agents), (MCP_SERVER.to_string(), r#"{"command":"evil"}"#.to_string())];
-        let path = write_mcp_config_with(dir.path(), "fm-demo-a", "http://x/mcp", "fake-token", &[], &servers).unwrap();
+        let path = write_mcp_config_helped(dir.path(), "fm-demo-a", "http://x/mcp", "sm", &servers).unwrap();
         let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         assert_eq!(v["mcpServers"]["agents"], serde_json::json!({ "command": "node", "args": ["C:/p/agents.mjs"] }));
         assert_eq!(v["mcpServers"][MCP_SERVER]["url"], "http://x/mcp", "a server named like Workman's is dropped");
         let spec = LaunchSpec { mcp_servers: servers.to_vec(), ..LaunchSpec::new("fm-demo-b", dir.path(), "p") };
-        let spec = spec.with_minted_token(dir.path(), "fm-demo-b", "http://x/mcp", "fake-token").unwrap();
+        let spec = spec.with_helped_config(dir.path(), "fm-demo-b", "http://x/mcp", "sm").unwrap();
         let text = std::fs::read_to_string(spec.mcp_config.unwrap()).unwrap();
         assert!(text.contains("agents.mjs") && spec.strict_mcp_config, "{text}");
     }

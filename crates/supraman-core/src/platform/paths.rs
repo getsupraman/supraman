@@ -24,6 +24,18 @@ pub fn user_profile() -> Option<OsString> {
     None
 }
 
+/// `%USERNAME%`, the account an owner-only file's ACL grants.
+#[cfg(windows)]
+pub fn user_name() -> Option<String> {
+    std::env::var("USERNAME").ok()
+}
+
+/// No account name here: an owner-only file is a mode, not an ACL.
+#[cfg(not(windows))]
+pub fn user_name() -> Option<String> {
+    None
+}
+
 /// A normalized path in the case its file system compares: lowercased on Windows.
 pub fn compared_case(normal: String) -> String {
     if cfg!(windows) { normal.to_lowercase() } else { normal }

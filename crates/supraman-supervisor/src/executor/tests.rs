@@ -537,7 +537,7 @@ fn mint_of_unknown_origin_is_reminted_once_unless_its_config_names_the_server() 
     assert_eq!(sup.minted().get("fm-demo-workspace").unwrap().origin.as_deref(), Some("http://127.0.0.1:1"), "recorded now");
 
     let dir = tempfile::tempdir().unwrap();
-    supraman_claude::write_mcp_config(&dir.path().join("mcp"), "fm-demo-workspace", "http://127.0.0.1:1/mcp", "wss_old", &[]).unwrap();
+    supraman_claude::write_mcp_config_helped(&dir.path().join("mcp"), "fm-demo-workspace", "http://127.0.0.1:1/mcp", "sm", &[]).unwrap();
     let (mut sup, _) = minting_from(dir.path(), OLD);
     assert!(sup.server_changed(Some("http://127.0.0.1:1")).is_empty(), "its config file already names the server");
     sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 10 * SECOND);
