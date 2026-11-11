@@ -89,7 +89,7 @@ pub(crate) fn pill_fill(colour: usize, hovered: bool, palette: &Palette) -> Hsla
 pub(crate) fn pill(key: impl Into<String>, face: Face, colour: usize, palette: &Palette, hits: &HitTargets) -> Div {
     let key = key.into();
     let (text, hover) = (palette.text, pill_fill(colour, true, palette));
-    let name = clipped(key.clone(), face.name, false).min_w(px(NAME_MIN)).child(hit_target(hits, format!("{key}-text")));
+    let name = clipped(key.clone(), face.name, false).min_w(px(NAME_MIN)).flex_shrink(BODY_SHRINK).child(hit_target(hits, format!("{key}-text")));
     let least = 2. * PILL_PAD + NAME_MIN + if face.head { PILL_ICON + PILL_GAP } else { 0. };
     div()
         .flex()
@@ -106,7 +106,7 @@ pub(crate) fn pill(key: impl Into<String>, face: Face, colour: usize, palette: &
         .text_xs()
         .when(face.head, |d| d.child(div().flex_none().child(current_mark(text, PILL_ICON))))
         .child(ink::text(name))
-        .children(face.icons.into_iter().enumerate().map(|(n, i)| div().relative().flex_none().child(i.svg(PILL_ICON, text)).child(hit_target(hits, format!("{key}-icon-{n}")))))
+        .when(!face.icons.is_empty(), |d| d.child(icons(&key, face.icons, text, hits)))
 }
 
 /// A panel's header branch: its pill in lane `colour`, or `Detached HEAD`, then [`super::ref_panel::track`]'s words; painted under `<key>-branch` and `<key>-upstream`.
@@ -135,6 +135,15 @@ pub(crate) fn kind_icons(group: &RefGroup) -> Vec<Icon> {
 /// The current branch's mark: the graph's HEAD pill and the ref panel's current row.
 pub(crate) fn current_mark(colour: Hsla, size: f32) -> Svg {
     Icon::Check.svg(size, colour)
+}
+
+/// A pill's icons on one line, laid out from the last after an empty first item: an icon without room wraps whole onto the hidden second line, the first icons before the last.
+fn icons(key: &str, icons: Vec<Icon>, colour: Hsla, hits: &HitTargets) -> Div {
+    let last = icons.len().saturating_sub(1);
+    let shown = icons.into_iter().enumerate().rev().map(|(n, i)| {
+        div().relative().flex_none().when(n < last, |d| d.mr(px(PILL_GAP))).child(i.svg(PILL_ICON, colour)).child(hit_target(hits, format!("{key}-icon-{n}")))
+    });
+    div().flex().flex_row_reverse().flex_wrap().justify_end().min_w_0().h(px(PILL_ICON)).overflow_hidden().child(div().flex_none().w(px(0.)).h(px(PILL_ICON))).children(shown)
 }
 
 /// A pill of row `ix`'s group `group`: its menu, double-click checkout, drag and drop.

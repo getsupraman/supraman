@@ -86,12 +86,22 @@ fn at_a_narrow_branch_column_every_pill_is_cut_inside_it(cx: &mut TestAppContext
     let column = at(&hits, "git-col-refs");
     let rows = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().enumerate().filter(|(_, r)| !r.row.refs.is_empty()).map(|(i, _)| i).collect::<Vec<_>>());
     assert!(rows.len() >= 3 && column.size.width < px(100.), "{rows:?} {column:?}");
+    let head = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| r.row.refs.first().is_some_and(|g| g.head()))).expect("HEAD's row");
+    let shown = |key: &str| hits.borrow().get(key).is_some_and(|h| h.fully_visible());
+    assert!(!shown(&format!("git-ref-{head}-icon-0")) && shown(&format!("git-ref-{head}-text")), "HEAD's pill, its ✓ and cut name filling it, has no room for an icon");
     let w = worktree_row(&view, cx);
+    let tree = (shown(&format!("git-worktree-label-{w}-icon-0")), shown(&format!("git-worktree-label-{w}-icon-1")));
+    assert!(tree.1 || !tree.0, "the worktree's icon is the last to go: {tree:?}");
     let pills = rows.iter().map(|ix| (format!("git-pill-{ix}"), format!("git-ref-{ix}"))).chain([(format!("git-worktree-ref-{w}"), format!("git-worktree-label-{w}"))]);
     for (pill, name) in pills {
         let shown = at(&hits, &pill);
         assert!(shown.left() >= column.left() && shown.right() <= column.right(), "{pill} inside its column: {shown:?} {column:?}");
         let cut = cut_at(&name).unwrap_or_else(|| panic!("{name} is cut: {shown:?} {column:?}"));
+        for (key, hit) in hits.borrow().iter().filter(|(k, _)| k.starts_with(&format!("{name}-icon-"))) {
+            let clip = hit.bounds.intersect(&hit.visible).size;
+            let hidden = clip.width <= px(0.) || clip.height <= px(0.);
+            assert!(hidden || (hit.fully_visible() && hit.bounds.left() >= shown.left() && hit.bounds.right() <= shown.right()), "{key} painted whole inside its pill or not at all: {hit:?} {shown:?}");
+        }
         assert!(cut.right() <= shown.right() && cut.size.width >= px(super::NAME_MIN), "{name}'s first letter and … inside its pill: {cut:?} {shown:?}");
     }
 }
