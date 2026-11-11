@@ -330,6 +330,8 @@ async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-git-agent.png"), None, cx).await?;
     println!("shot: {}", shot.display());
+    let window = cx.update(|window, _| window.viewport_size())?;
+    crate::selftest_git::resize(view, gpui::size(window.width * 1.5, window.height), cx).await?;
     crate::selftest::until(view, cx, Duration::from_secs(20), "the other worktree's row with both sessions' leads", |v| {
         v.hits.borrow().keys().any(|k| k.starts_with("git-worktree-session-") && k.ends_with("-1")).then_some(())
     })
@@ -337,7 +339,6 @@ async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-git-wip-rows.png"), None, cx).await?;
     println!("shot: {}", shot.display());
-    let window = cx.update(|window, _| window.viewport_size())?;
     crate::selftest_git::resize(view, gpui::size(window.width * 0.75, window.height), cx).await?;
     crate::selftest::until(view, cx, Duration::from_secs(10), "the agent row's name cut in the narrower window", |v| {
         (v.hits.borrow().contains_key("git-agent-0") && supraman_ui::clipped::cut_at("git-agent-0-name").is_some()).then_some(())
