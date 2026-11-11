@@ -140,7 +140,7 @@ fn double_click_and_open_worktree_ask_for_the_worktrees_tab_and_a_detached_ones_
 }
 
 #[gpui::test]
-fn every_session_in_a_worktree_has_its_lead_on_its_row_and_its_own_menu(cx: &mut TestAppContext) {
+fn every_session_in_a_worktree_has_its_lead_on_its_row_its_word_in_its_tooltip_and_its_own_menu(cx: &mut TestAppContext) {
     let (f, extra) = fixture();
     let live = occupancy::Live::default();
     let (view, cx) = open(&f, live.clone(), cx);
@@ -150,7 +150,8 @@ fn every_session_in_a_worktree_has_its_lead_on_its_row_and_its_own_menu(cx: &mut
     let ix = row_of(&view, &extra, cx);
     assert_eq!(names(&view.update(cx, |v, cx| v.worktree_view(ix, cx)).expect("read")), ["fm-alpha", "fm-beta"]);
     for n in 0..2 {
-        assert!(painted(&view, &format!("git-worktree-session-{ix}-{n}"), cx) && painted(&view, &format!("git-worktree-state-{ix}-{n}"), cx), "lead {n}");
+        assert!(painted(&view, &format!("git-worktree-session-{ix}-{n}"), cx), "lead {n}");
+        assert!(!painted(&view, &format!("git-worktree-state-{ix}-{n}"), cx), "lead {n}: its dot carries the state, the names get the room");
     }
     let hits = repaint(&view, cx);
     let (a, b) = (hits.borrow()[&format!("git-worktree-session-{ix}-0")].clone(), hits.borrow()[&format!("git-worktree-session-{ix}-1")].clone());
@@ -158,6 +159,12 @@ fn every_session_in_a_worktree_has_its_lead_on_its_row_and_its_own_menu(cx: &mut
     let commit = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| r.commit())).expect("a commit row");
     let (agent, text) = (hits.borrow()["git-agent-0"], hits.borrow()[&format!("git-text-{commit}")]);
     assert_eq!((agent.bounds.left(), a.bounds.left()), (text.bounds.left(), text.bounds.left()), "the agent's lead, the worktree's and a commit's message start at one x");
+
+    supraman_ui::tooltip::LAST_SHOWN.with(|l| l.borrow_mut().take());
+    cx.simulate_mouse_move(b.bounds.center(), None, gpui::Modifiers::none());
+    cx.executor().advance_clock(std::time::Duration::from_secs(2));
+    cx.run_until_parked();
+    assert_eq!(supraman_ui::tooltip::LAST_SHOWN.with(|l| l.borrow().clone()).as_deref(), Some("fm-beta · working"), "the word in the lead's tooltip with its name");
 
     let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let s = seen.clone();

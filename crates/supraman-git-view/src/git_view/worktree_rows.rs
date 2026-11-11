@@ -8,6 +8,8 @@ use supraman_gitman::{WorktreeRow, WorktreeWip};
 use supraman_ui::button;
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
+use supraman_ui::marks::Mark;
+use supraman_ui::session;
 use supraman_ui::tooltip::Tooltip;
 
 use super::branch::OpenGit;
@@ -160,22 +162,26 @@ impl GitView {
             .into_any_element()
     }
 
-    /// Each session's [`agent_rows::session_lead`], its right-click that session's menu; `// WIP` while nobody works there.
+    /// Each session's [`agent_rows::session_lead`], its state's word in its tooltip once there are several; its right-click that session's menu; `// WIP` while nobody works there.
     fn worktree_leads(&self, ix: usize, sessions: &[LiveSession], path: Option<&Path>, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         if sessions.is_empty() {
             return div().relative().flex_none().text_color(palette.muted).child("// WIP").child(hit_target(&self.hits, format!("git-worktree-wip-{ix}"))).into_any_element();
         }
+        let several = sessions.len() > 1;
         let leads = sessions.iter().enumerate().map(|(n, s)| {
             let path = path.map(Path::to_path_buf);
-            agent_rows::session_lead(&format!("git-worktree-session-{ix}-{n}"), &format!("git-worktree-state-{ix}-{n}"), s, palette, &self.hits, cx)
-                .on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(move |this, e: &MouseDownEvent, _, cx| {
-                        if let Some(path) = &path {
-                            this.worktree_session_menu(path, n, e.position, cx);
-                        }
-                    }),
-                )
+            let key = format!("git-worktree-session-{ix}-{n}");
+            let menu = cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                if let Some(path) = &path {
+                    this.worktree_session_menu(path, n, e.position, cx);
+                }
+            });
+            if several {
+                let told = format!("{} · {}", s.name, s.activity.word());
+                session::lead_told(&key, Mark::Filled(s.activity.color(cx)), &s.name, told).relative().text_color(palette.text).child(hit_target(&self.hits, key)).on_mouse_down(MouseButton::Right, menu).into_any_element()
+            } else {
+                agent_rows::session_lead(&key, &format!("git-worktree-state-{ix}-{n}"), s, palette, &self.hits, cx).on_mouse_down(MouseButton::Right, menu).into_any_element()
+            }
         });
         div().flex().items_center().gap_4().min_w_0().flex_shrink(1.).overflow_hidden().children(leads).into_any_element()
     }
