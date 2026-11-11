@@ -771,7 +771,7 @@ fn the_live_and_state_dirs_and_secret_keys_are_per_workspace_and_schedule() {
     assert_eq!(state_dir(home, "demo", "fix").unwrap(), home.join("schedules").join("state").join("demo").join("fix"));
     assert!(state_dir(home, "demo", "../x").is_err() && live_dir(home, "..").is_err());
     assert_eq!(fire_log(home), home.join("schedules").join("fire.log"));
-    assert_eq!(secret_key("demo", "fix", "API_TOKEN"), "foreman/schedule/demo/fix/API_TOKEN");
+    assert_eq!(secret_key("demo", "fix", "API_TOKEN"), "supraman/schedule/demo/fix/API_TOKEN");
 }
 
 #[test]

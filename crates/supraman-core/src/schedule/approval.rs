@@ -14,8 +14,8 @@ use crate::secret::SecretStore;
 use crate::{CoreError, Result, Workspace};
 
 /// The `SecretStore` key of the approval key: 32 random bytes as hex.
-pub const APPROVAL_KEY: &str = "foreman/schedule-approval/v1";
-const MAC_DOMAIN: &str = "foreman-schedule-v1";
+pub const APPROVAL_KEY: &str = "supraman/schedule-approval/v1";
+const MAC_DOMAIN: &str = "supraman-schedule-v1";
 const MISSING: &str = "missing";
 
 /// The fingerprinted JSON; field order is the canonical order of docs/research/scheduler.md.

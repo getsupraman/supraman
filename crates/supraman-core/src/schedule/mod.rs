@@ -205,7 +205,7 @@ pub struct Permissions {
     pub deny_tools: Vec<String>,
     #[serde(default)]
     pub add_dirs: Vec<String>,
-    /// Names only; each value is in the `SecretStore` under `foreman/schedule/<ws>/<id>/<NAME>`.
+    /// Names only; each value is in the `SecretStore` under `supraman/schedule/<ws>/<id>/<NAME>`.
     #[serde(default)]
     pub secrets: Vec<String>,
 }
