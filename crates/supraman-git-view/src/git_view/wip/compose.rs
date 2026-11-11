@@ -103,7 +103,7 @@ pub(crate) struct Composer {
 impl Composer {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<WipPanel>) -> Composer {
         let (summary, description) = message_fields(window, cx);
-        let row = cx.new(|cx| TextInput::new("// WIP", None, window, cx).submit_apart());
+        let row = cx.new(|cx| TextInput::new("// WIP", None, window, cx).submit_apart().quiet());
         let inputs = [
             cx.subscribe_in(&summary, window, |this: &mut WipPanel, _, e: &InputEvent, window, cx| this.summary_event(e, false, window, cx)),
             cx.subscribe_in(&row, window, |this: &mut WipPanel, _, e: &InputEvent, window, cx| this.summary_event(e, true, window, cx)),

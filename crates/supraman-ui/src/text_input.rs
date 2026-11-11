@@ -570,6 +570,15 @@ pub const TEXT_LEFT: Pixels = px(9.);
 const LINE_HEIGHT: Pixels = px(18.);
 /// A single-line field: one line, [`PAD_Y`] above and below, and the border.
 const SINGLE_HEIGHT: Pixels = px(26.);
+/// A [`TextInput::quiet`] field: one line inside its 1 px border, inside a graph row's band.
+pub const QUIET_HEIGHT: Pixels = px(20.);
+
+/// A [`TextInput::quiet`] field's box: a low-contrast fill, no border but the focus colour's while `focused`; a still copy of the field paints it too.
+pub fn quiet_frame(focused: bool, cx: &App) -> gpui::Div {
+    let colors = cx.theme().colors();
+    let border = if focused { colors.border_focused } else { gpui::transparent_black() };
+    div().flex().items_center().min_w_0().h(QUIET_HEIGHT).px(PAD_X).rounded_md().border_1().border_color(border).bg(colors.element_background).text_sm().line_height(LINE_HEIGHT).overflow_hidden()
+}
 
 pub struct TextInput {
     focus_handle: FocusHandle,
@@ -584,6 +593,7 @@ pub struct TextInput {
     /// Ctrl+Enter is [`InputEvent::Submit`], told apart from Enter's [`InputEvent::Confirm`].
     submit_apart: bool,
     masked: bool,
+    quiet: bool,
     last_layout: Option<Layout>,
     last_bounds: Option<Bounds<Pixels>>,
     last_line_height: Pixels,
@@ -653,6 +663,7 @@ impl TextInput {
             enter_confirms: false,
             submit_apart: false,
             masked: false,
+            quiet: false,
             last_layout: None,
             last_bounds: None,
             last_line_height: LINE_HEIGHT,
@@ -687,6 +698,12 @@ impl TextInput {
     /// A passphrase's field: one `*` per byte shown, and nothing copied or cut.
     pub fn masked(mut self) -> Self {
         self.masked = true;
+        self
+    }
+
+    /// A light one-line field in [`quiet_frame`]: the graph's WIP row's summary.
+    pub fn quiet(mut self) -> Self {
+        self.quiet = true;
         self
     }
 
@@ -1339,20 +1356,25 @@ impl Render for TextInput {
         let colors = cx.theme().colors();
         let focused = self.focus_handle.is_focused(window);
         let multi_line = self.multi_line;
-        div()
-            .flex()
+        let frame = if self.quiet && !multi_line {
+            quiet_frame(focused, cx)
+        } else {
+            div()
+                .flex()
+                .min_w_0()
+                .when(!multi_line, |d| d.items_center().h(SINGLE_HEIGHT))
+                .when(multi_line, |d| d.py(PAD_Y).on_scroll(cx.listener(Self::scroll_wheel)))
+                .px(PAD_X)
+                .rounded_sm()
+                .border_1()
+                .border_color(if focused { colors.border_focused } else { colors.border })
+                .bg(colors.editor_background)
+                .text_sm()
+                .line_height(LINE_HEIGHT)
+                .overflow_hidden()
+        };
+        frame
             .w_full()
-            .min_w_0()
-            .when(!multi_line, |d| d.items_center().h(SINGLE_HEIGHT))
-            .when(multi_line, |d| d.py(PAD_Y).on_scroll(cx.listener(Self::scroll_wheel)))
-            .px(PAD_X)
-            .rounded_sm()
-            .border_1()
-            .border_color(if focused { colors.border_focused } else { colors.border })
-            .bg(colors.editor_background)
-            .text_sm()
-            .line_height(LINE_HEIGHT)
-            .overflow_hidden()
             .key_context(CONTEXT)
             .track_focus(&self.focus_handle)
             .cursor(CursorStyle::IBeam)
