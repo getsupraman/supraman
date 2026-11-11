@@ -773,8 +773,7 @@ fn script_stage(env: &ScriptEnv, s: &Schedule, secrets: &[(String, String)], res
         ("STATE_DIR", state.clone().into()),
     ];
     for (name, value) in &vars {
-        // FOREMAN_* keeps scripts approved before the rename working; removed in 0.2.0.
-        cmd.env(format!("SUPRAMAN_{name}"), value).env(format!("FOREMAN_{name}"), value);
+        cmd.env(format!("SUPRAMAN_{name}"), value);
     }
     cmd.envs(secrets.iter().map(|(k, v)| (k, v)));
     let ran = process::run_watched(&mut cmd, timeout, Kill::Tree, &mut stop);

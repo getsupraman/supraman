@@ -16,7 +16,7 @@ mod common;
 const SECRET: &str = "s3cr3t-Value-81f2";
 
 /// One `.cmd` per behaviour, in folder Alpha's `scripts/`.
-const SCRIPTS: [(&str, &str); 8] = [
+const SCRIPTS: [(&str, &str); 7] = [
     ("exit0.cmd", "@exit /b 0\r\n"),
     ("gate.cmd", "@echo gate output\r\n@echo token %API_TOKEN%\r\n@exit /b 10\r\n"),
     ("fail.cmd", "@echo first line 1>&2\r\n@echo boom %API_TOKEN% 1>&2\r\n@exit /b 1\r\n"),
@@ -25,7 +25,6 @@ const SCRIPTS: [(&str, &str); 8] = [
         "env.cmd",
         "@echo %SUPRAMAN_HOME%^|%SUPRAMAN_WORKSPACE%^|%SUPRAMAN_SCHEDULE%^|%SUPRAMAN_RUN%^|%SUPRAMAN_FOLDER%^|%SUPRAMAN_LAST_RUN%^|%SUPRAMAN_LAST_OUTCOME%^|%CD%> \"%SUPRAMAN_STATE_DIR%\\env.txt\"\r\n@exit /b 0\r\n",
     ),
-    ("foreman.cmd", "@echo %FOREMAN_WORKSPACE%^|%FOREMAN_SCHEDULE%^|%FOREMAN_RUN%^|%FOREMAN_FOLDER%^|%FOREMAN_LAST_RUN%^|%FOREMAN_LAST_OUTCOME%> \"%FOREMAN_STATE_DIR%\\foreman.txt\"\r\n@exit /b 0\r\n"),
     ("secret.cmd", "@if \"%API_TOKEN%\"==\"s3cr3t-Value-81f2\" exit /b 10\r\n@exit /b 1\r\n"),
     ("once.cmd", "@if exist \"%SUPRAMAN_STATE_DIR%\\once\" exit /b 0\r\n@echo x> \"%SUPRAMAN_STATE_DIR%\\once\"\r\n@ping -n 30 127.0.0.1 >nul\r\n@exit /b 0\r\n"),
 ];
@@ -303,24 +302,6 @@ fn fire_gives_the_script_its_environment_and_state_dir() {
     let fields: Vec<&str> = line.trim_end().split('|').collect();
     let first_start = schedule::runs(&f.home, "demo").unwrap().into_iter().find(|r| Some(&r.run) == first.run.as_ref()).unwrap().started.unwrap().0;
     assert_eq!((fields[5], fields[6]), (first_start.to_string().as_str(), "ok"));
-}
-
-/// A script approved before the rename still reads its `FOREMAN_*` names, with the same values.
-#[test]
-fn fire_gives_the_script_its_old_names_too() {
-    let f = fixture();
-    f.add_approved(script_schedule("old", "foreman.cmd", ActionKind::Script));
-    let mut host = TestHost::new(&f);
-    let first = run_now(&f, "old", &mut host);
-    run_now(&f, "old", &mut host);
-    let state = schedule::state_dir(&f.home, "demo", "old").unwrap();
-    let line = fs::read_to_string(state.join("foreman.txt")).unwrap();
-    let fields: Vec<&str> = line.trim_end().split('|').collect();
-    let first_start = schedule::runs(&f.home, "demo").unwrap().into_iter().find(|r| Some(&r.run) == first.run.as_ref()).unwrap().started.unwrap().0;
-    assert_eq!(fields[..2], ["demo", "old"], "{line}");
-    assert!(fields[2].starts_with("old-") && Some(fields[2]) != first.run.as_deref(), "{line}");
-    assert_eq!(fields[3], f.alpha.to_str().unwrap(), "{line}");
-    assert_eq!((fields[4], fields[5]), (first_start.to_string().as_str(), "ok"), "{line}");
 }
 
 /// Unapproved, paused, changed since approval and a stale task fingerprint are refused and recorded.
