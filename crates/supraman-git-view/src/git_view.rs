@@ -408,9 +408,11 @@ impl GitView {
             RefEvent::Checkout(path) => self.ref_double_clicked(path, cx),
             RefEvent::RefreshWips => background::refresh_wips(cx.entity_id(), cx),
             RefEvent::AddRemote => {
+                self.branch.update(cx, |b, cx| b.close_add_worktree(cx));
                 self.remote.update(cx, |r, cx| r.open_add(cx));
                 cx.notify();
             }
+            RefEvent::AddWorktree => self.open_add_worktree(cx),
         }
     }
 
@@ -783,9 +785,12 @@ impl GitView {
 }
 
 impl GitView {
-    /// Add Remote while it is open, else the WIP panel for the WIP row, else the commit panel under the banner of a dirty tree.
+    /// Add Remote or Create Worktree while open, else the WIP panel for the WIP row, else the commit panel under the banner of a dirty tree.
     fn render_panel(&mut self, cx: &mut Context<Self>) -> AnyElement {
         if let Some(form) = self.remote.update(cx, |r, cx| r.render_add(cx)) {
+            return form;
+        }
+        if let Some(form) = self.branch.update(cx, |b, cx| b.render_add_worktree(cx)) {
             return form;
         }
         let selected = self.selected(cx);

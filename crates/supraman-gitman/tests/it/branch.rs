@@ -250,6 +250,50 @@ fn a_worktree_is_locked_unlocked_removed_with_its_branch_and_pruned() {
     assert_eq!(refs(&main).unwrap().worktrees.len(), 1);
 }
 
+#[test]
+fn a_worktree_is_added_on_a_branch_a_new_branch_or_a_tag_and_refused_a_used_folder_a_held_branch_or_a_bad_name() {
+    let f = Fixture::copy();
+    let main = f.repo();
+    let add = |folder: &Path, reference: &str, new: Option<&str>| Fixture::write_job(&main, LockSet::branch(), |s| branch::add_worktree(s, folder, reference, new));
+    let place = f.temp.path().join("repo.worktrees");
+    let worktree_of = |dir: &Path| refs(&main).unwrap().worktrees.iter().find(|w| supraman_core::paths::path_key(&w.path) == supraman_core::paths::path_key(dir)).map(|w| w.branch.clone());
+
+    let on_feature = place.join("feature");
+    add(&on_feature, "feature", None).unwrap();
+    assert_eq!(worktree_of(&on_feature), Some(Some("feature".into())), "an existing branch checked out there");
+    assert_eq!(head(&f, &on_feature), "feature");
+
+    let fresh = place.join("fresh");
+    add(&fresh, "origin/main", Some("fresh")).unwrap();
+    assert_eq!(head(&f, &fresh), "fresh");
+    assert_eq!(sha(&f, "fresh"), sha(&f, "origin/main"), "the new branch starts at the reference");
+    assert_eq!(f.git(&["config", "branch.fresh.merge"]), "refs/heads/main", "a new branch off a remote branch tracks it");
+
+    let tagged = place.join("v1");
+    add(&tagged, "v1", None).unwrap();
+    assert_eq!(worktree_of(&tagged), Some(None), "a tag is checked out detached");
+    assert_eq!(head(&f, &tagged), f.sha("second"));
+
+    let used = place.join("used");
+    std::fs::create_dir_all(&used).unwrap();
+    std::fs::write(used.join("keep.txt"), b"mine
+").unwrap();
+    assert_eq!(refused(add(&used, "stale", None)), branch::FOLDER_IN_USE);
+    assert_eq!(std::fs::read(used.join("keep.txt")).unwrap(), b"mine
+", "the folder is left as it was");
+    let empty = place.join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    add(&empty, "stale", None).unwrap();
+    assert_eq!(head(&f, &empty), "stale", "an empty folder is used");
+
+    let held = add(&place.join("side"), "side", None);
+    assert!(matches!(&held, Err(WriteError::Said(why)) if why.starts_with("'side' is already") && why.contains("wt")), "git's words: {held:?}");
+    assert!(!place.join("side").exists());
+    assert_eq!(refused(add(&place.join("bad"), "main", Some("two words"))), "A name cannot hold a space");
+    assert_eq!(refused(add(&place.join("taken"), "main", Some("feature"))), branch::BRANCH_EXISTS);
+    assert!(!place.join("bad").exists() && !place.join("taken").exists());
+}
+
 /// `f` again a few times while a scanner still holds a file written a moment ago.
 fn settled<T>(what: &str, mut f: impl FnMut() -> Result<T, String>) -> T {
     let mut last = f();

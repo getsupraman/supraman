@@ -111,6 +111,7 @@ impl NameDialog {
 impl BranchActions {
     /// The dialog's fields, made once a window is at hand, the first taking the keyboard.
     pub(crate) fn ensure_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.ensure_add_worktree(window, cx);
         let Some(dialog) = self.naming.as_mut().filter(|d| d.fields.is_none()) else { return };
         let given = match &dialog.ask {
             NameAsk::Rename { from } => from.clone(),

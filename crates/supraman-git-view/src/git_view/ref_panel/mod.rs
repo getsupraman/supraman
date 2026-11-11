@@ -94,6 +94,8 @@ pub(crate) enum RefEvent {
     RefreshWips,
     /// The REMOTE header's + was clicked.
     AddRemote,
+    /// The WORKTREES header's + was clicked.
+    AddWorktree,
 }
 
 pub(crate) struct RefPanel {
