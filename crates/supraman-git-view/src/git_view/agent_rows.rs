@@ -233,6 +233,7 @@ impl GitView {
             (1, _) => graph::cell(ix, row, false, palette, &self.hits),
             (2, Some(s)) => {
                 let state = clipped(format!("git-agent-state-{ix}"), s.activity.word(), false)
+                    .flex_shrink(4.)
                     .text_color(palette.muted)
                     .child(hit_target(&self.hits, format!("git-agent-state-{ix}")))
                     .into_any_element();

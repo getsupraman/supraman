@@ -310,6 +310,16 @@ async fn git_agent(view: &Entity<FleetView>, dir: &Path, out: &Path, cx: &mut As
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-git-agent.png"), None, cx).await?;
     println!("shot: {}", shot.display());
+    let window = cx.update(|window, _| window.viewport_size())?;
+    crate::selftest_git::resize(view, gpui::size(window.width * 0.75, window.height), cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the agent row's name cut in the narrower window", |v| {
+        (v.hits.borrow().contains_key("git-agent-0") && supraman_ui::clipped::cut_at("git-agent-0-name").is_some()).then_some(())
+    })
+    .await?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-git-agent-narrow.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    crate::selftest_git::resize(view, window, cx).await?;
     crate::selftest::press(view, "git-agent-0", MouseButton::Right, cx).await?;
     crate::selftest::until(view, cx, Duration::from_secs(10), "the session's menu over the Git tab", |v| v.dialogs.menu.as_ref().filter(|m| m.title == "fm-demo-shop").map(|_| ())).await?;
     view.update(cx, |v, cx| {

@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gpui::{Entity, MouseButton, TestAppContext, VisualTestContext, px};
+use gpui::{Entity, MouseButton, TestAppContext, VisualTestContext};
 use supraman_gitman::fixture::Fixture;
 use supraman_gitman::write::{Call, LockSet, Resource};
 use supraman_ui::marks::Activity;
@@ -175,7 +175,8 @@ fn in_a_narrow_column_the_leads_name_is_cut_with_an_ellipsis_and_nothing_overlap
     let (lead, state) = (&hits["git-agent-0"], &hits["git-agent-state-0"]);
     assert!(lead.fully_visible(), "the lead inside its cell: {lead:?}");
     assert!(name.left() >= lead.bounds.left() && name.right() <= state.bounds.left(), "the name {name:?} ends before its state {state:?}");
-    assert!(state.bounds.size.width > px(0.) && state.bounds.right() <= lead.bounds.right(), "its state {state:?} inside the lead {lead:?}");
+    assert!(state.bounds.right() <= lead.bounds.right(), "its state {state:?} inside the lead {lead:?}, given up before the name");
+    assert!(name.size.width >= state.bounds.size.width, "the name {name:?} keeps more room than its state {state:?}");
 }
 
 #[gpui::test]
