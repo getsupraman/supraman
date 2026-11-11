@@ -283,9 +283,11 @@ async fn inbox(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext
         cx.notify();
     });
     let (need, sync) = (format!("inbox-need-{WORKSPACE}/fm-demo-infra"), format!("inbox-sync-card-{WORKSPACE}/nightly"));
-    crate::selftest::until(view, cx, Duration::from_secs(10), "a need's and a schedule's Inbox cards", |v| {
+    let retry = "inbox-retry-fm-demo-infra";
+    crate::selftest::until(view, cx, Duration::from_secs(10), "a need's and a schedule's Inbox cards, the need's Retry a word", |v| {
         let hits = v.hits.borrow();
-        (hits.contains_key(&need) && hits.contains_key(&sync)).then_some(())
+        let word = hits.get(retry).is_some_and(|w| w.bounds.size.width > w.bounds.size.height * 2.);
+        (hits.contains_key(&need) && hits.contains_key(&sync) && word).then_some(())
     })
     .await?;
     let shot = capture(out.join("supraman-inbox.png"), None, cx).await?;

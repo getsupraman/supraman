@@ -110,3 +110,14 @@ fn copy_puts_the_call_on_the_clipboard_and_each_action_reaches_the_owner(cx: &mu
         "a hover button's click stays its own; a click on the card opens it"
     );
 }
+
+#[gpui::test]
+fn every_kinds_card_shows_open_as_a_word_and_its_other_actions_as_icons(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    let cards = view.read_with(cx, |h, _| h.cards.clone());
+    for card in &cards {
+        let (open, dismiss) = (bounds(&view, &part_key("open", card), cx), bounds(&view, &work_view::dismiss_key_of(&card.key), cx));
+        assert!(open.size.width > dismiss.size.width * 1.5, "{}: Open is a word, wider than the × icon: {open:?} against {dismiss:?}", card.kind);
+        assert!(open.left() >= dismiss.right(), "{}: the word after the hover icons", card.kind);
+    }
+}

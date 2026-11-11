@@ -50,6 +50,12 @@ fn painted(v: &FleetView, key: &str) -> bool {
     v.shown(key)
 }
 
+/// An Inbox card's main remedy painted as its word, wider than twice its height, after the card's hover `icon`.
+fn a_word_after(v: &FleetView, word: &str, icon: &str) -> bool {
+    let hits = v.hits.borrow();
+    matches!((hits.get(word), hits.get(icon)), (Some(w), Some(i)) if w.bounds.size.width > w.bounds.size.height * 2. && w.bounds.left() >= i.bounds.right())
+}
+
 /// The schedule's Details tab as text, once it is the active tab and holds `needle`.
 async fn page_text(view: &Entity<FleetView>, what: &str, needle: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     until(view, cx, WITHIN, what, |v| {
@@ -277,6 +283,8 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     }
     let open = format!("inbox-sched-open-{WS}/{ID}");
     until(view, cx, WITHIN, "the pending schedule's Inbox entry", |v| painted(v, &open).then_some(())).await?;
+    let later = format!("inbox-sched-later-{WS}/{ID}");
+    until(view, cx, WITHIN, "Approve as a word after the card's hover ×", |v| a_word_after(v, &open, &later).then_some(())).await?;
     let tip = view.read_with(cx, |v, _| v.tray_tooltip());
     if tip != "Supraman · 1 schedule waits for your approval" {
         bail!("the tray says {tip:?}");
@@ -308,7 +316,6 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     if fake.writes().len() != writes {
         bail!("sm's edit reached Task Scheduler: {:?}", fake.writes());
     }
-    let later = format!("inbox-sched-later-{WS}/{ID}");
     until(view, cx, WITHIN, "the changed schedule's Inbox entry", |v| painted(v, &later).then_some(())).await?;
     click(view, &later, cx).await?;
     until(view, cx, WITHIN, "the dismissed entry gone", |v| (!painted(v, &later) && v.tray_tooltip() == "Supraman").then_some(())).await?;
@@ -373,6 +380,8 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     }
     let dismiss = format!("inbox-sched-dismiss-{failed}");
     until(view, cx, WITHIN, "the failed run in the Inbox", |v| painted(v, &dismiss).then_some(())).await?;
+    let history = format!("inbox-sched-history-{failed}");
+    until(view, cx, WITHIN, "Open as a word after the card's hover ×", |v| a_word_after(v, &history, &dismiss).then_some(())).await?;
     let tip = view.read_with(cx, |v, _| v.tray_tooltip());
     if tip != "Supraman · 1 scheduled run needs you" {
         bail!("the tray says {tip:?}");

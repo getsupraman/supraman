@@ -20,6 +20,11 @@ impl Render for Holder {
             cx.stop_propagation();
             acted.set(acted.get() + 1);
         });
+        let went = self.acted.clone();
+        let go = primary(&self.hits, "c-go", "Attach", cx).on_click(move |_, _, cx| {
+            cx.stop_propagation();
+            went.set(went.get() + 10);
+        });
         let card = InboxCard::new("c", "blocked", "blocked", "A title")
             .mark(|color| div().size(px(12.)).bg(color).into_any_element(), cx)
             .context("ws")
@@ -28,6 +33,7 @@ impl Render for Holder {
             .line("detail", "", false)
             .line("why", "the reason", false)
             .action(act)
+            .primary(go)
             .on_click(move |_, _, _| clicked.set(clicked.get() + 1));
         div().w(px(320.)).child(card.render(&self.hits, cx))
     }
@@ -74,4 +80,19 @@ fn blocked_is_the_warning_colour_whoever_raised_it(cx: &mut TestAppContext) {
         assert_eq!(kind_color("duplicate", cx), status.hint);
         assert_eq!(kind_color("stale_in_progress", cx), status.info);
     });
+}
+
+#[gpui::test]
+fn the_main_remedy_is_a_word_after_the_hover_icons(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    let hits = view.read_with(cx, |h, _| h.hits.clone());
+    let b = |key: &str| hits.borrow().get(key).unwrap_or_else(|| panic!("{key} is painted")).bounds;
+    let (head, act, go) = (b("c-head"), b("c-act"), b("c-go"));
+    assert!(go.top() >= head.top() - px(1.) && go.bottom() <= head.bottom() + px(1.), "the word sits in the head");
+    assert!(go.left() >= act.right(), "the word follows the hover icons: {go:?} after {act:?}");
+    assert!(go.size.width > act.size.width * 1.5, "a word, not an icon's square: {go:?}");
+    assert!(go.size.height <= act.size.height, "the head keeps the icons' height: {go:?}");
+    let at = go.center();
+    cx.simulate_click(at, Modifiers::none());
+    view.read_with(cx, |h, _| assert_eq!((h.clicked.get(), h.acted.get()), (0, 10), "the word's click is its own"));
 }

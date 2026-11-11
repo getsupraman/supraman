@@ -7,6 +7,7 @@ use supraman_core::time::now_ms;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
 use supraman_ui::inbox_card::{self as shared, InboxCard};
+use supraman_ui::tooltip::Tooltip;
 use supraman_workman::InboxRow;
 use theme::ActiveTheme as _;
 
@@ -32,8 +33,12 @@ pub fn part_key(part: &str, card: &Card) -> String {
 
 fn action_button(hits: &HitTargets, card: &Card, part: &str, icon: Icon, tip: &'static str, on: &OnCard, does: CardAction, cx: &App) -> Stateful<Div> {
     let key = if does == CardAction::Dismiss { work_view::dismiss_key_of(&card.key) } else { part_key(part, card) };
+    acting(shared::action(hits, key, work_view::row_key_of(&card.key), icon.svg(shared::ICON, shared::icon_color(cx)), tip, cx), card, on, does)
+}
+
+fn acting(button: Stateful<Div>, card: &Card, on: &OnCard, does: CardAction) -> Stateful<Div> {
     let (on, call) = (on.clone(), card.call.clone());
-    shared::action(hits, key, work_view::row_key_of(&card.key), icon.svg(shared::ICON, shared::icon_color(cx)), tip, cx).on_click(move |_: &ClickEvent, window, cx| {
+    button.on_click(move |_: &ClickEvent, window, cx| {
         cx.stop_propagation();
         if does == CardAction::Copied {
             cx.write_to_clipboard(ClipboardItem::new_string(call.clone()));
@@ -52,7 +57,7 @@ pub fn render(card: &Card, hits: &HitTargets, now: i64, mark: Mark, on: OnCard, 
         .when(card.since, now)
         .line("ref", card.ref_.clone(), true)
         .line("detail", card.detail.clone().unwrap_or_default(), false)
-        .action(action_button(hits, card, "open", Icon::Work, "Open in the Work tab", &on, CardAction::Open, cx));
+        .primary(acting(shared::primary(hits, part_key("open", card), "Open", cx).tooltip(Tooltip::text("Open in the Work tab")), card, &on, CardAction::Open));
     if card.url.is_some() {
         shown = shown.action(action_button(hits, card, "web", Icon::ArrowUpRight, "Open in Workman's web page", &on, CardAction::Web, cx));
     }

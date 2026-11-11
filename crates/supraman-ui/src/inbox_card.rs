@@ -1,4 +1,4 @@
-//! Every Inbox card: a kind's tint and badge, a head line, the title, its lines and the owner's hover icons.
+//! Every Inbox card: a kind's tint and badge, a head line, the title, its lines, the owner's main remedy as a word and its other actions as hover icons.
 
 use std::rc::Rc;
 
@@ -48,6 +48,11 @@ pub fn action(hits: &HitTargets, key: impl Into<SharedString>, card_key: impl In
     button::revealed(hits, key, icon, px(BUTTON), card_key, false, cx).tooltip(Tooltip::text(tip))
 }
 
+/// A card's main remedy under `key`: its word, shown without hover; the owner adds its click.
+pub fn primary(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<SharedString>, cx: &App) -> Stateful<Div> {
+    button::tinted(hits, key, label, None, cx).h(px(BUTTON))
+}
+
 pub fn icon_color(cx: &App) -> Hsla {
     cx.theme().colors().text_muted
 }
@@ -66,6 +71,7 @@ pub struct InboxCard {
     when: Option<(i64, i64)>,
     lines: Vec<(String, SharedString, bool)>,
     actions: Vec<Stateful<Div>>,
+    primary: Option<Stateful<Div>>,
     on_click: Option<OnClick>,
 }
 
@@ -85,6 +91,7 @@ impl InboxCard {
             when: None,
             lines: Vec::new(),
             actions: Vec::new(),
+            primary: None,
             on_click: None,
         }
     }
@@ -125,6 +132,12 @@ impl InboxCard {
         self
     }
 
+    /// A button made by [`primary`], at the head's right after the hover icons.
+    pub fn primary(mut self, button: Stateful<Div>) -> Self {
+        self.primary = Some(button);
+        self
+    }
+
     pub fn on_click(mut self, on: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.on_click = Some(Rc::new(on));
         self
@@ -145,7 +158,7 @@ impl InboxCard {
             .children(self.when.and_then(|(at, now)| when(part("when"), at, now, cx)))
             .child(div().flex_none().px_1().rounded_sm().bg(color.opacity(BADGE_TINT)).text_color(color).font_weight(FontWeight::BOLD).child(self.badge))
             .child(div().flex_1())
-            .child(div().flex().flex_none().items_center().children(self.actions))
+            .child(div().flex().flex_none().items_center().gap_1().children(self.actions).children(self.primary))
             .child(hit_target(hits, part("head")));
         let title = clamped(part("title"), self.title, 2).text_sm().text_color(colors.text).child(hit_target(hits, part("title")));
         let lines = self.lines.into_iter().map(|(name, text, quiet)| {
