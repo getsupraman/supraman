@@ -187,9 +187,9 @@ pub(crate) fn message(ix: usize, row: &GraphRow, wip: Option<&str>, palette: &Pa
 }
 
 /// The WIP row's message cell: the summary's `field`, then the counts muted, after the lane's bar.
-pub(crate) fn wip_message(row: &GraphRow, field: impl IntoElement, counts: String, palette: &Palette) -> AnyElement {
+pub(crate) fn wip_message(row: &GraphRow, field: impl IntoElement, counts: impl IntoElement, palette: &Palette) -> AnyElement {
     let bar = div().absolute().left(px(-CELL_PAD)).w(px(BAR)).top(px(GAP / 2.)).bottom(px(GAP / 2.)).bg(palette.lane(row.row.colour));
-    let counts = div().flex_none().whitespace_nowrap().text_color(palette.muted).child(SharedString::from(counts));
+    let counts = div().flex_none().whitespace_nowrap().text_color(palette.muted).child(counts);
     div().relative().size_full().flex().items_center().gap_2().overflow_hidden().child(bar).child(field).child(counts).into_any_element()
 }
 

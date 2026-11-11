@@ -44,7 +44,7 @@ use std::sync::Arc;
 
 use gpui::{AnyElement, App, AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle, Pixels, Render, SharedString, Subscription, Task, Window, div, prelude::*, px};
 use supraman_gitman::write::Occupancy;
-use supraman_gitman::{Repo, WorktreeRow};
+use supraman_gitman::{Repo, WipCounts, WorktreeRow};
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::{banner, button};
 use supraman_ui::tooltip::Tooltip;
@@ -61,7 +61,7 @@ use cells::ref_cell;
 use details::{CommitPanel, PanelEvent};
 use diff::DiffView;
 use colours::Palette;
-use load::{Heads, Problem, Wip};
+use load::{Heads, Problem};
 use ref_panel::{RefEvent, RefPanel};
 use stash::StashActions;
 use branch::{BranchActions, OpenGit};
@@ -164,7 +164,7 @@ pub struct GitView {
     /// The other worktrees whose WIP rows the last graph read laid out.
     worktree_rows: Vec<WorktreeRow>,
     agents: agent_rows::Agents,
-    wip: Option<Wip>,
+    wip: Option<WipCounts>,
     table: TableState,
     /// The columns' preferred widths.
     widths: Vec<Pixels>,
@@ -791,7 +791,7 @@ impl GitView {
         if let Some(Selected::Agent(id)) = &selected {
             return self.render_agent_panel(id, cx);
         }
-        let dirty = self.wip.map_or(0, |w| w.total());
+        let dirty = self.wip.map_or(0, |w| w.total() as usize);
         let banner = (dirty > 0 && selected.is_some()).then(|| wip::banner(dirty, &self.hits, cx));
         div().size_full().flex().flex_col().children(banner).child(div().flex_1().min_h_0().child(self.panel.clone())).into_any_element()
     }

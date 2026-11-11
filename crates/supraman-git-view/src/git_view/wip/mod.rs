@@ -21,7 +21,8 @@ use supraman_ui::stall;
 use supraman_ui::table::TableState;
 use supraman_ui::tree::{Order, TreeState};
 
-use super::details::{Counts, FileView, PanelEvent, sort_changes};
+use super::details::{FileView, PanelEvent, sort_changes};
+use supraman_gitman::WipCounts;
 use super::diff::{Of, Target};
 use super::write_gate::{WriteGate, Writes};
 
@@ -70,7 +71,7 @@ pub(crate) enum State {
 
 /// One list's view state.
 pub(crate) struct List {
-    pub(crate) tree: TreeState<Option<ChangeKind>, Counts>,
+    pub(crate) tree: TreeState<Option<ChangeKind>, WipCounts>,
     pub(crate) paths: TableState,
     pub(crate) open: bool,
 }

@@ -6,10 +6,11 @@ use std::collections::HashMap;
 use supraman_gitman::{ChangeKind, Conflict, EntryKind, FileChange, OperationState, Repo, Status, UnderWay, short_sha};
 use supraman_ui::tree::{Order, Tree};
 
-use crate::git_view::details::{Counts, sort_changes};
+use crate::git_view::details::sort_changes;
+use supraman_gitman::WipCounts;
 use crate::git_view::diff::{Of, Target};
 
-pub(crate) type FileTree = Tree<Option<ChangeKind>, Counts>;
+pub(crate) type FileTree = Tree<Option<ChangeKind>, WipCounts>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Branch {
@@ -100,7 +101,7 @@ pub(crate) fn sections(status: &Status) -> (Vec<FileChange>, Vec<FileChange>) {
 }
 
 fn tree(files: &[FileChange], order: Order) -> FileTree {
-    Tree::build(files.iter().map(|c| (c.path.clone(), Some(c.kind))), Counts::add, order)
+    Tree::build(files.iter().map(|c| (c.path.clone(), Some(c.kind))), WipCounts::add, order)
 }
 
 pub(crate) fn load(repo: &Repo, order: Order) -> Result<Loaded, String> {

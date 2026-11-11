@@ -164,7 +164,7 @@ fn git_tab_puts_the_wip_row_on_top_of_a_dirty_tree_and_none_on_a_clean_one(cx: &
         let top = &v.pages.read(cx).rows[0];
         assert!(top.wip() && v.pages.read(cx).rows[1].sha.as_ref() == f.sha("ahead"), "WIP, then HEAD's commit");
         assert!(top.row.edges().all(|e| e.dashed), "its edge to HEAD is dashed");
-        assert_eq!(v.wip.map(|w| w.counts()).as_deref(), Some("+2 ✎2 −1"), "s.txt and u.txt added, a.txt and the rename changed, b.txt deleted");
+        assert_eq!(v.wip.map(|w| w.words()).as_deref(), Some("+2 ✎1 −1 →1"), "s.txt and u.txt added, a.txt changed, b.txt deleted, one renamed");
         assert_eq!(v.pages.read(cx).rows.iter().filter(|r| r.wip()).count(), 1);
     });
     f.git(&["reset", "-q", "--hard"]);

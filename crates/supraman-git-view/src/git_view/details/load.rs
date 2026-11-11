@@ -3,49 +3,20 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use supraman_gitman::{Amendable, ChangeKind, Details, FileChange, Repo, Stash};
+use supraman_gitman::{Amendable, ChangeKind, Details, FileChange, Repo, Stash, WipCounts};
 use supraman_ui::tree::{Order, Tree};
 
 /// A file's change in this commit; `None` on a file the commit left as it was.
 pub(crate) type Mark = Option<ChangeKind>;
 
-/// The changes a folder holds over its whole subtree, or a commit holds.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct Counts {
-    pub(crate) modified: usize,
-    pub(crate) added: usize,
-    pub(crate) deleted: usize,
-    pub(crate) renamed: usize,
-}
-
-impl Counts {
-    pub(crate) fn add(&mut self, mark: &Mark) {
-        match mark {
-            Some(ChangeKind::Added | ChangeKind::Copied | ChangeKind::Untracked) => self.added += 1,
-            Some(ChangeKind::Deleted) => self.deleted += 1,
-            Some(ChangeKind::Renamed) => self.renamed += 1,
-            Some(ChangeKind::Modified | ChangeKind::TypeChanged | ChangeKind::Unmerged) => self.modified += 1,
-            None => {}
-        }
-    }
-
-    /// The non-zero counts, modified, added, deleted then renamed.
-    pub(crate) fn parts(&self) -> Vec<(ChangeKind, usize)> {
-        [(ChangeKind::Modified, self.modified), (ChangeKind::Added, self.added), (ChangeKind::Deleted, self.deleted), (ChangeKind::Renamed, self.renamed)]
-            .into_iter()
-            .filter(|(_, n)| *n > 0)
-            .collect()
-    }
-}
-
-pub(crate) type FileTree = Tree<Mark, Counts>;
+pub(crate) type FileTree = Tree<Mark, WipCounts>;
 
 pub(crate) struct Loaded {
     pub(crate) sha: String,
     pub(crate) details: Details,
     pub(crate) stash: Option<Arc<Stash>>,
     pub(crate) changes: Vec<FileChange>,
-    pub(crate) counts: Counts,
+    pub(crate) counts: WipCounts,
     /// The changed files as a tree.
     pub(crate) changed: FileTree,
     /// Every file at the commit, the changed and deleted ones marked; read only with View all files on.
@@ -90,10 +61,10 @@ pub(crate) fn load_stash(repo: &Repo, stash: Arc<Stash>, order: Order, all_files
 
 fn build(repo: &Repo, sha: &str, details: Details, changes: Vec<FileChange>, stash: Option<Arc<Stash>>, order: Order, all_files: bool) -> Result<Loaded, String> {
     let all = if all_files { Some(whole(repo, sha, &changes, order)?) } else { None };
-    let mut counts = Counts::default();
+    let mut counts = WipCounts::default();
     changes.iter().for_each(|c| counts.add(&Some(c.kind)));
     let files = changes.iter().map(|c| c.path.clone()).collect();
-    let changed = Tree::build(changes.iter().map(|c| (c.path.clone(), Some(c.kind))), Counts::add, order);
+    let changed = Tree::build(changes.iter().map(|c| (c.path.clone(), Some(c.kind))), WipCounts::add, order);
     Ok(Loaded { sha: sha.to_string(), details, stash, changes, counts, changed, all, files })
 }
 
@@ -102,7 +73,7 @@ pub(crate) fn whole(repo: &Repo, sha: &str, changes: &[FileChange], order: Order
     let tree = supraman_gitman::tree(repo, sha).map_err(|e| e.to_string())?;
     let all = all_files(tree.into_iter().map(|f| f.path), changes);
     let files = all.iter().map(|(p, _)| p.clone()).collect();
-    Ok(Whole { tree: Tree::build(all, Counts::add, order), files })
+    Ok(Whole { tree: Tree::build(all, WipCounts::add, order), files })
 }
 
 /// The tree's files, each marked with its change, then every changed path the tree does not list.

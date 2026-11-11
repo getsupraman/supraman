@@ -21,7 +21,8 @@ use supraman_ui::text_input::{self, TextInput};
 use supraman_ui::tree::{Order, TreeState};
 
 pub(crate) use files::{kind_word, mark_icon};
-pub(crate) use load::{Counts, Mark};
+pub(crate) use load::Mark;
+use supraman_gitman::WipCounts;
 pub(crate) use render::{PANEL_STEP, placeholder};
 
 use super::Selected;
@@ -74,7 +75,7 @@ pub(crate) struct Shown {
     pub(crate) amendable: Option<Amendable>,
     /// The stash shown, its parents only its base.
     pub(crate) stash: Option<Arc<Stash>>,
-    pub(crate) counts: Counts,
+    pub(crate) counts: WipCounts,
     /// The changed files in path order, Z–A when the order is.
     pub(crate) changes: Vec<FileChange>,
     /// Each change's place in `changes` by its path.
@@ -121,8 +122,8 @@ pub(crate) struct CommitPanel {
     /// Expand All (`true`) or Collapse All pressed while the whole tree is read, for when it is in.
     whole_expand: Option<bool>,
     order: Order,
-    changed: TreeState<Mark, Counts>,
-    all: TreeState<Mark, Counts>,
+    changed: TreeState<Mark, WipCounts>,
+    all: TreeState<Mark, WipCounts>,
     /// Whether Expand All, rather than Collapse All, last ran on the changed tree and on the whole tree.
     changed_expanded: bool,
     all_expanded: bool,
@@ -251,7 +252,7 @@ impl CommitPanel {
                 whole.files
             }
             None => {
-                self.all.set_tree(load::FileTree::build(std::iter::empty(), Counts::add, self.order));
+                self.all.set_tree(load::FileTree::build(std::iter::empty(), WipCounts::add, self.order));
                 self.whole = Whole::Unread;
                 loaded.files
             }
@@ -396,7 +397,7 @@ impl CommitPanel {
     }
 
     /// The tree on show: the whole tree with View all files, else the changed files'.
-    fn tree(&self) -> (&TreeState<Mark, Counts>, bool) {
+    fn tree(&self) -> (&TreeState<Mark, WipCounts>, bool) {
         if self.all_files { (&self.all, self.all_expanded) } else { (&self.changed, self.changed_expanded) }
     }
 

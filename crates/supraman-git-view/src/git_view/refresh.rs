@@ -11,7 +11,8 @@ use supraman_ui::hit::SNAP;
 use supraman_ui::stall;
 
 use super::live::{self, FOCUS_DELAY, Live, Refresh};
-use super::load::{self, First, GraphRow, Kept, Wip};
+use super::load::{self, First, GraphRow, Kept};
+use supraman_gitman::WipCounts;
 use super::ref_panel::Walk;
 use super::pages::Pages;
 use super::splice::Loaded;
@@ -342,7 +343,7 @@ impl GitView {
         .detach();
     }
 
-    fn apply_wip(&mut self, token: u64, read: Result<(Option<Wip>, Arc<Status>), String>, files: Option<HashSet<String>>, cx: &mut Context<Self>) {
+    fn apply_wip(&mut self, token: u64, read: Result<(Option<WipCounts>, Arc<Status>), String>, files: Option<HashSet<String>>, cx: &mut Context<Self>) {
         if token != self.follow.wip_token {
             return;
         }
