@@ -7,7 +7,6 @@ use theme::ActiveTheme as _;
 /// A strip over this many items is a plain bar.
 pub const SQUARES_MAX: usize = 40;
 const SQUARE: f32 = 11.;
-/// Every state dot's side: a session's, a workspace's, an item's.
 pub const DOT: f32 = 8.;
 
 #[derive(Debug, Clone, Copy, PartialEq)]

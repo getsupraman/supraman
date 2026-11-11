@@ -66,7 +66,6 @@ impl FleetView {
     }
 }
 
-/// The names of the live sessions that can be attached.
 pub(crate) fn attachable(live: &occupancy::Live) -> Vec<String> {
     live.sessions().into_iter().filter(|s| s.attach.is_some()).map(|s| s.name).collect()
 }

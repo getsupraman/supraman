@@ -96,7 +96,6 @@ impl GitView {
         view
     }
 
-    /// The fleet's pages of the sessions, for the agent rows' panel.
     pub fn set_session_pages(&mut self, pages: SessionPages, cx: &mut Context<Self>) {
         self.agents.pages = Some(pages);
         cx.notify();
