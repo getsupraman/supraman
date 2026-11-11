@@ -72,6 +72,7 @@ fn job(c: &Case) -> Apply {
         restart_args: Vec::new(),
         log: c.log.clone(),
         stop_after: None,
+        one_rename: true,
     }
 }
 
@@ -210,10 +211,9 @@ fn a_killed_apply_leaves_a_startable_install_at_every_step() {
 #[test]
 fn a_kill_between_the_rename_aside_and_the_move_in_is_put_back_at_the_next_start() {
     let c = case();
-    let _aside = install::rename_aside_on_this_thread();
     let holder = hold(&c.install);
     let held_moves = new_files().keys().filter(|k| **k != "VERSION").position(|k| *k == HOOK_EXE).unwrap();
-    let out = install::apply(&Apply { stop_after: Some(held_moves + 1), ..job(&c) });
+    let out = install::apply(&Apply { stop_after: Some(held_moves + 1), one_rename: false, ..job(&c) });
     assert_eq!(out.result, Err(Failed::Stopped));
     assert!(!c.install.join(HOOK_EXE).exists(), "stopped with the hooks copy renamed aside and the new one not in");
     drop(holder);
@@ -438,9 +438,8 @@ fn a_rolled_back_apply_puts_the_running_hooks_copy_back_from_its_link() {
 #[test]
 fn the_rename_aside_path_journals_the_rename_and_lists_the_old_copy() {
     let c = case();
-    let _aside = install::rename_aside_on_this_thread();
     let _holder = hold(&c.install);
-    let out = install::apply(&job(&c));
+    let out = install::apply(&Apply { one_rename: false, ..job(&c) });
     let log = fs::read_to_string(&c.log).unwrap_or_default();
     assert_eq!(out.result, Ok(()), "{log}");
     assert!(log.contains(&format!("renamed aside {HOOK_EXE} -> {HOOK_EXE}.old-")), "{log}");

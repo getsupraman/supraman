@@ -43,5 +43,5 @@ fn parse_apply(args: &[&str]) -> Result<Apply, Failure> {
         }
     }
     let need = |v: Option<PathBuf>, flag: &str| v.ok_or_else(|| Failure::Usage(format!("update apply needs {flag}")));
-    Ok(Apply { from: need(from, "--from")?, to: need(to, "--to")?, wait_pid, wait, restart, restart_args, log: need(log, "--log")?, stop_after: None })
+    Ok(Apply { from: need(from, "--from")?, to: need(to, "--to")?, wait_pid, wait, restart, restart_args, log: need(log, "--log")?, stop_after: None, one_rename: true })
 }
