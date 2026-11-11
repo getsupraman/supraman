@@ -181,10 +181,8 @@ impl WorkView {
     fn render_over(&self, page: &ItemPage, key: StateKey, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let live = (self.link.live)();
-        let attach = page.claim.as_ref().and_then(|c| attach_target(c, &live)).map(|session| {
-            let name = if session.name.is_empty() { session.id.clone() } else { session.name.clone() };
-            let id = session.id.clone();
-            button::bordered(&self.hits, format!("work-attach-{}", session.id), format!("Attach to {name}"), cx).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+        let attach = page.claim.as_ref().and_then(|c| attach_target(c, &live)).and_then(|session| Some((session.name.clone(), session.attach.clone()?))).map(|(name, id)| {
+            button::bordered(&self.hits, format!("work-attach-{id}"), format!("Attach to {name}"), cx).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 let attach = this.link.attach.clone();
                 attach(&id, window, cx);
             }))

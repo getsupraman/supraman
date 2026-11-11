@@ -225,14 +225,14 @@ pub fn activity(health: &Health) -> Option<Activity> {
     }
 }
 
-/// The live sessions as the Git tabs show them, their attach id while [`attachable`].
+/// The live sessions as every tab shows them, by [`display_name`], their attach id while [`attachable`].
 pub fn live_sessions(sessions: &[Session], now_ms: i64) -> Vec<LiveSession> {
     sessions
         .iter()
         .filter_map(|s| {
             let health = s.health(now_ms);
             let activity = activity(&health)?;
-            Some(LiveSession { name: s.name.clone(), claude_session_id: s.session_id.clone(), cwd: s.cwd.clone(), activity, attach: attachable(s, &health).then(|| s.id.clone()) })
+            Some(LiveSession { name: display_name(s).to_string(), claude_session_id: s.session_id.clone(), cwd: s.cwd.clone(), activity, attach: attachable(s, &health).then(|| s.id.clone()) })
         })
         .collect()
 }

@@ -86,7 +86,7 @@ impl WorkView {
     pub(crate) fn needs_cards(&self, cx: &App) -> Vec<Card> {
         let Some(inbox) = &self.inbox else { return Vec::new() };
         let rows: Vec<(&str, &InboxRow)> = inbox.read(cx).rows().into_iter().filter(|(w, _)| *w == self.workspace).collect();
-        let live: Vec<String> = (self.link.live)().into_iter().map(|s| s.name).collect();
+        let live: Vec<String> = (self.link.live)().into_iter().filter(|s| s.attach.is_some()).map(|s| s.name).collect();
         cards::sections(&rows, &live, (self.now)()).needs_you
     }
 
@@ -193,7 +193,6 @@ impl WorkView {
 
     fn render_working(&self, now: i64, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
-        let info = cx.theme().status().info;
         let claims: Vec<Claim> = self.overview.as_ref().map(|o| working_now(o, &self.projects).into_iter().cloned().collect()).unwrap_or_default();
         let live = (self.link.live)();
         let mut card = self.card("Working now", Some(claims.len()), cx);
@@ -205,9 +204,10 @@ impl WorkView {
             let id = claim.item.id.clone();
             let holder = claim.holder().to_string();
             let facts = claim_facts(&claim, now);
-            let session = match attach_target(&claim, &live) {
+            let found = attach_target(&claim, &live);
+            let mark = Mark::Filled(found.map_or(cx.theme().status().info, |s| s.activity.color(cx)));
+            let session = match found.and_then(|s| s.attach.clone()) {
                 Some(target) => {
-                    let target = target.id.clone();
                     button::ghost(&self.hits, format!("work-working-session-{qref}"), cx)
                         .text_color(colors.text_accent)
                         .child(SharedString::from(holder))
@@ -229,7 +229,7 @@ impl WorkView {
                     .py(px(5.))
                     .border_t_1()
                     .border_color(colors.border_variant)
-                    .child(div().pt(px(6.)).child(dot(Mark::Filled(info))))
+                    .child(div().pt(px(6.)).child(dot(mark)))
                     .child(
                         div()
                             .flex_1()

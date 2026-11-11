@@ -1,15 +1,9 @@
 use std::rc::Rc;
 
+use supraman_ui::session::LiveSession;
 use supraman_workman::{Claim, ItemPage};
 
 use super::*;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LiveSession {
-    pub claude_session_id: String,
-    pub id: String,
-    pub name: String,
-}
 
 #[derive(Clone)]
 pub struct FleetLink {
@@ -169,17 +163,21 @@ mod tests {
         assert_eq!(run_of(&ItemPage::default()), None);
     }
 
+    fn live_session(claude_session_id: &str, attach: &str, name: &str) -> LiveSession {
+        LiveSession { name: name.into(), claude_session_id: claude_session_id.into(), cwd: Default::default(), activity: supraman_ui::marks::Activity::Working, attach: Some(attach.into()) }
+    }
+
     #[test]
     fn a_claim_joins_a_live_session_on_its_claude_session_id() {
         let live = vec![
-            LiveSession { claude_session_id: "uuid-a".into(), id: "aaaaaaaa".into(), name: "aw-a".into() },
-            LiveSession { claude_session_id: "uuid-b".into(), id: "bbbbbbbb".into(), name: "aw-b".into() },
+            live_session("uuid-a", "aaaaaaaa", "aw-a"),
+            live_session("uuid-b", "bbbbbbbb", "aw-b"),
         ];
         let claim = |sid: Option<&str>| Claim {
             session: Some(Session { name: "aw-b".into(), claude_session_id: sid.map(str::to_string), ..Default::default() }),
             ..Default::default()
         };
-        assert_eq!(attach_target(&claim(Some("uuid-b")), &live).map(|s| s.id.as_str()), Some("bbbbbbbb"));
+        assert_eq!(attach_target(&claim(Some("uuid-b")), &live).and_then(|s| s.attach.as_deref()), Some("bbbbbbbb"));
         assert_eq!(attach_target(&claim(Some("uuid-gone")), &live), None, "the name alone is not a join");
         assert_eq!(attach_target(&claim(None), &live), None);
         assert_eq!(attach_target(&claim(Some("")), &[LiveSession { claude_session_id: String::new(), ..live[0].clone() }]), None);

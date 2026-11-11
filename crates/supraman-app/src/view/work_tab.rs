@@ -6,7 +6,7 @@ use std::rc::Rc;
 use gpui::Context;
 
 use super::{FleetView, Tab, TabKind, occupancy};
-use crate::work_view::{self, FleetLink, LiveSession, WorkView};
+use crate::work_view::{self, FleetLink, WorkView};
 
 impl FleetView {
     pub fn open_work(&mut self, workspace: &str, cx: &mut Context<Self>) -> u64 {
@@ -23,7 +23,7 @@ impl FleetView {
         let link = FleetLink {
             live: {
                 let live = self.occupancy.clone();
-                Rc::new(move || attachable(&live))
+                Rc::new(move || live.sessions())
             },
             attach: Rc::new(move |id, window, cx| {
                 fleet.update(cx, |fleet, cx| fleet.attach_by_id(&name, id, window, cx)).ok();
@@ -66,9 +66,7 @@ impl FleetView {
     }
 }
 
-pub(crate) fn attachable(live: &occupancy::Live) -> Vec<LiveSession> {
-    live.sessions()
-        .into_iter()
-        .filter_map(|s| Some(LiveSession { claude_session_id: s.claude_session_id, id: s.attach?, name: s.name }))
-        .collect()
+/// The names of the live sessions that can be attached.
+pub(crate) fn attachable(live: &occupancy::Live) -> Vec<String> {
+    live.sessions().into_iter().filter(|s| s.attach.is_some()).map(|s| s.name).collect()
 }
