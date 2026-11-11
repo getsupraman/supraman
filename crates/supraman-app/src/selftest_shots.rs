@@ -325,6 +325,7 @@ async fn git_palette(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowC
     git_add_remote(view, out, cx).await?;
     git_add_worktree(view, out, cx).await?;
     git_agent(view, &dir, &fixture.worktree, out, cx).await?;
+    git_pills(view, out, cx).await?;
     drop(fixture);
     Ok(())
 }
@@ -444,6 +445,38 @@ async fn git_add_worktree(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWi
     let shot = capture(out.join("supraman-git-add-worktree.png"), None, cx).await?;
     println!("shot: {}", shot.display());
     crate::selftest::click(view, "git-add-worktree-close", cx).await
+}
+
+/// The graph's pills at the normal width, one hovered, and cut in a narrow Branch / Tag column, which the column's double-click then resets; what René compares with GitKraken by eye.
+async fn git_pills(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let pill = crate::selftest::until(view, cx, Duration::from_secs(10), "a pill", |v| v.hits.borrow().iter().find(|(k, _)| k.starts_with("git-pill-")).map(|(_, h)| h.bounds)).await?;
+    let away = cx.update(|window, _| window.viewport_size())?;
+    let mv = |position, cx: &mut AsyncWindowContext| cx.update(|window, cx| window.dispatch_event(gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent { position, pressed_button: None, modifiers: gpui::Modifiers::default() }), cx));
+    mv(gpui::point(away.width - gpui::px(4.), away.height - gpui::px(4.)), cx)?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-git-pills.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    mv(pill.center(), cx)?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-git-pill-hover.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    let (divider, column) = crate::selftest::until(view, cx, Duration::from_secs(10), "the Branch / Tag divider", |v| {
+        let hits = v.hits.borrow();
+        Some((hits.get("git-divider-refs")?.bounds.center(), hits.get("git-col-refs")?.bounds))
+    })
+    .await?;
+    let to = gpui::point(column.left() + gpui::px(70.), divider.y);
+    crate::selftest_tabs::drag_between(divider, to, None, cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the pills cut in the narrow column", |v| {
+        let narrow = v.hits.borrow().get("git-col-refs").is_some_and(|c| c.bounds.size.width < gpui::px(80.));
+        (narrow && v.hits.borrow().keys().any(|k| k.starts_with("git-pill-") && supraman_ui::clipped::cut_at(&k.replace("git-pill-", "git-ref-")).is_some())).then_some(())
+    })
+    .await?;
+    mv(gpui::point(away.width - gpui::px(4.), away.height - gpui::px(4.)), cx)?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-git-pills-narrow.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    crate::selftest::double_click(view, "git-divider-refs", cx).await
 }
 
 /// The same tab's WIP panel: staged and unstaged files and a typed summary in the commit area.
