@@ -212,7 +212,7 @@ const ICACLS_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[cfg(windows)]
 fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
-    let user = std::env::var("USERNAME").map_err(|_| std::io::Error::other("USERNAME is not set"))?;
+    let user = supraman_core::platform::paths::user_name().ok_or_else(|| std::io::Error::other("USERNAME is not set"))?;
     let out = process::run(
         // an elevated process's file also carries explicit SYSTEM and Administrators entries
         process::command("icacls")
@@ -551,7 +551,7 @@ mod tests {
         {
             let acl = supraman_core::process::command("icacls").arg(&path).output().unwrap();
             let acl = String::from_utf8_lossy(&acl.stdout);
-            let user = std::env::var("USERNAME").unwrap();
+            let user = supraman_core::platform::paths::user_name().unwrap();
             let grants: Vec<&str> = acl.lines().filter(|l| l.contains(":(")).collect();
             assert_eq!(grants.len(), 1, "{acl}");
             assert!(grants[0].contains(&format!("{user}:(F)")), "{acl}");

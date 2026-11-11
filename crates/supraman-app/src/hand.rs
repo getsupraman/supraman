@@ -913,7 +913,7 @@ mod tests {
         {
             let out = supraman_core::process::command("icacls").arg(&config).output().unwrap();
             let acl = String::from_utf8_lossy(&out.stdout);
-            let user = std::env::var("USERNAME").unwrap();
+            let user = supraman_core::platform::paths::user_name().unwrap();
             let aces: Vec<&str> = acl.lines().filter(|l| l.contains(":(")).collect();
             assert_eq!(aces.len(), 1, "{acl}");
             assert!(aces[0].contains(&user) && aces[0].contains("(F)") && !aces[0].contains("(I)"), "{acl}");
