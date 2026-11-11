@@ -18,7 +18,6 @@ pub struct WipCounts {
     pub conflicted: u32,
 }
 
-/// The order every count is listed in.
 const ORDER: [ChangeKind; 5] = [ChangeKind::Added, ChangeKind::Modified, ChangeKind::Deleted, ChangeKind::Renamed, ChangeKind::Unmerged];
 
 impl WipCounts {
@@ -43,7 +42,7 @@ impl WipCounts {
         }
     }
 
-    /// One file of `kind` more; `None` is a file left as it was.
+    /// `None`: a file left as it was.
     pub fn add(&mut self, kind: &Option<ChangeKind>) {
         let slot = match kind {
             Some(ChangeKind::Added | ChangeKind::Copied | ChangeKind::Untracked) => &mut self.added,

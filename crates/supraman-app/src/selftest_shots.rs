@@ -339,6 +339,12 @@ async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-git-wip-rows.png"), None, cx).await?;
     println!("shot: {}", shot.display());
+    let row = crate::selftest::until(view, cx, Duration::from_secs(10), "the other worktree's row", |v| v.hits.borrow().keys().find(|k| k.starts_with("git-worktree-ref-")).cloned()).await?;
+    crate::selftest::click(view, &row, cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the worktree panel's header", |v| v.hits.borrow().contains_key("worktree-branch").then_some(())).await?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-git-worktree.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
     crate::selftest_git::resize(view, gpui::size(window.width * 0.75, window.height), cx).await?;
     crate::selftest::until(view, cx, Duration::from_secs(10), "the agent row's name cut in the narrower window", |v| {
         (v.hits.borrow().contains_key("git-agent-0") && supraman_ui::clipped::cut_at("git-agent-0-name").is_some()).then_some(())
