@@ -34,6 +34,7 @@ impl GitView {
             let summary = input.read(cx).text().to_string();
             return cells::wip_message(row, div().relative().flex_none().child(still_field(summary, palette, cx)).child(hit_target(&self.hits, FIELD_KEY.into())), SharedString::from(counts), palette);
         }
+        let order = self.wip_panel.read(cx).message_order(true, cx).unwrap_or_default();
         let field = div()
             .relative()
             .w(px(FIELD))
@@ -43,7 +44,7 @@ impl GitView {
             .on_mouse_down(MouseButton::Left, cx.listener(|_, _: &MouseDownEvent, _, cx| cx.stop_propagation()))
             .child(input)
             .child(hit_target(&self.hits, FIELD_KEY.into()));
-        cells::wip_message(row, field, SharedString::from(counts), palette)
+        cells::wip_message(row, order.on(div().flex_none()).child(field), SharedString::from(counts), palette)
     }
 
     /// Ctrl+Shift+S: every file staged, the WIP row selected and its summary given the keyboard.

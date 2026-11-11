@@ -82,6 +82,11 @@ fn heads_message_box_opens_to_a_summary_and_description_and_amends_only_the_mess
     assert_eq!((field(&view, cx).2, field(&view, cx).3), (false, true), "Tab: the description");
     keys(&view, "shift-tab", cx);
     assert_eq!((field(&view, cx).2, field(&view, cx).3), (true, false), "Shift+Tab: the summary");
+    keys(&view, "shift-tab", cx);
+    assert_eq!((field(&view, cx).2, field(&view, cx).3), (false, true), "Shift+Tab wraps to the description");
+    keys(&view, "tab", cx);
+    assert_eq!((field(&view, cx).2, field(&view, cx).3), (true, false), "Tab wraps to the summary");
+    assert_eq!((field(&view, cx).0, field(&view, cx).1), ("Ahead of origin".into(), String::new()), "no field typed a tab");
     keys(&view, "escape", cx);
     assert!(!open_field(&view, cx), "Esc cancels the amend");
 

@@ -6,6 +6,7 @@ use supraman_gitman::write::conflicts::Sequence;
 use supraman_gitman::write::wip::Step;
 use supraman_ui::banner;
 use supraman_ui::button;
+use supraman_ui::focus_order::Press;
 use supraman_ui::icon::Icon;
 use supraman_ui::tooltip::Tooltip;
 use theme::ActiveTheme as _;
@@ -24,7 +25,7 @@ impl WipPanel {
             .items_center()
             .gap_2()
             .cursor_pointer()
-            .child(button::checkbox(&self.hits, "wip-amend", c.amend, cx))
+            .child(button::focusable_checkbox(&self.hits, "wip-amend", c.amend, &c.amend_focus, cx.listener(|this, _: &Press, _, cx| this.toggle_amend(cx)), cx))
             .child("Amend previous commit")
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_amend(cx)))
     }
@@ -126,6 +127,10 @@ impl WipPanel {
         let c = self.composer.as_ref()?;
         let border = cx.theme().colors().border_variant;
         let area = div().flex().flex_col().flex_none().gap_2().p_2().border_t_1().border_color(border);
+        let area = match self.message_order(false, cx) {
+            Some(order) => order.on(area),
+            None => area,
+        };
         let message = matches!(shown.state, OperationState::None | OperationState::Merge | OperationState::Rebase { external: false });
         let area = match shown.state {
             OperationState::None => area.child(self.amend_row(c, cx)),

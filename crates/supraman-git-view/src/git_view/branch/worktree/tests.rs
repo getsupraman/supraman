@@ -118,3 +118,40 @@ fn the_worktrees_headers_plus_opens_create_worktree_whose_enter_adds_one_and_esc
     click(&view, &format!("{KEY}-close"), cx);
     assert_eq!(form(&view, cx), None, "× closes");
 }
+
+fn focus_at(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<usize> {
+    cx.update(|window, cx| view.read(cx).branch.read(cx).adding().and_then(|a| a.focus_at(window, cx)))
+}
+
+#[gpui::test]
+fn tab_walks_create_worktrees_reference_fields_and_buttons_and_wraps(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let home = tempfile::tempdir().unwrap();
+    let (view, cx) = open(&f.dir, home.path(), cx);
+    click(&view, "refpanel-worktrees-add", cx);
+    assert!(picking(&view, cx));
+    assert_eq!(focus_at(&view, cx), Some(1), "the picker, after the reference's field");
+    keys(&view, "tab", cx);
+    assert_eq!((focused(&view, cx), picking(&view, cx)), (Some("branch"), false), "Tab from the picker: the new branch, the picker shut");
+    let mut walked = vec![focus_at(&view, cx)];
+    for _ in 0..4 {
+        keys(&view, "tab", cx);
+        walked.push(focus_at(&view, cx));
+    }
+    assert_eq!(walked, [Some(1), Some(2), Some(3), Some(4), Some(0)], "branch, folder, Browse, Create Worktree, then the reference");
+    keys(&view, "shift-tab", cx);
+    assert_eq!(focus_at(&view, cx), Some(4), "Shift+Tab from the reference wraps to Create Worktree");
+    keys(&view, "shift-tab", cx);
+    keys(&view, "shift-tab", cx);
+    keys(&view, "shift-tab", cx);
+    assert_eq!(focused(&view, cx), Some("branch"));
+    keys(&view, "shift-tab", cx);
+    keys(&view, "space", cx);
+    assert!(picking(&view, cx), "Space on the focused reference opens its picker");
+    keys(&view, "escape", cx);
+    assert!(!picking(&view, cx) && form(&view, cx).is_some());
+    keys(&view, "shift-tab", cx);
+    assert_eq!(focus_at(&view, cx), Some(0));
+    keys(&view, "escape", cx);
+    assert_eq!(form(&view, cx), None, "Esc on a focused button closes the form");
+}

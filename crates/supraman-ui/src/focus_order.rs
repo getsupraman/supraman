@@ -1,12 +1,12 @@
-//! A form's Tab order: Tab focuses its next field, Shift+Tab the previous one, wrapping within the form; Space or Enter presses a focused button.
+//! A form's Tab order: Tab focuses its next field, Shift+Tab the previous one, wrapping within the form; Space or Enter presses a focused button, Esc on it is `Dismiss` for the form.
 
 use gpui::{App, FocusHandle, InteractiveElement, KeyBinding, Window};
 
-gpui::actions!(focus_order, [NextField, PreviousField, Press]);
+gpui::actions!(focus_order, [NextField, PreviousField, Press, Dismiss]);
 
 /// A form's element: Tab and Shift+Tab are bound here only, so a terminal and every other view keep Tab.
 pub const CONTEXT: &str = "FocusOrder";
-/// A focused button's element: Space and Enter press it.
+/// A focused button's element: Space and Enter press it, Esc says `Dismiss` to the form around it.
 pub const BUTTON_CONTEXT: &str = "FocusedButton";
 
 pub fn bind_keys(cx: &mut App) {
@@ -15,6 +15,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("shift-tab", PreviousField, Some(CONTEXT)),
         KeyBinding::new("space", Press, Some(BUTTON_CONTEXT)),
         KeyBinding::new("enter", Press, Some(BUTTON_CONTEXT)),
+        KeyBinding::new("escape", Dismiss, Some(BUTTON_CONTEXT)),
     ]);
 }
 

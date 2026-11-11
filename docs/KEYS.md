@@ -41,6 +41,7 @@ as anywhere else.
 | Enter | Add workspace: save. Search: nothing. Find bar: next match up. Task box: a new line |
 | Shift+Enter | find bar: next match down. Task box: a new line |
 | Ctrl+Enter | task box: send |
+| Tab, Shift+Tab | in a form (the commit area: summary, description, Amend previous commit, the graph's WIP row field standing for the summary; the commit panel's summary and description; Add Remote; Create Worktree): the next / previous field or button, wrapping; Space or Enter presses a focused button or ticks a focused box, Esc on it closes the form. Outside a form Tab goes where it went before (a terminal gets it); no field types a tab |
 | Esc | Search: clear the box (the tree is back); on an empty box, give the keys back to the window. Add workspace: cancel. Find bar: close. Task box: close, nothing sent. An open menu closes first |
 | click, drag, Shift+click | place the caret, select, extend the selection |
 | double-click, triple-click | select the word, select all |

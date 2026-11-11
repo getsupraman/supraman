@@ -3,11 +3,12 @@
 use supraman_core::text::count;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use gpui::{App, ClickEvent, Context, Div, Hsla, Stateful, Subscription, Window, div, prelude::*};
+use gpui::{App, ClickEvent, Context, Div, Focusable, Hsla, Stateful, Subscription, Window, div, prelude::*};
 use supraman_gitman::Amendable;
 use supraman_gitman::write::rebase::{self, Autostash, Rebased};
 use supraman_gitman::write::{LockSet, Session, WriteError, wip};
 use supraman_ui::confirm::Confirm;
+use supraman_ui::focus_order::FocusOrder;
 use supraman_ui::hit::hit_target;
 use supraman_ui::text_input::{InputEvent, TextInput};
 use supraman_ui::tooltip::Tooltip;
@@ -15,7 +16,6 @@ use supraman_ui::button;
 use theme::ActiveTheme as _;
 
 use super::{CommitPanel, PanelEvent, Shown};
-use crate::git_view::keys::{AMEND_CONTEXT, NextField, PreviousField};
 use crate::git_view::stash::StashRef;
 use crate::git_view::wip::compose::{failure_banner, message_fields, summary_row};
 use crate::git_view::write_gate::{STILL_OPENING, Written};
@@ -48,6 +48,14 @@ pub(crate) struct Field {
     pub(crate) summary: gpui::Entity<TextInput>,
     pub(crate) description: gpui::Entity<TextInput>,
     _events: [Subscription; 2],
+}
+
+impl Field {
+    /// The summary, then the description; a stash's message has only the summary.
+    fn order(&self, cx: &App) -> FocusOrder {
+        let description = (!matches!(self.target, Target::Stash(_))).then(|| self.description.focus_handle(cx));
+        FocusOrder::new(std::iter::once(self.summary.focus_handle(cx)).chain(description))
+    }
 }
 
 #[derive(Default)]
@@ -151,18 +159,15 @@ impl CommitPanel {
     fn field_event(&mut self, e: &InputEvent, in_summary: bool, window: &mut Window, cx: &mut Context<Self>) {
         match e {
             InputEvent::Edited => cx.notify(),
-            InputEvent::Confirm if in_summary => self.other_field(window, cx),
+            InputEvent::Confirm if in_summary => {
+                if let Some(field) = &self.reword.field {
+                    field.order(cx).step(false, window, cx);
+                }
+            }
             InputEvent::Submit => self.update_message(cx),
             InputEvent::Cancel => self.cancel_amend(cx),
             _ => {}
         }
-    }
-
-    /// The keyboard to the field it is not in; a stash's message has only one.
-    fn other_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(field) = self.reword.field.as_ref().filter(|f| !matches!(f.target, Target::Stash(_))) else { return };
-        let to = if field.summary.read(cx).is_focused(window) { field.description.clone() } else { field.summary.clone() };
-        to.update(cx, |i, cx| i.focus(window, cx));
     }
 
     pub(crate) fn cancel_amend(&mut self, cx: &mut Context<Self>) {
@@ -346,11 +351,7 @@ impl CommitPanel {
     /// The open field in the box's place: the summary with its count, and HEAD's description.
     pub(super) fn field_box(&self, field: &Field, box_bg: Hsla, cx: &mut Context<Self>) -> Stateful<Div> {
         let colors = cx.theme().colors().clone();
-        div()
-            .id("commit-amend")
-            .key_context(AMEND_CONTEXT)
-            .on_action(cx.listener(|this, _: &NextField, window, cx| this.other_field(window, cx)))
-            .on_action(cx.listener(|this, _: &PreviousField, window, cx| this.other_field(window, cx)))
+        field.order(cx).on(div().id("commit-amend"))
             .size_full()
             .overflow_y_scroll()
             .flex()

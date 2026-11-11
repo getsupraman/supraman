@@ -482,3 +482,25 @@ fn the_remote_headers_plus_opens_add_remote_whose_enter_adds_and_fetches_and_esc
     click(&view, "git-add-remote-close", cx);
     assert_eq!(adding(&view, cx), None, "× closes");
 }
+
+#[gpui::test]
+fn tab_walks_add_remotes_fields_and_its_button_and_wraps(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let home = tempfile::tempdir().unwrap();
+    let (view, cx) = open(&f.dir, home.path(), cx);
+    click(&view, "refpanel-remote-add", cx);
+    let mut walked = vec![focused(&view, cx)];
+    for _ in 0..4 {
+        keys(&view, "tab", cx);
+        walked.push(focused(&view, cx));
+    }
+    assert_eq!(walked, [Some(0), Some(1), Some(2), Some(3), Some(0)], "Name, Pull URL, Push URL, Add Remote, then Name again");
+    keys(&view, "shift-tab", cx);
+    assert_eq!(focused(&view, cx), Some(3), "Shift+Tab from Name wraps to Add Remote");
+    keys(&view, "enter", cx);
+    assert_eq!(toast(&view, cx).as_deref(), Some(add::NEEDS_NAME), "Enter on the focused button submits, which says why not yet");
+    keys(&view, "shift-tab", cx);
+    keys(&view, "tab", cx);
+    keys(&view, "escape", cx);
+    assert_eq!(adding(&view, cx), None, "Esc on the focused button closes the form");
+}
