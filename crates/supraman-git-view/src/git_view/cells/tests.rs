@@ -77,7 +77,7 @@ fn at_a_narrow_branch_column_every_pill_is_cut_inside_it(cx: &mut TestAppContext
     let f = Fixture::copy();
     let (view, cx) = open(&f, cx);
     let divider = at(&repaint(&view, cx), "git-divider-refs").center();
-    let to = divider - gpui::point(at(&repaint(&view, cx), "git-col-refs").size.width - px(60.), px(0.));
+    let to = divider - gpui::point(at(&repaint(&view, cx), "git-col-refs").size.width - px(80.), px(0.));
     cx.simulate_mouse_down(divider, MouseButton::Left, Modifiers::none());
     cx.simulate_mouse_move(divider - gpui::point(px(10.), px(0.)), MouseButton::Left, Modifiers::none());
     cx.simulate_mouse_move(to, MouseButton::Left, Modifiers::none());
@@ -85,14 +85,14 @@ fn at_a_narrow_branch_column_every_pill_is_cut_inside_it(cx: &mut TestAppContext
     let hits = repaint(&view, cx);
     let column = at(&hits, "git-col-refs");
     let rows = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().enumerate().filter(|(_, r)| !r.row.refs.is_empty()).map(|(i, _)| i).collect::<Vec<_>>());
-    assert!(rows.len() >= 3 && column.size.width < px(70.), "{rows:?} {column:?}");
+    assert!(rows.len() >= 3 && column.size.width < px(100.), "{rows:?} {column:?}");
     let w = worktree_row(&view, cx);
     let pills = rows.iter().map(|ix| (format!("git-pill-{ix}"), format!("git-ref-{ix}"))).chain([(format!("git-worktree-ref-{w}"), format!("git-worktree-label-{w}"))]);
     for (pill, name) in pills {
         let shown = at(&hits, &pill);
         assert!(shown.left() >= column.left() && shown.right() <= column.right(), "{pill} inside its column: {shown:?} {column:?}");
         let cut = cut_at(&name).unwrap_or_else(|| panic!("{name} is cut: {shown:?} {column:?}"));
-        assert!(cut.right() <= shown.right(), "{name}'s … inside its pill: {cut:?} {shown:?}");
+        assert!(cut.right() <= shown.right() && cut.size.width >= px(super::NAME_MIN), "{name}'s first letter and … inside its pill: {cut:?} {shown:?}");
     }
 }
 

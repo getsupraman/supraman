@@ -18,6 +18,10 @@ use super::load::GraphRow;
 const LISTED: usize = 100;
 /// A pill's icons and HEAD mark.
 pub(crate) const PILL_ICON: f32 = 16.;
+const PILL_PAD: f32 = 8.;
+const PILL_GAP: f32 = 6.;
+/// A cut name keeps its first letter and the ellipsis.
+const NAME_MIN: f32 = 22.;
 /// The body gives up its width long before the summary does.
 const BODY_SHRINK: f32 = 1000.;
 
@@ -85,15 +89,16 @@ pub(crate) fn pill_fill(colour: usize, hovered: bool, palette: &Palette) -> Hsla
 pub(crate) fn pill(key: impl Into<String>, face: Face, colour: usize, palette: &Palette, hits: &HitTargets) -> Div {
     let key = key.into();
     let (text, hover) = (palette.text, pill_fill(colour, true, palette));
-    let name = clipped(key.clone(), face.name, false).min_w_0().child(hit_target(hits, format!("{key}-text")));
+    let name = clipped(key.clone(), face.name, false).min_w(px(NAME_MIN)).child(hit_target(hits, format!("{key}-text")));
+    let least = 2. * PILL_PAD + NAME_MIN + if face.head { PILL_ICON + PILL_GAP } else { 0. };
     div()
         .flex()
         .items_center()
-        .gap_1p5()
-        .min_w_0()
+        .gap(px(PILL_GAP))
+        .min_w(px(least))
         .overflow_hidden()
         .h(px(LINE))
-        .px_2()
+        .px(px(PILL_PAD))
         .rounded(px(4.))
         .bg(pill_fill(colour, false, palette))
         .hover(move |s| s.bg(hover))

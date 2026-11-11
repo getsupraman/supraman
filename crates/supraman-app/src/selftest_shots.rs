@@ -449,8 +449,12 @@ async fn git_add_worktree(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWi
 
 /// The graph's pills at the normal width, one hovered, and cut in a narrow Branch / Tag column, which the column's double-click then resets; what René compares with GitKraken by eye.
 async fn git_pills(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
-    let pill = crate::selftest::until(view, cx, Duration::from_secs(10), "a pill", |v| v.hits.borrow().iter().find(|(k, _)| k.starts_with("git-pill-")).map(|(_, h)| h.bounds)).await?;
     let away = cx.update(|window, _| window.viewport_size())?;
+    crate::selftest::drawn(cx).await?;
+    let pill = crate::selftest::until(view, cx, Duration::from_secs(10), "the top pill", |v| {
+        v.hits.borrow().iter().filter(|(k, _)| k.starts_with("git-pill-")).map(|(_, h)| h.bounds).min_by(|a, b| a.top().partial_cmp(&b.top()).unwrap_or(std::cmp::Ordering::Equal))
+    })
+    .await?;
     let mv = |position, cx: &mut AsyncWindowContext| cx.update(|window, cx| window.dispatch_event(gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent { position, pressed_button: None, modifiers: gpui::Modifiers::default() }), cx));
     mv(gpui::point(away.width - gpui::px(4.), away.height - gpui::px(4.)), cx)?;
     sleep(cx, Duration::from_millis(800)).await;
@@ -465,10 +469,10 @@ async fn git_pills(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowCon
         Some((hits.get("git-divider-refs")?.bounds.center(), hits.get("git-col-refs")?.bounds))
     })
     .await?;
-    let to = gpui::point(column.left() + gpui::px(70.), divider.y);
+    let to = gpui::point(column.left() + gpui::px(80.), divider.y);
     crate::selftest_tabs::drag_between(divider, to, None, cx).await?;
     crate::selftest::until(view, cx, Duration::from_secs(10), "the pills cut in the narrow column", |v| {
-        let narrow = v.hits.borrow().get("git-col-refs").is_some_and(|c| c.bounds.size.width < gpui::px(80.));
+        let narrow = v.hits.borrow().get("git-col-refs").is_some_and(|c| c.bounds.size.width < gpui::px(100.));
         (narrow && v.hits.borrow().keys().any(|k| k.starts_with("git-pill-") && supraman_ui::clipped::cut_at(&k.replace("git-pill-", "git-ref-")).is_some())).then_some(())
     })
     .await?;
