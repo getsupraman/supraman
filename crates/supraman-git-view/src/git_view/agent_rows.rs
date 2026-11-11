@@ -9,7 +9,7 @@ use gpui::{AnyElement, App, ClickEvent, Context, Entity, EventEmitter, Hsla, Mou
 use supraman_gitman::Row;
 use supraman_ui::details::{self, Page, Section};
 use supraman_ui::hit::{HitTargets, hit_target};
-use supraman_ui::marks::{self, Activity, Mark};
+use supraman_ui::marks::Mark;
 use supraman_ui::clipped::clipped;
 use supraman_ui::session;
 use supraman_ui::tooltip::Tooltip;
@@ -218,9 +218,9 @@ impl GitView {
         self.agents.shown.iter().find(|s| s.claude_session_id == id)
     }
 
-    /// The live session `name` working in `path`, for its state's dot.
-    pub(super) fn activity_in(&self, path: &Path, name: &str) -> Option<Activity> {
-        self.agents.live.as_ref()?.working_in(path).into_iter().find(|s| s.name == name).map(|s| s.activity)
+    /// The live sessions working in `path`.
+    pub(super) fn sessions_in(&self, path: &Path) -> Vec<LiveSession> {
+        self.agents.live.as_ref().map(|l| l.working_in(path)).unwrap_or_default()
     }
 
     /// Row `ix`'s cell of column `col` for an agent row: the bot node, then the session's lead with its state's word.
@@ -231,18 +231,7 @@ impl GitView {
         let session = self.shown_agent(&id).cloned();
         let cell = match (col, &session) {
             (1, _) => graph::cell(ix, row, false, palette, &self.hits),
-            (2, Some(s)) => {
-                let state = clipped(format!("git-agent-state-{ix}"), s.activity.word(), false)
-                    .flex_shrink(4.)
-                    .text_color(palette.muted)
-                    .child(hit_target(&self.hits, format!("git-agent-state-{ix}")))
-                    .into_any_element();
-                let lead = session::lead(&format!("git-agent-{ix}"), Mark::Filled(s.activity.color(cx)), &s.name, Some(state))
-                    .relative()
-                    .text_color(palette.text)
-                    .child(hit_target(&self.hits, format!("git-agent-{ix}")));
-                cells::wip_message(row, lead, String::new(), palette)
-            }
+            (2, Some(s)) => cells::wip_message(row, session_lead(&format!("git-agent-{ix}"), &format!("git-agent-state-{ix}"), s, palette, &self.hits, cx), String::new(), palette),
             _ => div().into_any_element(),
         };
         let menu_id = id.clone();
@@ -266,9 +255,9 @@ impl GitView {
         }
     }
 
-    /// The fleet's menu of the first session, by name, working in the worktree at `path`.
-    pub(super) fn worktree_session_menu(&mut self, path: &Path, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let Some(session) = self.agents.live.as_ref().and_then(|l| l.working_in(path).into_iter().next()) else { return };
+    /// The fleet's menu of the `n`th session, by name, working in the worktree at `path`.
+    pub(super) fn worktree_session_menu(&mut self, path: &Path, n: usize, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some(session) = self.sessions_in(path).into_iter().nth(n) else { return };
         cx.stop_propagation();
         cx.emit(AgentMenu { session, position });
     }
@@ -321,9 +310,10 @@ impl GitView {
     }
 }
 
-/// A session's state as its dot: the sidebar's status colours.
-pub(super) fn state_dot(activity: Activity, cx: &App) -> gpui::Div {
-    marks::dot(Mark::Filled(activity.color(cx)))
+/// A session's [`session::lead`] in a graph row, painted under `key`: its state's dot, its name, then its state's word under `state_key`.
+pub(super) fn session_lead(key: &str, state_key: &str, s: &LiveSession, palette: &Palette, hits: &HitTargets, cx: &App) -> gpui::Div {
+    let state = clipped(state_key.to_string(), s.activity.word(), false).flex_shrink(4.).text_color(palette.muted).child(hit_target(hits, state_key.to_string())).into_any_element();
+    session::lead(key, Mark::Filled(s.activity.color(cx)), &s.name, Some(state)).relative().text_color(palette.text).child(hit_target(hits, key.to_string()))
 }
 
 #[cfg(test)]

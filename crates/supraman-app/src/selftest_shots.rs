@@ -277,14 +277,14 @@ async fn git_palette(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowC
     println!("shot: {}", shot.display());
     cx.update(|window, cx| git.update(cx, |g, cx| g.close_find(window, cx)))?;
     git_wip(view, &git, out, cx).await?;
-    git_agent(view, &dir, out, cx).await?;
+    git_agent(view, &dir, &fixture.worktree, out, cx).await?;
     drop(fixture);
     Ok(())
 }
 
-/// A session working in the same tab's worktree: its agent row, its page as the fleet gives it, and the sidebar's menu on a right-click.
-/// The page and the menu come from `FleetView`, which no unit test builds.
-async fn git_agent(view: &Entity<FleetView>, dir: &Path, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+/// A session working in the same tab's worktree: its agent row, its page as the fleet gives it, and the sidebar's menu on a right-click;
+/// two in the other worktree: their leads on its row beside the agent row and the WIP row. The page and the menu come from `FleetView`, which no unit test builds.
+async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let folder = dir.to_path_buf();
     cx.background_executor()
         .spawn(async move { Registry::from_env()?.edit(WORKSPACE, supraman_core::Edit::AddFolder { path: folder, enable: false }) })
@@ -300,6 +300,26 @@ async fn git_agent(view: &Entity<FleetView>, dir: &Path, out: &Path, cx: &mut As
         "state": "working",
         "status": "busy",
         "pid": std::process::id(),
+    }, {
+        "id": "d0000008",
+        "sessionId": "d0000008-0000-4000-8000-00000000demo",
+        "name": "fm-demo-side",
+        "cwd": side,
+        "kind": "background",
+        "startedAt": supraman_claude::now_ms() - 9 * 60_000,
+        "state": "working",
+        "status": "busy",
+        "pid": std::process::id(),
+    }, {
+        "id": "d0000009",
+        "sessionId": "d0000009-0000-4000-8000-00000000demo",
+        "name": "fm-demo-review",
+        "cwd": side,
+        "kind": "background",
+        "startedAt": supraman_claude::now_ms() - 12 * 60_000,
+        "state": "working",
+        "status": "busy",
+        "pid": std::process::id(),
     }]);
     let sessions = supraman_claude::parse(&session.to_string())?;
     view.read_with(cx, |v, _| v.polls.injected.lock().unwrap_or_else(|e| e.into_inner()).extend(sessions));
@@ -311,6 +331,14 @@ async fn git_agent(view: &Entity<FleetView>, dir: &Path, out: &Path, cx: &mut As
     let shot = capture(out.join("supraman-git-agent.png"), None, cx).await?;
     println!("shot: {}", shot.display());
     let window = cx.update(|window, _| window.viewport_size())?;
+    crate::selftest_git::resize(view, gpui::size(window.width * 1.5, window.height), cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(20), "the other worktree's row with both sessions' leads", |v| {
+        v.hits.borrow().keys().any(|k| k.starts_with("git-worktree-session-") && k.ends_with("-1")).then_some(())
+    })
+    .await?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-git-wip-rows.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
     crate::selftest_git::resize(view, gpui::size(window.width * 0.75, window.height), cx).await?;
     crate::selftest::until(view, cx, Duration::from_secs(10), "the agent row's name cut in the narrower window", |v| {
         (v.hits.borrow().contains_key("git-agent-0") && supraman_ui::clipped::cut_at("git-agent-0-name").is_some()).then_some(())

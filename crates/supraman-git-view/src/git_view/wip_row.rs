@@ -7,14 +7,16 @@ use gpui::{AnyElement, App, Div, MouseButton, MouseDownEvent, SharedString, Wind
 use gpui::Context;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
+use supraman_ui::text_input;
 use theme::ActiveTheme as _;
 
 use super::colours::Palette;
 use super::load::Wip;
 use super::{GitView, Selected, cells, keys};
 
-/// The WIP row's summary field's width.
-const FIELD: f32 = 160.;
+/// The WIP row's summary field's width (GitKraken's).
+const FIELD: f32 = 140.;
+pub(crate) const FIELD_KEY: &str = "git-wip-field";
 
 impl GitView {
     /// The summary's field and the counts; `// WIP` and the counts until the field is made.
@@ -30,15 +32,17 @@ impl GitView {
         let Some(input) = input else { return cells::message(ix, row, Some(counts.as_str()), palette, &self.hits) };
         if self.selected(cx) != Some(Selected::Wip) {
             let summary = input.read(cx).text().to_string();
-            return cells::wip_message(row, still_field(summary, palette, cx), counts, palette);
+            return cells::wip_message(row, div().relative().flex_none().child(still_field(summary, palette, cx)).child(hit_target(&self.hits, FIELD_KEY.into())), counts, palette);
         }
         let field = div()
+            .relative()
             .w(px(FIELD))
             .flex_none()
             .key_context(keys::MESSAGE_CONTEXT)
             .on_action(cx.listener(|this, _: &keys::StageAllAndCommit, _, cx| this.wip_panel.update(cx, |p, cx| p.commit(true, cx))))
             .on_mouse_down(MouseButton::Left, cx.listener(|_, _: &MouseDownEvent, _, cx| cx.stop_propagation()))
-            .child(input);
+            .child(input)
+            .child(hit_target(&self.hits, FIELD_KEY.into()));
         cells::wip_message(row, field, counts, palette)
     }
 
@@ -111,21 +115,9 @@ fn conflict_node(n: usize, hits: &HitTargets, palette: &Palette, cx: &App) -> Di
 
 /// The field as the row shows it until the row is selected: a click on it selects the row.
 fn still_field(summary: String, palette: &Palette, cx: &App) -> Div {
-    let colors = cx.theme().colors();
     let (text, colour) = if summary.is_empty() { ("// WIP".to_string(), palette.muted) } else { (summary, palette.text) };
-    div()
-        .w(px(FIELD))
-        .flex_none()
-        .flex()
-        .items_center()
-        .h(px(26.))
-        .px(px(8.))
-        .rounded_sm()
-        .border_1()
-        .border_color(colors.border)
-        .bg(colors.editor_background)
-        .overflow_hidden()
-        .whitespace_nowrap()
-        .text_color(colour)
-        .child(SharedString::from(text))
+    text_input::quiet_frame(false, cx).w(px(FIELD)).flex_none().whitespace_nowrap().text_color(colour).child(SharedString::from(text))
 }
+
+#[cfg(test)]
+mod tests;
