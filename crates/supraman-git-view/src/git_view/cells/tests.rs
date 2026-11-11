@@ -84,12 +84,14 @@ fn narrow(view: &Entity<GitView>, width: f32, cx: &mut VisualTestContext) -> Hit
     repaint(view, cx)
 }
 
-/// Each icon of the pill named `name` is painted whole inside `pill`, or not at all.
+/// Each icon of the pill named `name` is painted whole inside `pill`, or not at all, and only once the name is cut to its least.
 fn icons_whole(hits: &HitTargets, name: &str, pill: Bounds<Pixels>) {
+    let text = at(hits, &format!("{name}-text")).size.width;
     for (key, hit) in hits.borrow().iter().filter(|(k, _)| k.starts_with(&format!("{name}-icon-"))) {
         let clip = hit.bounds.intersect(&hit.visible).size;
         let hidden = clip.width <= px(0.) || clip.height <= px(0.);
         assert!(hidden || (hit.fully_visible() && hit.bounds.left() >= pill.left() && hit.bounds.right() <= pill.right()), "{key} painted whole inside its pill or not at all: {hit:?} {pill:?}");
+        assert!(!hidden || text < px(super::NAME_MIN + super::PILL_ICON + super::PILL_GAP), "{key} dropped while its name still had room: {text:?}");
     }
 }
 
