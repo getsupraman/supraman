@@ -230,7 +230,7 @@ fn a_new_task_starts_on_its_first_fire_after_now() {
 #[ignore = "registers a real Windows task under \\SupramanProbe-sched-3\\"]
 fn a_real_task_registers_reads_back_and_goes_with_its_folder() {
     const FOLDER: &str = r"\SupramanProbe-sched-3";
-    let tasks = WindowsRegistrar;
+    let tasks = crate::platform::tasks::WindowsRegistrar;
     let mut s = example();
     s.id = "probe".into();
     s.trigger = Trigger::Weekly { days: vec![Day::Sun], at: Clock::new(3, 33).unwrap() };

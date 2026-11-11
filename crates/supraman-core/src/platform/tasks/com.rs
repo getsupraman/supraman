@@ -7,16 +7,11 @@ use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 use windows::Win32::System::Variant::VARIANT;
 use windows::core::{BSTR, HRESULT, PWSTR};
 
-use super::foreign::ole_date_ms;
-use super::registrar::{Listing, Registrar, TaskState};
+use super::WindowsRegistrar;
+use crate::schedule::{Listing, Registrar, TaskState, ole_date_ms};
 use crate::{CoreError, Result};
 
 const NOT_FOUND: [HRESULT; 2] = [HRESULT(0x8007_0002_u32 as i32), HRESULT(0x8007_0003_u32 as i32)];
-
-/// Task Scheduler through COM `ITaskService`. Each call runs on a thread of its own in the MTA, never
-/// the caller's: an STA call pumps the UI thread's messages.
-#[derive(Debug, Default)]
-pub struct WindowsRegistrar;
 
 fn on_mta<T: Send>(what: &str, f: impl FnOnce(&ITaskService) -> windows::core::Result<T> + Send) -> Result<T> {
     std::thread::scope(|scope| {

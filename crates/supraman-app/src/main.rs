@@ -328,7 +328,7 @@ fn single_instance(mode: Mode, home: Option<PathBuf>, relaunched: bool) -> Optio
         && matches!(acquired, Some(Ok(Acquired::First(_))))
     {
         let toggle = mode == Mode::App && elevate::toggle(home);
-        let elevated = supraman_claude::is_elevated();
+        let elevated = supraman_core::platform::process::is_elevated();
         let start = elevate::start(mode == Mode::App, toggle, elevated, relaunched, || {
             // the copy takes the lock
             acquired = None;

@@ -49,7 +49,7 @@ pub fn elevation_mismatch(elevated: bool, reach: &DaemonReach) -> Option<String>
 /// [`elevation_mismatch`] for this process. An elevated process reaches every service, so it runs
 /// nothing; otherwise one `claude daemon status`.
 pub fn daemon_mismatch() -> Option<String> {
-    let elevated = is_elevated();
+    let elevated = supraman_core::platform::process::is_elevated();
     if elevated {
         return None;
     }
@@ -62,38 +62,6 @@ pub fn daemon_status() -> DaemonReach {
         Ok(out) => parse_daemon_status(&format!("{}\n{}", out.stdout, out.stderr)),
         Err(_) => DaemonReach::Unknown,
     }
-}
-
-/// Whether this process runs elevated (UAC's full administrator token).
-#[cfg(windows)]
-pub fn is_elevated() -> bool {
-    use windows::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows::Win32::Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation};
-    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
-    let mut token = HANDLE::default();
-    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }.is_err() {
-        return false;
-    }
-    let mut elevation = TOKEN_ELEVATION::default();
-    let mut len = 0u32;
-    let ok = unsafe {
-        GetTokenInformation(
-            token,
-            TokenElevation,
-            Some(&mut elevation as *mut _ as *mut _),
-            size_of::<TOKEN_ELEVATION>() as u32,
-            &mut len,
-        )
-    };
-    unsafe {
-        let _ = CloseHandle(token);
-    }
-    ok.is_ok() && elevation.TokenIsElevated != 0
-}
-
-#[cfg(not(windows))]
-pub fn is_elevated() -> bool {
-    true
 }
 
 /// The service's pid from `<claude_dir>/daemon/roster.json` (`supervisorPid`), when it runs. Read from the
@@ -111,39 +79,13 @@ fn service_pid_in(roster: &str) -> Option<u32> {
 
 /// Whether the running service has an elevated token; `None` when none runs or its token cannot be read.
 pub fn service_elevated() -> Option<bool> {
-    pid_elevated(service_pid()?)
+    supraman_core::platform::process::pid_elevated(service_pid()?)
 }
 
 /// A scheduled task's run level: `HighestAvailable` while the service is elevated (Decision 5 of
 /// docs/research/scheduler.md); with no service the task's own `claude --bg` starts one at its level.
 pub fn task_run_level() -> supraman_core::schedule::RunLevel {
     supraman_core::schedule::RunLevel::for_service(service_elevated().unwrap_or(false))
-}
-
-#[cfg(windows)]
-pub fn pid_elevated(pid: u32) -> Option<bool> {
-    use windows::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows::Win32::Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation};
-    use windows::Win32::System::Threading::{OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION};
-    // SAFETY: plain Win32 calls on handles this function opens and closes.
-    unsafe {
-        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-        let mut token = HANDLE::default();
-        let opened = OpenProcessToken(process, TOKEN_QUERY, &mut token);
-        let _ = CloseHandle(process);
-        opened.ok()?;
-        let mut elevation = TOKEN_ELEVATION::default();
-        let mut len = 0u32;
-        let read = GetTokenInformation(token, TokenElevation, Some(&mut elevation as *mut _ as *mut _), size_of::<TOKEN_ELEVATION>() as u32, &mut len);
-        let _ = CloseHandle(token);
-        read.ok()?;
-        Some(elevation.TokenIsElevated != 0)
-    }
-}
-
-#[cfg(not(windows))]
-pub fn pid_elevated(_pid: u32) -> Option<bool> {
-    None
 }
 
 #[cfg(test)]
@@ -173,13 +115,6 @@ mod tests {
         assert_eq!(service_pid_in("not json"), None);
     }
 
-    #[cfg(windows)]
-    #[test]
-    fn this_process_reads_as_elevated_exactly_when_is_elevated_says_so() {
-        assert_eq!(pid_elevated(std::process::id()), Some(is_elevated()));
-        assert_eq!(pid_elevated(u32::MAX - 1), None);
-    }
-
     #[test]
     fn only_an_unelevated_process_facing_a_refusing_service_is_a_mismatch() {
         let refused = parse_daemon_status(REFUSED);
@@ -199,7 +134,7 @@ mod tests {
     #[test]
     #[ignore = "runas opens a console window of its own; run elevated with --ignored"]
     fn a_medium_il_process_cannot_reach_an_elevated_service() {
-        if !is_elevated() || daemon_status() != DaemonReach::Reachable {
+        if !supraman_core::platform::process::is_elevated() || daemon_status() != DaemonReach::Reachable {
             eprintln!("skipped: needs an elevated test process and a running service it reaches");
             return;
         }

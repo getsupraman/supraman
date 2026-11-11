@@ -124,15 +124,7 @@ fn confined(root: &Path, dir: &str, item: &str, want_dir: bool) -> Result<PathBu
 }
 
 fn is_link(meta: &fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt as _;
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return true;
-        }
-    }
-    meta.file_type().is_symlink()
+    supraman_core::platform::fs::is_reparse_point(meta) || meta.file_type().is_symlink()
 }
 
 #[cfg(test)]

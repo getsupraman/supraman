@@ -6,6 +6,8 @@ use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::platform::fs::{delete_file, move_file, rename_over};
+
 /// The release's file list beside `VERSION`: one `/`-separated relative path per line.
 pub const FILES: &str = "FILES";
 /// The `.old-<stamp>` files an apply left in the install, for [`cleanup`].
@@ -124,82 +126,6 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
-#[cfg(windows)]
-fn wide(path: &Path) -> Vec<u16> {
-    use std::os::windows::ffi::OsStrExt as _;
-    path.as_os_str().encode_wide().chain(Some(0)).collect()
-}
-
-#[cfg(windows)]
-fn os_error(e: windows::core::Error) -> io::Error {
-    io::Error::from_raw_os_error(e.code().0 & 0xffff)
-}
-
-/// `MoveFileExW`, which refuses to replace a running exe; [`rename_over`] is the one that does not.
-#[cfg(windows)]
-fn move_file(from: &Path, to: &Path) -> io::Result<()> {
-    use windows::Win32::Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW};
-    use windows::core::PCWSTR;
-    let (from, to) = (wide(from), wide(to));
-    unsafe { MoveFileExW(PCWSTR(from.as_ptr()), PCWSTR(to.as_ptr()), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) }.map_err(os_error)
-}
-
-#[cfg(not(windows))]
-fn move_file(from: &Path, to: &Path) -> io::Result<()> {
-    fs::rename(from, to)
-}
-
-/// A POSIX-semantics rename (`FileRenameInfoEx`) that replaces even a running exe; FAT and shares refuse it.
-#[cfg(windows)]
-fn rename_over(from: &Path, to: &Path) -> io::Result<()> {
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::Storage::FileSystem::{
-        CreateFileW, DELETE, FILE_FLAGS_AND_ATTRIBUTES, FILE_RENAME_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        FileRenameInfoEx, OPEN_EXISTING, SetFileInformationByHandle,
-    };
-    use windows::core::PCWSTR;
-    const REPLACE_IF_EXISTS: u32 = 0x1;
-    const POSIX_SEMANTICS: u32 = 0x2;
-    let from = wide(from);
-    let to = wide(to);
-    let name = &to[..to.len() - 1];
-    let offset = std::mem::offset_of!(FILE_RENAME_INFO, FileName);
-    let size = offset + std::mem::size_of_val(to.as_slice());
-    let mut buf = vec![0u64; size.div_ceil(8)];
-    let info = buf.as_mut_ptr().cast::<FILE_RENAME_INFO>();
-    // SAFETY: `buf` is zeroed, 8-aligned and holds the header and the name with its nul.
-    unsafe {
-        (*info).Anonymous.Flags = REPLACE_IF_EXISTS | POSIX_SEMANTICS;
-        (*info).FileNameLength = std::mem::size_of_val(name) as u32;
-        std::ptr::copy_nonoverlapping(name.as_ptr(), info.cast::<u8>().add(offset).cast::<u16>(), name.len());
-    }
-    let share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
-    let handle = unsafe { CreateFileW(PCWSTR(from.as_ptr()), DELETE.0, share, None, OPEN_EXISTING, FILE_FLAGS_AND_ATTRIBUTES(0), None) }
-        .map_err(os_error)?;
-    let renamed = unsafe { SetFileInformationByHandle(handle, FileRenameInfoEx, info.cast(), size as u32) };
-    let _ = unsafe { CloseHandle(handle) };
-    renamed.map_err(os_error)
-}
-
-#[cfg(not(windows))]
-fn rename_over(from: &Path, to: &Path) -> io::Result<()> {
-    fs::rename(from, to)
-}
-
-/// `DeleteFileW`, which refuses a running exe, for the same reason as [`move_file`].
-#[cfg(windows)]
-fn delete_file(path: &Path) -> io::Result<()> {
-    use windows::Win32::Storage::FileSystem::DeleteFileW;
-    use windows::core::PCWSTR;
-    let wide = wide(path);
-    unsafe { DeleteFileW(PCWSTR(wide.as_ptr())) }.map_err(os_error)
-}
-
-#[cfg(not(windows))]
-fn delete_file(path: &Path) -> io::Result<()> {
-    fs::remove_file(path)
-}
-
 #[derive(Debug, Clone)]
 pub struct Apply {
     /// The unpacked release folder.
@@ -213,6 +139,9 @@ pub struct Apply {
     pub log: PathBuf,
     /// Stops as a kill would, before the move after this many: what a test of an interrupted apply sets.
     pub stop_after: Option<usize>,
+    /// A locked file is replaced in one POSIX rename before it is renamed aside; `false` takes the aside path
+    /// a FAT volume or a share forces: what a test of that path sets.
+    pub one_rename: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -229,27 +158,6 @@ impl std::fmt::Display for Failed {
             Self::Refused(why) => f.write_str(why),
             Self::Stopped => f.write_str("stopped before the next move"),
         }
-    }
-}
-
-thread_local! {
-    static RENAME_ASIDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Makes [`apply`] on this thread take the rename-aside path for a locked file until the guard drops.
-#[doc(hidden)]
-#[must_use]
-pub fn rename_aside_on_this_thread() -> RenameAside {
-    RENAME_ASIDE.with(|c| c.set(true));
-    RenameAside(())
-}
-
-#[doc(hidden)]
-pub struct RenameAside(());
-
-impl Drop for RenameAside {
-    fn drop(&mut self) {
-        RENAME_ASIDE.with(|c| c.set(false));
     }
 }
 
@@ -437,7 +345,7 @@ impl<'a> Run<'a> {
             return Ok(());
         }
         let mut old_rel = format!("{rel}.old-{}", self.stamp);
-        if !RENAME_ASIDE.with(std::cell::Cell::get) {
+        if self.job.one_rename {
             let old = self.job.to.join(&old_rel);
             self.note_leftover("aside", &old_rel)?;
             match self.swap(&target, &old, &staged)? {

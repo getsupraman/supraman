@@ -2,7 +2,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -761,7 +760,7 @@ fn script_stage(env: &ScriptEnv, s: &Schedule, secrets: &[(String, String)], res
         next_check = Instant::now() + RESTART_POLL;
         restart.exists()
     };
-    let mut cmd = script_command(env.folder, script, &s.action.script_args);
+    let mut cmd = supraman_core::platform::shell::script_command(&env.folder.join(script), &s.action.script_args);
     cmd.current_dir(env.folder).envs(supraman_core::home::home_env(env.home));
     let vars: [(&str, std::ffi::OsString); 7] = [
         ("WORKSPACE", env.workspace.into()),
@@ -793,46 +792,6 @@ fn script_stage(env: &ScriptEnv, s: &Schedule, secrets: &[(String, String)], res
         (Ended::Stopped, _) => ScriptEnd::Restarted,
     };
     (end, Some(stage))
-}
-
-fn extension(script: &str) -> String {
-    Path::new(script).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase()
-}
-
-/// The command per the script's extension (the script contract's table).
-fn script_command(folder: &Path, script: &str, args: &[String]) -> Command {
-    let path = folder.join(script);
-    match extension(script).as_str() {
-        "ps1" => {
-            let mut cmd = process::command(supraman_core::platform::shell::script_powershell().path);
-            cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"]).arg(&path).args(args);
-            cmd
-        }
-        "cmd" | "bat" => {
-            let mut cmd = process::command("cmd");
-            let line =
-                std::iter::once(path.to_string_lossy().into_owned()).chain(args.iter().cloned()).map(|a| format!("\"{a}\"")).collect::<Vec<_>>().join(" ");
-            raw(&mut cmd, &format!("/d /s /c \"{line}\""));
-            cmd
-        }
-        _ => {
-            let mut cmd = process::command(&path);
-            cmd.args(args);
-            cmd
-        }
-    }
-}
-
-/// cmd's `/s /c "…"` line is not parsed by the MSVC rules `Command::arg` quotes for.
-#[cfg(windows)]
-fn raw(cmd: &mut Command, line: &str) {
-    use std::os::windows::process::CommandExt as _;
-    cmd.raw_arg(line);
-}
-
-#[cfg(not(windows))]
-fn raw(cmd: &mut Command, line: &str) {
-    cmd.arg(line);
 }
 
 #[cfg(test)]

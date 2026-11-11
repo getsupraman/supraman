@@ -300,3 +300,64 @@ pub fn memory() -> (usize, usize) {
     eprintln!("{}", super::refused("this process's memory"));
     (0, 0)
 }
+
+/// Whether this process runs elevated (UAC's full administrator token).
+#[cfg(windows)]
+pub fn is_elevated() -> bool {
+    // SAFETY: the current process's pseudo handle, which needs no closing.
+    token_elevated(unsafe { windows::Win32::System::Threading::GetCurrentProcess() }).unwrap_or(false)
+}
+
+/// No UAC here: every process reads as elevated.
+#[cfg(not(windows))]
+pub fn is_elevated() -> bool {
+    true
+}
+
+/// Whether `pid` runs elevated; `None` when it does not run or its token cannot be read.
+#[cfg(windows)]
+pub fn pid_elevated(pid: u32) -> Option<bool> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    // SAFETY: plain Win32 calls on a handle this function opens and closes.
+    unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let elevated = token_elevated(process);
+        let _ = CloseHandle(process);
+        elevated
+    }
+}
+
+#[cfg(not(windows))]
+pub fn pid_elevated(_pid: u32) -> Option<bool> {
+    None
+}
+
+#[cfg(windows)]
+fn token_elevated(process: windows::Win32::Foundation::HANDLE) -> Option<bool> {
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation};
+    use windows::Win32::System::Threading::OpenProcessToken;
+    // SAFETY: plain Win32 calls on a token this function opens and closes.
+    unsafe {
+        let mut token = HANDLE::default();
+        OpenProcessToken(process, TOKEN_QUERY, &mut token).ok()?;
+        let mut elevation = TOKEN_ELEVATION::default();
+        let mut len = 0u32;
+        let read = GetTokenInformation(token, TokenElevation, Some(&mut elevation as *mut _ as *mut _), size_of::<TOKEN_ELEVATION>() as u32, &mut len);
+        let _ = CloseHandle(token);
+        read.ok()?;
+        Some(elevation.TokenIsElevated != 0)
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn this_process_reads_as_elevated_exactly_when_is_elevated_says_so() {
+        assert_eq!(pid_elevated(std::process::id()), Some(is_elevated()));
+        assert_eq!(pid_elevated(u32::MAX - 1), None);
+    }
+}

@@ -198,6 +198,7 @@ fn expand_env_keeps_what_is_not_a_set_variable() {
 #[test]
 #[ignore = "reads the real Task Scheduler"]
 fn a_real_scan_reads_task_scheduler_and_prints_what_runs_claude() {
+    use crate::platform::tasks::WindowsRegistrar;
     let all = WindowsRegistrar.all_tasks(&is_own_root).unwrap();
     let found = scan_foreign(&WindowsRegistrar).unwrap();
     println!("read {} tasks, {} unreadable, {} run claude", all.tasks.len(), found.unreadable, found.tasks.len());

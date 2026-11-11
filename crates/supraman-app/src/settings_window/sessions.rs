@@ -42,12 +42,11 @@ impl SettingsView {
         let admin = self.settings.sessions.run_as_admin;
         let toggle = button::small("run-as-admin", if admin { "On" } else { "Off" }, cx)
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.change(move |s| s.sessions.run_as_admin = !admin, cx)));
-        let now: SharedString = if supraman_claude::is_elevated() {
-            "Supraman runs as administrator now.".into()
-        } else {
-            "Supraman runs unelevated now.".into()
-        };
-        let now = div().text_xs().text_color(cx.theme().colors().text_muted).child(now).into_any_element();
+        let now = self.elevated.map(|elevated| {
+            let now: SharedString =
+                if elevated { "Supraman runs as administrator now.".into() } else { "Supraman runs unelevated now.".into() };
+            div().text_xs().text_color(cx.theme().colors().text_muted).child(now).into_any_element()
+        });
         let reopen = self.settings.sessions.reopen_tabs;
         let reopen_toggle = button::small("reopen-tabs", if reopen { "On" } else { "Off" }, cx)
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.change(move |s| s.sessions.reopen_tabs = !reopen, cx)));
@@ -70,7 +69,7 @@ impl SettingsView {
                  start then refuses an unelevated Supraman, and its sessions cannot launch or resume. Each \
                  start asks Windows (UAC) once. Takes effect the next time Supraman starts.",
                 toggle.into_any_element(),
-                Some(now),
+                now,
                 cx,
             ),
             row(

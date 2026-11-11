@@ -9,8 +9,6 @@ mod registrar;
 mod runs;
 mod session;
 mod store;
-#[cfg(windows)]
-mod task_service;
 mod task_xml;
 
 use std::fmt;
@@ -29,8 +27,6 @@ pub use registrar::{SMW_EXE, FakeRegistrar, Listing, Registrar, TaskState, SyncT
 pub use runs::{Fired, Outcome, RUNS_CAP, Run, RunEvent, RunRecord, Stage, Tokens, append_run, read_runs, runs, runs_path};
 pub use session::{DEFAULT_DENY, base_prompt, preamble, run_branch, run_id, run_stamp, run_worktree, schedule_of_session, session_name};
 pub use store::{edit, file_path, load, schedules_dir};
-#[cfg(windows)]
-pub use task_service::WindowsRegistrar;
 pub use task_xml::{RunLevel, TaskSpec, definition_digest, task_xml, version_of};
 pub(crate) use runs::prune as prune_schedules;
 pub use runs::run_worktrees;

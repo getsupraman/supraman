@@ -33,7 +33,7 @@ impl ScheduleState {
             schedule_errors: Vec::new(),
             schedule_errors_dismissed: Vec::new(),
             sync_errors: BTreeMap::new(),
-            registrar: Arc::new(supraman_core::schedule::WindowsRegistrar),
+            registrar: Arc::new(supraman_core::platform::tasks::WindowsRegistrar),
             other_schedules: None,
             other_scan_error: None,
             other_scans: 0,

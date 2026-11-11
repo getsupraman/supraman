@@ -17,7 +17,7 @@ fn wait_for(within: Duration, mut done: impl FnMut() -> bool) -> bool {
 #[test]
 #[ignore = "starts Supraman windows and a runas console; run elevated with --ignored"]
 fn an_unelevated_second_launch_hands_off_to_an_elevated_foreman() {
-    if !supraman_claude::is_elevated() {
+    if !supraman_core::platform::process::is_elevated() {
         eprintln!("skipped: needs an elevated test process");
         return;
     }
