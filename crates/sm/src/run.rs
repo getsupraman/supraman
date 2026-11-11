@@ -142,7 +142,7 @@ pub fn session_stage(ctx: &RunCtx, gate: Option<&str>, host: &mut dyn SessionHos
     };
     if let Some(m) = &mut mint
         && !row.session_id.is_empty()
-        && let Err(e) = m.bind(&spec.name, &row.session_id)
+        && let Err(e) = m.bind(ctx.home, &spec.name, &row.session_id)
     {
         crate::fire::log(ctx.home, &format!("{}/{} {}: {e}", w.name, s.id, ctx.run));
     }
@@ -232,17 +232,20 @@ struct Mint {
     token: String,
     expires_at: Option<String>,
     session_id: String,
-    /// The run's record, at [`MintedSessions::run_path`]: only this sm writes it.
-    record: MintedSessions,
+    /// What the run's record at [`MintedSessions::run_path`] holds of it.
+    record: MintedSession,
 }
 
 impl Mint {
     /// The run's claude session on its record, so deleting that session revokes the token.
-    fn bind(&mut self, name: &str, claude_session_id: &str) -> Result<(), String> {
-        if let Some(m) = self.record.get_mut(name) {
-            m.claude_session_id = Some(claude_session_id.to_string());
-        }
-        self.record.save().map_err(|e| format!("cannot record the claude session of {name}: {e}"))
+    fn bind(&mut self, home: &Path, name: &str, claude_session_id: &str) -> Result<(), String> {
+        self.record.claude_session_id = Some(claude_session_id.to_string());
+        MintedSessions::edit_run(&MintedSessions::run_path(home, name), |records| {
+            if let Some(m) = records.get_mut(name) {
+                m.claude_session_id = Some(claude_session_id.to_string());
+            }
+        })
+        .map_err(|e| format!("cannot record the claude session of {name}: {e}"))
     }
 }
 
@@ -265,7 +268,6 @@ fn mint(ctx: &RunCtx, spec: &LaunchSpec, host: &mut dyn SessionHost) -> Result<O
         takeover_from: None,
     };
     let minted = host.minter().mint(&supraman_core::url::origin(&t.url), &t.token, &request).map_err(|e| format!("cannot mint a Workman token for {}: {e}", spec.name))?;
-    let mut record = MintedSessions::empty(Some(MintedSessions::run_path(ctx.home, &spec.name)));
     let session = MintedSession {
         session_id: minted.session_id.clone(),
         role: crate::schedule::RUN_ROLE.into(),
@@ -273,20 +275,18 @@ fn mint(ctx: &RunCtx, spec: &LaunchSpec, host: &mut dyn SessionHost) -> Result<O
         last_active: None,
         origin: Some(supraman_core::url::origin(&t.url)),
     };
-    record.insert_minted(&spec.name, session, &request);
-    record.save().map_err(|e| format!("cannot record the Workman session of {}: {e}", spec.name))?;
-    Ok(Some(Mint { url: t.url, token: minted.token, expires_at: minted.expires_at, session_id: minted.session_id, record }))
+    MintedSessions::edit_run(&MintedSessions::run_path(ctx.home, &spec.name), |records| records.insert_minted(&spec.name, session.clone(), &request))
+        .map_err(|e| format!("cannot record the Workman session of {}: {e}", spec.name))?;
+    Ok(Some(Mint { url: t.url, token: minted.token, expires_at: minted.expires_at, session_id: minted.session_id, record: session }))
 }
 
 /// A run that never got going cannot come back: its token is revoked and its record goes; `Some` says what failed.
 fn end_mint(host: &mut dyn SessionHost, keeper: &Keeper, home: &Path, name: &str, mint: Option<&Mint>) -> Option<String> {
     let mut failed = Vec::new();
-    if let Some(session) = mint.and_then(|m| m.record.get(name)) {
+    if let Some(session) = mint.map(|m| &m.record) {
         let bearer = Bearer::of(host.tokens().token(crate::schedule::RUN_ROLE).map(|t| t.map(|t| (t.url, t.token))));
         failed.extend(supraman_supervisor::revoke(keeper, host.minter(), &bearer, name, session).notices);
-        if let Err(e) = fs::remove_file(MintedSessions::run_path(home, name))
-            && e.kind() != std::io::ErrorKind::NotFound
-        {
+        if let Err(e) = MintedSessions::edit_run(&MintedSessions::run_path(home, name), |records| records.remove(name)) {
             failed.push(format!("cannot delete the Workman record of {name}: {e}"));
         }
     } else if let Err(e) = supraman_supervisor::remove_mcp_config(keeper.mcp_dir(), name) {

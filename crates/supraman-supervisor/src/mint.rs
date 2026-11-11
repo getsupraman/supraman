@@ -308,6 +308,22 @@ impl MintedSessions {
         supraman_core::fs::write_atomic(path, serde_json::to_string_pretty(&self.names).map_err(std::io::Error::other)?)
     }
 
+    /// The one read-modify-write of a run record ([`Self::run_path`]), which `sm` and the app both edit: under the runs' lock, the file deleted once empty.
+    pub fn edit_run<R>(path: &Path, f: impl FnOnce(&mut Self) -> R) -> std::io::Result<R> {
+        let _lock = supraman_core::fs::lock_file(&path.parent().unwrap_or(Path::new(".")).join(RUNS_LOCK))?;
+        let mut records = Self::load(Some(path.to_path_buf()))?;
+        let out = f(&mut records);
+        if records.names.is_empty() {
+            match std::fs::remove_file(path) {
+                Err(e) if e.kind() != ErrorKind::NotFound => return Err(e),
+                _ => {}
+            }
+        } else {
+            records.save()?;
+        }
+        Ok(out)
+    }
+
     pub fn get(&self, name: &str) -> Option<&MintedSession> {
         self.names.get(name).map(|e| &e.session)
     }
@@ -366,6 +382,9 @@ impl MintedSessions {
             .collect()
     }
 }
+
+/// One lock for every run record: a lock file per run would outlive its record, one per scheduled run.
+const RUNS_LOCK: &str = ".lock";
 
 fn runs_dir(home: &Path) -> PathBuf {
     home.join("supervisor").join("runs")
@@ -645,20 +664,19 @@ pub fn revoke_deleted_runs(keeper: &Keeper, minter: &dyn Minter, bearer: impl Fn
     }
     let bearer = bearer();
     let mut notices = Vec::new();
-    for (path, mut records) in runs {
-        let gone: Vec<(String, String)> = records.bound().into_iter().filter(|(_, sid)| deleted.contains(sid)).collect();
-        for (name, sid) in &gone {
-            log::info!("scheduled run {name}: its claude session {sid} is deleted, so its Workman token is revoked");
-            if let Some(m) = records.remove(name) {
-                notices.extend(revoke(keeper, minter, &bearer, name, &m).notices);
+    for (path, _) in runs.iter().filter(|(_, r)| r.bound().iter().any(|(_, sid)| deleted.contains(sid))) {
+        let removed = MintedSessions::edit_run(path, |records| {
+            let gone: Vec<String> = records.bound().into_iter().filter(|(_, sid)| deleted.contains(sid)).map(|(name, _)| name).collect();
+            gone.into_iter().filter_map(|name| Some((records.remove(&name)?, name))).collect::<Vec<_>>()
+        });
+        match removed {
+            Ok(removed) => {
+                for (m, name) in removed {
+                    log::info!("scheduled run {name}: its claude session {} is deleted, so its Workman token is revoked", m.claude_session_id.as_deref().unwrap_or_default());
+                    notices.extend(revoke(keeper, minter, &bearer, &name, &m).notices);
+                }
             }
-        }
-        if gone.is_empty() {
-            continue;
-        }
-        let (verb, done) = if records.names().next().is_none() { ("delete", std::fs::remove_file(&path)) } else { ("save", records.save()) };
-        if let Err(e) = done {
-            notices.push(format!("Cannot {verb} {}: {e}", path.display()));
+            Err(e) => notices.push(format!("Cannot update {}: {e}", path.display())),
         }
     }
     notices
@@ -866,6 +884,31 @@ mod tests {
         assert!(!home.path().join("supervisor").join("demo.sessions.json.tmp").exists());
         std::fs::write(&path, "not json").unwrap();
         assert!(MintedSessions::load(Some(path)).is_err());
+    }
+
+    #[test]
+    fn two_writers_of_one_run_record_lose_no_update() {
+        let home = tempfile::tempdir().unwrap();
+        let path = MintedSessions::run_path(home.path(), "fm-demo-run");
+        let session = MintedSession { session_id: "7".into(), role: "run".into(), claude_session_id: None, last_active: None, origin: None };
+        const EACH: usize = 40;
+        std::thread::scope(|s| {
+            for writer in ["a", "b"] {
+                let (path, session) = (&path, &session);
+                s.spawn(move || {
+                    for i in 0..EACH {
+                        MintedSessions::edit_run(path, |r| r.insert(&format!("fm-{writer}-{i}"), session.clone())).unwrap();
+                    }
+                });
+            }
+        });
+        let records = MintedSessions::load(Some(path.clone())).unwrap();
+        assert_eq!(records.names().count(), 2 * EACH, "an edit lost another's");
+        for i in 0..2 * EACH {
+            let name = if i < EACH { format!("fm-a-{i}") } else { format!("fm-b-{}", i - EACH) };
+            MintedSessions::edit_run(&path, |r| r.remove(&name)).unwrap();
+        }
+        assert!(!path.exists(), "the record goes with its last session");
     }
 
     #[test]
