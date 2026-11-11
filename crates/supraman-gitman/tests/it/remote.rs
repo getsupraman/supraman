@@ -187,7 +187,7 @@ fn add_remote_adds_with_or_without_a_push_url_and_refuses_a_bad_or_taken_name() 
     assert!(matches!(bad, Err(WriteError::Refused("A name cannot hold a space"))), "{bad:?}");
     let before = f.git(&["remote", "get-url", "--push", "origin"]);
     let taken = add("origin", Some("C:/never.git"));
-    assert!(matches!(&taken, Err(WriteError::Remote(why)) if why == "Remote origin already exists."), "{taken:?}");
+    assert!(matches!(&taken, Err(WriteError::Said(why)) if why == "Remote origin already exists."), "{taken:?}");
     assert_eq!(f.git(&["remote", "get-url", "--push", "origin"]), before, "the taken remote is left as it was");
     let names: Vec<String> = remotes(&f.repo()).unwrap().into_iter().map(|r| r.name).collect();
     assert_eq!(names, ["mirror", "origin", "split"]);

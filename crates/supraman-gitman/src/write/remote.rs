@@ -7,8 +7,6 @@ use std::time::{Duration, Instant};
 
 use supraman_core::process::{self, Pipe, RawOutput, Waited};
 
-use supraman_core::text::capitalised;
-
 use super::branch::name_problem;
 use super::rebase::{self, Rebased};
 use super::{Call, Session, WriteError, Writer};
@@ -426,23 +424,14 @@ pub fn add_remote(s: &Session, name: &str, pull_url: &str, push_url: Option<&str
     if pull_url.is_empty() {
         return Err(WriteError::Refused("A remote needs a URL"));
     }
-    refused_in_git_words(s, &["remote", "add", "--", name, pull_url])?;
+    s.said(&Call::new(&["remote", "add", "--", name, pull_url]))?;
     if let Some(push) = push_url {
-        if let Err(e) = refused_in_git_words(s, &["remote", "set-url", "--push", "--", name, push]) {
+        if let Err(e) = s.said(&Call::new(&["remote", "set-url", "--push", "--", name, push])) {
             drop(s.run(&Call::new(&["remote", "remove", "--", name])));
             return Err(e);
         }
     }
     Ok(())
-}
-
-fn refused_in_git_words(s: &Session, args: &[&str]) -> Result<(), WriteError> {
-    let out = s.run(&Call::new(args))?;
-    if out.success() {
-        return Ok(());
-    }
-    let said = super::reason(&text(&out.stderr));
-    Err(WriteError::Remote(capitalised(said.strip_prefix("error: ").unwrap_or(&said))))
 }
 
 /// `remote`, its remote-tracking branches and the upstream settings naming it removed; not undoable.

@@ -70,6 +70,9 @@ pub enum WriteError {
     /// A remote refused, or some of several remotes failed: each with its reason.
     #[error("{0}")]
     Remote(String),
+    /// git refused: its reason in its words.
+    #[error("{0}")]
+    Said(String),
 }
 
 impl WriteError {
@@ -315,6 +318,16 @@ impl Session<'_> {
             return Ok(out.stdout);
         }
         Err(crate::repo::failed(call.label(), &self.writer.dirs.top, &out).into())
+    }
+
+    /// `call` run, git's refusal as [`WriteError::Said`].
+    pub fn said(&self, call: &Call) -> Result<(), WriteError> {
+        let out = self.run(call)?;
+        if out.success() {
+            return Ok(());
+        }
+        let said = reason(&text(&out.stderr));
+        Err(WriteError::Said(supraman_core::text::capitalised(said.strip_prefix("error: ").unwrap_or(&said))))
     }
 
     /// `call`'s stdout as one trimmed line, an error unless git exited 0.

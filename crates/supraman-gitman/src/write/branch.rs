@@ -16,6 +16,7 @@ pub const DELETE_CURRENT: &str = "The checked-out branch cannot be deleted: chec
 pub const NOT_FAST_FORWARD: &str = "The branch has commits the other does not: it cannot be fast-forwarded";
 pub const IN_WORKTREE: &str = "The branch is checked out in another worktree: change it there";
 pub const DETACHED: &str = "HEAD is detached: check out a branch first";
+pub const FOLDER_IN_USE: &str = "The folder exists and is not empty: pick an empty or new one";
 
 /// Why `name` cannot name a branch, a tag or a remote, after git's `check-ref-format`; `None` when it can.
 pub fn name_problem(name: &str) -> Option<&'static str> {
@@ -418,6 +419,27 @@ pub fn abandon(s: &Session, away: &Away) -> Result<Autostash, WriteError> {
 }
 
 /// Removes the worktree at `path` with what it holds (`--force`), then deletes `branch` when given.
+/// A new worktree at `folder` checking out `reference`, or `new_branch` made there; a reference that is no local branch is checked out detached.
+/// Refused for a folder that holds anything, a bad or taken name, and in git's words for a branch checked out elsewhere; not undoable.
+pub fn add_worktree(s: &Session, folder: &Path, reference: &str, new_branch: Option<&str>) -> Result<(), WriteError> {
+    if std::fs::read_dir(folder).is_ok_and(|mut entries| entries.next().is_some()) || folder.is_file() {
+        return Err(WriteError::Refused(FOLDER_IN_USE));
+    }
+    let folder = folder.to_string_lossy();
+    let mut args = vec!["worktree", "add"];
+    if let Some(name) = new_branch {
+        checked_name(s, name)?;
+        if s.verify(&format!("refs/heads/{name}"))?.is_some() {
+            return Err(WriteError::Refused(BRANCH_EXISTS));
+        }
+        args.extend(["-b", name]);
+    } else if s.verify(&format!("refs/heads/{reference}"))?.is_none() {
+        args.push("--detach");
+    }
+    args.extend([folder.as_ref(), reference]);
+    s.said(&Call::new(&args))
+}
+
 pub fn remove_worktree(s: &Session, path: &Path, branch: Option<&str>) -> Result<(), WriteError> {
     let path = path.to_string_lossy();
     s.output(&Call::new(&["worktree", "remove", "--force", &path]))?;
