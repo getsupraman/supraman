@@ -75,18 +75,26 @@ pub(crate) fn pressed_modifiers() -> Vec<&'static str> {
     MODIFIERS[..3].iter().filter(|(vk, _)| unsafe { GetAsyncKeyState(vk.0 as i32) } as u16 & 0x8000 != 0).map(|(_, name)| *name).collect()
 }
 
-/// Every modifier released in this thread's key state.
+/// Caps Lock toggled in this thread's key state, which `TranslateMessage` types a posted key by.
 #[cfg(windows)]
-pub(crate) fn clear_held_modifiers() -> anyhow::Result<()> {
+pub(crate) fn caps_lock_on() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CAPITAL};
+    (unsafe { GetKeyState(VK_CAPITAL.0 as i32) } & 1) != 0
+}
+
+/// Every modifier released and Caps Lock off in this thread's key state, so a posted key types its own character.
+#[cfg(windows)]
+pub(crate) fn clear_key_state() -> anyhow::Result<()> {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        GetKeyboardState, SetKeyboardState, VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN,
-        VK_SHIFT,
+        GetKeyboardState, SetKeyboardState, VK_CAPITAL, VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU, VK_RSHIFT,
+        VK_RWIN, VK_SHIFT,
     };
     let mut state = [0u8; 256];
     unsafe { GetKeyboardState(&mut state) }.map_err(|e| anyhow!("GetKeyboardState: {e}"))?;
     for vk in [VK_CONTROL, VK_LCONTROL, VK_RCONTROL, VK_MENU, VK_LMENU, VK_RMENU, VK_SHIFT, VK_LSHIFT, VK_RSHIFT, VK_LWIN, VK_RWIN] {
         state[vk.0 as usize] &= !0x80;
     }
+    state[VK_CAPITAL.0 as usize] &= !0x01;
     unsafe { SetKeyboardState(&state) }.map_err(|e| anyhow!("SetKeyboardState: {e}"))
 }
 
@@ -516,3 +524,6 @@ pub(crate) mod clipboard {
         0
     }
 }
+
+#[cfg(all(test, windows))]
+mod tests;
