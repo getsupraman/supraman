@@ -284,7 +284,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     let open = format!("inbox-sched-open-{WS}/{ID}");
     until(view, cx, WITHIN, "the pending schedule's Inbox entry", |v| painted(v, &open).then_some(())).await?;
     let later = format!("inbox-sched-later-{WS}/{ID}");
-    until(view, cx, WITHIN, "Approve as a word after the card's hover ×", |v| a_word_after(v, &open, &later).then_some(())).await?;
+    until(view, cx, WITHIN, "Review as a word after the card's hover ×", |v| a_word_after(v, &open, &later).then_some(())).await?;
     let tip = view.read_with(cx, |v, _| v.tray_tooltip());
     if tip != "Supraman · 1 schedule waits for your approval" {
         bail!("the tray says {tip:?}");

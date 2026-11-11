@@ -1021,7 +1021,7 @@ impl FleetView {
         for w in waiting {
             let k = key(&w.workspace, &w.id);
             let card = format!("inbox-sched-card-{k}");
-            let open = inbox_card::primary(&self.hits, format!("inbox-sched-open-{k}"), "Approve", cx).tooltip(Tooltip::text("Open to approve")).on_click(cx.listener({
+            let open = inbox_card::primary(&self.hits, format!("inbox-sched-open-{k}"), "Review", cx).tooltip(Tooltip::text("Open to review and approve")).on_click(cx.listener({
                 let (ws, id) = (w.workspace.clone(), w.id.clone());
                 move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
