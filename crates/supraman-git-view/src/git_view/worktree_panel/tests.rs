@@ -80,7 +80,7 @@ fn worktree_panel_shows_the_header_and_the_worktrees_files_in_path_and_tree(cx: 
 
     let shown = view.read_with(cx, |v, cx| v.worktree_panel.read(cx).shown()).expect("the worktree is shown");
     assert_eq!(path_key(&shown.path), path_key(&f.worktree));
-    assert_eq!((shown.said.label.as_str(), shown.said.counts.as_str()), ("on side", "+2 ✎1"));
+    assert_eq!((shown.said.label.as_str(), shown.said.counts.as_str()), ("side", "+2 ✎1"));
     assert_eq!(listed(&shown.unstaged), [("a.txt", ChangeKind::Modified), ("dir/u.txt", ChangeKind::Untracked)], "the worktree's files, not the tab's");
     assert_eq!(listed(&shown.staged), [("s.txt", ChangeKind::Added)]);
 

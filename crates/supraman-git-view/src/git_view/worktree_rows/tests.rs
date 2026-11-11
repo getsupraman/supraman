@@ -105,7 +105,7 @@ fn a_worktree_row_says_its_counts_and_branch_or_detached_head_or_shows_the_sessi
 
     let side = row_of(&view, &f.worktree, cx);
     let said = view.update(cx, |v, cx| v.worktree_view(side, cx)).expect("read");
-    assert_eq!((said.label.as_str(), said.counts.as_str(), names(&said)), ("on side", "+1", vec![]));
+    assert_eq!((said.label.as_str(), said.counts.as_str(), names(&said)), ("side", "+1", vec![]));
     assert!(painted(&view, &format!("git-worktree-wip-{side}"), cx), "muted // WIP");
     assert!(painted(&view, &format!("git-worktree-ref-{side}"), cx));
 

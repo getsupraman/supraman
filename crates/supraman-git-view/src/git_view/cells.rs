@@ -279,3 +279,6 @@ pub(crate) fn date(ix: usize, row: &GraphRow, palette: &Palette, hits: &HitTarge
 pub(crate) fn sha(ix: usize, row: &GraphRow, palette: &Palette, hits: &HitTargets) -> AnyElement {
     figures(sha_text(row).to_string(), palette, format!("git-sha-{ix}"), hits)
 }
+
+#[cfg(test)]
+mod tests;
