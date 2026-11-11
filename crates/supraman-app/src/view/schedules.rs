@@ -1044,11 +1044,11 @@ impl FleetView {
             } else {
                 (format!("{} waits for your approval", w.title), format!("Schedule {} of {}: nothing runs until you approve it.", w.id, w.workspace))
             };
-            out.push(InboxCard::new(card, "approve", "Approve", title).context(w.workspace.clone()).line("detail", detail, false).action(open).action(dismiss).render(&self.hits, cx));
+            out.push(InboxCard::new(card, "approve", "approve", title).context(w.workspace.clone()).line("detail", detail, false).action(open).action(dismiss).render(&self.hits, cx));
         }
         for a in runs {
             let needs_you = a.outcome == schedule::Outcome::NeedsYou;
-            let (kind, label) = if needs_you { ("needs you", "Needs you") } else { ("run failed", "Run failed") };
+            let kind = if needs_you { "needs you" } else { "run failed" };
             let detail = if a.why.is_empty() { schedules::outcome_text(a.outcome).to_string() } else { format!("{}: {}", schedules::outcome_text(a.outcome), a.why) };
             let (w, id, run) = (a.workspace.clone(), a.id.clone(), a.run.clone());
             let card = format!("inbox-sched-run-{}", a.run);
@@ -1063,7 +1063,7 @@ impl FleetView {
                 cx.stop_propagation();
                 this.dismiss_schedule_notice(&w, &run, cx);
             }));
-            out.push(InboxCard::new(card, kind, label, a.id.clone()).context(a.workspace.clone()).when(Some(a.at), now).line("detail", detail, false).action(history).action(dismiss).render(&self.hits, cx));
+            out.push(InboxCard::new(card, kind, kind, a.id.clone()).context(a.workspace.clone()).when(Some(a.at), now).line("detail", detail, false).action(history).action(dismiss).render(&self.hits, cx));
         }
         for (k, e) in syncs {
             let card = format!("inbox-sync-card-{k}");
@@ -1075,7 +1075,7 @@ impl FleetView {
                     cx.notify();
                 }
             }));
-            out.push(InboxCard::new(card, "task not synced", "Task not synced", k).line("detail", e, false).action(dismiss).render(&self.hits, cx));
+            out.push(InboxCard::new(card, "task not synced", "task not synced", k).line("detail", e, false).action(dismiss).render(&self.hits, cx));
         }
         out
     }

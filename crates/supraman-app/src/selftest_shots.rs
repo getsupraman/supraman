@@ -206,6 +206,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     sleep(cx, Duration::from_millis(1500)).await;
     let main = capture(out.join("supraman-main.png"), None, cx).await?;
     println!("shot: {}", main.display());
+    inbox(view, &out, cx).await?;
 
     let target = MenuTarget::Session {
         workspace: WORKSPACE.to_string(),
@@ -235,8 +236,52 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-work.png"), None, cx).await?;
     println!("shot: {}", shot.display());
+    crate::selftest::click(view, "work-tab-evidence", cx).await?;
+    crate::selftest::drawn(cx).await?;
+    let shot = capture(out.join("supraman-work-evidence.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    crate::selftest::click(view, "work-tab-overview", cx).await?;
     work_pages(view, &work, &out, cx).await?;
     git_palette(view, &out, cx).await
+}
+
+/// The Inbox with a session's need and a schedule's notice beside Workman's cards: the three owners of `supraman_ui::inbox_card`.
+async fn inbox(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    use supraman_supervisor::{NeedsKind, NeedsYou, Remedy};
+    view.update(cx, |v, cx| {
+        v.supervising.needs.push(NeedsYou {
+            kind: NeedsKind::LaunchFailed,
+            workspace: WORKSPACE.to_string(),
+            name: "fm-demo-infra".to_string(),
+            since: fixture_now() - 25 * 60_000,
+            detail: "claude exited with code 1 before its first turn".to_string(),
+            action: Some(Remedy::Retry),
+        });
+        v.scheduling.sync_errors.insert(format!("{WORKSPACE}/nightly"), "Task Scheduler refused the task: access is denied".to_string());
+        cx.notify();
+    });
+    let (need, sync) = (format!("inbox-need-{WORKSPACE}/fm-demo-infra"), format!("inbox-sync-card-{WORKSPACE}/nightly"));
+    crate::selftest::until(view, cx, Duration::from_secs(10), "a need's and a schedule's Inbox cards", |v| {
+        let hits = v.hits.borrow();
+        (hits.contains_key(&need) && hits.contains_key(&sync)).then_some(())
+    })
+    .await?;
+    let shot = capture(out.join("supraman-inbox.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    view.update(cx, |v, cx| {
+        v.work_inbox.read(cx).scroll.scroll_to_bottom();
+        cx.notify();
+    });
+    crate::selftest::drawn(cx).await?;
+    let shot = capture(out.join("supraman-inbox-end.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    view.update(cx, |v, cx| {
+        v.work_inbox.read(cx).scroll.set_offset(gpui::Point::default());
+        v.supervising.needs.retain(|n| n.name != "fm-demo-infra");
+        v.scheduling.sync_errors.clear();
+        cx.notify();
+    });
+    Ok(())
 }
 
 /// The Work tab's Overview, Activity and the open Ctrl+P palette.
