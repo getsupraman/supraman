@@ -835,3 +835,6 @@ fn raw(cmd: &mut Command, line: &str) {
 fn raw(cmd: &mut Command, line: &str) {
     cmd.arg(line);
 }
+
+#[cfg(test)]
+mod tests;
