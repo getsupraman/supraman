@@ -1,6 +1,6 @@
 //! The Branch / Tag, Commit Message, Date and Sha cells.
 
-use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Div, Hsla, MouseButton, MouseDownEvent, SharedString, Stateful, Svg, deferred, div, prelude::*, px, relative};
+use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Div, Hsla, MouseButton, MouseDownEvent, SharedString, Stateful, Svg, canvas, deferred, div, prelude::*, px, relative};
 use supraman_gitman::{RefGroup, RefKind, Row, short_sha};
 use supraman_ui::clipped::clipped;
 use supraman_ui::fonts;
@@ -11,7 +11,7 @@ use supraman_ui::ink;
 use super::GitView;
 use super::branch::DraggedPill;
 use super::colours::Palette;
-use super::graph::{BAR, CELL_PAD, GAP, LINE};
+use super::graph::{self, BAR, CELL_PAD, GAP, LINE};
 use super::load::GraphRow;
 
 /// The hover list shows at most this many groups.
@@ -199,8 +199,9 @@ pub(crate) fn refs(ix: usize, row: &GraphRow, view: RefCellView, selected: bool,
         let more = SharedString::from(format!("+{}", view.more));
         d.child(more_chip(more, colour, palette).child(hit_target(hits, format!("git-more-{ix}"))))
     });
-    let connector = div().flex_1().min_w(px(4.)).mr(px(-CELL_PAD)).h(px(1.5)).bg(palette.connector(colour));
-    cell.child(connector).into_any_element()
+    let (link, hits) = (palette.connector(colour), hits.clone());
+    let connector = canvas(|_, _, _| {}, move |bounds, _, window, _| graph::link_line(window, bounds.left(), bounds.right(), bounds, link, &hits, format!("git-link-{ix}")));
+    cell.child(connector.flex_1().min_w(px(4.)).mr(px(-CELL_PAD)).h_full()).into_any_element()
 }
 
 /// A group's `+N`: its own fill, [`GAP`] from the pill, as two graph stripes stand apart.
