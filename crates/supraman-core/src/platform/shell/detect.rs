@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::{PowerShell, powershell, windows_powershell};
+use super::{PowerShell, powershell, quote, windows_powershell};
 use crate::shells::{Shell, ShellSetting, Shells};
 
 /// How long one `vswhere` or `wsl.exe` may run before it is killed and its shells are left out.
@@ -124,8 +124,8 @@ fn dev_shells(vs: &VsInstance, powershell: &Path, cmd: &Path) -> Vec<Shell> {
     let (dll, bat) = (tools.join("Microsoft.VisualStudio.DevShell.dll"), tools.join("VsDevCmd.bat"));
     let mut out = Vec::new();
     if dll.is_file() {
-        let module = dll.display().to_string().replace('\'', "''");
-        let enter = format!("&{{Import-Module '{module}'; Enter-VsDevShell {} -SkipAutomaticLocation}}", vs.id);
+        let module = quote(&dll.display().to_string());
+        let enter = format!("&{{Import-Module {module}; Enter-VsDevShell {} -SkipAutomaticLocation}}", vs.id);
         let args = bypass().into_iter().chain(["-NoExit".into(), "-Command".into(), enter]).collect();
         out.push(Shell { label: format!("Developer PowerShell for {}", vs.name), program: powershell.into(), args, setting: None });
     }

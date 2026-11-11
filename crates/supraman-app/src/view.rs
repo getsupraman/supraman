@@ -1240,7 +1240,7 @@ impl FleetView {
             }
             id
         } else {
-            let resume = format!("{} --resume '{}'", self.claude_command, sid.replace('\'', "''"));
+            let resume = format!("{} --resume {}", self.claude_command, supraman_core::platform::shell::quote(sid));
             let own = (!session.name.is_empty()).then(|| session.name.clone());
             let id = self.hand_claude_in(None, session.cwd.clone(), title, resume, own, Some(sid.clone()), None, cx);
             if let Some(tab) = self.tab_mut(id) {
@@ -1810,7 +1810,7 @@ fn entered(command: &str) -> String {
 }
 
 fn held_line(why: &str) -> String {
-    format!("Write-Host -ForegroundColor Yellow '{}'", why.replace('\'', "''"))
+    format!("Write-Host -ForegroundColor Yellow {}", supraman_core::platform::shell::quote(why))
 }
 
 fn placeholder(text: String, cx: &gpui::App) -> AnyElement {

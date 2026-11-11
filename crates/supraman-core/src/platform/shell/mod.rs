@@ -10,6 +10,11 @@ pub mod launch;
 
 pub use detect::{Machine, PROBE_TIMEOUT, VsInstance, detect, detect_on, parse_vswhere, parse_wsl};
 
+/// `s` as a single-quoted PowerShell string.
+pub fn quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
 /// `%NAME%` replaced by that environment variable; a name that is not set stays as written.
 pub fn expand_env(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -175,6 +180,10 @@ fn raw(cmd: &mut std::process::Command, line: &str) {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn quote_doubles_each_single_quote_inside_single_quotes() {
+        assert_eq!(quote(r"C:\it's here"), r"'C:\it''s here'");    }
 
     #[test]
     fn powershell_is_pwsh_only_when_path_holds_it() {

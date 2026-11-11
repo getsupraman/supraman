@@ -1,10 +1,5 @@
 //! The PowerShell text a [+] tab runs claude with (C113: tabs that start claude stay on PowerShell).
 
-/// `s` as a single-quoted PowerShell string.
-pub fn quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "''"))
-}
-
 /// Under legacy arg passing (5.1, pwsh < 7.3) claude gets one MSVC-quoted command line, never via its environment.
 const RUNNER: &str = r#"function supramanClaude($supramanArgv) {
     $c = Get-Command -Name <command> -ErrorAction SilentlyContinue | Select-Object -First 1

@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use supraman_core::home::home_env;
-use supraman_core::platform::shell::launch::{encoded_command, quote, runner};
+use supraman_core::platform::shell::launch::{encoded_command, runner};
+use supraman_core::platform::shell::quote;
 use supraman_core::paths::{path_key, within};
 use supraman_core::{Workspace, owners};
 use supraman_supervisor::{Bearer, HAND_ROLE, HttpMinter, Keeper, LaunchConfig, MintError, MintRepo, MintRequest, Minted, MintedSession, MintedSessions, Minter, git_repo, launched_by, mint_as};

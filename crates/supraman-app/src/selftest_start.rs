@@ -33,8 +33,8 @@ pub(crate) async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWin
 fn fake(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     std::fs::remove_file(out).ok();
     let exe = std::env::current_exe()?;
-    let quote = |p: &Path| p.display().to_string().replace('\'', "''");
-    view.update(cx, |v, _| v.claude_command = format!("& '{}' --selftest-argv '{}'", quote(&exe), quote(out)));
+    let quote = |p: &Path| supraman_core::platform::shell::quote(&p.display().to_string());
+    view.update(cx, |v, _| v.claude_command = format!("& {} --selftest-argv {}", quote(&exe), quote(out)));
     Ok(())
 }
 
