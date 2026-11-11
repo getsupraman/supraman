@@ -5,10 +5,11 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, FontWeight, SharedString, Subscription, Window, deferred, div, prelude::*, px};
+use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, SharedString, Subscription, Window, deferred, div, prelude::*, px};
 use supraman_gitman::write::LockSet;
 use supraman_gitman::write::branch::{self, name_problem};
 use supraman_ui::button;
+use supraman_ui::focus_order::{Dismiss, FocusOrder, NextField, Press, PreviousField};
 use supraman_ui::folder_picker::pick_folder;
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
@@ -41,6 +42,9 @@ fn branch_of(entry: &GitEntry) -> Option<&str> {
 struct Fields {
     branch: Entity<TextInput>,
     folder: Entity<TextInput>,
+    reference: FocusHandle,
+    browse: FocusHandle,
+    ok: FocusHandle,
     _events: [Subscription; 2],
 }
 
@@ -75,6 +79,19 @@ impl AddWorktree {
             Some(GitEntry::Ref { name, .. }) => Some(name),
             _ => None,
         }
+    }
+
+    /// The reference (its open picker with it), the new branch, the folder, Browse, then Create Worktree.
+    fn order(&self, cx: &gpui::App) -> FocusOrder {
+        let Some(f) = &self.fields else { return FocusOrder::default() };
+        let picker = self.picking.as_ref().map(|(p, _)| p.focus_handle(cx));
+        let fields = [f.branch.focus_handle(cx), f.folder.focus_handle(cx), f.browse.clone(), f.ok.clone()];
+        FocusOrder::new(std::iter::once(f.reference.clone()).chain(picker).chain(fields))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn focus_at(&self, window: &Window, cx: &gpui::App) -> Option<usize> {
+        self.order(cx).focused(window, cx)
     }
 
     /// Why Create Worktree cannot act on what is set.
@@ -204,7 +221,7 @@ impl BranchActions {
             let (branch, b) = field("Optional: a new branch", window, cx);
             let (folder, f) = field("Where the worktree goes", window, cx);
             if let Some(a) = self.adding.as_mut() {
-                a.fields = Some(Fields { branch, folder, _events: [b, f] });
+                a.fields = Some(Fields { branch, folder, reference: cx.focus_handle(), browse: cx.focus_handle(), ok: cx.focus_handle(), _events: [b, f] });
             }
         }
         if self.adding.as_ref().is_some_and(|a| a.wants_picker && a.picking.is_none()) {
@@ -257,6 +274,14 @@ impl BranchActions {
         cx.notify();
     }
 
+    /// Tab or Shift+Tab in the open picker: the form's next (previous) member focused, the picker shut.
+    fn tab_out_of_picker(&mut self, back: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(adding) = self.adding.as_mut() else { return };
+        adding.order(cx).step(back, window, cx);
+        adding.picking = None;
+        cx.notify();
+    }
+
     /// Adds the worktree; the form closes once it is made.
     pub(crate) fn submit_add_worktree(&mut self, cx: &mut Context<Self>) {
         let Some(adding) = &self.adding else { return };
@@ -281,7 +306,7 @@ impl BranchActions {
         });
     }
 
-    fn ref_field(&self, adding: &AddWorktree, cx: &mut Context<Self>) -> AnyElement {
+    fn ref_field(&self, adding: &AddWorktree, focus: &FocusHandle, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors();
         let muted = secondary(colors);
         let shown = match &adding.picked {
@@ -302,15 +327,24 @@ impl BranchActions {
             .child(shown)
             .child(Icon::ChevronDown.svg(12., muted))
             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_picker(window, cx)));
+        let field = button::focusable(field, focus, cx.listener(|this, _: &Press, window, cx| this.open_picker(window, cx)), cx);
         let picker = adding.picking.as_ref().map(|(p, _)| deferred(div().absolute().top_full().left_0().right_0().child(p.clone())).with_priority(supraman_ui::menu::FLOAT));
-        div().relative().child(field).children(picker).into_any_element()
+        div()
+            .relative()
+            .when(picker.is_some(), |d| {
+                d.on_action(cx.listener(|this, _: &NextField, window, cx| this.tab_out_of_picker(false, window, cx)))
+                    .on_action(cx.listener(|this, _: &PreviousField, window, cx| this.tab_out_of_picker(true, window, cx)))
+            })
+            .child(field)
+            .children(picker)
+            .into_any_element()
     }
 
     /// The form as the commit panel's place shows it, while it is open.
     pub(crate) fn render_add_worktree(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let adding = self.adding.as_ref()?;
         let fields = adding.fields.as_ref()?;
-        let reference = self.ref_field(adding, cx);
+        let reference = self.ref_field(adding, &fields.reference, cx);
         let colors = cx.theme().colors();
         let (muted, border) = (secondary(colors), colors.border);
         let close = button::icon(&self.hits, format!("{KEY}-close"), Icon::Close.svg(14., muted), px(22.), cx)
@@ -330,6 +364,7 @@ impl BranchActions {
         let labelled = |label: &'static str, field: AnyElement| div().flex().flex_col().gap_1().child(div().text_xs().text_color(muted).child(label)).child(field);
         let input = |key: &str, input: &Entity<TextInput>| div().relative().flex_1().min_w_0().child(input.clone()).child(hit_target(&self.hits, format!("{KEY}-{key}"))).into_any_element();
         let browse = button::bordered(&self.hits, format!("{KEY}-browse"), "Browse", cx).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.browse(window, cx)));
+        let browse = button::focusable(browse, &fields.browse, cx.listener(|this, _: &Press, window, cx| this.browse(window, cx)), cx);
         let folder = div().flex().items_center().gap_2().child(input("folder", &fields.folder)).child(browse).into_any_element();
         let why = adding.why_not(cx).or_else(|| self.busy(cx));
         let ok = button::tinted(&self.hits, format!("{KEY}-ok"), "Create Worktree", Some(cx.theme().status().success), cx);
@@ -337,6 +372,7 @@ impl BranchActions {
             Some(why) => button::dimmed(ok).tooltip(Tooltip::text(why)),
             None => ok.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.submit_add_worktree(cx))),
         };
+        let ok = button::focusable(ok, &fields.ok, cx.listener(|this, _: &Press, _, cx| this.submit_add_worktree(cx)), cx);
         let body = div()
             .flex()
             .flex_col()
@@ -346,7 +382,7 @@ impl BranchActions {
             .child(labelled("Worktree branch to create (optional)", input("branch", &fields.branch)))
             .child(labelled("Working directory", folder))
             .child(div().flex().child(ok));
-        let form = div().relative().size_full().flex().flex_col().bg(colors.panel_background).child(title).child(body).child(hit_target(&self.hits, KEY.to_string()));
+        let form = adding.order(cx).on(div()).on_action(cx.listener(|this, _: &Dismiss, _, cx| this.close_add_worktree(cx))).relative().size_full().flex().flex_col().bg(colors.panel_background).child(title).child(body).child(hit_target(&self.hits, KEY.to_string()));
         Some(form.into_any_element())
     }
 

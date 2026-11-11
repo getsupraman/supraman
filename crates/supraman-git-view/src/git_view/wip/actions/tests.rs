@@ -294,6 +294,41 @@ fn wip_keys_one_summary_in_two_fields_commit_stage_and_unstage(cx: &mut TestAppC
     assert_eq!(lists(&view, cx).0, vec!["k.txt".to_string()]);
 }
 
+fn amend_focused(view: &Entity<GitView>, cx: &mut VisualTestContext) -> bool {
+    let focus = panel(view, cx, |p, _| p.composer().unwrap().amend_focus.clone());
+    cx.update(|window, _| focus.is_focused(window))
+}
+
+#[gpui::test]
+fn wip_tab_walks_summary_description_and_amend_and_the_wip_rows_field_stands_for_the_summary(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let (view, cx) = open(&f.dir, occupancy::Live::default(), cx);
+    focus(&view, |c| &c.summary, cx);
+    keys(&view, "tab", cx);
+    assert!(focused(&view, |c| &c.description, cx), "Tab: the summary to the description");
+    keys(&view, "tab", cx);
+    assert!(amend_focused(&view, cx), "Tab: the description to Amend previous commit");
+    assert!(painted(&view, "wip-amend", cx));
+    keys(&view, "tab", cx);
+    assert!(focused(&view, |c| &c.summary, cx), "Tab: Amend wraps to the summary");
+    keys(&view, "shift-tab", cx);
+    assert!(amend_focused(&view, cx), "Shift+Tab: the summary back to Amend");
+    keys(&view, "space", cx);
+    assert!(panel(&view, cx, |p, _| p.composer().unwrap().amend), "Space ticks the focused Amend");
+    keys(&view, "space", cx);
+    assert!(!panel(&view, cx, |p, _| p.composer().unwrap().amend), "and unticks it");
+    keys(&view, "shift-tab", cx);
+    assert!(focused(&view, |c| &c.description, cx), "Shift+Tab: Amend back to the description");
+
+    focus(&view, |c| &c.row, cx);
+    keys(&view, "tab", cx);
+    assert!(focused(&view, |c| &c.description, cx), "Tab from the WIP row's field: the description");
+    focus(&view, |c| &c.row, cx);
+    keys(&view, "shift-tab", cx);
+    assert!(amend_focused(&view, cx), "Shift+Tab from the WIP row's field: Amend");
+    assert_eq!(texts(&view, cx), (String::new(), String::new(), String::new()), "no field typed a tab");
+}
+
 /// `side` with W1 to W3 changing c.txt, stopped in GitMan's reword of W1 with W2 dropped: the pick of W3 conflicts.
 pub(crate) fn stopped_rebase(f: &Fixture) -> String {
     let commits = ["one", "two", "three"].map(|n| {

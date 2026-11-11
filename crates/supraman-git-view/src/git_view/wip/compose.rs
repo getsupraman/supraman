@@ -1,9 +1,10 @@
 //! The commit area's state: summary, description and the WIP row's input as one summary, Amend's draft, the button's words.
 
 use supraman_core::text::count;
-use gpui::{AppContext as _, Context, Div, Entity, SharedString, Subscription, Window, div, prelude::*, px};
+use gpui::{AppContext as _, Context, Div, Entity, FocusHandle, Focusable, SharedString, Subscription, Window, div, prelude::*, px};
 use supraman_gitman::OperationState;
 use supraman_gitman::write::conflicts::Sequence;
+use supraman_ui::focus_order::FocusOrder;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
 use supraman_ui::text_input::{InputEvent, TextInput};
@@ -91,6 +92,7 @@ pub(crate) struct Composer {
     /// The graph's WIP row input: the summary in another place.
     pub(crate) row: Entity<TextInput>,
     pub(crate) amend: bool,
+    pub(crate) amend_focus: FocusHandle,
     /// The summary and description from before Amend was ticked, back when it is unticked.
     draft: Option<(String, String)>,
     pub(crate) options_open: bool,
@@ -113,7 +115,14 @@ impl Composer {
                 }
             }),
         ];
-        Composer { summary, description, row, amend: false, draft: None, options_open: false, skip_hooks: false, failure: None, _inputs: inputs }
+        Composer { summary, description, row, amend: false, amend_focus: cx.focus_handle(), draft: None, options_open: false, skip_hooks: false, failure: None, _inputs: inputs }
+    }
+
+    /// The summary (`from_row`: the WIP row's field in its place), the description, then Amend where it shows.
+    pub(crate) fn order(&self, from_row: bool, amend: bool, cx: &gpui::App) -> FocusOrder {
+        let summary = if from_row { &self.row } else { &self.summary };
+        let amend = amend.then(|| self.amend_focus.clone());
+        FocusOrder::new([summary.focus_handle(cx), self.description.focus_handle(cx)].into_iter().chain(amend))
     }
 
     pub(crate) fn texts(&self, cx: &gpui::App) -> (String, String) {
@@ -205,6 +214,13 @@ impl WipPanel {
             InputEvent::Submit => self.commit(false, cx),
             _ => {}
         }
+    }
+
+    /// The commit area's Tab order, while it shows the message.
+    pub(crate) fn message_order(&self, from_row: bool, cx: &gpui::App) -> Option<FocusOrder> {
+        let state = self.shown()?.state;
+        let amend = state == OperationState::None;
+        Some(self.composer.as_ref()?.order(from_row, amend, cx))
     }
 
     /// The summary takes the keyboard.

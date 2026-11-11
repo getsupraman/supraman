@@ -1,11 +1,12 @@
 //! The buttons. Each takes `key` as its element id, its hover group and its [`hit_target`] key.
 
 use gpui::{
-    App, Div, ElementId, Hsla, Pixels, SharedString, Stateful, StyleRefinement, Svg, div,
+    App, Div, ElementId, FocusHandle, Hsla, Pixels, SharedString, Stateful, StyleRefinement, Svg, Window, div,
     prelude::*, px,
 };
 use theme::ActiveTheme as _;
 
+use crate::focus_order::{BUTTON_CONTEXT, Press};
 use crate::hit::{HitTargets, hit_target};
 use crate::icon::Icon;
 use crate::ink;
@@ -182,6 +183,27 @@ pub fn checkbox(hits: &HitTargets, key: impl Into<SharedString>, on: bool, cx: &
     let colors = cx.theme().colors();
     let square = tick(on, colors.text_accent, cx).relative().group_hover(key.clone(), |s| s.border_color(if on { colors.text_accent } else { colors.border_selected }));
     div().id(key.clone()).group(key.clone()).flex_none().cursor_pointer().child(ink::mark(square.child(hit_target(hits, key.to_string()))))
+}
+
+/// [`checkbox`] taking the keyboard under `focus` (a form's [`crate::focus_order::FocusOrder`] member): its square bordered in the focus colour while focused, Space toggling it by `press`.
+pub fn focusable_checkbox(hits: &HitTargets, key: impl Into<SharedString>, on: bool, focus: &FocusHandle, press: impl Fn(&Press, &mut Window, &mut App) + 'static, cx: &App) -> Stateful<Div> {
+    let key = key.into();
+    let colors = cx.theme().colors();
+    let ring = colors.border_focused;
+    let square = tick(on, colors.text_accent, cx)
+        .relative()
+        .group_hover(key.clone(), |s| s.border_color(if on { colors.text_accent } else { colors.border_selected }))
+        .track_focus(focus)
+        .key_context(BUTTON_CONTEXT)
+        .on_action(press)
+        .focus(move |s| s.border_2().border_color(ring));
+    div().id(key.clone()).group(key.clone()).flex_none().cursor_pointer().child(ink::mark(square.child(hit_target(hits, key.to_string()))))
+}
+
+/// `button` taking the keyboard under `focus` (a form's [`crate::focus_order::FocusOrder`] member): bordered in the focus colour while focused, Space or Enter `press`.
+pub fn focusable(button: Stateful<Div>, focus: &FocusHandle, press: impl Fn(&Press, &mut Window, &mut App) + 'static, cx: &App) -> Stateful<Div> {
+    let ring = cx.theme().colors().border_focused;
+    button.track_focus(focus).key_context(BUTTON_CONTEXT).on_action(press).focus(move |s| s.border_color(ring))
 }
 
 /// A 14 px square, checked and filled with `fill` while `on`, the same size either way; a read-only mark on its own.

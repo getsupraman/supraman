@@ -1,9 +1,10 @@
 //! Add Remote in the commit panel's place: Name, Pull URL and an optional Push URL; hit keys `git-add-remote{,-close,-ok,-name,-pull,-push}`.
 
-use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, FontWeight, Subscription, Window, div, prelude::*, px};
+use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, Subscription, Window, div, prelude::*, px};
 use supraman_gitman::write::remote;
 use supraman_gitman::write::LockSet;
 use supraman_ui::button;
+use supraman_ui::focus_order::{Dismiss, FocusOrder, Press};
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
 use supraman_ui::text_input::{InputEvent, TextInput};
@@ -22,11 +23,22 @@ const FIELDS: [(&str, &str, &str); 3] = [("name", "Name", "origin"), ("pull", "P
 #[derive(Default)]
 pub(crate) struct AddRemote {
     fields: Vec<(Entity<TextInput>, Subscription)>,
+    ok: Option<FocusHandle>,
 }
 
 impl AddRemote {
     fn text(&self, at: usize, cx: &gpui::App) -> String {
         self.fields.get(at).map(|(f, _)| f.read(cx).text().trim().to_string()).unwrap_or_default()
+    }
+
+    /// Name, Pull URL, Push URL, then Add Remote.
+    fn order(&self, cx: &gpui::App) -> FocusOrder {
+        FocusOrder::new(self.fields.iter().map(|(f, _)| f.focus_handle(cx)).chain(self.ok.clone()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn focused(&self, window: &Window, cx: &gpui::App) -> Option<usize> {
+        self.order(cx).focused(window, cx)
     }
 
     /// `(name, pull, push)` as typed.
@@ -44,11 +56,6 @@ impl AddRemote {
         } else {
             None
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn focused(&self, window: &Window, cx: &gpui::App) -> Option<usize> {
-        self.fields.iter().position(|(f, _)| f.read(cx).is_focused(window))
     }
 
     #[cfg(test)]
@@ -100,6 +107,7 @@ impl RemoteActions {
             .collect();
         if let Some(a) = self.adding.as_mut() {
             a.fields = fields;
+            a.ok = Some(cx.focus_handle());
         }
     }
 
@@ -163,8 +171,12 @@ impl RemoteActions {
             Some(why) => button::dimmed(ok).tooltip(Tooltip::text(why)),
             None => ok.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.submit_add(cx))),
         };
+        let ok = match &adding.ok {
+            Some(focus) => button::focusable(ok, focus, cx.listener(|this, _: &Press, _, cx| this.submit_add(cx)), cx),
+            None => ok,
+        };
         let body = div().flex().flex_col().gap_3().p_3().children(fields).child(div().flex().child(ok));
-        let form = div().relative().size_full().flex().flex_col().bg(colors.panel_background).child(title).child(body).child(hit_target(&self.hits, KEY.to_string()));
+        let form = adding.order(cx).on(div()).on_action(cx.listener(|this, _: &Dismiss, _, cx| this.close_add(cx))).relative().size_full().flex().flex_col().bg(colors.panel_background).child(title).child(body).child(hit_target(&self.hits, KEY.to_string()));
         Some(form.into_any_element())
     }
 }

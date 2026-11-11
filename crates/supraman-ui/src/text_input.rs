@@ -1083,6 +1083,11 @@ impl TextInput {
 }
 
 /// What a paste inserts: on one line its line breaks as spaces (a trailing one dropped), on several `\n`.
+/// Typed text without its tabs: Tab moves between a form's fields (`focus_order`), it never types.
+fn without_tabs(text: &str) -> String {
+    text.replace('\t', "")
+}
+
 pub fn pasted(text: &str, multi_line: bool) -> String {
     if multi_line {
         text.replace("\r\n", "\n").replace('\r', "\n")
@@ -1122,7 +1127,7 @@ impl EntityInputHandler for TextInput {
 
     fn replace_text_in_range(&mut self, range_utf16: Option<Range<usize>>, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         let range = range_utf16.map(|r| self.line.range_from_utf16(&r));
-        self.insert(range, text, EditKind::Typing, window, cx);
+        self.insert(range, &without_tabs(text), EditKind::Typing, window, cx);
     }
 
     fn replace_and_mark_text_in_range(
