@@ -514,7 +514,7 @@ impl<V: 'static> Table<V> {
             }
             let selected = state.selected();
             let colors = cx.theme().colors();
-            let focused = state.focus.contains_focused(window, cx);
+            let focused = state.focus.is_focused(window) || state.focus.contains_focused(window, cx);
             let (selection, hover) = (crate::themes::selection(colors, focused), colors.ghost_element_hover);
             let mut out = Vec::with_capacity(range.len());
             if range.len() > 1 || range.start > 0 {
