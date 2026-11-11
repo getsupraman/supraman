@@ -1,6 +1,6 @@
 //! The Branch / Tag, Commit Message, Date and Sha cells.
 
-use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Div, MouseButton, MouseDownEvent, SharedString, Stateful, deferred, div, prelude::*, px, relative};
+use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Div, Hsla, MouseButton, MouseDownEvent, SharedString, Stateful, Svg, deferred, div, prelude::*, px, relative};
 use supraman_gitman::{RefGroup, RefKind, Row, short_sha};
 use supraman_ui::clipped::clipped;
 use supraman_ui::fonts;
@@ -70,11 +70,16 @@ pub(crate) fn kind_icons(group: &RefGroup) -> Vec<Icon> {
     kinds.into_iter().map(kind_icon).collect()
 }
 
+/// The current branch's mark: the graph's HEAD pill and the ref panel's current row.
+pub(crate) fn current_mark(colour: Hsla) -> Svg {
+    Icon::Check.svg(12., colour)
+}
+
 /// The HEAD mark, the name (painted under `<key>-text`), then the kinds of its refs.
 fn pill(key: String, group: &RefGroup, colour: usize, palette: &Palette, hits: &HitTargets) -> Div {
     let text = hit_target(hits, format!("{key}-text"));
     pill_box(colour, palette)
-        .when(group.head(), |d| d.child(Icon::Check.svg(12., palette.text)))
+        .when(group.head(), |d| d.child(current_mark(palette.text)))
         .child(ink::text(clipped(key, group.name.clone(), false).child(text)))
         .children(kind_icons(group).into_iter().map(|k| div().flex_none().child(k.svg(12., palette.text))))
 }
