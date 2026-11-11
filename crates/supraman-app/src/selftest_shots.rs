@@ -323,6 +323,7 @@ async fn git_palette(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowC
     cx.update(|window, cx| git.update(cx, |g, cx| g.close_find(window, cx)))?;
     git_wip(view, &git, out, cx).await?;
     git_add_remote(view, out, cx).await?;
+    git_add_worktree(view, out, cx).await?;
     git_agent(view, &dir, &fixture.worktree, out, cx).await?;
     drop(fixture);
     Ok(())
@@ -425,6 +426,24 @@ async fn git_add_remote(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWind
     let shot = capture(out.join("supraman-git-add-remote.png"), None, cx).await?;
     println!("shot: {}", shot.display());
     crate::selftest::click(view, "git-add-remote-close", cx).await
+}
+
+/// The WORKTREES header hovered, its + in the count's place beside Refresh; then Create Worktree open, its reference's picker shown.
+async fn git_add_worktree(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let header = crate::selftest::until(view, cx, Duration::from_secs(10), "the WORKTREES header", |v| v.hits.borrow().get("refpanel-row-worktrees").map(|h| h.bounds)).await?;
+    cx.update(|window, cx| {
+        let event = gpui::MouseMoveEvent { position: header.center(), pressed_button: None, modifiers: gpui::Modifiers::default() };
+        window.dispatch_event(gpui::PlatformInput::MouseMove(event), cx);
+    })?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-git-worktree-add.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    crate::selftest::click(view, "refpanel-worktrees-add", cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "Create Worktree", |v| v.hits.borrow().contains_key("git-add-worktree-refs").then_some(())).await?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-git-add-worktree.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    crate::selftest::click(view, "git-add-worktree-close", cx).await
 }
 
 /// The same tab's WIP panel: staged and unstaged files and a typed summary in the commit area.
