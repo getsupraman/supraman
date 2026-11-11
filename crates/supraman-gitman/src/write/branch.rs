@@ -17,7 +17,7 @@ pub const NOT_FAST_FORWARD: &str = "The branch has commits the other does not: i
 pub const IN_WORKTREE: &str = "The branch is checked out in another worktree: change it there";
 pub const DETACHED: &str = "HEAD is detached: check out a branch first";
 
-/// Why `name` cannot name a branch or a tag, after git's `check-ref-format`; `None` when it can.
+/// Why `name` cannot name a branch, a tag or a remote, after git's `check-ref-format`; `None` when it can.
 pub fn name_problem(name: &str) -> Option<&'static str> {
     if name.is_empty() {
         return Some("Type a name");

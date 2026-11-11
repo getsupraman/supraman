@@ -7,6 +7,9 @@ use std::time::{Duration, Instant};
 
 use supraman_core::process::{self, Pipe, RawOutput, Waited};
 
+use supraman_core::text::capitalised;
+
+use super::branch::name_problem;
 use super::rebase::{self, Rebased};
 use super::{Call, Session, WriteError, Writer};
 use crate::parse::text;
@@ -412,6 +415,34 @@ pub fn set_url(s: &Session, remote: &str, url: &str) -> Result<(), WriteError> {
     }
     s.output(&Call::new(&["remote", "set-url", "--", remote, url.trim()]))?;
     Ok(())
+}
+
+/// A new remote fetching from `pull_url`, pushing to `push_url` when given; refused by [`name_problem`], else in git's words.
+pub fn add_remote(s: &Session, name: &str, pull_url: &str, push_url: Option<&str>) -> Result<(), WriteError> {
+    let (name, pull_url, push_url) = (name.trim(), pull_url.trim(), push_url.map(str::trim).filter(|u| !u.is_empty()));
+    if let Some(problem) = name_problem(name) {
+        return Err(WriteError::Refused(problem));
+    }
+    if pull_url.is_empty() {
+        return Err(WriteError::Refused("A remote needs a URL"));
+    }
+    refused_in_git_words(s, &["remote", "add", "--", name, pull_url])?;
+    if let Some(push) = push_url {
+        if let Err(e) = refused_in_git_words(s, &["remote", "set-url", "--push", "--", name, push]) {
+            drop(s.run(&Call::new(&["remote", "remove", "--", name])));
+            return Err(e);
+        }
+    }
+    Ok(())
+}
+
+fn refused_in_git_words(s: &Session, args: &[&str]) -> Result<(), WriteError> {
+    let out = s.run(&Call::new(args))?;
+    if out.success() {
+        return Ok(());
+    }
+    let said = super::reason(&text(&out.stderr));
+    Err(WriteError::Remote(capitalised(said.strip_prefix("error: ").unwrap_or(&said))))
 }
 
 /// `remote`, its remote-tracking branches and the upstream settings naming it removed; not undoable.

@@ -191,7 +191,7 @@ impl RefPanel {
             items.push(item("section-show-all", "Show all", RefAction::ToggleHidden(hidden)));
         }
         if self.tree.is_open(section.key()) {
-            let others = Section::ALL.into_iter().filter(|s| *s != section && self.tree.shows(*s) && self.tree.is_open(s.key())).count();
+            let others = Section::ALL.into_iter().filter(|s| *s != section && self.shows(*s) && self.tree.is_open(s.key())).count();
             let maximize = item("section-maximize", "Maximize this section", RefAction::Maximize(section));
             let maximize = if others == 0 { maximize.dimmed("It is the only section open") } else { maximize };
             items.push(if items.is_empty() { maximize } else { maximize.rule() });

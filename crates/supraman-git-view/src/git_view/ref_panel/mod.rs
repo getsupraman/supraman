@@ -92,6 +92,8 @@ pub(crate) enum RefEvent {
     Checkout(String),
     /// Refresh WIPs was clicked.
     RefreshWips,
+    /// The REMOTE header's + was clicked.
+    AddRemote,
 }
 
 pub(crate) struct RefPanel {
