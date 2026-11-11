@@ -336,8 +336,9 @@ impl Supervision {
         self.read_desired(workspaces, &settings, &mut report, now);
         self.follow_server(&mut report);
         self.run_supervisors(workspaces, observed, retries, &settings, &mut report, now);
-        let ended = self.end_deleted_runs(observed);
-        self.notices.extend(ended);
+        for ended in self.end_deleted_runs(observed) {
+            log::warn!("{ended}");
+        }
         for s in self.supervisors.values_mut() {
             self.notices.extend(s.take_notices());
         }
@@ -357,7 +358,9 @@ impl Supervision {
         report.terminal = settings.terminal.clone();
         if self.pruned_at.is_none_or(|at| now - at >= PRUNE_EVERY) {
             self.pruned_at = Some(now);
-            report.errors.extend(supraman_core::prune::prune(&self.home, supraman_core::time::now_ms(), supraman_core::prune::KEEP_MS));
+            for failed in supraman_core::prune::prune(&self.home, supraman_core::time::now_ms(), supraman_core::prune::KEEP_MS) {
+                log::warn!("{failed}");
+            }
         }
         self.config.plugin_dirs = plugin_dirs(self.plugin_dir.as_deref(), &settings);
         settings
@@ -397,8 +400,9 @@ impl Supervision {
     }
 
     fn follow_server(&mut self, report: &mut Report) {
-        let signed_out = self.end_signed_out();
-        self.notices.extend(signed_out);
+        for signed_out in self.end_signed_out() {
+            log::warn!("{signed_out}");
+        }
         let server = signed_in_server(&crate::signin::auth(&self.home));
         for (name, s) in &mut self.supervisors {
             let stale = s.server_changed(server.as_deref());
@@ -457,7 +461,7 @@ impl Supervision {
             let wanted = names.contains(&relay);
             let live = observed.iter().any(|r| r.name == relay && is_live(r, now));
             if !live && let Err(e) = clear_ready(&self.home, workspace) {
-                report.errors.push(format!("Cannot reset the relay of {workspace}: {e}"));
+                log::warn!("Cannot reset the relay of {workspace}: {e}");
             }
             let ready_at = live.then(|| relay_ready(&self.home, workspace)).flatten();
             report.relays.insert(workspace.clone(), RelayStatus { started: s.desired.started, wanted, live, ready_at });

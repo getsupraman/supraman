@@ -281,7 +281,7 @@ impl WorkInbox {
         self.workspaces = names;
         self.workspaces_set = true;
         let save = self.dismissed.edit(|d| d.retain_workspaces(&self.workspaces));
-        Self::save(save, cx);
+        Self::save_pruned(save, cx);
         let asks = changed.into_iter().map(|w| self.ask(w)).collect();
         self.read(asks, true, cx);
         cx.notify();
@@ -364,6 +364,17 @@ impl WorkInbox {
     pub fn toggle_housekeeping(&mut self, cx: &mut Context<Self>) {
         self.housekeeping_open = !self.housekeeping_open;
         cx.notify();
+    }
+
+    /// A save of rows Supraman pruned itself: a failure leaves them in the file, harmless, so it is logged.
+    fn save_pruned(save: Option<Save>, cx: &mut Context<Self>) {
+        supraman_ui::store::save_off_thread(save, cx, |this, saved, cx| match saved {
+            Ok(()) => {
+                this.notice = None;
+                cx.notify();
+            }
+            Err(e) => log::warn!("Cannot save the dismissed rows ({e}): a dismissed row shows again after a restart"),
+        });
     }
 
     fn save(save: Option<Save>, cx: &mut Context<Self>) {
@@ -487,7 +498,7 @@ impl WorkInbox {
                 }
             }
         }
-        Self::save(save, cx);
+        Self::save_pruned(save, cx);
         cx.notify();
     }
 }

@@ -8809,6 +8809,7 @@ version = "0.1.15"
 dependencies = [
  "collections",
  "gpui",
+ "log",
  "serde",
  "serde_json",
  "supraman-core",

@@ -409,7 +409,7 @@ impl Hands {
             Ok(None) => return Err(self.helped(self.next_name(cwd), None)),
             Err(e) => return Err(self.helped(self.next_name(cwd), Some(format!("This claude session runs without its own Workman token: {e}")))),
         };
-        let mut notice = self.follow_chains();
+        let notice = self.follow_chains();
         let new_session = claude_session.is_none().then(supraman_claude::new_session_id);
         let claude_session = claude_session
             .filter(|s| supraman_claude::is_session_id(s))
@@ -436,7 +436,7 @@ impl Hands {
             name = held.clone();
         }
         if self.sessions.values().chain(self.picked.values()).any(|s| *s == request.name) {
-            notice = Some(format!("Workman session {name}, not {}: another tab holds that name", request.name));
+            log::info!("hand {name}: Workman session {name}, not {}: another tab holds that name", request.name);
             request.name = name.clone();
         }
         self.picked.insert(name.clone(), request.name.clone());
@@ -505,11 +505,10 @@ impl Hands {
         {
             self.left.push(other);
         }
-        let revoke = (!done.notices.is_empty()).then(|| done.notices.join("; "));
-        match (revoke, self.save()) {
-            (Some(r), Some(s)) => Some(format!("{r}; {s}")),
-            (r, s) => r.or(s),
+        for notice in done.notices {
+            log::warn!("{notice}");
         }
+        self.save()
     }
 
     /// The sign-out of `origin`: each hand minted there is [`Keeper::signed_out`].
@@ -1256,7 +1255,7 @@ mod tests {
 
         let Launch::Minted { session, notice, .. } = hands.launch(alpha, Some("mw-workflow")) else { panic!() };
         assert_eq!(session, "hand-alpha-2");
-        assert!(notice.is_some_and(|n| n.contains("another tab holds that name")));
+        assert_eq!(notice, None);
         let body: serde_json::Value = serde_json::from_str(&seen.recv_timeout(WAIT).unwrap().2).unwrap();
         assert_eq!(body["name"].as_str(), Some("hand-alpha-2"));
 
