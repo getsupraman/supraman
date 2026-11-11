@@ -78,3 +78,11 @@ fn outside_the_form_tab_reaches_the_view_holding_the_focus(cx: &mut TestAppConte
     assert_eq!(focused(&view, cx), None, "the form took no focus");
     assert_eq!(view.read_with(cx, |f, _| f.outside_keys.clone()), ["tab", "tab"]);
 }
+
+#[gpui::test]
+fn a_typed_tab_never_reaches_a_fields_text(cx: &mut TestAppContext) {
+    let (view, cx) = form(cx);
+    let second = view.read_with(cx, |f, _| f.fields[1].clone());
+    cx.update(|window, cx| second.update(cx, |i, cx| gpui::EntityInputHandler::replace_text_in_range(i, None, "a\tb", window, cx)));
+    assert_eq!(second.read_with(cx, |i, _| i.text().to_string()), "ab");
+}
