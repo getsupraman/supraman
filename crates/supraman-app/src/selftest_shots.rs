@@ -242,7 +242,29 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     println!("shot: {}", shot.display());
     crate::selftest::click(view, "work-tab-overview", cx).await?;
     work_pages(view, &work, &out, cx).await?;
-    git_palette(view, &out, cx).await
+    git_palette(view, &out, cx).await?;
+    tab_overflow(view, &out, cx).await
+}
+
+/// Twenty more tabs than the strip holds: the last one active beside the + ⌄ at the room's right edge, the left edge faded.
+async fn tab_overflow(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let cwd = home();
+    let opened: Vec<u64> = view.update(cx, |v, cx| {
+        (1..=20).map(|n| v.open_placeholder(crate::saved_tabs::SavedTab::Shell { title: format!("shell {n:02}"), cwd: cwd.clone(), shell: None }, cx)).collect()
+    });
+    let fade = format!("{}-fade-left", supraman_ui::tabs::STRIP);
+    view.read_with(cx, |v, _| v.hits.borrow_mut().remove(&fade));
+    let last = format!("tab-{}", opened[opened.len() - 1]);
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the strip overflowing, its last tab whole in view", |v| {
+        let hits = v.hits.borrow();
+        (hits.contains_key(&fade) && hits.get(&last)?.fully_visible() && hits.get("new-shell")?.fully_visible()).then_some(())
+    })
+    .await?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-tabs-overflow.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    view.update(cx, |v, cx| opened.into_iter().for_each(|id| v.close_tab(id, cx)));
+    Ok(())
 }
 
 /// The Inbox with a session's need and a schedule's notice beside Workman's cards: the three owners of `supraman_ui::inbox_card`.
