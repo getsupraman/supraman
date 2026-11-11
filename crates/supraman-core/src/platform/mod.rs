@@ -8,6 +8,7 @@ pub mod paths;
 pub mod process;
 pub mod secret;
 pub mod shell;
+pub mod tasks;
 
 /// What a stub says off Windows, the one platform implemented.
 pub const NOT_HERE: &str = "not on this platform";
