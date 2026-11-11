@@ -1,5 +1,6 @@
 //! The tab's fetch, pull and push, each through the tab's [`WriteGate`] off the UI thread with progress and Cancel.
 
+mod add;
 mod bar;
 mod dialogs;
 pub(crate) mod menu;
@@ -115,6 +116,7 @@ enum Doing {
     Fetch(String),
     Pull(PullMode),
     Push { local: String, remote: String, branch: String },
+    AddRemote(String),
     Plain(String),
 }
 
@@ -126,6 +128,7 @@ impl Doing {
             Doing::Fetch(r) => format!("Fetching {r}"),
             Doing::Pull(_) => "Pulling".into(),
             Doing::Push { remote, branch, .. } => format!("Pushing to {remote}/{branch}"),
+            Doing::AddRemote(r) => format!("Adding the remote {r}"),
             Doing::Plain(_) => "Working".into(),
         }
     }
@@ -137,6 +140,8 @@ enum Done {
     Nothing,
     Pulled(Pulled),
     Pushed(Pushed),
+    /// A remote added; why its first fetch failed.
+    Added(Option<String>),
 }
 
 /// A call's progress and prompts, heard off the UI thread.
@@ -166,6 +171,7 @@ pub(crate) struct RemoteActions {
     menu: Option<ContextMenu<RemoteAct>>,
     upstream: Option<UpstreamDialog>,
     editing: Option<dialogs::EditRemote>,
+    adding: Option<add::AddRemote>,
     prompting: Option<Prompting>,
 }
 
@@ -189,6 +195,7 @@ impl RemoteActions {
             menu: None,
             upstream: None,
             editing: None,
+            adding: None,
             prompting: None,
         }
     }
@@ -360,6 +367,15 @@ impl RemoteActions {
             p.cancel();
         }
         let done = self.writes.kept();
+        if let (Doing::AddRemote(name), Ok(())) = (&running.doing, &w.result) {
+            self.adding = None;
+            let fetched = match done {
+                Some(Done::Added(Some(why))) if self.cancelled.take() != Some(w.ticket) => Err(why),
+                _ => Ok(()),
+            };
+            self.cancelled = None;
+            return self.added(name, fetched, cx);
+        }
         if self.cancelled.take() == Some(w.ticket) {
             cx.emit(RemoteEvent::Wrote(None));
             return cx.emit(RemoteEvent::Why(format!("{} was cancelled", running.doing.running())));

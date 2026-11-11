@@ -114,7 +114,7 @@ impl RefPanel {
             .min_h_0()
             .h(px(ROW * rows as f32));
         let colors = cx.theme().colors();
-        let header = div().flex_none().px_2().py_1().child(self.header(section, true, cx));
+        let header = div().flex_none().px_2().py_1().child(self.header(section, true, None, cx));
         let card = div()
             .id(OVERLAY)
             .track_focus(&focus)

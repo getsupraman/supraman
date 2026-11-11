@@ -126,6 +126,7 @@ impl Drop for Prompting {
 impl RemoteActions {
     /// The dialogs' fields, made once a window is at hand, each taking the keyboard.
     pub(crate) fn ensure_fields(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.ensure_add_fields(window, cx);
         let field = |text: &str, placeholder: &str, masked: bool, on_confirm: fn(&mut RemoteActions, &mut Context<RemoteActions>), window: &mut Window, cx: &mut Context<RemoteActions>| {
             let input = cx.new(|cx| {
                 let input = TextInput::new(placeholder.to_string(), None, window, cx);

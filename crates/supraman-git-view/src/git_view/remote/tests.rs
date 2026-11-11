@@ -7,9 +7,9 @@ use supraman_gitman::fixture::Fixture;
 use supraman_gitman::write::remote::PullChoice;
 
 use super::bar::{PULL_KEY, PULL_MENU_KEY, PUSH_KEY};
-use super::{DETACHED, NO_REMOTE};
+use super::{DETACHED, NO_REMOTE, add};
 use supraman_ui::confirm::Answer;
-use crate::git_view::test_support::{self, Opts, click, redraw, toast};
+use crate::git_view::test_support::{self, Opts, click, keys, redraw, toast};
 use crate::git_view::*;
 
 fn open<'a>(folder: &Path, home: &Path, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
@@ -417,4 +417,68 @@ fn the_pull_answer_fast_forwards_a_branch_only_behind_and_merges_a_diverged_one(
     assert_eq!(asking(&view, cx).as_deref(), Some(BEHIND));
     click(&view, "git-remote-ask-yes", cx);
     assert_eq!((f.at(&mine, &["rev-parse", "HEAD^1"]), f.at(&mine, &["rev-parse", "HEAD^2"])), (ours, again), "a diverged branch is merged");
+}
+
+fn adding(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<Option<&'static str>> {
+    view.read_with(cx, |v, cx| v.remote.read(cx).adding().map(|a| a.why_not(cx)))
+}
+
+fn type_in(view: &Entity<GitView>, at: usize, text: &str, cx: &mut VisualTestContext) {
+    view.update(cx, |v, cx| v.remote.update(cx, |r, cx| r.adding().unwrap().type_in(at, text, cx)));
+    redraw(view, cx);
+}
+
+fn focused(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<usize> {
+    cx.update(|window, cx| view.read(cx).remote.read(cx).adding().and_then(|a| a.focused(window, cx)))
+}
+
+#[gpui::test]
+fn the_remote_headers_plus_opens_add_remote_whose_enter_adds_and_fetches_and_esc_closes(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let home = tempfile::tempdir().unwrap();
+    let (view, cx) = open(&f.dir, home.path(), cx);
+    let hits = test_support::repaint(&view, cx);
+    let at = |k: &str| hits.borrow().get(k).map(|h| h.bounds).unwrap_or_else(|| panic!("{k} is painted"));
+    let (plus, count, header) = (at("refpanel-remote-add"), at("refpanel-remote-count"), at("refpanel-row-remote"));
+    assert!((plus.right() - count.right()).abs() < px(1.) && (plus.center().y - count.center().y).abs() < px(1.), "the + sits in the count's place: {plus:?} {count:?}");
+    assert!(header.contains(&plus.center()), "on the REMOTE header");
+
+    click(&view, "refpanel-remote-add", cx);
+    assert!(test_support::painted(&view, "refpanel-row-remote/origin", cx), "the click is the +'s: the section stays open");
+    assert_eq!(adding(&view, cx), Some(Some(add::NEEDS_NAME)), "Add Remote opens, its button dimmed until Name is typed");
+    assert_eq!(focused(&view, cx), Some(0), "Name takes the keyboard");
+    for key in ["git-add-remote", "git-add-remote-name", "git-add-remote-pull", "git-add-remote-push", "git-add-remote-ok", "git-add-remote-close"] {
+        assert!(test_support::painted(&view, key, cx), "{key}");
+    }
+    click(&view, "git-add-remote-ok", cx);
+    assert_eq!(adding(&view, cx), Some(Some(add::NEEDS_NAME)), "the dimmed button does nothing");
+
+    type_in(&view, 0, "origin", cx);
+    assert_eq!(adding(&view, cx), Some(Some(add::NEEDS_URL)));
+    let url = f.temp.path().join("origin.git").to_string_lossy().replace('\\', "/");
+    type_in(&view, 1, &url, cx);
+    assert_eq!(adding(&view, cx), Some(None));
+    click(&view, "git-add-remote-pull", cx);
+    assert_eq!(focused(&view, cx), Some(1), "a click puts the keyboard in a field");
+    keys(&view, "enter", cx);
+    assert_eq!(toast(&view, cx).as_deref(), Some("Remote origin already exists."), "git's refusal in its words");
+    assert!(adding(&view, cx).is_some(), "the form stays open for another name");
+
+    type_in(&view, 0, "mirror", cx);
+    type_in(&view, 2, "C:/push-here.git", cx);
+    keys(&view, "enter", cx);
+    test_support::settle(&view, cx);
+    assert_eq!(toast(&view, cx).as_deref(), Some("Added remote mirror"));
+    assert_eq!(adding(&view, cx), None, "the form closes");
+    assert_eq!(f.git(&["remote", "get-url", "--push", "mirror"]), "C:/push-here.git");
+    assert_eq!(f.git(&["rev-parse", "mirror/main"]), f.at(&f.temp.path().join("origin.git"), &["rev-parse", "main"]), "the new remote is fetched");
+    assert!(test_support::painted(&view, "refpanel-row-remote/mirror", cx), "the REMOTE section lists it");
+
+    click(&view, "refpanel-remote-add", cx);
+    assert!(adding(&view, cx).is_some());
+    keys(&view, "escape", cx);
+    assert_eq!(adding(&view, cx), None, "Esc closes");
+    click(&view, "refpanel-remote-add", cx);
+    click(&view, "git-add-remote-close", cx);
+    assert_eq!(adding(&view, cx), None, "× closes");
 }

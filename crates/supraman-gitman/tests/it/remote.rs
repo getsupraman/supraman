@@ -168,6 +168,31 @@ fn a_branch_without_upstream_is_published_and_tags_and_branches_are_pushed_and_d
     assert!(remotes(&Repo::new(f.git.clone(), &mine)).unwrap().is_empty());
 }
 
+#[test]
+fn add_remote_adds_with_or_without_a_push_url_and_refuses_a_bad_or_taken_name() {
+    let f = Fixture::copy();
+    let url = origin(&f).to_string_lossy().replace('\\', "/");
+    let add = |name: &str, push: Option<&str>| write(&f, &f.dir, LockSet::remote_config(), |s| remote::add_remote(s, name, &url, push));
+
+    add("mirror", None).unwrap();
+    add("split", Some("C:/push-here.git")).unwrap();
+    let all = remotes(&f.repo()).unwrap();
+    let of = |name: &str| all.iter().find(|r| r.name == name).cloned().unwrap();
+    assert_eq!((of("mirror").url, of("mirror").push_url), (url.clone(), None));
+    assert_eq!((of("split").url, of("split").push_url.as_deref()), (url.clone(), Some("C:/push-here.git")));
+    write(&f, &f.dir, LockSet::fetch(), |s| remote::fetch(s, "mirror", true, &Transfer::default())).unwrap();
+    assert_eq!(f.git(&["rev-parse", "mirror/main"]), on_remote(&f, "main"));
+
+    let bad = add("two words", None);
+    assert!(matches!(bad, Err(WriteError::Refused("A name cannot hold a space"))), "{bad:?}");
+    let before = f.git(&["remote", "get-url", "--push", "origin"]);
+    let taken = add("origin", Some("C:/never.git"));
+    assert!(matches!(&taken, Err(WriteError::Remote(why)) if why == "Remote origin already exists."), "{taken:?}");
+    assert_eq!(f.git(&["remote", "get-url", "--push", "origin"]), before, "the taken remote is left as it was");
+    let names: Vec<String> = remotes(&f.repo()).unwrap().into_iter().map(|r| r.name).collect();
+    assert_eq!(names, ["mirror", "origin", "split"]);
+}
+
 /// A fake ssh that says how far it got, notes its Windows pid, and waits on its child `cat` for ever.
 fn slow_ssh(dir: &Path) -> (String, PathBuf) {
     let pid = dir.join("ssh.pid");

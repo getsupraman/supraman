@@ -1,4 +1,4 @@
-//! The panel painted; hit keys `refpanel-{row,name,mark}-<path>`, `-filter`, `-show-all`, `-collapse`, `-expand`, `-strip-<section>`, `-sections-divider-<pane>`.
+//! The panel painted; hit keys `refpanel-{row,name,mark}-<path>`, `-filter`, `-show-all`, `-collapse`, `-expand`, `-strip-<section>`, `-sections-divider-<pane>`, `-remote-add`, `-remote-count`.
 
 use gpui::{AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla, IntoElement, Render, Window, div, prelude::*, px};
 use supraman_gitman::short_sha;
@@ -32,13 +32,32 @@ impl RefPanel {
         self.counts()[at]
     }
 
+    /// Whether `section`'s pane shows: it holds a ref the filter keeps; REMOTE, which adds a remote, also while nothing is filtered.
+    pub(super) fn shows(&self, section: Section) -> bool {
+        self.tree.shows(section) || (section == Section::Remote && self.filter().is_empty())
+    }
+
     /// Whether the graph walks none of `keys`; never for none.
     fn out_of_walk(&self, keys: &[String]) -> bool {
         !keys.is_empty() && keys.iter().all(|k| !self.walk.walks(k))
     }
 
-    pub(super) fn header(&self, section: Section, open: bool, cx: &App) -> AnyElement {
+    /// `add`: a button shown in the count's place while the header's `group` is hovered.
+    pub(super) fn header(&self, section: Section, open: bool, add: Option<(String, AnyElement)>, cx: &App) -> AnyElement {
         let muted = secondary(cx.theme().colors());
+        let count = div().flex_none().pr_1().text_xs().text_color(muted).child(count_words(self.count_of(section), section, open));
+        let count = match add {
+            Some((group, add)) => div()
+                .relative()
+                .flex()
+                .flex_none()
+                .items_center()
+                .child(count.group_hover(group, |s| s.opacity(0.)))
+                .child(hit_target(&self.hits, format!("{LIST}-{}-count", section.key())))
+                .child(div().absolute().top_0().bottom_0().right_0().flex().items_center().child(add))
+                .into_any_element(),
+            None => count.into_any_element(),
+        };
         div()
             .flex()
             .items_center()
@@ -47,7 +66,7 @@ impl RefPanel {
             .min_w_0()
             .child(ink::mark(section.icon().svg(ICON, muted)))
             .child(div().flex_1().min_w_0().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(muted).child(section.title()))
-            .child(div().flex_none().pr_1().text_xs().text_color(muted).child(count_words(self.count_of(section), section, open)))
+            .child(count)
             .into_any_element()
     }
 
@@ -189,7 +208,7 @@ impl RefPanel {
             .border_t_1()
             .border_color(cx.theme().colors().border_variant)
             .child(ink::mark(div().flex().flex_none().items_center().justify_center().w(px(LEAD)).child(chevron.svg(ICON, secondary(cx.theme().colors())))))
-            .child(self.header(section, open, cx))
+            .child(self.header(section, open, (section == Section::Remote).then(|| self.add_remote(cx)), cx))
             .children((section == Section::Worktrees).then(|| self.refresh_wips(cx)).flatten())
             .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
                 cx.stop_propagation();
@@ -201,6 +220,18 @@ impl RefPanel {
                 cx.notify();
             }))
             .into_any_element()
+    }
+
+    /// The REMOTE header's +, in its count's place while the header is hovered.
+    fn add_remote(&self, cx: &mut Context<Self>) -> (String, AnyElement) {
+        let group = format!("{LIST}-row-{}", Section::Remote.key());
+        let plus = button::revealed(&self.hits, format!("{LIST}-remote-add"), Icon::Plus.svg(ICON, cx.theme().status().success), px(18.), group.clone(), false, cx)
+            .tooltip(Tooltip::text("Add Remote"))
+            .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                cx.emit(RefEvent::AddRemote);
+            }));
+        (group, plus.into_any_element())
     }
 
     fn section_list(&self, section: Section, cx: &mut Context<Self>) -> AnyElement {
@@ -219,7 +250,7 @@ impl RefPanel {
 
     /// The sections the filter keeps, stacked: a closed one its header, the open ones sharing the rest by kept heights, else rows.
     fn list(&self, cx: &mut Context<Self>) -> AnyElement {
-        let shown: Vec<Section> = Section::ALL.into_iter().filter(|s| self.tree.shows(*s)).collect();
+        let shown: Vec<Section> = Section::ALL.into_iter().filter(|s| self.shows(*s)).collect();
         let at = |section: Section| Section::ALL.iter().position(|s| *s == section).unwrap_or(0);
         let panes = shown
             .iter()

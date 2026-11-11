@@ -322,6 +322,7 @@ async fn git_palette(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowC
     println!("shot: {}", shot.display());
     cx.update(|window, cx| git.update(cx, |g, cx| g.close_find(window, cx)))?;
     git_wip(view, &git, out, cx).await?;
+    git_add_remote(view, out, cx).await?;
     git_agent(view, &dir, &fixture.worktree, out, cx).await?;
     drop(fixture);
     Ok(())
@@ -406,6 +407,24 @@ async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path
         cx.notify();
     });
     Ok(())
+}
+
+/// The REMOTE header hovered, its + in the count's place; then Add Remote open in the commit panel's place.
+async fn git_add_remote(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let header = crate::selftest::until(view, cx, Duration::from_secs(10), "the REMOTE header", |v| v.hits.borrow().get("refpanel-row-remote").map(|h| h.bounds)).await?;
+    cx.update(|window, cx| {
+        let event = gpui::MouseMoveEvent { position: header.center(), pressed_button: None, modifiers: gpui::Modifiers::default() };
+        window.dispatch_event(gpui::PlatformInput::MouseMove(event), cx);
+    })?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-git-remote-add.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    crate::selftest::click(view, "refpanel-remote-add", cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "Add Remote", |v| v.hits.borrow().contains_key("git-add-remote-ok").then_some(())).await?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-git-add-remote.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    crate::selftest::click(view, "git-add-remote-close", cx).await
 }
 
 /// The same tab's WIP panel: staged and unstaged files and a typed summary in the commit area.
