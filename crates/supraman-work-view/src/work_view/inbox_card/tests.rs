@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use gpui::{Bounds, Context, Modifiers, Pixels, Render, TestAppContext, VisualTestContext, rems};
+use gpui::{Bounds, Context, Modifiers, Pixels, Render, TestAppContext, VisualTestContext, px, rems};
 use serde_json::json;
 use supraman_workman::Client;
 use supraman_workman::fake::{Answer, FakeWorkman, INBOX_KINDS, inbox_rows};

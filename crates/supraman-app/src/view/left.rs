@@ -15,6 +15,7 @@ use supraman_ui::tabs::DraggedSession;
 use theme::ActiveTheme as _;
 
 use supraman_ui::icon::Icon;
+use supraman_ui::inbox_card::{self, InboxCard};
 use supraman_ui::marks::{self, Mark};
 use supraman_ui::tooltip::Tooltip;
 use super::{Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE};
@@ -82,17 +83,6 @@ fn seam_color(cx: &gpui::App) -> Hsla {
     cx.theme().colors().text_muted.opacity(0.35)
 }
 
-fn needs_color(kind: NeedsKind, cx: &gpui::App) -> Hsla {
-    let status = cx.theme().status();
-    match kind {
-        NeedsKind::Blocked | NeedsKind::TrustNeeded => status.warning,
-        NeedsKind::GaveUp | NeedsKind::LaunchFailed | NeedsKind::TokenExpired | NeedsKind::OtherServer | NeedsKind::StopFailed => {
-            status.error
-        }
-        NeedsKind::Duplicate => status.hint,
-    }
-}
-
 fn needs_label(kind: NeedsKind) -> &'static str {
     match kind {
         NeedsKind::Blocked => "blocked",
@@ -141,6 +131,17 @@ pub fn inbox_buttons(need: &NeedsYou) -> Vec<(String, &'static str, InboxButton)
         _ => {}
     }
     buttons
+}
+
+fn inbox_button_icon(button: &InboxButton) -> Icon {
+    match button {
+        InboxButton::Remedy(Remedy::Attach { .. }) => Icon::Attach,
+        InboxButton::Remedy(Remedy::Retry | Remedy::Adopt { .. }) | InboxButton::Retry => Icon::Refresh,
+        InboxButton::Remedy(Remedy::RunInTerminal { .. }) => Icon::Terminal,
+        InboxButton::Remedy(Remedy::Remint { .. }) => Icon::Lock,
+        InboxButton::Remedy(Remedy::RestartElevated) => Icon::Resume,
+        InboxButton::StartFresh => Icon::Plus,
+    }
 }
 
 fn icon_button(hits: &HitTargets, key: &'static str, icon: Icon, tip: impl Into<SharedString>, on: bool, cx: &gpui::App) -> Stateful<Div> {
@@ -615,66 +616,29 @@ impl FleetView {
         Some(inbox.into_any_element())
     }
 
-    fn need_remedy(&self, need: &NeedsYou, cx: &mut Context<Self>) -> Option<Div> {
-        let buttons = inbox_buttons(need);
-        (!buttons.is_empty()).then(|| {
-            div().flex().flex_none().gap_1().children(buttons.into_iter().map(|(key, label, does)| {
-                let (workspace, name) = (need.workspace.clone(), need.name.clone());
-                button::bordered(&self.hits, key, label, cx).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| match &does {
+    fn render_need(&self, need: &NeedsYou, now: i64, cx: &mut Context<Self>) -> AnyElement {
+        let label = needs_label(need.kind);
+        let key = format!("inbox-need-{}/{}", need.workspace, need.name);
+        let mut card = InboxCard::new(key.clone(), label, label, need.name.clone()).context(need.workspace.clone()).when(Some(need.since), now).line("detail", need.detail.clone(), false);
+        for (button, tip, does) in inbox_buttons(need) {
+            let (workspace, name) = (need.workspace.clone(), need.name.clone());
+            let icon = inbox_button_icon(&does).svg(inbox_card::ICON, inbox_card::icon_color(cx));
+            card = card.action(inbox_card::action(&self.hits, button, key.clone(), icon, tip, cx).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                cx.stop_propagation();
+                match &does {
                     InboxButton::Remedy(Remedy::Attach { id }) => {
                         this.attach_by_id(&workspace, id, window, cx);
                     }
-                    InboxButton::Remedy(Remedy::Retry | Remedy::Remint { .. } | Remedy::Adopt { .. }) | InboxButton::Retry => {
-                        this.retry(&workspace, &name, cx)
-                    }
+                    InboxButton::Remedy(Remedy::Retry | Remedy::Remint { .. } | Remedy::Adopt { .. }) | InboxButton::Retry => this.retry(&workspace, &name, cx),
                     InboxButton::Remedy(Remedy::RunInTerminal { cwd, command }) => {
                         this.run_in_terminal(cwd.clone(), command.clone(), window, cx);
                     }
                     InboxButton::Remedy(Remedy::RestartElevated) => this.restart_elevated(window, cx),
                     InboxButton::StartFresh => this.start_fresh(&workspace, &name, cx),
-                }))
-            }))
-        })
-    }
-
-    fn render_need(&self, need: &NeedsYou, now: i64, cx: &mut Context<Self>) -> AnyElement {
-        let colors = cx.theme().colors().clone();
-        let color = needs_color(need.kind, cx);
-        let remedy = self.need_remedy(need, cx);
-        div()
-            .flex()
-            .items_start()
-            .gap_2()
-            .p_2()
-            .rounded_md()
-            .border_l_2()
-            .border_color(color)
-            .bg(color.opacity(0.10))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w_0()
-                    .gap(px(2.))
-                    .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .text_sm()
-                            .child(div().font_weight(FontWeight::BOLD).text_color(color).child(needs_label(need.kind)))
-                            .child(SharedString::from(format!("{} · {}", need.workspace, need.name)))
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(colors.text_muted)
-                                    .child(SharedString::from(supraman_core::time::ago(now - need.since))),
-                            ),
-                    )
-                    .child(div().text_xs().text_color(colors.text).child(SharedString::from(need.detail.clone()))),
-            )
-            .children(remedy)
-            .into_any_element()
+                }
+            })));
+        }
+        card.render(&self.hits, cx)
     }
 
     fn render_workman_notice(&self, problem: String, cx: &mut Context<Self>) -> AnyElement {

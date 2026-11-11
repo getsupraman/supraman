@@ -2,6 +2,7 @@
 
 use gpui::{ClickEvent, FontWeight};
 use supraman_core::time::{self, rfc3339_ms};
+use supraman_ui::placeholder::placeholder;
 use supraman_ui::hit::hit_target;
 use supraman_ui::clipped::clipped;
 use supraman_ui::icon::Icon;
@@ -126,10 +127,10 @@ impl WorkView {
             root = root.child(div().text_sm().text_color(cx.theme().status().error).child(SharedString::from(why.clone())));
         }
         if !a.loaded {
-            return root.child(div().text_sm().text_color(colors.text_muted).child("Reading the journal…")).into_any_element();
+            return root.child(placeholder("Reading the journal…", Vec::<SharedString>::new(), cx).py_6()).into_any_element();
         }
         if a.events.is_empty() {
-            return root.child(div().text_sm().text_color(colors.text_muted).child("No activity yet.")).into_any_element();
+            return root.child(placeholder("No activity yet.", Vec::<SharedString>::new(), cx).py_6()).into_any_element();
         }
         let mut list = div().flex().flex_col().rounded_md().border_1().border_color(colors.border_variant).bg(colors.panel_background);
         for (day, events) in by_day(&a.events) {

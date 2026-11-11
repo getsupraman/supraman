@@ -2,13 +2,11 @@
 
 use std::rc::Rc;
 
-use gpui::{AnyElement, App, ClickEvent, ClipboardItem, Div, Entity, FontWeight, Hsla, SharedString, Stateful, Window, div, prelude::*, px};
+use gpui::{AnyElement, App, ClickEvent, ClipboardItem, Div, Entity, FontWeight, Hsla, SharedString, Stateful, Window, div, prelude::*};
 use supraman_core::time::now_ms;
-use supraman_ui::button;
-use supraman_ui::clipped::{clamped, clipped};
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::inbox_card::{self as shared, InboxCard};
 use supraman_workman::InboxRow;
 use theme::ActiveTheme as _;
 
@@ -28,89 +26,43 @@ pub type OnCard = Rc<dyn Fn(CardAction, &mut Window, &mut App)>;
 
 pub type Mark = fn(Hsla) -> AnyElement;
 
-pub fn kind_color(kind: &str, cx: &App) -> Hsla {
-    let status = cx.theme().status();
-    match kind {
-        "blocked" | "blocker_finding" => status.error,
-        "question" | "assumption_due" | "done_unverified" => status.warning,
-        _ => status.info,
-    }
-}
-
 pub fn part_key(part: &str, card: &Card) -> String {
     format!("inbox-card-{part}-{}", card.key)
 }
 
 fn action_button(hits: &HitTargets, card: &Card, part: &str, icon: Icon, tip: &'static str, on: &OnCard, does: CardAction, cx: &App) -> Stateful<Div> {
     let key = if does == CardAction::Dismiss { work_view::dismiss_key_of(&card.key) } else { part_key(part, card) };
-    let group = work_view::row_key_of(&card.key);
     let (on, call) = (on.clone(), card.call.clone());
-    button::revealed(hits, key, icon.svg(14., cx.theme().colors().text_muted), px(20.), group, false, cx)
-        .tooltip(Tooltip::text(tip))
-        .on_click(move |_: &ClickEvent, window, cx| {
-            cx.stop_propagation();
-            if does == CardAction::Copied {
-                cx.write_to_clipboard(ClipboardItem::new_string(call.clone()));
-            }
-            on(does, window, cx);
-        })
+    shared::action(hits, key, work_view::row_key_of(&card.key), icon.svg(shared::ICON, shared::icon_color(cx)), tip, cx).on_click(move |_: &ClickEvent, window, cx| {
+        cx.stop_propagation();
+        if does == CardAction::Copied {
+            cx.write_to_clipboard(ClipboardItem::new_string(call.clone()));
+        }
+        on(does, window, cx);
+    })
 }
 
 /// Paints [`Card::texts`] and nothing else; the call only reaches the clipboard, through Copy.
 pub fn render(card: &Card, hits: &HitTargets, now: i64, mark: Mark, on: OnCard, cx: &App) -> AnyElement {
-    let colors = cx.theme().colors();
-    let color = kind_color(&card.kind, cx);
-    let muted = supraman_ui::themes::secondary(colors);
-    let key = work_view::row_key_of(&card.key);
-    let when = card.when(now);
-    let mut buttons = div().flex().flex_none().items_center().child(action_button(hits, card, "open", Icon::Work, "Open in the Work tab", &on, CardAction::Open, cx));
+    let item = card.clone();
+    let mut shown = InboxCard::new(work_view::row_key_of(&card.key), card.kind.clone(), card.badge.clone(), card.title.clone())
+        .parts(move |part| part_key(part, &item))
+        .mark(mark, cx)
+        .context(card.workspace.clone())
+        .when(card.since, now)
+        .line("ref", card.ref_.clone(), true)
+        .line("detail", card.detail.clone().unwrap_or_default(), false)
+        .action(action_button(hits, card, "open", Icon::Work, "Open in the Work tab", &on, CardAction::Open, cx));
     if card.url.is_some() {
-        buttons = buttons.child(action_button(hits, card, "web", Icon::ArrowUpRight, "Open in Workman's web page", &on, CardAction::Web, cx));
+        shown = shown.action(action_button(hits, card, "web", Icon::ArrowUpRight, "Open in Workman's web page", &on, CardAction::Web, cx));
     }
     if !card.call.is_empty() {
-        buttons = buttons.child(action_button(hits, card, "copy", Icon::Copy, "Copy the call that resolves it", &on, CardAction::Copied, cx));
+        shown = shown.action(action_button(hits, card, "copy", Icon::Copy, "Copy the call that resolves it", &on, CardAction::Copied, cx));
     }
-    buttons = buttons.child(action_button(hits, card, "dismiss", Icon::Close, "Dismiss here (Workman is not changed)", &on, CardAction::Dismiss, cx));
-    let head = div()
-        .flex()
-        .items_center()
-        .gap_2()
-        .text_xs()
-        .child(mark(color))
-        .child(clipped(part_key("workspace", card), card.workspace.clone(), false).flex_shrink(1.).text_color(muted))
-        .when(!when.is_empty(), |d| {
-            let full = card.since.map(supraman_core::time::date_words).unwrap_or_default();
-            d.child(div().id(SharedString::from(part_key("when", card))).flex_none().text_color(muted).child(SharedString::from(when)).tooltip(Tooltip::text(full)))
-        })
-        .child(div().flex_none().px_1().rounded_sm().bg(color.opacity(0.16)).text_color(color).font_weight(FontWeight::BOLD).child(SharedString::from(card.badge.clone())))
-        .child(div().flex_1())
-        .child(buttons)
-        .child(hit_target(hits, part_key("head", card)));
-    let title = clamped(part_key("title", card), card.title.clone(), 2).text_sm().text_color(colors.text).child(hit_target(hits, part_key("title", card)));
-    let ref_ = div().relative().text_xs().text_color(muted).child(SharedString::from(card.ref_.clone())).child(hit_target(hits, part_key("ref", card)));
-    let detail = card.detail.clone().map(|text| clipped(part_key("detail", card), text, false).text_xs().text_color(colors.text).child(hit_target(hits, part_key("detail", card))));
-    let open = on.clone();
-    div()
-        .id(SharedString::from(key.clone()))
-        .group(SharedString::from(key.clone()))
-        .relative()
-        .flex()
-        .flex_col()
-        .gap(px(2.))
-        .p_2()
-        .rounded_md()
-        .border_l_2()
-        .border_color(color)
-        .bg(color.opacity(0.06))
-        .cursor_pointer()
-        .hover(|s| s.bg(color.opacity(0.14)))
-        .child(head)
-        .child(title)
-        .child(ref_)
-        .children(detail)
-        .child(hit_target(hits, key))
-        .on_click(move |_: &ClickEvent, window, cx| open(CardAction::Open, window, cx))
-        .into_any_element()
+    shown
+        .action(action_button(hits, card, "dismiss", Icon::Close, "Dismiss here (Workman is not changed)", &on, CardAction::Dismiss, cx))
+        .on_click(move |_: &ClickEvent, window, cx| on(CardAction::Open, window, cx))
+        .render(hits, cx)
 }
 
 fn caption(text: String, cx: &App) -> Div {

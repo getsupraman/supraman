@@ -11,6 +11,7 @@ pub mod fonts;
 pub mod hit;
 pub mod hover_card;
 pub mod icon;
+pub mod inbox_card;
 pub mod ink;
 pub mod keyed_list;
 pub mod marks;
