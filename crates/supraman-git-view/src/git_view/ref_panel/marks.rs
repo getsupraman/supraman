@@ -69,7 +69,7 @@ impl RefPanel {
         let (accent, muted) = (colors.text_accent, secondary(cx.theme().colors()));
         let (icon, colour, shown, tip, keys, solos) = match self.mark_of(hide, solo, current)? {
             Mark::Current => {
-                let mark = cells::current_mark(accent);
+                let mark = cells::current_mark(accent, 12.);
                 return Some(div().relative().flex().items_center().child(mark).child(hit_target(&self.hits, key)).into_any_element());
             }
             Mark::Soloed(keys) => (Icon::Solo, accent, true, "Stop soloing", keys, true),

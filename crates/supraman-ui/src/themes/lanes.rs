@@ -23,6 +23,8 @@ pub const LIGHT: [&str; LANES] = ["#0A86AD", "#2D63D6", "#7446D4", "#B4359F", "#
 pub const BAND: f32 = 0.14;
 pub const PILL: f32 = 0.22;
 pub const AVATAR: f32 = 0.25;
+/// A hovered ref pill's alpha: stronger than [`PILL`].
+pub const PILL_HOVER: f32 = 0.36;
 /// A lane's line and node against the background (WCAG 1.4.11, non-text).
 pub const LINE_FLOOR: f32 = 3.;
 
@@ -48,6 +50,11 @@ pub fn key_lane(key: &str) -> Option<usize> {
 /// `colour` at `alpha` over `under`, opaque.
 pub fn blend(colour: Hsla, alpha: f32, under: Hsla) -> Hsla {
     over(colour.opacity(alpha), under).into()
+}
+
+/// A hovered ref pill's fill in `lane`.
+pub fn pill_hover(lane: Hsla) -> Hsla {
+    lane.opacity(PILL_HOVER)
 }
 
 /// The initials on an avatar `fill`: the theme's text, or its background where that reads better.

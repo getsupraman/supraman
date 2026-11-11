@@ -14,7 +14,7 @@ use super::actions::{Doing, Kept, index_write};
 use super::compose::split;
 use super::render::live;
 use super::{Shown, WipPanel};
-use crate::git_view::cells::pill_box;
+use crate::git_view::cells::{Face, pill};
 use crate::git_view::colours::Palette;
 
 /// `2 file conflicts in working directory`: the graph's conflict node and the conflict panel's header.
@@ -87,7 +87,7 @@ impl WipPanel {
 
     fn side_pill(&self, key: &'static str, name: &str, palette: &Palette) -> Div {
         let colour = self.ref_colours.get(name).copied().unwrap_or(self.colour);
-        pill_box(colour, palette).relative().child(supraman_ui::ink::text(SharedString::from(name.to_string()))).child(hit_target(&self.hits, key.into()))
+        pill(format!("{key}-name"), Face::named(name.to_string()), colour, palette, &self.hits).relative().child(hit_target(&self.hits, key.into()))
     }
 
     /// The warning (or an external rebase's own icon), the headline, and the sides as the graph colours their pills.

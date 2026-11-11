@@ -35,6 +35,14 @@ impl Palette {
         self.lane(colour).opacity(PILL)
     }
 
+    pub(crate) fn pill_hover(&self, colour: usize) -> Hsla {
+        lanes::pill_hover(self.lane(colour))
+    }
+
+    pub(crate) fn pill_hover_solid(&self, colour: usize) -> Hsla {
+        blend(self.pill_hover(colour), self.background)
+    }
+
     /// The pill fill over the background, solid: a list that covers the rows below.
     pub(crate) fn pill_solid(&self, colour: usize) -> Hsla {
         blend(self.pill(colour), self.background)
