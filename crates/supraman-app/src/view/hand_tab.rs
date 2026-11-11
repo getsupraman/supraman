@@ -252,7 +252,7 @@ impl FleetView {
         let launch_args = match &self.supervising.daemon_hold {
             Some(why) => {
                 let script = format!("{}; {}", held_line(why), launch.script_with(claude, extras));
-                ["-NoExit".into(), "-EncodedCommand".into(), crate::hand::encoded_command(&script)]
+                ["-NoExit".into(), "-EncodedCommand".into(), supraman_core::platform::shell::launch::encoded_command(&script)]
             }
             None => launch.shell_args_with(claude, extras),
         };

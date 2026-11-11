@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::paths::{executable, folders_holding, process_path};
 
 mod detect;
+pub mod launch;
 
 pub use detect::{Machine, PROBE_TIMEOUT, VsInstance, detect, detect_on, parse_vswhere, parse_wsl};
 
@@ -131,6 +132,43 @@ pub fn terminal_powershell() -> &'static PowerShell {
 pub fn script_powershell() -> PowerShell {
     let (path, pathext, root) = process_env();
     job_powershell(&path, &pathext, root.as_deref())
+}
+
+/// The command that runs the script at `path` per its extension (the script contract's table).
+pub fn script_command(path: &Path, args: &[String]) -> std::process::Command {
+    use crate::process;
+    let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    match extension.as_str() {
+        "ps1" => {
+            let mut cmd = process::command(script_powershell().path);
+            cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"]).arg(path).args(args);
+            cmd
+        }
+        "cmd" | "bat" => {
+            let mut cmd = process::command("cmd");
+            let line =
+                std::iter::once(path.to_string_lossy().into_owned()).chain(args.iter().cloned()).map(|a| format!("\"{a}\"")).collect::<Vec<_>>().join(" ");
+            raw(&mut cmd, &format!("/d /s /c \"{line}\""));
+            cmd
+        }
+        _ => {
+            let mut cmd = process::command(path);
+            cmd.args(args);
+            cmd
+        }
+    }
+}
+
+/// cmd's `/s /c "…"` line is not parsed by the MSVC rules `Command::arg` quotes for.
+#[cfg(windows)]
+fn raw(cmd: &mut std::process::Command, line: &str) {
+    use std::os::windows::process::CommandExt as _;
+    cmd.raw_arg(line);
+}
+
+#[cfg(not(windows))]
+fn raw(cmd: &mut std::process::Command, line: &str) {
+    cmd.arg(line);
 }
 
 #[cfg(test)]
