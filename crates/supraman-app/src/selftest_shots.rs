@@ -453,11 +453,14 @@ fn stacked_on_worktree(v: &FleetView, n: usize) -> Option<()> {
 /// one tab's look beside the other's is what René compares, which no unit test shows.
 async fn git_worktree_tab(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     view.read_with(cx, |v, _| v.hits.borrow_mut().retain(|k, _| !k.starts_with("git-")));
+    let window = cx.update(|window, _| window.viewport_size())?;
+    crate::selftest_git::resize(view, gpui::size(window.width * 1.5, window.height), cx).await?;
     let tab = view.update(cx, |v, cx| v.open_git(side.to_path_buf(), crate::view::git_tab::title(side), cx));
     crate::selftest::until(view, cx, Duration::from_secs(20), "the main checkout's row with its session's agent row on it", |v| stacked_on_worktree(v, 1)).await?;
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-git-worktree-tab.png"), None, cx).await?;
     println!("shot: {}", shot.display());
+    crate::selftest_git::resize(view, window, cx).await?;
     view.update(cx, |v, cx| {
         v.close_tab(tab, cx);
         v.hits.borrow_mut().retain(|k, _| !k.starts_with("git-"));
