@@ -274,10 +274,10 @@ impl Hands {
         store: Arc<dyn supraman_core::secret::SecretStore>,
     ) -> (Self, Option<String>) {
         let path = Self::path(home);
-        let (mut minted, notice) = match MintedSessions::load(Some(path.clone())) {
+        let (mut minted, notice) = match MintedSessions::load(path.clone()) {
             Ok(m) => (m, None),
             Err(e) => (
-                MintedSessions::empty(Some(path.clone())),
+                MintedSessions::empty(path.clone()),
                 Some(format!("Cannot read {} ({e}): hand-session tokens minted before lapse after their idle window", path.display())),
             ),
         };

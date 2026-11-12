@@ -114,64 +114,17 @@ pub struct Updates {
 
 impl Updates {
     /// The check at start, after the window is up, then every [`updates::EVERY`] or when nudged; one at a time.
-    pub fn start(home: Option<PathBuf>, cx: &mut Context<FleetView>) -> Self {
+    pub fn start<T: 'static>(home: Option<PathBuf>, of: fn(&mut T) -> &mut Updates, cx: &mut Context<T>) -> Self {
         let exe_dir = install::exe_dir().ok();
         let running = updates::running_version(env!("CARGO_PKG_VERSION"), exe_dir.as_deref());
         let source = Arc::new(Mutex::new(Source::github(running.clone())));
-        let (nudge, mut nudged) = nudge::nudge();
+        let (nudge, nudged) = nudge::nudge();
         if let Some(home) = home.clone() {
-            let shared = source.clone();
-            cx.spawn(async move |this, cx| {
-                let executor = cx.background_executor().clone();
-                let at = home.clone();
-                let (last, dismissed) = executor.spawn(async move { (updates::last(&at), updates::dismissed(&at)) }).await;
-                let landed = this.update(cx, |this, cx| {
-                    this.updates.stored(last, dismissed);
-                    cx.notify();
-                });
-                if landed.is_err() {
-                    return;
-                }
-                loop {
-                    let source = shared.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                    let started = this.update(cx, |this, cx| {
-                        this.updates.checking = true;
-                        cx.notify();
-                    });
-                    if started.is_err() {
-                        return;
-                    }
-                    let at = home.clone();
-                    let checked = executor.spawn(async move { updates::check_if_on(&at, &source) }).await;
-                    let alive = this.update(cx, |this, cx| {
-                        match checked.as_ref().map(|c| &c.outcome) {
-                            Some(Outcome::Failed { reason }) => log::warn!("update check: {reason}"),
-                            Some(Outcome::Available(a)) => log::info!("update check: Supraman {} is available", a.version()),
-                            Some(Outcome::UpToDate) => log::info!("update check: up to date"),
-                            None => {}
-                        }
-                        let u = &mut this.updates;
-                        u.checking = false;
-                        u.checks += 1;
-                        if checked.is_some() {
-                            u.last = checked;
-                        }
-                        cx.notify();
-                    });
-                    if alive.is_err() {
-                        return;
-                    }
-                    nudged.wait(&executor, updates::EVERY).await;
-                }
-            })
-            .detach();
+            Self::follow(home.clone(), source.clone(), nudged, of, cx);
+            Self::read_failed(home, running.clone(), of, cx);
         }
         let target = Target::this_install();
-        let stage = match home.as_deref().and_then(|h| updates::failed_apply(h, &running)) {
-            Some((version, why)) => Stage::Failed(format!("The update to {version} did not apply: {why}")),
-            None => Stage::Idle,
-        };
-        let (at, install, current) = (home.clone(), target.install.clone(), running.clone());
+        let (at, install, current) = (home, target.install.clone(), running);
         cx.background_executor()
             .spawn(async move {
                 install::cleanup(&install);
@@ -180,7 +133,70 @@ impl Updates {
                 }
             })
             .detach();
-        Self { source, nudge, last: None, checking: false, checks: 0, dismissed: None, action: install_update, target, stage, cancel: Arc::default() }
+        Self { source, nudge, last: None, checking: false, checks: 0, dismissed: None, action: install_update, target, stage: Stage::Idle, cancel: Arc::default() }
+    }
+
+    fn follow<T: 'static>(home: PathBuf, shared: Arc<Mutex<Source>>, mut nudged: nudge::Nudged, of: fn(&mut T) -> &mut Updates, cx: &mut Context<T>) {
+        cx.spawn(async move |this, cx| {
+            let executor = cx.background_executor().clone();
+            let at = home.clone();
+            let (last, dismissed) = executor.spawn(async move { (updates::last(&at), updates::dismissed(&at)) }).await;
+            let landed = this.update(cx, |this, cx| {
+                of(this).stored(last, dismissed);
+                cx.notify();
+            });
+            if landed.is_err() {
+                return;
+            }
+            loop {
+                let source = shared.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                let started = this.update(cx, |this, cx| {
+                    of(this).checking = true;
+                    cx.notify();
+                });
+                if started.is_err() {
+                    return;
+                }
+                let at = home.clone();
+                let checked = executor.spawn(async move { updates::check_if_on(&at, &source) }).await;
+                let alive = this.update(cx, |this, cx| {
+                    match checked.as_ref().map(|c| &c.outcome) {
+                        Some(Outcome::Failed { reason }) => log::warn!("update check: {reason}"),
+                        Some(Outcome::Available(a)) => log::info!("update check: Supraman {} is available", a.version()),
+                        Some(Outcome::UpToDate) => log::info!("update check: up to date"),
+                        None => {}
+                    }
+                    let u = of(this);
+                    u.checking = false;
+                    u.checks += 1;
+                    if checked.is_some() {
+                        u.last = checked;
+                    }
+                    cx.notify();
+                });
+                if alive.is_err() {
+                    return;
+                }
+                nudged.wait(&executor, updates::EVERY).await;
+            }
+        })
+        .detach();
+    }
+
+    /// The last apply that failed, unless a download began before the read landed.
+    fn read_failed<T: 'static>(home: PathBuf, running: Version, of: fn(&mut T) -> &mut Updates, cx: &mut Context<T>) {
+        cx.spawn(async move |this, cx| {
+            let Some((version, why)) = cx.background_spawn(async move { updates::failed_apply(&home, &running) }).await else { return };
+            this.update(cx, |this, cx| {
+                let u = of(this);
+                if u.stage == Stage::Idle {
+                    u.stage = Stage::Failed(format!("The update to {version} did not apply: {why}"));
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// What the last run kept, under a check or a Dismiss made before it landed.
@@ -463,6 +479,38 @@ mod tests {
         assert_eq!(u.status_line(true), "Checking…");
         let failed = updates("0.1.0", Some(Outcome::Failed { reason: "no release is published yet".into() }));
         assert!(failed.status_line(true).ends_with("failed: no release is published yet"), "{}", failed.status_line(true));
+    }
+
+    struct Holder(Updates);
+
+    fn home_with_a_failed_apply() -> tempfile::TempDir {
+        let home = tempfile::tempdir().unwrap();
+        supraman_core::Settings::update(home.path(), |s| s.updates.check = false).unwrap();
+        let dir = updates::version_dir(home.path(), "999.0.0");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(updates::APPLY_LOG), "t apply a over b\nt failed: supraman.exe is locked\n").unwrap();
+        home
+    }
+
+    #[gpui::test]
+    fn a_failed_apply_is_read_off_the_constructing_thread_and_shown(cx: &mut gpui::TestAppContext) {
+        let home = home_with_a_failed_apply();
+        let at = home.path().to_path_buf();
+        let holder = cx.new(|cx| Holder(Updates::start(Some(at), |h: &mut Holder| &mut h.0, cx)));
+        assert_eq!(holder.read_with(cx, |h, _| h.0.stage.clone()), Stage::Idle, "start reads nothing itself");
+        cx.run_until_parked();
+        let stage = holder.read_with(cx, |h, _| h.0.stage.clone());
+        assert_eq!(stage, Stage::Failed("The update to 999.0.0 did not apply: supraman.exe is locked".into()));
+    }
+
+    #[gpui::test]
+    fn a_download_begun_before_the_read_lands_wins(cx: &mut gpui::TestAppContext) {
+        let home = home_with_a_failed_apply();
+        let at = home.path().to_path_buf();
+        let holder = cx.new(|cx| Holder(Updates::start(Some(at), |h: &mut Holder| &mut h.0, cx)));
+        holder.update(cx, |h, _| h.0.stage = Stage::Downloading { done: 0, total: 9 });
+        cx.run_until_parked();
+        assert_eq!(holder.read_with(cx, |h, _| h.0.stage.clone()), Stage::Downloading { done: 0, total: 9 });
     }
 
     #[test]

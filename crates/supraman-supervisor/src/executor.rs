@@ -157,6 +157,8 @@ pub struct Supervisor<L, T> {
     pub desired: DesiredState,
     pub memory: SupervisorMemory,
     pub policy: Policy,
+    /// Where its state files are: the minted sessions, the kept tokens, the wanted sessions.
+    home: PathBuf,
     pub config: LaunchConfig,
     launcher: L,
     tokens: T,
@@ -194,28 +196,24 @@ pub struct Supervisor<L, T> {
 }
 
 impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
-    /// Mints over HTTP; the minted sessions are kept at [`MintedSessions::path`] when `config.supraman_home` is set.
-    pub fn new(desired: DesiredState, config: LaunchConfig, launcher: L, tokens: T) -> Self {
-        let path = config.supraman_home.as_deref().map(|home| MintedSessions::path(home, &desired.workspace));
+    /// Mints over HTTP; the minted sessions are kept at [`MintedSessions::path`] under `home`.
+    pub fn new(desired: DesiredState, home: &Path, config: LaunchConfig, launcher: L, tokens: T) -> Self {
+        let path = MintedSessions::path(home, &desired.workspace);
         let mut notices = Vec::new();
         let mut minted = MintedSessions::load(path.clone()).unwrap_or_else(|e| {
-            let shown = path.as_deref().map(|p| p.display().to_string()).unwrap_or_default();
-            let kept = match path.as_deref().map(MintedSessions::set_aside) {
-                Some(Ok(aside)) => format!("it is kept as {}", aside.display()),
-                Some(Err(moved)) => format!("it could not be set aside ({moved})"),
-                None => String::new(),
+            let kept = match MintedSessions::set_aside(&path) {
+                Ok(aside) => format!("it is kept as {}", aside.display()),
+                Err(moved) => format!("it could not be set aside ({moved})"),
             };
-            notices.push(format!("Cannot read {shown} ({e}); {kept}: the Workman sessions minted before are not revoked"));
+            notices.push(format!("Cannot read {} ({e}); {kept}: the Workman sessions minted before are not revoked", path.display()));
             MintedSessions::empty(path)
         });
         if let Err(e) = minted.adopt_origins(&config.mcp_dir) {
             notices.push(format!("Cannot save the minted Workman sessions of {}: {e}", desired.workspace));
         }
-        let keeper = match &config.supraman_home {
-            Some(home) => Keeper::new(home, &config.mcp_dir, supraman_core::secret::default_store(home)),
-            None => Keeper::new(&config.mcp_dir, &config.mcp_dir, std::sync::Arc::new(supraman_core::secret::MemoryStore::default())),
-        };
+        let keeper = Keeper::new(home, &config.mcp_dir, supraman_core::secret::default_store(home));
         Self {
+            home: home.to_path_buf(),
             desired,
             memory: SupervisorMemory::default(),
             policy: Policy::default(),
@@ -612,9 +610,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             .collect();
         for (name, session_id) in landed {
             self.desired.forked(&name, &session_id);
-            if let Some(home) = &self.config.supraman_home
-                && let Err(e) = DesiredState::update(home, &self.desired.workspace, |d| d.forked(&name, &session_id))
-            {
+            if let Err(e) = DesiredState::update(&self.home, &self.desired.workspace, |d| d.forked(&name, &session_id)) {
                 self.notices.push(format!("Cannot record that {name} continues as {session_id}: {e}"));
             }
         }

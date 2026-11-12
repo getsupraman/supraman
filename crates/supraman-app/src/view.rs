@@ -476,7 +476,7 @@ impl FleetView {
         let claude_dir = claude_dir_or(CLAUDE_DIR_OVERRIDE.get().map(PathBuf::as_path));
         Self::watch_transcripts(claude_dir.clone(), home.as_deref().map(|h| h.join(TRANSCRIPTS_CACHE)), transcripts_nudged, cx);
         let desired_writes = Self::desired_writer(cx);
-        let updates = crate::updates::Updates::start(home.clone(), cx);
+        let updates = crate::updates::Updates::start(home.clone(), |v: &mut Self| &mut v.updates, cx);
         let tabs_writes = Self::tabs_writer(home.clone(), cx);
         Self::detect_shells(cx);
         cx.on_focus_lost(window, |this, window, cx| this.focus.focus(window, cx)).detach();

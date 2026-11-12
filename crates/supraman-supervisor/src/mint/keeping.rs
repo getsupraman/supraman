@@ -129,7 +129,7 @@ impl Keeping {
 }
 
 fn kept_names(home: &Path) -> BTreeSet<String> {
-    record_files(home).into_iter().filter_map(|p| MintedSessions::load(Some(p)).ok()).flat_map(|r| r.names().cloned().collect::<Vec<_>>()).collect()
+    record_files(home).into_iter().filter_map(|p| MintedSessions::load(p).ok()).flat_map(|r| r.names().cloned().collect::<Vec<_>>()).collect()
 }
 
 #[cfg(test)]
@@ -164,7 +164,7 @@ mod tests {
     fn kept(home: &Path, fake: &FakeWorkman) -> (Keeper, String) {
         let keeper = Keeper::new(home, &home.join("mcp"), Arc::new(supraman_core::secret::MemoryStore::default()));
         let minted = HttpMinter::default().mint(fake.base(), "fake-static", &request()).unwrap();
-        let mut records = MintedSessions::empty(Some(MintedSessions::path(home, "demo")));
+        let mut records = MintedSessions::empty(MintedSessions::path(home, "demo"));
         let session = MintedSession { session_id: minted.session_id.clone(), role: "workspace".into(), claude_session_id: None, last_active: None, origin: Some(fake.base().to_string()) };
         records.insert_minted(NAME, session, &request());
         records.save().unwrap();

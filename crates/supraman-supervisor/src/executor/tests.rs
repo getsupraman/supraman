@@ -168,7 +168,7 @@ fn supervisor(started: bool, tokens: Option<RoleToken>, mcp_dir: &Path) -> Super
         plugin_dirs: vec![r"C:\fm\plugins\supraman".into()],
         ..LaunchConfig::default()
     };
-    Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(tokens, None, Ok(SIGNED_OUT_URL.into())))
+    Supervisor::new(desired, mcp_dir, config, FakeLauncher::default(), FakeTokens(tokens, None, Ok(SIGNED_OUT_URL.into())))
         .with_minter(FakeMinter::default())
         .with_repo_of(fake_repo_of)
         .with_daemon_check(|| None)
@@ -496,7 +496,7 @@ fn minting_from(home: &Path, json: &str) -> (Supervisor<FakeLauncher, FakeTokens
     desired.started = true;
     let config = LaunchConfig { mcp_dir: home.join("mcp"), supraman_home: Some(home.into()), ..LaunchConfig::default() };
     let minter = FakeMinter::default();
-    let sup = Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(static_token(), None, Ok(SIGNED_OUT_URL.into())))
+    let sup = Supervisor::new(desired, home, config, FakeLauncher::default(), FakeTokens(static_token(), None, Ok(SIGNED_OUT_URL.into())))
         .with_minter(minter.clone())
         .with_repo_of(fake_repo_of)
         .with_daemon_check(|| None);
@@ -889,9 +889,7 @@ fn mint_sessions_survive_a_restart_and_are_revoked_once_deleted() {
     let (mut sup, minter) = minting(true, &dir.path().join("mcp"));
     sup.config.supraman_home = Some(home.clone());
     let config = sup.config.clone();
-    sup.tick(&[], &mut free(), NOW);
-    // no persistence without a home at construction: rebuild the way the app does
-    let mut sup = Supervisor::new(sup.desired.clone(), config.clone(), FakeLauncher::default(), FakeTokens(static_token(), None, Ok(SIGNED_OUT_URL.into())))
+    let mut sup = Supervisor::new(sup.desired.clone(), &home, config.clone(), FakeLauncher::default(), FakeTokens(static_token(), None, Ok(SIGNED_OUT_URL.into())))
         .with_minter(minter.clone());
     assert_eq!(sup.minted().get("fm-demo-workspace"), None, "nothing saved yet");
     sup.tick(&[], &mut free(), NOW);
@@ -904,7 +902,7 @@ fn mint_sessions_survive_a_restart_and_are_revoked_once_deleted() {
     // the app restarts, then the workspace is stopped, and later its session deleted
     let mut desired = sup.desired.clone();
     desired.started = false;
-    let mut sup = Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(static_token(), None, Ok(SIGNED_OUT_URL.into()))).with_minter(minter.clone());
+    let mut sup = Supervisor::new(desired, &home, config, FakeLauncher::default(), FakeTokens(static_token(), None, Ok(SIGNED_OUT_URL.into()))).with_minter(minter.clone());
     sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 2 * SECOND);
     assert_eq!(minter.take(), [], "the Stop keeps it");
     for t in [3, 4] {
@@ -921,7 +919,7 @@ fn a_live_supervised_session_keeps_its_token_across_quit_and_start() {
     let (mut sup, minter) = minting(true, &dir.path().join("mcp"));
     sup.config.supraman_home = Some(home.clone());
     let config = sup.config.clone();
-    let started = || Supervisor::new(sup.desired.clone(), config.clone(), FakeLauncher::default(), FakeTokens(static_token(), None, Ok(SIGNED_OUT_URL.into()))).with_minter(minter.clone());
+    let started = || Supervisor::new(sup.desired.clone(), &home, config.clone(), FakeLauncher::default(), FakeTokens(static_token(), None, Ok(SIGNED_OUT_URL.into()))).with_minter(minter.clone());
     let mut before = started();
     before.tick(&[], &mut free(), NOW);
     let live = row(SessionState::Working, Some(Status::Busy), Some(7));
@@ -1103,7 +1101,7 @@ fn workspace(name: &str, mcp_dir: &Path) -> Supervisor<FakeLauncher, FakeTokens>
         mcp_dir: mcp_dir.into(),
         ..LaunchConfig::default()
     };
-    Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(None, None, Ok(SIGNED_OUT_URL.into())))
+    Supervisor::new(desired, mcp_dir, config, FakeLauncher::default(), FakeTokens(None, None, Ok(SIGNED_OUT_URL.into())))
 }
 
 fn live(name: &str, n: u32, state: SessionState, status: Status) -> Session {
@@ -1662,10 +1660,9 @@ fn a_resume_that_dies_quickly_counts_as_a_failure() {
 
 #[test]
 fn an_adopted_session_launches_a_copy_of_its_uuid_with_the_supervised_flags_and_forks_once() {
-    let mcp = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
     let from = "fc5bf027-48e3-4510-90b2-63a00eb76df8";
-    let (sup, minter) = minting(true, mcp.path());
+    let (sup, minter) = minting(true, home.path());
     let mut sup = sup;
     sup.config.supraman_home = Some(home.path().into());
     sup.desired.sessions.clear();
