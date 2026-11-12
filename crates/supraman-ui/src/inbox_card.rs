@@ -50,7 +50,7 @@ pub fn action(hits: &HitTargets, key: impl Into<SharedString>, card_key: impl In
 
 /// A card's main remedy under `key`: its word, shown without hover; the owner adds its click.
 pub fn primary(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<SharedString>, cx: &App) -> Stateful<Div> {
-    button::tinted(hits, key, label, None, cx).h(px(BUTTON))
+    button::action(hits, key, label, button::Tone::Neutral, button::Fill::Outline, cx)
 }
 
 pub fn icon_color(cx: &App) -> Hsla {

@@ -151,14 +151,14 @@ impl WipPanel {
             return None;
         }
         let (busy, paths) = (self.busy(cx), vec![path.to_string()]);
-        let button = button::outline(&self.hits, format!("wip-unresolve-{path}"), "Mark Conflicted", cx.theme().status().conflict, cx);
+        let button = button::action(&self.hits, format!("wip-unresolve-{path}"), "Mark Conflicted", button::Tone::Neutral, button::Fill::Outline, cx);
         Some(button::reveal(live(button, busy, cx, move |this, cx| this.unresolve(paths.clone(), cx)), group, false))
     }
 
     /// Mark all resolved over the conflicted files: only those are staged.
     pub(super) fn resolve_all_button(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         let busy = self.busy(cx);
-        live(button::outline(&self.hits, "wip-resolve-all", "Mark all resolved", cx.theme().status().created, cx), busy, cx, |this, cx| this.resolve(None, false, cx))
+        live(button::action(&self.hits, "wip-resolve-all", "Mark all resolved", button::Tone::Success, button::Fill::Outline, cx), busy, cx, |this, cx| this.resolve(None, false, cx))
     }
 }
 

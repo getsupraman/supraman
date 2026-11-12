@@ -338,12 +338,12 @@ impl Render for WorkspaceDialog {
         let p = self.prefix();
         let list = folder_list::render(&self.list, &self.path, p, &hits, on, cx);
         let can_save = self.can_save(cx);
-        let save = button::bordered(&hits, format!("{p}-save"), "Save", cx).on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+        let save = button::action(&hits, format!("{p}-save"), "Save", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
             cx.stop_propagation();
             this.save(window, cx);
         }));
         let save = if can_save { save } else { button::dimmed(save) };
-        let cancel = button::bordered(&hits, format!("{p}-cancel"), "Cancel", cx).on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
+        let cancel = button::action(&hits, format!("{p}-cancel"), "Cancel", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
             cx.stop_propagation();
             cx.emit(DialogEvent::Cancel);
         }));

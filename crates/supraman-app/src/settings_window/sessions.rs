@@ -25,7 +25,7 @@ impl SettingsView {
             .flex()
             .items_center()
             .gap_1()
-            .child(button::small("max-dec", "−", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            .child(button::action(&self.hits, "settings-max-dec", "−", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.set_max_working(n.saturating_sub(1), cx);
             })))
             .child(
@@ -36,11 +36,11 @@ impl SettingsView {
                     .font_weight(FontWeight::BOLD)
                     .child(SharedString::from(n.to_string())),
             )
-            .child(button::small("max-inc", "+", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            .child(button::action(&self.hits, "settings-max-inc", "+", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.set_max_working(n + 1, cx);
             })));
         let admin = self.settings.sessions.run_as_admin;
-        let toggle = button::small("run-as-admin", if admin { "On" } else { "Off" }, cx)
+        let toggle = button::action(&self.hits, "settings-run-as-admin", if admin { "On" } else { "Off" }, button::Tone::Neutral, button::Fill::Solid, cx)
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.change(move |s| s.sessions.run_as_admin = !admin, cx)));
         let now = self.elevated.map(|elevated| {
             let now: SharedString =
@@ -48,10 +48,10 @@ impl SettingsView {
             div().text_xs().text_color(cx.theme().colors().text_muted).child(now).into_any_element()
         });
         let reopen = self.settings.sessions.reopen_tabs;
-        let reopen_toggle = button::small("reopen-tabs", if reopen { "On" } else { "Off" }, cx)
+        let reopen_toggle = button::action(&self.hits, "settings-reopen-tabs", if reopen { "On" } else { "Off" }, button::Tone::Neutral, button::Fill::Solid, cx)
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.change(move |s| s.sessions.reopen_tabs = !reopen, cx)));
         let on_click = self.settings.sessions.resume_tabs_on_click;
-        let resume_toggle = button::small("resume-tabs-on-click", if on_click { "On a click" } else { "At once" }, cx)
+        let resume_toggle = button::action(&self.hits, "settings-resume-tabs-on-click", if on_click { "On a click" } else { "At once" }, button::Tone::Neutral, button::Fill::Solid, cx)
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.change(move |s| s.sessions.resume_tabs_on_click = !on_click, cx)));
         vec![
             row(

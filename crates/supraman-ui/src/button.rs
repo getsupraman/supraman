@@ -101,69 +101,87 @@ pub fn split(main: Stateful<Div>, menu: Stateful<Div>, cx: &App) -> Div {
         .child(menu.rounded_l_none().min_w(px(18.)).px(px(2.)))
 }
 
-/// A small bordered button: one height, the label centred, a lighter fill and border on hover.
-pub fn bordered(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<SharedString>, cx: &App) -> Stateful<Div> {
-    let colors = cx.theme().colors();
-    base(hits, key.into(), |s| s.bg(colors.element_hover).border_color(colors.border_selected), colors.element_active)
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .h(px(20.))
-        .px_2()
-        .rounded_sm()
-        .border_1()
-        .border_color(colors.border)
-        .bg(colors.element_background)
-        .text_xs()
-        .text_color(colors.text)
-        .whitespace_nowrap()
-        .child(label.into())
+/// What a labelled [`action`] does: Danger loses work or cannot be taken back, Success is GitMan's safe forward action, Neutral the rest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tone {
+    Neutral,
+    Success,
+    Danger,
 }
 
-/// A prompt's answer, bold: on `tone`'s tint inside a solid `tone` border, or outlined without one (Cancel).
-pub fn tinted(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<SharedString>, tone: Option<Hsla>, cx: &App) -> Stateful<Div> {
+/// Solid for a form's or band's main answer (Enter's), Outline for the rest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fill {
+    Solid,
+    Outline,
+}
+
+/// Every [`action`]'s height.
+pub const HEIGHT: Pixels = px(20.);
+
+/// An [`action`]'s colours: its fill, border and text, and its fill hovered and pressed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Look {
+    pub fill: Hsla,
+    pub border: Hsla,
+    pub text: Hsla,
+    pub hover: Hsla,
+    pub active: Hsla,
+}
+
+/// The colours of `tone` in `fill`: success `status().success`, danger `status().error`, neutral the element grey.
+pub fn look(tone: Tone, fill: Fill, cx: &App) -> Look {
     let colors = cx.theme().colors();
-    let (fill, hover, border) = match tone {
-        Some(tone) => (tone.opacity(TINT), tone.opacity(TINT_HOVER), tone),
-        None => (gpui::transparent_black(), colors.element_hover, colors.border),
+    let tone = match tone {
+        Tone::Neutral => None,
+        Tone::Success => Some(cx.theme().status().success),
+        Tone::Danger => Some(cx.theme().status().error),
     };
-    base(hits, key.into(), move |s| s.bg(hover), colors.element_active)
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .h(px(24.))
-        .px_2()
-        .rounded(px(2.))
-        .border_1()
-        .border_color(border)
-        .bg(fill)
-        .text_xs()
-        .font_weight(gpui::FontWeight::BOLD)
-        .text_color(colors.text)
-        .whitespace_nowrap()
-        .child(label.into())
+    let clear = gpui::transparent_black();
+    match (tone, fill) {
+        (None, Fill::Solid) => Look { fill: colors.element_background, border: colors.border, text: colors.text, hover: colors.element_hover, active: colors.element_active },
+        (None, Fill::Outline) => Look { fill: clear, border: colors.border, text: colors.text, hover: colors.element_hover, active: colors.element_active },
+        (Some(tone), Fill::Solid) => Look { fill: tone, border: tone, text: on(tone), hover: tone.opacity(SOLID_HOVER), active: tone.opacity(SOLID_ACTIVE) },
+        (Some(tone), Fill::Outline) => Look { fill: clear, border: tone, text: tone, hover: tone.opacity(TINT), active: tone.opacity(TINT_HOVER) },
+    }
+}
+
+/// White or black, whichever reads better on `fill`.
+fn on(fill: Hsla) -> Hsla {
+    let (white, black) = (gpui::white(), gpui::black());
+    if crate::themes::contrast(white, fill) >= crate::themes::contrast(black, fill) { white } else { black }
 }
 
 const TINT: f32 = 0.2;
 const TINT_HOVER: f32 = 0.3;
+const SOLID_HOVER: f32 = 0.85;
+const SOLID_ACTIVE: f32 = 0.7;
+
+/// Every labelled button: `label` centred at [`HEIGHT`] in [`look`]'s colours of `tone` and `fill`.
+pub fn action(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<SharedString>, tone: Tone, fill: Fill, cx: &App) -> Stateful<Div> {
+    let look = look(tone, fill, cx);
+    let hover_border = if tone == Tone::Neutral { cx.theme().colors().border_selected } else { look.border };
+    base(hits, key.into(), move |s| s.bg(look.hover).border_color(hover_border), look.active)
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .gap_1()
+        .h(HEIGHT)
+        .px_2()
+        .rounded_sm()
+        .border_1()
+        .border_color(look.border)
+        .bg(look.fill)
+        .text_xs()
+        .text_color(look.text)
+        .whitespace_nowrap()
+        .child(label.into())
+}
 
 /// `button` dimmed, with the plain cursor, while it cannot act; its click must then do nothing.
 pub fn dimmed(button: Stateful<Div>) -> Stateful<Div> {
     button.opacity(0.4).cursor_default()
-}
-
-/// A ghost button with a `border` outline and a text label.
-pub fn outline(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<SharedString>, border: Hsla, cx: &App) -> Stateful<Div> {
-    ghost(hits, key, cx)
-        .flex_none()
-        .px_2()
-        .rounded_sm()
-        .border_1()
-        .border_color(border)
-        .text_xs()
-        .child(label.into())
 }
 
 /// A quiet outlined pill in `fg`, lit on hover; its label's letters centred, painted under `<key>-label`.
@@ -229,23 +247,6 @@ pub fn tick(on: bool, fill: Hsla, cx: &App) -> Div {
         .when(on, |d| d.bg(fill).child(Icon::Check.svg(10., gpui::white())))
 }
 
-/// A bordered button sized by its text; no hit key.
-pub fn small(id: impl Into<ElementId>, label: impl Into<SharedString>, cx: &App) -> Stateful<Div> {
-    let colors = cx.theme().colors();
-    div()
-        .id(id)
-        .px_2()
-        .rounded_sm()
-        .border_1()
-        .border_color(colors.border)
-        .bg(colors.element_background)
-        .text_sm()
-        .cursor_pointer()
-        .hover(|s| s.bg(colors.element_hover))
-        .active(|s| s.bg(colors.element_active))
-        .child(label.into())
-}
-
 /// One option of a choice; the selected one is drawn as a selected list row.
 pub fn choice(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: bool, cx: &App) -> Stateful<Div> {
     let colors = cx.theme().colors();
@@ -288,39 +289,4 @@ fn chosen(d: Stateful<Div>, selected: bool, cx: &App) -> Stateful<Div> {
 }
 
 #[cfg(test)]
-mod tests {
-    use gpui::{Context, Pixels, Render, TestAppContext, VisualTestContext, Window, rems};
-
-    use super::*;
-
-    struct Row {
-        hits: HitTargets,
-    }
-
-    impl Render for Row {
-        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            let label = div().relative().child("View all files").child(hit_target(&self.hits, "label".into()));
-            let row = div().flex().items_center().gap_1p5().text_xs().child(checkbox(&self.hits, "tick", true, cx)).child(label);
-            div().flex().flex_col().gap_2().p_2().child(row).child(div().flex().child(pill(&self.hits, "pill", "main", gpui::red(), cx)))
-        }
-    }
-
-    fn centre(row: &gpui::Entity<Row>, key: &str, cx: &mut VisualTestContext) -> Pixels {
-        row.read_with(cx, |r, _| r.hits.borrow().get(key).map(|h| h.bounds.center().y)).unwrap_or_else(|| panic!("{key} paints"))
-    }
-
-    #[gpui::test]
-    fn a_tick_box_sits_on_its_labels_letters_and_a_pills_letters_on_its_middle(cx: &mut TestAppContext) {
-        cx.update(|cx| crate::init_globals(cx, "test"));
-        let (row, cx) = cx.add_window_view(|_, _| Row { hits: HitTargets::default() });
-        cx.run_until_parked();
-        let below = cx.update(|window, _| {
-            let mut style = window.text_style();
-            style.font_size = rems(0.75).into();
-            crate::ink::offset(&style, window)
-        });
-        assert!(below > px(0.), "the letters' middle is below the line's");
-        assert!(crate::ink::level(centre(&row, "tick", cx), centre(&row, "label", cx) + below), "the square on the label's letters");
-        assert!(crate::ink::level(centre(&row, "pill", cx), centre(&row, "pill-label", cx) + below), "the pill's letters on its middle");
-    }
-}
+mod tests;

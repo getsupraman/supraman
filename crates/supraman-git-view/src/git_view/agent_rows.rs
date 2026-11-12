@@ -281,7 +281,7 @@ impl GitView {
             return details::render(page, &hits, cx);
         }
         let sections = [Section::new("session", "Session").path("Working directory", &session.cwd).row("State", session.activity.word())];
-        let attach = button::bordered(&self.hits, "git-agent-attach", "Attach", cx);
+        let attach = button::action(&self.hits, "git-agent-attach", "Attach", button::Tone::Neutral, button::Fill::Outline, cx);
         let attach = match session.attach {
             Some(_) => {
                 let id = id.to_string();
@@ -295,7 +295,7 @@ impl GitView {
     }
 
     fn page_action(&self, session: &LiveSession, action: PageAction, cx: &mut Context<Self>) -> AnyElement {
-        let button = button::bordered(&self.hits, format!("git-agent-{}", action.key), action.label, cx);
+        let button = button::action(&self.hits, format!("git-agent-{}", action.key), action.label, button::Tone::Neutral, button::Fill::Outline, cx);
         if let Some(why) = action.dimmed {
             return button::dimmed(button).tooltip(Tooltip::text(why)).into_any_element();
         }

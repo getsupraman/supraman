@@ -84,7 +84,7 @@ impl SettingsView {
 
     fn render_update_rows(&self, cx: &mut Context<Self>) -> [AnyElement; 2] {
         let on = self.settings.updates.check;
-        let check_toggle = button::small("updates-check", if on { "On" } else { "Off" }, cx)
+        let check_toggle = button::action(&self.hits, "settings-updates-check", if on { "On" } else { "Off" }, button::Tone::Neutral, button::Fill::Solid, cx)
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_update_check(!on, cx)));
         let last_check = div()
             .flex()
@@ -92,7 +92,7 @@ impl SettingsView {
             .gap_2()
             .child(div().id("updates-last").max_w(px(260.)).text_sm().child(SharedString::from(self.updates_line(cx))))
             .children(on.then(|| {
-                button::small("updates-check-now", "Check now", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                button::action(&self.hits, "settings-updates-check-now", "Check now", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.fleet.update(cx, |fleet, _| fleet.check_updates_now()).ok();
                 }))
             }));

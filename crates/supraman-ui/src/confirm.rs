@@ -1,6 +1,6 @@
 //! A question before an action that cannot be taken back, or a report with only its OK; a box or a band.
 
-use gpui::{AnyElement, App, ClickEvent, Context, Div, Hsla, KeyDownEvent, Pixels, SharedString, Window, div, prelude::*, px};
+use gpui::{AnyElement, App, ClickEvent, Context, Div, KeyDownEvent, Pixels, SharedString, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
 use crate::banner;
@@ -89,6 +89,9 @@ impl<A> Confirm<A> {
     ) -> Div {
         let status = cx.theme().status().clone();
         let (on_yes, on_alt) = (on_answer.clone(), on_answer.clone());
+        let default = self.default_answer();
+        let fill = |answer| if answer == default { button::Fill::Solid } else { button::Fill::Outline };
+        let tone = |danger: bool| if danger { button::Tone::Danger } else { button::Tone::Neutral };
         div()
             .flex()
             .flex_col()
@@ -105,14 +108,14 @@ impl<A> Confirm<A> {
                     .flex()
                     .gap_2()
                     .justify_end()
-                    .child(button::bordered(hits, format!("{key}-yes"), self.yes.clone(), cx).on_click(cx.listener(
+                    .child(button::action(hits, format!("{key}-yes"), self.yes.clone(), tone(self.danger), fill(Answer::Yes), cx).on_click(cx.listener(
                         move |this, _: &ClickEvent, window, cx| {
                             cx.stop_propagation();
                             on_yes(this, Answer::Yes, window, cx);
                         },
                     )))
                     .when_some(self.alt.as_ref(), |d, (words, _)| {
-                        d.child(button::bordered(hits, format!("{key}-alt"), words.clone(), cx).on_click(cx.listener(
+                        d.child(button::action(hits, format!("{key}-alt"), words.clone(), tone(self.alt_danger), fill(Answer::Alt), cx).on_click(cx.listener(
                             move |this, _: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
                                 on_alt(this, Answer::Alt, window, cx);
@@ -120,7 +123,7 @@ impl<A> Confirm<A> {
                         )))
                     })
                     .when(self.action.is_some(), |d| {
-                        d.child(button::bordered(hits, format!("{key}-cancel"), "Cancel", cx).on_click(cx.listener(
+                        d.child(button::action(hits, format!("{key}-cancel"), "Cancel", button::Tone::Neutral, fill(Answer::No), cx).on_click(cx.listener(
                             move |this, _: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
                                 on_answer(this, Answer::No, window, cx);
@@ -149,16 +152,18 @@ impl<A> Confirm<A> {
         on_answer: impl Fn(&mut V, Answer, &mut Window, &mut Context<V>) + Clone + 'static,
         cx: &mut Context<V>,
     ) -> Div {
-        let status = cx.theme().status().clone();
-        let tone = |danger: bool| Some(if danger { status.error } else { status.success });
-        let mut items = vec![answer_button(hits, format!("{key}-yes"), self.yes.clone(), tone(self.danger), Answer::Yes, on_answer.clone(), cx)];
+        let (default, escape) = (self.default_answer(), if self.action.is_some() { Answer::No } else { Answer::Yes });
+        let look = |danger: bool, answer: Answer| {
+            let tone = if danger { button::Tone::Danger } else if answer == Answer::No { button::Tone::Neutral } else { button::Tone::Success };
+            (tone, if answer == default { button::Fill::Solid } else { button::Fill::Outline })
+        };
+        let mut items = vec![answer_button(hits, format!("{key}-yes"), self.yes.clone(), look(self.danger, Answer::Yes), Answer::Yes, on_answer.clone(), cx)];
         if let Some((words, _)) = &self.alt {
-            items.push(answer_button(hits, format!("{key}-alt"), words.clone(), tone(self.alt_danger), Answer::Alt, on_answer.clone(), cx));
+            items.push(answer_button(hits, format!("{key}-alt"), words.clone(), look(self.alt_danger, Answer::Alt), Answer::Alt, on_answer.clone(), cx));
         }
         if self.action.is_some() {
-            items.push(answer_button(hits, format!("{key}-cancel"), "Cancel".into(), None, Answer::No, on_answer.clone(), cx));
+            items.push(answer_button(hits, format!("{key}-cancel"), "Cancel".into(), look(false, Answer::No), Answer::No, on_answer.clone(), cx));
         }
-        let (default, escape) = (self.default_answer(), if self.action.is_some() { Answer::No } else { Answer::Yes });
         band(hits, key, SharedString::from(self.text.clone()), items, cx).on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
             let answer = match e.keystroke.key.as_str() {
                 "enter" => default,
@@ -175,12 +180,12 @@ fn answer_button<V: 'static>(
     hits: &HitTargets,
     key: String,
     words: String,
-    tone: Option<Hsla>,
+    (tone, fill): (button::Tone, button::Fill),
     answer: Answer,
     on_answer: impl Fn(&mut V, Answer, &mut Window, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
 ) -> AnyElement {
-    button::tinted(hits, key, words, tone, cx)
+    button::action(hits, key, words, tone, fill, cx)
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
             cx.stop_propagation();
             on_answer(this, answer, window, cx);

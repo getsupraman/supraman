@@ -170,7 +170,7 @@ impl FleetView {
             .map(|s| s.id.clone())?;
         let workspace = workspace.clone();
         Some(
-            button::bordered(&self.hits, format!("msg-attach-{key}"), "Attach", cx)
+            button::action(&self.hits, format!("msg-attach-{key}"), "Attach", button::Tone::Neutral, button::Fill::Solid, cx)
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     cx.stop_propagation();
                     this.attach_by_id(&workspace, &id, window, cx);
@@ -183,7 +183,7 @@ impl FleetView {
         let row = div().flex().items_center().gap_2().text_xs();
         let reply = |cx: &mut Context<Self>| {
             let (w, file) = (workspace.clone(), m.file.clone());
-            button::bordered(&self.hits, format!("msg-reply-{key}"), "Reply…", cx).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            button::action(&self.hits, format!("msg-reply-{key}"), "Reply…", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 cx.stop_propagation();
                 this.open_compose(&w, file.clone(), window, cx);
             }))
@@ -191,7 +191,7 @@ impl FleetView {
         match state {
             AskState::Open(Ask::Approve) => {
                 let (w, file) = (workspace.clone(), m.file.clone());
-                row.child(button::bordered(&self.hits, format!("msg-approve-{key}"), "Approve", cx).on_click(cx.listener(
+                row.child(button::action(&self.hits, format!("msg-approve-{key}"), "Approve", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(
                     move |this, _: &ClickEvent, _, cx| {
                         cx.stop_propagation();
                         this.approve(&w, &file, cx);
@@ -255,7 +255,7 @@ impl FleetView {
                         .flex()
                         .gap_2()
                         .justify_end()
-                        .child(button::bordered(&self.hits, "compose-send", "Send", cx).on_click(cx.listener(
+                        .child(button::action(&self.hits, "compose-send", "Send", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(
                             |this, _: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
                                 this.send_compose(cx);
@@ -265,7 +265,7 @@ impl FleetView {
                                 }
                             },
                         )))
-                        .child(button::bordered(&self.hits, "compose-cancel", "Cancel", cx).on_click(cx.listener(
+                        .child(button::action(&self.hits, "compose-cancel", "Cancel", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| {
                                 cx.stop_propagation();
                                 this.mail.compose = None;

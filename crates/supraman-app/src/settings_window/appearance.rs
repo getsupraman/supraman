@@ -156,7 +156,7 @@ impl SettingsView {
                 .text_color(colors.text_muted)
                 .child("VS Code Dark Modern: kevcamel/vscode_dark_modern.zed, © 2024 Kevin Camellini, MIT licence (THIRD_PARTY.md)."),
         );
-        let folder = button::small("themes-folder", "Open themes folder", cx)
+        let folder = button::action(&self.hits, "settings-themes-folder", "Open themes folder", button::Tone::Neutral, button::Fill::Solid, cx)
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_themes_folder(cx)));
         row(
             "Theme",
@@ -196,7 +196,7 @@ impl SettingsView {
                 .flex()
                 .items_center()
                 .gap_1()
-                .child(button::small("term-font-dec", "−", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                .child(button::action(&self.hits, "settings-term-font-dec", "−", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.set_term_font_size(size - px(1.), cx);
                 })))
                 .child(
@@ -208,10 +208,10 @@ impl SettingsView {
                         .font_weight(FontWeight::BOLD)
                         .child(SharedString::from(format!("{}", f32::from(size)))),
                 )
-                .child(button::small("term-font-inc", "+", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                .child(button::action(&self.hits, "settings-term-font-inc", "+", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.set_term_font_size(size + px(1.), cx);
                 })))
-                .child(button::small("term-font-reset", "Reset", cx).ml_1().on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                .child(button::action(&self.hits, "settings-term-font-reset", "Reset", button::Tone::Neutral, button::Fill::Solid, cx).ml_1().on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.set_term_font_size(term_element::FONT_SIZE, cx);
                 })))
                 .into_any_element(),
@@ -257,7 +257,7 @@ impl SettingsView {
             .collect::<Vec<_>>();
         fonts = fonts.children(font_notes);
         let default = supraman_core::default_terminal_font_family(installed);
-        let font_reset = button::small("term-font-default", "Default", cx)
+        let font_reset = button::action(&self.hits, "settings-term-font-default", "Default", button::Tone::Neutral, button::Fill::Solid, cx)
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_term_font(None, ligatures, cx)));
         row(
             "Terminal font",

@@ -381,12 +381,12 @@ impl CommitPanel {
             Target::Older { above, .. } => Some(rebases_words(above)),
             _ => None,
         };
-        let update = button::bordered(&self.hits, UPDATE_KEY, update_words, cx);
+        let update = button::action(&self.hits, UPDATE_KEY, update_words, button::Tone::Success, button::Fill::Solid, cx);
         let update = match self.update_why_not(cx) {
             Some(why) => button::dimmed(update).tooltip(Tooltip::text(why)),
             None => update.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.update_message(cx))),
         };
-        let cancel = button::bordered(&self.hits, CANCEL_KEY, cancel_words, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_amend(cx)));
+        let cancel = button::action(&self.hits, CANCEL_KEY, cancel_words, button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_amend(cx)));
         let muted = cx.theme().colors().text_muted;
         let rebases = rebases.map(|words| div().relative().text_xs().text_color(muted).child(words).child(hit_target(&self.hits, REBASES_KEY.into())));
         div()

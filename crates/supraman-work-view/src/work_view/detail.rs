@@ -183,7 +183,7 @@ impl WorkView {
         let colors = cx.theme().colors().clone();
         let live = (self.link.live)();
         let attach = page.claim.as_ref().and_then(|c| attach_target(c, &live)).and_then(|session| Some((session.name.clone(), session.attach.clone()?))).map(|(name, id)| {
-            button::bordered(&self.hits, format!("work-attach-{id}"), format!("Attach to {name}"), cx).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            button::action(&self.hits, format!("work-attach-{id}"), format!("Attach to {name}"), button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 let attach = this.link.attach.clone();
                 attach(&id, window, cx);
             }))
