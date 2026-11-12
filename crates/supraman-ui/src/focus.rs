@@ -1,6 +1,6 @@
 //! A window's panes: each registers its focus handle as it paints, F6 and Shift+F6 step through them, the one
 //! holding the focus wears a 1 px edge in the theme's focus colour, and focus lost with a popup goes back to
-//! the pane that held it.
+//! the pane that held it; a tab shown in another's place takes the keys ([`Group`]).
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
@@ -79,6 +79,55 @@ fn paint_mark(pane: &Pane, bounds: Bounds<Pixels>, hits: &HitTargets, window: &m
     hits.borrow_mut().insert(key, Hit { bounds, visible: window.content_mask().bounds });
 }
 
+/// One of the things a window shows in turn in one place (its tabs): when it is shown in another's place it
+/// takes the keys once painted, what it held when last shown, else `entry`; never from a popup holding them (what
+/// holds them outside every pane and its region, painted under [`restore_on_loss`]).
+#[derive(Clone)]
+pub struct Group {
+    key: SharedString,
+    region: FocusHandle,
+    entry: FocusHandle,
+}
+
+impl Group {
+    /// `region` contains what the place shows, whichever group it is.
+    pub fn new(key: impl Into<SharedString>, region: &FocusHandle, entry: &FocusHandle) -> Self {
+        Self { key: key.into(), region: region.clone(), entry: entry.clone() }
+    }
+
+    /// The last child of the place's element.
+    pub fn paint(self) -> impl IntoElement {
+        canvas(|_, _, _| {}, move |_, _, window, cx| self.painted(window, cx)).absolute().size_0()
+    }
+
+    fn painted(self, window: &mut Window, cx: &mut App) {
+        let state = state(window, cx);
+        let previous = {
+            let mut state = state.borrow_mut();
+            let previous = state.group.replace(self.key.clone());
+            if let Some(previous) = &previous {
+                state.keep_group_leaf(previous, &self.region, window, cx);
+            }
+            previous
+        };
+        if previous.as_ref() != Some(&self.key) {
+            window.defer(cx, move |window, cx| self.take_keys(&state, window, cx));
+        }
+    }
+
+    fn take_keys(&self, state: &Rc<RefCell<State>>, window: &mut Window, cx: &mut App) {
+        let target = {
+            let state = state.borrow();
+            let popup = window.focused(cx).is_some_and(|f| !self.region.contains(&f, window) && !state.shown.iter().any(|p| p.region.contains(&f, window)));
+            if popup {
+                return;
+            }
+            state.group_leaves.get(&self.key).filter(|leaf| self.region.contains(leaf, window)).unwrap_or(&self.entry).clone()
+        };
+        window.focus(&target, cx);
+    }
+}
+
 /// The window's root element: its panes registered afresh each frame from here, F6 and Shift+F6 handled.
 pub fn root<E: InteractiveElement + ParentElement>(element: E) -> E {
     let start = canvas(|_, window, cx| state(window, cx).borrow_mut().shown.clear(), |_, _, _, _| {}).absolute().size_0();
@@ -138,6 +187,10 @@ struct State {
     held: Option<SharedString>,
     /// What each pane last held.
     leaves: HashMap<SharedString, FocusHandle>,
+    /// The group last shown.
+    group: Option<SharedString>,
+    /// What each group last held inside its region.
+    group_leaves: HashMap<SharedString, FocusHandle>,
 }
 
 impl State {
@@ -149,6 +202,15 @@ impl State {
     fn held(&mut self, key: &SharedString, leaf: FocusHandle) {
         self.held = Some(key.clone());
         self.leaves.insert(key.clone(), leaf);
+    }
+
+    /// Keeps what `group` held in the last frame: its region's focused element, none when the region itself held it.
+    fn keep_group_leaf(&mut self, group: &SharedString, region: &FocusHandle, window: &Window, cx: &App) {
+        match window.focused(cx).filter(|leaf| leaf != region && region.contains_focused(window, cx)) {
+            Some(leaf) => self.group_leaves.insert(group.clone(), leaf),
+            None if region.is_focused(window) => self.group_leaves.remove(group),
+            None => None,
+        };
     }
 
     fn ordered(&self) -> Vec<Pane> {

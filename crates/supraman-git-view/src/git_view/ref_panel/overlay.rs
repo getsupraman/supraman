@@ -21,6 +21,8 @@ pub(super) struct Overlay {
     build: u64,
     /// Whether its tree has been built once: it paints only from then.
     ready: bool,
+    /// It takes the keys as it first paints.
+    take_keys: bool,
 }
 
 /// `section`'s rows below its folder, for `cx.background_spawn`.
@@ -42,16 +44,15 @@ impl RefPanel {
     }
 
     /// Opens `section`'s overlay with the keyboard in it once its tree is built, or closes it when it is the one open.
-    pub(crate) fn toggle_overlay(&mut self, section: Section, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn toggle_overlay(&mut self, section: Section, cx: &mut Context<Self>) {
         if self.overlay() == Some(section) {
             return self.close_overlay(cx);
         }
         let tree = TreeState::new(cx);
         tree.match_with(|entry: &Entry, filter| entry.matches(filter));
         let focus = cx.focus_handle();
-        self.overlay = Some(Overlay { section, tree, focus: focus.clone(), build: 0, ready: false });
+        self.overlay = Some(Overlay { section, tree, focus, build: 0, ready: false, take_keys: true });
         self.refill_overlay(cx);
-        window.focus(&focus, cx);
         cx.notify();
     }
 
@@ -99,8 +100,12 @@ impl RefPanel {
         self.hits.borrow().get(&format!("{LIST}-strip-{}", section.key())).is_some_and(|hit| hit.bounds.contains(&at))
     }
 
-    pub(super) fn render_overlay(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let (section, tree, focus) = self.overlay.as_ref().filter(|o| o.ready).map(|o| (o.section, o.tree.clone(), o.focus.clone()))?;
+    pub(super) fn render_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let overlay = self.overlay.as_mut().filter(|o| o.ready)?;
+        if std::mem::take(&mut overlay.take_keys) {
+            window.focus(&overlay.focus, cx);
+        }
+        let (section, tree, focus) = (overlay.section, overlay.tree.clone(), overlay.focus.clone());
         let rows = tree.visible().len().clamp(1, MOST_ROWS);
         let list = TreeList::new(OVERLAY, &tree, &self.hits, |this: &mut RefPanel, row, _, cx| this.paint(OVERLAY, row, cx))
             .row_height(px(ROW))

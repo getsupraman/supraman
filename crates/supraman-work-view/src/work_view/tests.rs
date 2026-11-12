@@ -492,6 +492,14 @@ fn f6_steps_through_the_navigator_list_and_detail(cx: &mut TestAppContext) {
     assert!(hit(&view, &focus::mark_key(FOCUS_NAV), cx).is_some() && hit(&view, &focus::mark_key(FOCUS_MAIN), cx).is_none(), "the navigator wears the mark, the list not");
 }
 
+#[gpui::test]
+fn the_tabs_own_element_holding_the_keys_hands_them_to_the_list(cx: &mut TestAppContext) {
+    let Opened { view, cx, .. } = open(cx);
+    view.update_in(cx, |v, window, cx| window.focus(&v.focus, cx));
+    settle(&view, cx);
+    assert_eq!(holding(cx).as_deref(), Some(FOCUS_MAIN), "the shown tab's entry gives the list the keys");
+}
+
 fn show_inbox_count(view: &Entity<WorkView>, cx: &mut VisualTestContext) -> Rc<std::cell::Cell<usize>> {
     let shown = Rc::new(std::cell::Cell::new(0));
     let counted = shown.clone();

@@ -2,6 +2,8 @@
 
 pub(in crate::view) mod tab_menu;
 
+use gpui::Focusable as _;
+
 use super::*;
 
 impl FleetView {
@@ -79,7 +81,19 @@ impl FleetView {
             Some(_) => Some("tab"),
         };
         let area = div().relative().flex_1().min_h_0().track_focus(&self.focus).child(content).children(self.pane_toast.render(&self.hits, "pane-toast", cx));
-        area.children(pane.map(|key| supraman_ui::focus::Pane::new(key, &self.focus).paint(&self.hits)))
+        let area = area.children(pane.map(|key| supraman_ui::focus::Pane::new(key, &self.focus).paint(&self.hits)));
+        area.children(tab.map(|t| self.tab_keys(t, cx).paint()))
+    }
+
+    /// The shown tab takes the keys: what it held when last shown, else its view's own (the Git and Work tabs
+    /// hand them to the graph and the list), else the content area's.
+    fn tab_keys(&self, tab: &Tab, cx: &App) -> supraman_ui::focus::Group {
+        let entry = match &tab.kind {
+            TabKind::Git(view) => view.focus_handle(cx),
+            TabKind::Work(view) => view.focus_handle(cx),
+            _ => self.focus.clone(),
+        };
+        supraman_ui::focus::Group::new(format!("tab-{}", tab.id), &self.focus, &entry)
     }
 
     fn render_tab_content(&mut self, cx: &mut Context<Self>) -> AnyElement {
