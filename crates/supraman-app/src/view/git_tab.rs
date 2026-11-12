@@ -127,6 +127,5 @@ impl FleetView {
 mod tests;
 
 pub(crate) fn title(folder: &std::path::Path) -> String {
-    let name = folder.file_name().map_or_else(|| folder.display().to_string(), |n| n.to_string_lossy().into_owned());
-    format!("Git · {name}")
+    format!("Git · {}", supraman_core::paths::folder_name(folder))
 }

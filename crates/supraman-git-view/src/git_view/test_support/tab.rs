@@ -133,6 +133,15 @@ pub(crate) fn repaint(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Hit
     hits
 }
 
+/// The hit keys of a frame drawn now with no parked work run: a write just requested is still under way.
+pub(crate) fn frame(view: &Entity<GitView>, cx: &mut VisualTestContext) -> HitTargets {
+    let hits = view.read_with(cx, |v, _| v.hits.clone());
+    hits.borrow_mut().clear();
+    view.update(cx, |_, cx| cx.notify());
+    cx.update(|_, _| ());
+    hits
+}
+
 /// Whether `key` is painted in a frame drawn now.
 pub(crate) fn painted(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) -> bool {
     repaint(view, cx).borrow().contains_key(key)

@@ -5,7 +5,7 @@ mod marks;
 mod overlay;
 mod render;
 mod sections;
-mod worktrees;
+pub(crate) mod worktrees;
 
 #[cfg(test)]
 mod tests;

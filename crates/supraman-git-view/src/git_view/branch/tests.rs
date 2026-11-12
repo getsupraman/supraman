@@ -239,6 +239,7 @@ fn a_branch_in_a_linked_worktree_shows_the_tree_and_every_menu_of_it_offers_the_
     assert!(f.worktree.exists() && exists(&f, "refs/heads/side"), "nothing before the answer");
     click(&view, "git-ref-ask-yes", cx);
     assert!(!f.worktree.exists() && !exists(&f, "refs/heads/side"));
+    assert_eq!(toast(&view, cx).as_deref(), Some("Removed the worktree wt"), "the toast names the folder, as the question does");
 }
 
 #[gpui::test]

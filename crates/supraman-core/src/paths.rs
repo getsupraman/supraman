@@ -155,6 +155,11 @@ pub fn within(dir: &Path, root: &Path) -> bool {
     key_within(&path_key(dir), &path_key(root))
 }
 
+/// The folder's own name as the user reads it: its last part, the whole path when it has none.
+pub fn folder_name(path: &Path) -> String {
+    path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned())
+}
+
 /// [`within`] on two [`path_key`]s.
 pub fn key_within(dir: &str, root: &str) -> bool {
     dir == root || dir.strip_prefix(root).is_some_and(|rest| rest.starts_with('/') || root.ends_with('/'))
