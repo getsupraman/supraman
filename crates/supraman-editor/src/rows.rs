@@ -38,6 +38,7 @@ pub fn row_at(editor: &Entity<Editor>, position: Point<Pixels>, window: &mut Win
 }
 
 /// The window y of the top of `row` (of `editor`'s text); `None` while it is out of view.
+#[cfg(any(test, feature = "test-support"))]
 pub fn row_top(editor: &Entity<Editor>, row: u32, window: &mut Window, cx: &mut App) -> Option<Pixels> {
     editor.update(cx, |e, cx| {
         let bounds = *e.last_bounds()?;
@@ -49,12 +50,9 @@ pub fn row_top(editor: &Entity<Editor>, row: u32, window: &mut Window, cx: &mut 
     })
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub fn left(editor: &Entity<Editor>, cx: &App) -> Option<Pixels> {
     editor.read(cx).last_bounds().map(|b| b.origin.x)
-}
-
-pub fn right(editor: &Entity<Editor>, cx: &App) -> Option<Pixels> {
-    editor.read(cx).last_bounds().map(|b| b.origin.x + b.size.width)
 }
 
 /// The rows of `editor`'s newest non-empty selection; one ending at a row's start leaves that row out.
@@ -80,14 +78,6 @@ pub fn row_lines(editor: &Entity<Editor>, cx: &App) -> Vec<Option<(u32, bool)>> 
             info.buffer_row.map(|row| (row, removed))
         })
         .collect()
-}
-
-pub fn on_scroll(editor: &Entity<Editor>, f: impl Fn(&mut App) + 'static, cx: &mut App) -> gpui::Subscription {
-    cx.subscribe(editor, move |_, e: &editor::EditorEvent, cx| {
-        if let editor::EditorEvent::ScrollPositionChanged { .. } = e {
-            f(cx);
-        }
-    })
 }
 
 #[cfg(any(test, feature = "test-support"))]

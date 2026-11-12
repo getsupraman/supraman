@@ -22,9 +22,7 @@ pub(crate) use load::{MAX_SHOWN_BYTES, Of, Sizes, TooLarge};
 pub use load::Target;
 pub(crate) use picks::{PickEvent, Picks};
 #[cfg(test)]
-pub(crate) use picks::{Act, Line};
-#[cfg(test)]
-pub(crate) use picks::hunk_key;
+pub(crate) use picks::Act;
 
 gpui::actions!(git_diff, [NextChange, PreviousChange, CloseDiff, PreviousFile, NextFile, FirstFile, LastFile]);
 
@@ -102,8 +100,6 @@ pub(crate) struct Text {
     pub(crate) invisible: Vec<String>,
     /// The old and new texts the diff was computed from.
     shown: (String, String),
-    /// The editors' scroll subscriptions that repaint the picks.
-    watching: Vec<gpui::Subscription>,
     file: Option<Entity<ZedEditor>>,
     inline: Option<Entity<ZedEditor>>,
     split: Option<Entity<SplitDiff>>,
@@ -226,7 +222,7 @@ impl DiffView {
         if let Some(picks) = &mut self.picks {
             picks.forget_rows();
         }
-        self.content = Content::Text(Box::new(Text { diff, encoding, invisible, shown: Default::default(), watching: Vec::new(), file: None, inline: None, split: None, place }));
+        self.content = Content::Text(Box::new(Text { diff, encoding, invisible, shown: Default::default(), file: None, inline: None, split: None, place }));
         cx.notify();
     }
 

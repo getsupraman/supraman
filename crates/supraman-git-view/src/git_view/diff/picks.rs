@@ -1,16 +1,12 @@
 //! The viewer's line picks on a working-tree diff of a modified file (docs/research/gitkraken-12.6.1.md, "Staging").
 
 use supraman_core::text::count;
-use gpui::{AnyElement, App, AppContext as _, ClickEvent, Context, Entity, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, Subscription, Window, anchored, deferred, div, point, prelude::*, px};
+use gpui::{AnyElement, App, AppContext as _, Context, Entity, MouseButton, MouseDownEvent, Pixels, Point, Subscription, Window, div, prelude::*};
 use supraman_editor::{ZedEditor, rows};
 use supraman_gitman::write::lines::{self, Change, Pick, Picked};
 use supraman_gitman::write::{LockSet, Resource};
 use supraman_gitman::{ChangeKind, OperationState, Repo};
-use supraman_ui::button;
-use supraman_ui::icon::Icon;
 use supraman_ui::menu::{ContextMenu, MenuItem, item};
-use supraman_ui::tooltip::Tooltip;
-use theme::ActiveTheme as _;
 
 use super::{DiffView, Layout, Mode, Of};
 use crate::git_view::write_gate::{WriteGate, Written};
@@ -43,19 +39,10 @@ enum Pane {
     Inline,
 }
 
-/// The changed row under the pointer: its editor, its row there and the line it shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Hover {
-    pane: Pane,
-    row: u32,
-    line: Line,
-}
-
 pub(crate) struct Picks {
     gate: Entity<WriteGate>,
     /// The operation under way, once read with the tab's writer.
     state: Option<OperationState>,
-    hover: Option<Hover>,
     menu: Option<ContextMenu<Act>>,
     doing: Option<(u64, Act)>,
     /// The inline editor's line of each row, read once per editor.
@@ -64,9 +51,9 @@ pub(crate) struct Picks {
 }
 
 impl Picks {
-    /// The pointer's row and the open menu belong to the text a reload replaced.
+    /// The open menu and the rows' lines belong to the text a reload replaced.
     pub(super) fn forget_rows(&mut self) {
-        (self.hover, self.menu, self.inline_lines) = (None, None, None);
+        (self.menu, self.inline_lines) = (None, None);
     }
 }
 
@@ -91,7 +78,7 @@ impl DiffView {
     pub(crate) fn enable_picks(&mut self, gate: Entity<WriteGate>, repo: Repo, cx: &mut Context<Self>) {
         let written = cx.subscribe(&gate, |this: &mut DiffView, _, w: &Written, cx| this.pick_written(w, cx));
         let observed = cx.observe(&gate, |_, _, cx| cx.notify());
-        self.picks = Some(Picks { gate, state: None, hover: None, menu: None, doing: None, inline_lines: None, _gate: [written, observed] });
+        self.picks = Some(Picks { gate, state: None, menu: None, doing: None, inline_lines: None, _gate: [written, observed] });
         self.read_pick_tools(repo, cx);
     }
 
@@ -160,7 +147,6 @@ impl DiffView {
             Pick::Unstage => lines::unstage(s, &picked),
             Pick::Discard => lines::discard(s, &picked),
         };
-        picks.hover = None;
         picks.menu = None;
         if let Some(ticket) = picks.gate.update(cx, |g, cx| g.request(locks, job, cx)) {
             picks.doing = Some((ticket, act));
@@ -206,16 +192,13 @@ impl DiffView {
         }
     }
 
-    /// The row of `pane` that shows `line`.
-    fn row_of(&mut self, pane: Pane, editor: &Entity<ZedEditor>, line: Line, cx: &App) -> Option<u32> {
-        match pane {
-            Pane::Old | Pane::New => Some(line.row),
-            Pane::Inline => self.inline_lines(editor, cx).iter().position(|l| *l == Some((line.row, !line.new))).map(|r| r as u32),
-        }
+    /// The index of the hunk that changes `line`.
+    fn hunk_of(&self, line: Line) -> Option<usize> {
+        self.text()?.diff.hunks.iter().position(|h| if line.new { h.new_rows.contains(&line.row) } else { h.old_rows.contains(&line.row) })
     }
 
     fn changed(&self, line: Line) -> bool {
-        self.text().is_some_and(|t| t.diff.hunks.iter().any(|h| if line.new { h.new_rows.contains(&line.row) } else { h.old_rows.contains(&line.row) }))
+        self.hunk_of(line).is_some()
     }
 
     /// The pane, row and line under `position`.
@@ -229,15 +212,7 @@ impl DiffView {
         None
     }
 
-    fn hover_at(&mut self, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
-        let hover = self.under(position, window, cx).filter(|(.., line)| self.changed(*line)).map(|(pane, _, row, line)| Hover { pane, row, line });
-        if let Some(picks) = self.picks.as_mut().filter(|p| p.hover != hover) {
-            picks.hover = hover;
-            cx.notify();
-        }
-    }
-
-    /// The menu of the changed lines selected in the editor under `position`, else of the changed line under it.
+    /// The menu of the changed lines selected in the editor under `position`, else of the changed line under it and its hunk.
     fn open_line_menu(&mut self, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(side) = self.pick_side() else { return };
         let Some((pane, editor, row, line)) = self.under(position, window, cx) else { return };
@@ -247,33 +222,31 @@ impl DiffView {
                 selected.push(l);
             }
         }
-        let (many, lines) = match (selected.is_empty(), self.changed(line)) {
-            (false, _) => (true, selected),
-            (true, true) => (false, vec![line]),
-            (true, false) => return,
+        let (hunk, lines) = match (selected.is_empty(), self.hunk_of(line)) {
+            (false, _) => (None, selected),
+            (true, Some(ix)) => (Some(ix), vec![line]),
+            (true, None) => return,
         };
-        let pick = |p: Pick| Act::Lines(p, lines.clone());
-        let items: Vec<MenuItem<Act>> = match side {
-            Of::Staged => vec![item("line-unstage", if many { "Unstage selection" } else { "Unstage this line" }, pick(Pick::Unstage))],
-            _ => vec![
-                item("line-stage", if many { "Stage selected lines" } else { "Stage this line" }, pick(Pick::Stage)),
-                item("line-discard", if many { "Discard selection" } else { "Discard this line" }, pick(Pick::Discard)),
-            ],
-        };
+        let title = count(lines.len(), "line", "lines");
+        let mut items = line_items(&side, lines, hunk.is_none());
+        if let Some(ix) = hunk {
+            items.extend(hunk_items(&side, ix));
+        }
+        if let Some(why) = self.picks_blocked(cx) {
+            items = items.into_iter().map(|i| i.dimmed(why)).collect();
+        }
         let picks = self.picks.as_mut().expect("picks are on");
-        picks.menu = Some(ContextMenu { title: count(lines.len(), "line", "lines"), position, items });
+        picks.menu = Some(ContextMenu { title, position, items });
         cx.notify();
     }
 
-    /// `body` (the diff's editors) with the picks over it, where lines can be picked.
-    pub(super) fn with_picks(&mut self, body: AnyElement, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let Some(side) = self.pick_side() else { return body };
-        self.watch_scrolls(window, cx);
-        let mut overlays = self.hunk_buttons(&side, window, cx);
-        overlays.extend(self.line_button(&side, window, cx));
+    /// `body` (the diff's editors), whose right-click opens the line menu where lines can be picked.
+    pub(super) fn with_picks(&self, body: AnyElement, cx: &mut Context<Self>) -> AnyElement {
+        if self.pick_side().is_none() {
+            return body;
+        }
         div()
             .size_full()
-            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, window, cx| this.hover_at(e.position, window, cx)))
             .capture_any_mouse_down(cx.listener(|this, e: &MouseDownEvent, window, cx| {
                 if e.button == MouseButton::Right {
                     cx.stop_propagation();
@@ -281,92 +254,7 @@ impl DiffView {
                 }
             }))
             .child(body)
-            .children(overlays)
             .into_any_element()
-    }
-
-    /// The tab notified each time an editor of the diff scrolls, so the picks follow their rows.
-    fn watch_scrolls(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let panes = self.panes(cx);
-        let Some(text) = self.text_mut() else { return };
-        if text.watching.len() == panes.len() {
-            return;
-        }
-        let this = cx.entity().downgrade();
-        text.watching = panes
-            .iter()
-            .map(|(_, editor)| {
-                let this = this.clone();
-                rows::on_scroll(editor, move |cx| {
-                    this.update(cx, |_, cx| cx.notify()).ok();
-                }, cx)
-            })
-            .collect();
-        cx.on_next_frame(window, |_, _, cx| cx.notify());
-    }
-
-    fn hunk_buttons(&mut self, side: &Of, window: &mut Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let panes = self.panes(cx);
-        let Some(hunks) = self.text().map(|t| t.diff.hunks.clone()) else { return Vec::new() };
-        let editor = |pane: Pane| panes.iter().find(|(p, _)| *p == pane).map(|(_, e)| e.clone());
-        let (inline, old, new) = (editor(Pane::Inline), editor(Pane::Old), editor(Pane::New));
-        let Some(right) = inline.as_ref().or(new.as_ref()).and_then(|e| rows::right(e, cx)) else { return Vec::new() };
-        let blocked = self.picks_blocked(cx);
-        let mut out = Vec::new();
-        for (ix, h) in hunks.iter().enumerate() {
-            let first = if h.new_rows.is_empty() { Line { new: false, row: h.old_rows.start } } else { Line { new: true, row: h.new_rows.start } };
-            let (pane, at) = match (&inline, first.new) {
-                (Some(e), _) => (Pane::Inline, e.clone()),
-                (None, true) => (Pane::New, new.clone().expect("split")),
-                (None, false) => (Pane::Old, old.clone().expect("split")),
-            };
-            let Some(row) = self.row_of(pane, &at, first, cx) else { continue };
-            let Some(y) = rows::row_top(&at, row, window, cx) else { continue };
-            let buttons = match side {
-                Of::Staged => vec![self.hunk_button(ix, "unstage", "Unstage hunk", Act::Hunk(Pick::Unstage, ix), blocked, cx)],
-                _ => vec![self.hunk_button(ix, "discard", "Discard hunk", Act::Hunk(Pick::Discard, ix), blocked, cx), self.hunk_button(ix, "stage", "Stage hunk", Act::Hunk(Pick::Stage, ix), blocked, cx)],
-            };
-            let bar = div().flex().gap_1().occlude().children(buttons);
-            out.push(deferred(anchored().anchor(gpui::Anchor::TopRight).position(point(right - px(18.), y)).child(bar)).into_any_element());
-        }
-        out
-    }
-
-    fn hunk_button(&self, ix: usize, what: &str, label: &'static str, act: Act, blocked: Option<&'static str>, cx: &mut Context<Self>) -> AnyElement {
-        let key = format!("diff-hunk-{ix}-{what}");
-        let tone = match what {
-            "discard" => button::Tone::Danger,
-            "stage" => button::Tone::Success,
-            _ => button::Tone::Neutral,
-        };
-        let button = button::action(&self.hits, key, label, tone, button::Fill::Outline, cx);
-        self.acting(button, act, blocked, label, cx)
-    }
-
-    /// `button` running `act` on a click, dimmed with why while `blocked`.
-    fn acting(&self, button: gpui::Stateful<gpui::Div>, act: Act, blocked: Option<&'static str>, tip: &'static str, cx: &mut Context<Self>) -> AnyElement {
-        match blocked {
-            Some(why) => button::dimmed(button).tooltip(Tooltip::text(why)).into_any_element(),
-            None => button.tooltip(Tooltip::text(tip)).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                cx.stop_propagation();
-                this.pick(act.clone(), cx);
-            })).into_any_element(),
-        }
-    }
-
-    fn line_button(&mut self, side: &Of, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let hover = self.picks.as_ref()?.hover?;
-        let (_, editor) = self.panes(cx).into_iter().find(|(p, _)| *p == hover.pane)?;
-        let y = rows::row_top(&editor, hover.row, window, cx)?;
-        let x = rows::left(&editor, cx)?;
-        let (key, icon, tip, pick) = match side {
-            Of::Staged => ("diff-line-unstage", Icon::Minus, "Unstage this line", Pick::Unstage),
-            _ => ("diff-line-stage", Icon::Plus, "Stage this line", Pick::Stage),
-        };
-        let colors = cx.theme().colors();
-        let button = button::icon_toned(&self.hits, key, icon.svg(12., colors.text), px(16.), button::Tone::Neutral, cx).occlude();
-        let button = self.acting(button, Act::Lines(pick, vec![hover.line]), self.picks_blocked(cx), tip, cx);
-        Some(deferred(anchored().position(point(x + px(2.), y)).child(button)).into_any_element())
     }
 
     /// The line menu, while open.
@@ -386,17 +274,31 @@ impl DiffView {
     }
 
     #[cfg(test)]
-    pub(crate) fn hovered(&self) -> Option<Line> {
-        self.picks.as_ref()?.hover.map(|h| h.line)
+    pub(crate) fn menu_dimmed(&self) -> Vec<Option<String>> {
+        self.picks.as_ref().and_then(|p| p.menu.as_ref()).map(|m| m.items.iter().map(|i| i.dimmed.clone()).collect()).unwrap_or_default()
     }
 }
 
 impl gpui::EventEmitter<PickEvent> for DiffView {}
 
-/// The hit key a test clicks for hunk `ix`'s button `what` (`stage`, `unstage` or `discard`).
-#[cfg(test)]
-pub(crate) fn hunk_key(ix: usize, what: &str) -> gpui::SharedString {
-    format!("diff-hunk-{ix}-{what}").into()
+/// The items of `lines`: the selection's when `many`, else one line's.
+fn line_items(side: &Of, lines: Vec<Line>, many: bool) -> Vec<MenuItem<Act>> {
+    let pick = |p: Pick| Act::Lines(p, lines.clone());
+    match side {
+        Of::Staged => vec![item("line-unstage", if many { "Unstage selection" } else { "Unstage this line" }, pick(Pick::Unstage))],
+        _ => vec![
+            item("line-stage", if many { "Stage selected lines" } else { "Stage this line" }, pick(Pick::Stage)),
+            item("line-discard", if many { "Discard selection" } else { "Discard this line" }, pick(Pick::Discard)),
+        ],
+    }
+}
+
+/// The items of hunk `ix`, a group of their own.
+fn hunk_items(side: &Of, ix: usize) -> Vec<MenuItem<Act>> {
+    match side {
+        Of::Staged => vec![item("hunk-unstage", "Unstage hunk", Act::Hunk(Pick::Unstage, ix)).rule()],
+        _ => vec![item("hunk-stage", "Stage hunk", Act::Hunk(Pick::Stage, ix)).rule(), item("hunk-discard", "Discard hunk", Act::Hunk(Pick::Discard, ix))],
+    }
 }
 
 #[cfg(test)]
