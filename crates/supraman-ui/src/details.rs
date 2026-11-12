@@ -248,7 +248,7 @@ fn long_line<V: 'static>(text: &str, copy_key: String, hits: &HitTargets, cx: &m
         .rounded_md()
         .bg(cx.theme().colors().element_background)
         .child(div().flex_1().min_w_0().font_family(crate::fonts::MONO).text_sm().child(SharedString::from(text.to_string())))
-        .child(button::bordered(hits, copy_key, "Copy", cx).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+        .child(button::action(hits, copy_key, "Copy", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
             cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()));
         })))
         .into_any_element()

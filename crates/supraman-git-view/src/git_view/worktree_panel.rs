@@ -278,7 +278,7 @@ impl WorktreePanel {
             .min_w_0()
             .child(cells::branch_header("worktree", said.branch.as_deref(), &said.upstream, said.colour, &palette, &self.hits))
             .when(!said.counts.is_empty(), |d| d.child(counts));
-        let open = button::bordered(&self.hits, "worktree-open", "Open Worktree", cx).on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(WorktreeEvent::Open)));
+        let open = button::action(&self.hits, "worktree-open", "Open Worktree", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(WorktreeEvent::Open)));
         let line = div().flex().items_center().justify_between().gap_2().child(words).child(open);
         div().flex().flex_col().flex_none().gap_1().px_2().py_1p5().text_color(colors.text).child(path).child(line)
     }

@@ -255,7 +255,7 @@ impl FleetView {
             .text_color(colors.text_muted)
             .child(SharedString::from(format!("{what} Nothing runs until you resume it.")))
             .child(
-                supraman_ui::button::bordered(&self.hits, format!("resume-tab-{id}"), "Resume", cx)
+                supraman_ui::button::action(&self.hits, format!("resume-tab-{id}"), "Resume", supraman_ui::button::Tone::Neutral, supraman_ui::button::Fill::Outline, cx)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.resume_saved(id, cx))),
             )
             .into_any_element()

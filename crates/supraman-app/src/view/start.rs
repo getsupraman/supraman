@@ -217,7 +217,7 @@ impl FleetView {
                 .gap_2()
                 .m_2()
                 .child(div().flex_1().min_w_0().child(SharedString::from(format!("Schedule {name} waits for your approval"))))
-                .child(button::bordered(&self.hits, format!("start-schedule-open-{tab}"), "Open", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                .child(button::action(&self.hits, format!("start-schedule-open-{tab}"), "Open", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     this.open_schedule(&workspace, &id, At::Top, cx);
                 })))
@@ -305,14 +305,14 @@ impl FleetView {
             .child(mode_line)
             .children(page.error.clone().map(|e| banner::tinted(status.error).relative().child(SharedString::from(e)).child(hit_target(&self.hits, "start-error".into()))));
         let actions = vec![
-            button::bordered(&self.hits, "start-send", "Send", cx)
+            button::action(&self.hits, "start-send", "Send", button::Tone::Neutral, button::Fill::Solid, cx)
                 .font_weight(FontWeight::SEMIBOLD)
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     this.send_start(tab, cx);
                 }))
                 .into_any_element(),
-            button::bordered(&self.hits, "start-cancel", "Cancel", cx)
+            button::action(&self.hits, "start-cancel", "Cancel", button::Tone::Neutral, button::Fill::Outline, cx)
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     this.close_tab(tab, cx);

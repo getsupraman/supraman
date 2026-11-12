@@ -94,7 +94,7 @@ impl WorkView {
         let chips = prompts.iter().map(|p| {
             let (scope, key) = (scope.to_string(), p.key.clone());
             let on = open.is_some_and(|o| o.key == p.key);
-            button::bordered(&self.hits, format!("work-prompt-{place}-{}", p.key), chip_label(p), cx)
+            button::action(&self.hits, format!("work-prompt-{place}-{}", p.key), chip_label(p), button::Tone::Neutral, button::Fill::Outline, cx)
                 .when(on, |d| d.bg(colors.element_selected))
                 .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| this.toggle_prompt(&scope, &key, cx)))
         });
@@ -119,14 +119,14 @@ impl WorkView {
                             .items_center()
                             .gap_2()
                             .child(
-                                button::bordered(&self.hits, format!("work-prompt-{place}-copy"), "Copy", cx)
+                                button::action(&self.hits, format!("work-prompt-{place}-copy"), "Copy", button::Tone::Neutral, button::Fill::Outline, cx)
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
                                         cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
                                         this.toast.show(format!("Copied the {label} prompt"), |this: &mut WorkView| &mut this.toast, cx);
                                     })),
                             )
-                            .child(button::bordered(&self.hits, format!("work-prompt-{place}-close"), "Close", cx).on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                            .child(button::action(&self.hits, format!("work-prompt-{place}-close"), "Close", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
                                 this.prompts.collapse();
                                 cx.notify();
                             })))

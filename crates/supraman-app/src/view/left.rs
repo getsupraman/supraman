@@ -647,13 +647,13 @@ impl FleetView {
         let mut actions = div().flex().flex_wrap().gap_2().pt_1();
         if self.workman.signed_out() {
             actions = match self.workman_state.signing_in {
-                Some(_) => actions.child(button::bordered(&self.hits, "ws-setup-cancel", "Cancel sign-in", cx).on_click(cx.listener(
+                Some(_) => actions.child(button::action(&self.hits, "ws-setup-cancel", "Cancel sign-in", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
                         cx.stop_propagation();
                         this.cancel_sign_in();
                     },
                 ))),
-                None => actions.child(button::bordered(&self.hits, "ws-setup-signin", "Sign in", cx).on_click(cx.listener(
+                None => actions.child(button::action(&self.hits, "ws-setup-signin", "Sign in", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
                         cx.stop_propagation();
                         this.sign_in(cx);
@@ -662,14 +662,14 @@ impl FleetView {
             };
         }
         if self.workman.unreachable() {
-            actions = actions.child(button::bordered(&self.hits, "ws-setup-retry", "Retry", cx).on_click(cx.listener(
+            actions = actions.child(button::action(&self.hits, "ws-setup-retry", "Retry", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(
                 |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     this.recheck_workman();
                 },
             )));
         }
-        actions = actions.child(button::bordered(&self.hits, "ws-setup-settings", "Settings…", cx).on_click(cx.listener(
+        actions = actions.child(button::action(&self.hits, "ws-setup-settings", "Settings…", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(
             |this, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();
                 this.open_settings_at(Some(page::WORKMAN), cx);
@@ -712,7 +712,7 @@ impl FleetView {
         let mut actions = div().flex().flex_wrap().gap_2().pt_2();
         match stage {
             Stage::Downloading { .. } => {
-                actions = actions.child(button::bordered(&self.hits, "update-cancel", "Cancel", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                actions = actions.child(button::action(&self.hits, "update-cancel", "Cancel", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     this.cancel_update(cx);
                 })));
@@ -720,11 +720,11 @@ impl FleetView {
             Stage::Applying => {}
             Stage::Idle | Stage::Failed(_) => {
                 actions = actions
-                    .child(button::bordered(&self.hits, "update-notes", "What's new", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    .child(button::action(&self.hits, "update-notes", "What's new", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         cx.stop_propagation();
                         this.update_notes(cx);
                     })))
-                    .child(button::bordered(&self.hits, "update-install", "Update", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    .child(button::action(&self.hits, "update-install", "Update", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         cx.stop_propagation();
                         this.run_update(cx);
                     })));

@@ -869,7 +869,7 @@ impl GitView {
             Problem::Git(why) => ("Git is missing or too old", why),
             Problem::Failed(why) => ("Cannot read this repository", why),
         };
-        let retry = button::bordered(&self.hits, "git-retry", "Retry", cx).on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| this.reload(cx)));
+        let retry = button::action(&self.hits, "git-retry", "Retry", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| this.reload(cx)));
         notice(title, why.clone(), cx).child(div().pt_2().child(retry)).into_any_element()
     }
 

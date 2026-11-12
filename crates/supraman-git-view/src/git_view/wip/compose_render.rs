@@ -1,10 +1,9 @@
 //! The commit area under the WIP panel's lists; a cherry-pick, revert or am shows only its steps, an external rebase only its Abort.
 
-use gpui::{ClickEvent, Context, Div, SharedString, Stateful, div, prelude::*, px};
+use gpui::{ClickEvent, Context, Div, SharedString, Stateful, div, prelude::*};
 use supraman_gitman::OperationState;
 use supraman_gitman::write::conflicts::Sequence;
 use supraman_gitman::write::wip::Step;
-use supraman_ui::banner;
 use supraman_ui::button;
 use supraman_ui::focus_order::Press;
 use supraman_ui::icon::Icon;
@@ -105,20 +104,14 @@ impl WipPanel {
             }
         };
         let busy = self.busy(cx);
-        Some(live(button::outline(&self.hits, "wip-abort", SharedString::from(words), cx.theme().status().error, cx), busy, cx, move |this, cx| this.ask(Ask::Step(step), cx)))
+        Some(live(button::action(&self.hits, "wip-abort", SharedString::from(words), button::Tone::Danger, button::Fill::Outline, cx), busy, cx, move |this, cx| this.ask(Ask::Step(step), cx)))
     }
 
     fn commit_bar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let (words, act) = self.commit_button(false, cx)?;
-        let created = cx.theme().status().created;
-        let bar = button::outline(&self.hits, "wip-commit", SharedString::from(words.clone()), created, cx)
-            .flex()
-            .items_center()
-            .justify_center()
-            .gap_1()
-            .h(px(32.))
-            .bg(banner::tint(created))
-            .child(Icon::GitCommit.svg(14., cx.theme().colors().text));
+        let (tone, fill) = (button::Tone::Success, button::Fill::Solid);
+        let ink = button::look(tone, fill, cx).text;
+        let bar = button::action(&self.hits, "wip-commit", SharedString::from(words.clone()), tone, fill, cx).child(Icon::GitCommit.svg(14., ink));
         let busy = self.busy(cx);
         Some(if act.is_none() && busy.is_none() { button::dimmed(bar) } else { live(bar, busy, cx, |this, cx| this.commit(false, cx)) })
     }

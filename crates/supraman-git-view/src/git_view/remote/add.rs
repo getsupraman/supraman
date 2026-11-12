@@ -166,7 +166,7 @@ impl RemoteActions {
                 .child(div().relative().children(field).child(hit_target(&self.hits, format!("{KEY}-{key}"))))
         });
         let why = adding.why_not(cx).map(str::to_string).or_else(|| self.busy(cx));
-        let ok = button::tinted(&self.hits, format!("{KEY}-ok"), "Add Remote", Some(cx.theme().status().success), cx);
+        let ok = button::action(&self.hits, format!("{KEY}-ok"), "Add Remote", button::Tone::Success, button::Fill::Solid, cx);
         let ok = match why {
             Some(why) => button::dimmed(ok).tooltip(Tooltip::text(why)),
             None => ok.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.submit_add(cx))),

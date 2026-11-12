@@ -334,11 +334,12 @@ impl DiffView {
 
     fn hunk_button(&self, ix: usize, what: &str, label: &'static str, act: Act, blocked: Option<&'static str>, cx: &mut Context<Self>) -> AnyElement {
         let key = format!("diff-hunk-{ix}-{what}");
-        let button = if what == "discard" {
-            button::outline(&self.hits, key, label, cx.theme().status().error, cx).text_color(cx.theme().status().error).bg(cx.theme().colors().editor_background)
-        } else {
-            button::bordered(&self.hits, key, label, cx)
+        let tone = match what {
+            "discard" => button::Tone::Danger,
+            "stage" => button::Tone::Success,
+            _ => button::Tone::Neutral,
         };
+        let button = button::action(&self.hits, key, label, tone, button::Fill::Outline, cx);
         self.acting(button, act, blocked, label, cx)
     }
 

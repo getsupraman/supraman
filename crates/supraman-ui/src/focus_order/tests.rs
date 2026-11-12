@@ -20,7 +20,7 @@ impl Form {
 impl Render for Form {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let hits = crate::hit::HitTargets::default();
-        let button = crate::button::focusable(crate::button::bordered(&hits, "ok", "OK", cx), &self.button, cx.listener(|this, _: &Press, _, _| this.pressed += 1), cx);
+        let button = crate::button::focusable(crate::button::action(&hits, "ok", "OK", crate::button::Tone::Neutral, crate::button::Fill::Outline, cx), &self.button, cx.listener(|this, _: &Press, _, _| this.pressed += 1), cx);
         let form = self.order(cx).on(div().id("form").children(self.fields.iter().cloned()).child(button));
         let outside = div().id("outside").track_focus(&self.outside).on_key_down(cx.listener(|this, e: &KeyDownEvent, _, _| this.outside_keys.push(e.keystroke.key.clone())));
         div().size_full().child(form).child(outside)

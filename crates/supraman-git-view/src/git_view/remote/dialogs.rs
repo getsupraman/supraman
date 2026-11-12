@@ -202,7 +202,7 @@ impl RemoteActions {
     }
 
     fn cancel_button(&self, key: &str, words: &str, cx: &mut Context<Self>) -> AnyElement {
-        button::tinted(&self.hits, key.to_string(), words.to_string(), None, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.close_dialogs(cx))).into_any_element()
+        button::action(&self.hits, key.to_string(), words.to_string(), button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.close_dialogs(cx))).into_any_element()
     }
 
     fn field(&self, field: &Entity<TextInput>, key: &str, width: f32) -> AnyElement {
@@ -224,7 +224,7 @@ impl RemoteActions {
             Then::Pull(_) => ("Pull", "Pull {} with no upstream from"),
             Then::Set => ("Set upstream", "Track {} at"),
         };
-        let ok = button::tinted(&self.hits, "git-upstream-ok", ok_words, Some(cx.theme().status().success), cx);
+        let ok = button::action(&self.hits, "git-upstream-ok", ok_words, button::Tone::Success, button::Fill::Solid, cx);
         let ok = if d.chosen(&self.remotes, cx).is_some() { ok.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.submit_upstream(cx))) } else { button::dimmed(ok) };
         let items = vec![
             remotes.into_any_element(),
@@ -239,7 +239,7 @@ impl RemoteActions {
     fn render_edit(&self, cx: &mut Context<Self>) -> Option<(Div, bool)> {
         let e = self.editing.as_ref()?;
         let (field, _) = e.field.as_ref()?;
-        let ok = button::tinted(&self.hits, "git-edit-remote-ok", "Save", Some(cx.theme().status().success), cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.submit_edit(cx)));
+        let ok = button::action(&self.hits, "git-edit-remote-ok", "Save", button::Tone::Success, button::Fill::Solid, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.submit_edit(cx)));
         let items = vec![self.field(field, "git-edit-remote-field", 2. * FIELD), ok.into_any_element(), self.cancel_button("git-edit-remote-cancel", "Cancel", cx)];
         Some((band(&self.hits, "git-edit-remote", format!("The URL {} fetches from and pushes to", e.name), items, cx), true))
     }
@@ -247,9 +247,9 @@ impl RemoteActions {
     fn render_prompt(&self, cx: &mut Context<Self>) -> Option<(Div, bool)> {
         let p = self.prompting.as_ref()?;
         let host = matches!(p.prompt, Prompt::HostKey { .. });
-        let ok = button::tinted(&self.hits, "git-askpass-ok", if host { "Yes, trust it" } else { "OK" }, Some(cx.theme().status().success), cx)
+        let ok = button::action(&self.hits, "git-askpass-ok", if host { "Yes, trust it" } else { "OK" }, button::Tone::Success, button::Fill::Solid, cx)
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.answer_prompt(true, cx)));
-        let cancel = button::tinted(&self.hits, "git-askpass-cancel", if host { "No" } else { "Cancel" }, None, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.answer_prompt(false, cx)));
+        let cancel = button::action(&self.hits, "git-askpass-cancel", if host { "No" } else { "Cancel" }, button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.answer_prompt(false, cx)));
         let remember = matches!(p.prompt, Prompt::Passphrase { key: Some(_) }).then(|| {
             let tick = button::checkbox(&self.hits, "git-askpass-remember", p.remember, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 if let Some(p) = this.prompting.as_mut() {

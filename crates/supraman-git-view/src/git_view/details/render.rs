@@ -237,7 +237,7 @@ impl CommitPanel {
         let changes = shown.clone();
         Some(Rc::new(move |this: &mut CommitPanel, path: &str, _, group: SharedString, cx: &mut Context<CommitPanel>| {
             let file = changes.changes.iter().find(|c| c.path == path).cloned();
-            let applied = button::outline(&this.hits, format!("commit-apply-{path}"), "Apply File", cx.theme().status().created, cx);
+            let applied = button::action(&this.hits, format!("commit-apply-{path}"), "Apply File", button::Tone::Success, button::Fill::Outline, cx);
             let Some(file) = file else { return button::dimmed(applied).into_any_element() };
             let stash = stash.clone();
             let applied = applied.tooltip(Tooltip::text("Put this file in the work tree as the stash has it")).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {

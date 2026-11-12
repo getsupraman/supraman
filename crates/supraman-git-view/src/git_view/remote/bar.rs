@@ -101,7 +101,7 @@ impl GitView {
                 Some(p) => format!("{doing}: {} {}%", p.phase, p.percent),
                 None => format!("{doing}…"),
             };
-            let cancel = button::bordered(&self.hits, CANCEL_KEY, "Cancel", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.remote.update(cx, |r, cx| r.cancel(cx))));
+            let cancel = button::action(&self.hits, CANCEL_KEY, "Cancel", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.remote.update(cx, |r, cx| r.cancel(cx))));
             div().flex().items_center().gap_2().px_2().text_xs().text_color(cx.theme().colors().text_muted).child(said).child(cancel)
         });
         let colors = cx.theme().colors();

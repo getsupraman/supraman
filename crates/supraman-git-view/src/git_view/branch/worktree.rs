@@ -363,11 +363,11 @@ impl BranchActions {
             .child(close);
         let labelled = |label: &'static str, field: AnyElement| div().flex().flex_col().gap_1().child(div().text_xs().text_color(muted).child(label)).child(field);
         let input = |key: &str, input: &Entity<TextInput>| div().relative().flex_1().min_w_0().child(input.clone()).child(hit_target(&self.hits, format!("{KEY}-{key}"))).into_any_element();
-        let browse = button::bordered(&self.hits, format!("{KEY}-browse"), "Browse", cx).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.browse(window, cx)));
+        let browse = button::action(&self.hits, format!("{KEY}-browse"), "Browse", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.browse(window, cx)));
         let browse = button::focusable(browse, &fields.browse, cx.listener(|this, _: &Press, window, cx| this.browse(window, cx)), cx);
         let folder = div().flex().items_center().gap_2().child(input("folder", &fields.folder)).child(browse).into_any_element();
         let why = adding.why_not(cx).or_else(|| self.busy(cx));
-        let ok = button::tinted(&self.hits, format!("{KEY}-ok"), "Create Worktree", Some(cx.theme().status().success), cx);
+        let ok = button::action(&self.hits, format!("{KEY}-ok"), "Create Worktree", button::Tone::Success, button::Fill::Solid, cx);
         let ok = match why {
             Some(why) => button::dimmed(ok).tooltip(Tooltip::text(why)),
             None => ok.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.submit_add_worktree(cx))),

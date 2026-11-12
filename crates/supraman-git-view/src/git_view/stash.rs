@@ -290,8 +290,8 @@ impl StashActions {
 
     fn render_editing(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
         let (_, Some((input, _))) = self.editing.as_ref()? else { return None };
-        let save = button::bordered(&self.hits, "git-stash-message-save", "Save", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.save_message(cx)));
-        let cancel = button::bordered(&self.hits, "git-stash-message-cancel", "Cancel", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_message(cx)));
+        let save = button::action(&self.hits, "git-stash-message-save", "Save", button::Tone::Success, button::Fill::Solid, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.save_message(cx)));
+        let cancel = button::action(&self.hits, "git-stash-message-cancel", "Cancel", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_message(cx)));
         Some(div().flex().items_center().gap_2().m_2().child(div().flex_1().min_w_0().child(input.clone())).child(save).child(cancel))
     }
 }
