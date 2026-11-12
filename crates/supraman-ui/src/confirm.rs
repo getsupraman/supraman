@@ -91,6 +91,7 @@ impl<A> Confirm<A> {
         let (on_yes, on_alt) = (on_answer.clone(), on_answer.clone());
         let default = self.default_answer();
         let fill = |answer| if answer == default { button::Fill::Solid } else { button::Fill::Outline };
+        let tone = |danger: bool| if danger { button::Tone::Danger } else { button::Tone::Neutral };
         div()
             .flex()
             .flex_col()
@@ -107,14 +108,14 @@ impl<A> Confirm<A> {
                     .flex()
                     .gap_2()
                     .justify_end()
-                    .child(button::action(hits, format!("{key}-yes"), self.yes.clone(), button::Tone::Neutral, fill(Answer::Yes), cx).on_click(cx.listener(
+                    .child(button::action(hits, format!("{key}-yes"), self.yes.clone(), tone(self.danger), fill(Answer::Yes), cx).on_click(cx.listener(
                         move |this, _: &ClickEvent, window, cx| {
                             cx.stop_propagation();
                             on_yes(this, Answer::Yes, window, cx);
                         },
                     )))
                     .when_some(self.alt.as_ref(), |d, (words, _)| {
-                        d.child(button::action(hits, format!("{key}-alt"), words.clone(), button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(
+                        d.child(button::action(hits, format!("{key}-alt"), words.clone(), tone(self.alt_danger), fill(Answer::Alt), cx).on_click(cx.listener(
                             move |this, _: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
                                 on_alt(this, Answer::Alt, window, cx);

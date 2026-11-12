@@ -68,7 +68,7 @@ impl SettingsView {
             .items_center()
             .gap_2()
             .child(div().id("ws-url").w(px(280.)).child(self.url_input.clone()))
-            .child(button::action(&self.hits, "settings-ws-url-apply", "Apply", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.apply_url(cx))));
+            .child(button::action(&self.hits, "settings-ws-url-apply", "Apply", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.apply_url(cx))));
         let below = div()
             .flex()
             .flex_col()
@@ -186,11 +186,11 @@ impl SettingsView {
         let held = self.auth.as_ref().is_some_and(|a| !matches!(a, AuthStatus::NotSignedIn));
         let mut controls = div().flex().flex_col().items_end().gap_1();
         controls = match signing_in {
-            true => controls.child(button::action(&self.hits, "settings-ws-cancel", "Cancel sign-in", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            true => controls.child(button::action(&self.hits, "settings-ws-cancel", "Cancel sign-in", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.fleet.update(cx, |fleet, _| fleet.cancel_sign_in()).ok();
             }))),
             false if self.auth.is_some() && (!held || matches!(self.workman, WorkmanStatus::SignInAgain { .. })) => {
-                controls.child(button::action(&self.hits, "settings-ws-signin", "Sign in", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                controls.child(button::action(&self.hits, "settings-ws-signin", "Sign in", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.fleet.update(cx, |fleet, cx| fleet.sign_in(cx)).ok();
                     cx.notify();
                 })))
@@ -198,12 +198,12 @@ impl SettingsView {
             false => controls,
         };
         if held && !signing_in {
-            controls = controls.child(button::action(&self.hits, "settings-ws-signout", "Sign out", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            controls = controls.child(button::action(&self.hits, "settings-ws-signout", "Sign out", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.fleet.update(cx, |fleet, cx| fleet.sign_out(cx)).ok();
                 cx.notify();
             })));
         }
-        controls.child(button::action(&self.hits, "settings-ws-check", "Check now", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+        controls.child(button::action(&self.hits, "settings-ws-check", "Check now", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
             this.fleet.update(cx, |fleet, _| fleet.recheck_workman()).ok();
             this.check_server(cx);
         })))

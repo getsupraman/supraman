@@ -217,7 +217,7 @@ impl FleetView {
                 .gap_2()
                 .m_2()
                 .child(div().flex_1().min_w_0().child(SharedString::from(format!("Schedule {name} waits for your approval"))))
-                .child(button::action(&self.hits, format!("start-schedule-open-{tab}"), "Open", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                .child(button::action(&self.hits, format!("start-schedule-open-{tab}"), "Open", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     this.open_schedule(&workspace, &id, At::Top, cx);
                 })))

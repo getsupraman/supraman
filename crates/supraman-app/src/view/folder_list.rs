@@ -168,8 +168,8 @@ pub fn render<V: 'static>(
         .child(path.clone())
         .child(hit_target(hits, format!("{prefix}-new-path")))
         .child(div().absolute().top_0().bottom_0().left(TEXT_LEFT).right(TEXT_LEFT).child(hit_target(hits, format!("{prefix}-new-path-text"))));
-    let browse = button::action(hits, format!("{prefix}-browse"), "Browse", button::Tone::Neutral, button::Fill::Outline, cx).on_click(act(&on, RowAction::Browse, cx));
-    let add = button::action(hits, format!("{prefix}-add"), "Add", button::Tone::Neutral, button::Fill::Outline, cx).on_click(act(&on, RowAction::Add, cx));
+    let browse = button::action(hits, format!("{prefix}-browse"), "Browse", button::Tone::Neutral, button::Fill::Solid, cx).on_click(act(&on, RowAction::Browse, cx));
+    let add = button::action(hits, format!("{prefix}-add"), "Add", button::Tone::Neutral, button::Fill::Solid, cx).on_click(act(&on, RowAction::Add, cx));
     let add = if empty { button::dimmed(add) } else { add };
     out.child(div().flex().items_center().gap_1().min_w_0().pt_1().child(field).child(browse).child(add))
 }
