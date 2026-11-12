@@ -106,6 +106,9 @@ impl UndoBar {
 
     fn written(&mut self, written: &Written, cx: &mut Context<Self>) {
         let Some(way) = self.writes.written(written) else { return };
+        if written.cancelled.is_some() {
+            return;
+        }
         let Some(outcome) = self.writes.kept() else { return };
         match (written.result.clone(), outcome) {
             (Err(why), _) => cx.emit(UndoEvent::Why(why)),

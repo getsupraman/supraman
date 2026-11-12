@@ -247,6 +247,9 @@ impl StashActions {
 
     fn written(&mut self, w: &Written, cx: &mut Context<Self>) {
         let Some(doing) = self.writes.written(w) else { return };
+        if w.cancelled.is_some() {
+            return;
+        }
         if let Err(why) = &w.result {
             cx.emit(StashEvent::Wrote(None));
             return cx.emit(StashEvent::Why(capitalised(why)));

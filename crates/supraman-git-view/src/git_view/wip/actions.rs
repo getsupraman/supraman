@@ -270,6 +270,9 @@ impl WipPanel {
     /// A write of the gate ran; this panel's says how it went.
     pub(super) fn written(&mut self, w: &Written, cx: &mut Context<Self>) {
         let Some(doing) = self.writes.written(w) else { return };
+        if w.cancelled.is_some() {
+            return;
+        }
         let toast = match (&doing, &w.result) {
             (Doing::Commit { .. }, Err(why)) => {
                 if let Some(c) = &mut self.composer {

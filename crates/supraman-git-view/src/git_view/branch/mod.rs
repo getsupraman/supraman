@@ -394,6 +394,9 @@ impl BranchActions {
             cx.emit(BranchEvent::Removing(false));
         }
         let outcome = self.writes.kept();
+        if w.cancelled.is_some() {
+            return;
+        }
         if let Err(why) = &w.result {
             cx.emit(BranchEvent::Wrote(None));
             return cx.emit(BranchEvent::Why(capitalised(why)));

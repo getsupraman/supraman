@@ -303,6 +303,9 @@ impl CommitActions {
     fn written(&mut self, w: &Written, cx: &mut Context<Self>) {
         let Some(doing) = self.writes.written(w) else { return };
         let outcome = self.writes.kept();
+        if w.cancelled.is_some() {
+            return;
+        }
         if let Err(why) = &w.result {
             cx.emit(CommitEvent::Wrote(None));
             return cx.emit(CommitEvent::Why(capitalised(why)));

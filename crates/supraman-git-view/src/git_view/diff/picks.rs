@@ -162,6 +162,9 @@ impl DiffView {
     fn pick_written(&mut self, w: &Written, cx: &mut Context<Self>) {
         let Some(picks) = &mut self.picks else { return };
         let Some((_, act)) = picks.doing.take_if(|(ticket, _)| *ticket == w.ticket) else { return };
+        if w.cancelled.is_some() {
+            return;
+        }
         match &w.result {
             Ok(()) => cx.emit(PickEvent::Wrote(act.toast())),
             Err(why) => cx.emit(PickEvent::Why(why.clone())),
