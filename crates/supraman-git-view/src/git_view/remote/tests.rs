@@ -484,6 +484,25 @@ fn the_remote_headers_plus_opens_add_remote_whose_enter_adds_and_fetches_and_esc
 }
 
 #[gpui::test]
+fn add_remotes_ok_turns_dimmed_with_its_why_while_its_add_and_fetch_run(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let home = tempfile::tempdir().unwrap();
+    let (view, cx) = open(&f.dir, home.path(), cx);
+    click(&view, "refpanel-remote-add", cx);
+    type_in(&view, 0, "mirror", cx);
+    type_in(&view, 1, &f.temp.path().join("origin.git").to_string_lossy().replace('\\', "/"), cx);
+    assert!(!test_support::frame(&view, cx).borrow().contains_key("git-add-remote-ok-turning"), "OK is still before Add Remote");
+
+    view.update(cx, |v, cx| v.remote.update(cx, |r, cx| r.submit_add(cx)));
+    assert!(test_support::frame(&view, cx).borrow().contains_key("git-add-remote-ok-turning"), "OK turns while the add and fetch run");
+    assert_eq!(view.read_with(cx, |v, cx| v.remote.read(cx).busy(cx)).as_deref(), Some("Adding the remote mirror…"), "its why while dimmed");
+
+    test_support::settle(&view, cx);
+    assert_eq!(toast(&view, cx).as_deref(), Some("Added remote mirror"));
+    assert!(!test_support::painted(&view, "git-add-remote-ok-turning", cx));
+}
+
+#[gpui::test]
 fn tab_walks_add_remotes_fields_and_its_button_and_wraps(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let home = tempfile::tempdir().unwrap();

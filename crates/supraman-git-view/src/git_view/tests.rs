@@ -3,6 +3,7 @@ mod focus;
 mod forms;
 mod paint;
 mod stream;
+mod write_cancel;
 
 use gpui::{Modifiers, TestAppContext, VisualTestContext};
 use supraman_gitman::fixture::{Fixture, Generated, git_in};

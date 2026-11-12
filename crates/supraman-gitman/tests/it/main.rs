@@ -1,6 +1,7 @@
 //! GitMan's integration tests: one binary, one shared fixture.
 
 mod branch;
+mod cancel;
 mod commit;
 mod conflicts;
 mod fixture_copy;

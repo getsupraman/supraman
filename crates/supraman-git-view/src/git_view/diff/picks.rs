@@ -148,7 +148,12 @@ impl DiffView {
             Pick::Discard => lines::discard(s, &picked),
         };
         picks.menu = None;
-        if let Some(ticket) = picks.gate.update(cx, |g, cx| g.request(locks, job, cx)) {
+        let words = match pick {
+            Pick::Stage => "Staging the lines",
+            Pick::Unstage => "Unstaging the lines",
+            Pick::Discard => "Discarding the lines",
+        };
+        if let Some(ticket) = picks.gate.update(cx, |g, cx| g.request(locks, words.into(), job, cx)) {
             picks.doing = Some((ticket, act));
         }
         cx.notify();
@@ -157,6 +162,9 @@ impl DiffView {
     fn pick_written(&mut self, w: &Written, cx: &mut Context<Self>) {
         let Some(picks) = &mut self.picks else { return };
         let Some((_, act)) = picks.doing.take_if(|(ticket, _)| *ticket == w.ticket) else { return };
+        if w.cancelled.is_some() {
+            return;
+        }
         match &w.result {
             Ok(()) => cx.emit(PickEvent::Wrote(act.toast())),
             Err(why) => cx.emit(PickEvent::Why(why.clone())),

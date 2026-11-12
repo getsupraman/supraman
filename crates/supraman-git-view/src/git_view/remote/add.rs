@@ -192,8 +192,9 @@ impl RemoteActions {
         let key = adding.key();
         let (title, ok) = if adding.editing.is_some() { ("Edit Remote", "Save") } else { ("Add Remote", "Add Remote") };
         let fields = FIELDS.iter().zip(&adding.fields).map(|((field, label, _), (input, _))| (SharedString::from(*label), form::input(&self.hits, format!("{key}-{field}"), input))).collect();
-        let why = adding.why_not(cx).map(str::to_string).or_else(|| self.busy(cx));
-        let form = Form { key: key.into(), icon: Icon::Remote, title: title.into(), ok: ok.into(), why: why.map(Into::into), running: false, answers: ANSWERS };
+        let running = self.writes.doing().is_some_and(|(_, r)| matches!(r.doing, super::Doing::AddRemote(_) | super::Doing::EditRemote(_)));
+        let why = if running { self.busy(cx) } else { adding.why_not(cx).map(str::to_string).or_else(|| self.busy(cx)) };
+        let form = Form { key: key.into(), icon: Icon::Remote, title: title.into(), ok: ok.into(), why: why.map(Into::into), running, answers: ANSWERS };
         Some(form.render(&self.hits, fields, adding.order(cx), adding.ok.as_ref(), cx))
     }
 }

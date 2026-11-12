@@ -29,7 +29,7 @@ use menu::{Dragged, Facts, RefAct, Subject};
 use super::ref_panel::RefAction;
 use super::remote::RemoteFacts;
 use super::remote::menu as remote_menu;
-use super::write_gate::{STILL_OPENING, WriteGate, Writes, Written};
+use super::write_gate::{STILL_OPENING, Verb, WriteGate, Writes, Written};
 use supraman_core::paths::folder_name;
 use supraman_core::text::capitalised;
 
@@ -117,7 +117,24 @@ enum Doing {
     Rebase { branch: String, onto: String },
     Worktree(PathBuf),
     RemoveWorktree(PathBuf),
-    Plain(String),
+    /// Its words while it runs, then its toast.
+    Plain { running: String, done: String },
+}
+
+impl Verb for Doing {
+    fn running(&self) -> String {
+        match self {
+            Doing::Checkout(Plan::Branch(name) | Plan::Track { name, .. } | Plan::Forward { name, .. } | Plan::Clash { name, .. }) => format!("Checking out {name}"),
+            Doing::Checkout(Plan::Detached(sha)) => format!("Checking out {}", supraman_gitman::short_sha(sha)),
+            Doing::Checkout(_) => "Checking out".into(),
+            Doing::Created { what } => format!("Creating {what}"),
+            Doing::Merge { source, into } => format!("Merging {source} into {into}"),
+            Doing::Rebase { branch, onto } => format!("Rebasing {branch} onto {onto}"),
+            Doing::Worktree(_) => "Creating the worktree".into(),
+            Doing::RemoveWorktree(path) => format!("Removing the worktree {}", supraman_core::paths::folder_name(path)),
+            Doing::Plain { running, .. } => running.clone(),
+        }
+    }
 }
 
 pub(crate) struct BranchActions {
@@ -210,7 +227,8 @@ impl BranchActions {
             _ => None,
         };
         if let Some(away) = away {
-            self.request(Doing::Plain(format!("Went back to {}", away.back)), LockSet::checkout(), self.writes.keeping(Outcome::Checkout, move |s| branch::abandon(s, &away).map(CheckedOut::Done)), cx);
+            let doing = Doing::Plain { running: format!("Going back to {}", away.back), done: format!("Went back to {}", away.back) };
+            self.request(doing, LockSet::checkout(), self.writes.keeping(Outcome::Checkout, move |s| branch::abandon(s, &away).map(CheckedOut::Done)), cx);
             return;
         }
         match (asked.take(answer), answer) {
@@ -219,12 +237,12 @@ impl BranchActions {
             (Some(Ask::Stash(plan)), _) => self.run_checkout(plan, true, cx),
             (Some(Ask::Delete { name, only_here: true }), _) => self.ask(Ask::DeleteAnyway(name), cx),
             (Some(Ask::Delete { name, .. } | Ask::DeleteAnyway(name)), _) => {
-                let words = format!("Deleted the branch {name}");
-                self.request(Doing::Plain(words), LockSet::branch_delete(), move |s| branch::delete_branch(s, &name), cx);
+                let doing = Doing::Plain { running: format!("Deleting the branch {name}"), done: format!("Deleted the branch {name}") };
+                self.request(doing, LockSet::branch_delete(), move |s| branch::delete_branch(s, &name), cx);
             }
             (Some(Ask::DeleteTag(name)), _) => {
-                let words = format!("Deleted the tag {name}");
-                self.request(Doing::Plain(words), LockSet::branch(), move |s| branch::delete_tag(s, &name), cx);
+                let doing = Doing::Plain { running: format!("Deleting the tag {name}"), done: format!("Deleted the tag {name}") };
+                self.request(doing, LockSet::branch(), move |s| branch::delete_tag(s, &name), cx);
             }
             (Some(Ask::RemoveWorktree { path, branch, .. }), _) => {
                 let removing = path.clone();
@@ -243,8 +261,8 @@ impl BranchActions {
             RefAct::Checkout(target) => self.checkout(target, cx),
             RefAct::OpenWorktree(path) => cx.emit(BranchEvent::OpenFolder(path)),
             RefAct::FastForward { branch: b, to } => {
-                let words = format!("Fast-forwarded {b} to {to}");
-                self.request(Doing::Plain(words), LockSet::checkout(), move |s| branch::fast_forward(s, &b, &to), cx);
+                let doing = Doing::Plain { running: format!("Fast-forwarding {b} to {to}"), done: format!("Fast-forwarded {b} to {to}") };
+                self.request(doing, LockSet::checkout(), move |s| branch::fast_forward(s, &b, &to), cx);
             }
             RefAct::Merge { source, into } => self.merge(source, into, cx),
             RefAct::Rebase { branch: b, onto } => {
@@ -268,10 +286,11 @@ impl BranchActions {
                 self.ask(Ask::RemoveWorktree { path, branch, working }, cx)
             }
             RefAct::LockWorktree { path, lock } => {
-                let words = format!("{} the worktree {}", if lock { "Locked" } else { "Unlocked" }, path.display());
-                self.request(Doing::Plain(words), LockSet::branch(), move |s| branch::lock_worktree(s, &path, lock), cx);
+                let said = |verb: [&str; 2]| format!("{} the worktree {}", verb[usize::from(!lock)], path.display());
+                let doing = Doing::Plain { running: said(["Locking", "Unlocking"]), done: said(["Locked", "Unlocked"]) };
+                self.request(doing, LockSet::branch(), move |s| branch::lock_worktree(s, &path, lock), cx);
             }
-            RefAct::PruneWorktrees => self.request(Doing::Plain("Pruned the worktrees".into()), LockSet::branch(), branch::prune_worktrees, cx),
+            RefAct::PruneWorktrees => self.request(Doing::Plain { running: "Pruning the worktrees".into(), done: "Pruned the worktrees".into() }, LockSet::branch(), branch::prune_worktrees, cx),
             RefAct::Panel(action) => cx.emit(BranchEvent::Panel(action)),
             RefAct::Commit(act) => cx.emit(BranchEvent::Commit(act)),
             RefAct::Remote(act) => cx.emit(BranchEvent::Remote(act)),
@@ -314,8 +333,8 @@ impl BranchActions {
                 self.request(Doing::Created { what: format!("the annotated tag {name}") }, LockSet::branch(), move |s| branch::create_tag(s, &name, &at, Some(&message), force), cx);
             }
             NameAsk::Rename { from } => {
-                let words = format!("Renamed {from} to {name}");
-                self.request(Doing::Plain(words), LockSet::branch(), move |s| branch::rename_branch(s, &from, &name), cx);
+                let doing = Doing::Plain { running: format!("Renaming {from} to {name}"), done: format!("Renamed {from} to {name}") };
+                self.request(doing, LockSet::branch(), move |s| branch::rename_branch(s, &from, &name), cx);
             }
         }
     }
@@ -378,6 +397,9 @@ impl BranchActions {
             cx.emit(BranchEvent::Removing(false));
         }
         let outcome = self.writes.kept();
+        if w.cancelled.is_some() {
+            return;
+        }
         if let Err(why) = &w.result {
             cx.emit(BranchEvent::Wrote(None));
             return cx.emit(BranchEvent::Why(capitalised(why)));
@@ -407,8 +429,8 @@ impl BranchActions {
             (Doing::Created { what }, _) => format!("Created {what}"),
             (Doing::Worktree(folder), _) => self.added_worktree(&folder),
             (Doing::RemoveWorktree(path), _) => format!("Removed the worktree {}", folder_name(&path)),
-            (Doing::Plain(words), Some(Outcome::Checkout(CheckedOut::Done(stash)))) => with_stash(words, &stash),
-            (Doing::Plain(words), _) => words,
+            (Doing::Plain { done, .. }, Some(Outcome::Checkout(CheckedOut::Done(stash)))) => with_stash(done, &stash),
+            (Doing::Plain { done, .. }, _) => done,
             (_, _) => String::new(),
         };
         cx.emit(BranchEvent::Wrote(Some(toast).filter(|t| !t.is_empty())));

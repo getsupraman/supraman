@@ -270,7 +270,7 @@ impl CommitPanel {
             *rebased.lock().unwrap_or_else(PoisonError::into_inner) = Some(outcome);
             Ok(())
         };
-        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request(LockSet::rebase(), job, cx)) {
+        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request(LockSet::rebase(), "Rewording the commit".into(), job, cx)) {
             self.reword.doing = Some(ticket);
         }
         cx.notify();
@@ -301,7 +301,7 @@ impl CommitPanel {
             *reworded.lock().unwrap_or_else(PoisonError::into_inner) = Some(sha);
             Ok(())
         };
-        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request(LockSet::commit(), job, cx)) {
+        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request(LockSet::commit(), "Amending the commit".into(), job, cx)) {
             self.reword.doing = Some(ticket);
         }
         cx.notify();

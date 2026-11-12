@@ -11,7 +11,7 @@ use supraman_ui::icon::Icon;
 use supraman_ui::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
-use super::write_gate::{WriteGate, Writes, Written};
+use super::write_gate::{Verb, WriteGate, Writes, Written};
 
 pub(crate) const UNDO_KEY: &str = "git-undo";
 pub(crate) const REDO_KEY: &str = "git-redo";
@@ -26,6 +26,15 @@ pub(crate) enum UndoEvent {
 enum Way {
     Undo,
     Redo,
+}
+
+impl Verb for Way {
+    fn running(&self) -> String {
+        match self {
+            Way::Undo => "Undoing".into(),
+            Way::Redo => "Redoing".into(),
+        }
+    }
 }
 
 pub(crate) struct UndoBar {
@@ -97,6 +106,9 @@ impl UndoBar {
 
     fn written(&mut self, written: &Written, cx: &mut Context<Self>) {
         let Some(way) = self.writes.written(written) else { return };
+        if written.cancelled.is_some() {
+            return;
+        }
         let Some(outcome) = self.writes.kept() else { return };
         match (written.result.clone(), outcome) {
             (Err(why), _) => cx.emit(UndoEvent::Why(why)),

@@ -1,6 +1,7 @@
 //! GitMan's one write layer; blocking, so callers run it on a background executor.
 
 pub mod branch;
+mod cancel;
 pub mod commit;
 pub mod conflicts;
 pub mod files;
@@ -24,7 +25,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use std::time::Duration;
 
-use supraman_core::process::{self, GIT_TIMEOUT, Kill, NO_TIMEOUT, RawOutput, RunError};
+use supraman_core::process::{self, Ended, GIT_TIMEOUT, Kill, NO_TIMEOUT, RawOutput, RunError};
+
+pub use cancel::{Cancel, Left, left};
 
 pub use guard::{Occupancy, working_in};
 pub use locks::{Access, Held, LockSet, Resource, Scheduler};
@@ -69,7 +72,7 @@ pub enum WriteError {
     /// Refused before git ran.
     #[error("{0}")]
     Refused(&'static str),
-    /// The user stopped a fetch or a push; its git tree was killed.
+    /// The user cancelled the write: its git tree was killed, or its next call refused before git ran.
     #[error("cancelled")]
     Cancelled,
     /// A remote refused, or some of several remotes failed: each with its reason.
@@ -284,16 +287,21 @@ impl Writer {
 
     /// Runs `f` holding `locks`, the repo's watchers paused while they include a write; blocks until the locks are free.
     pub fn run<T>(&self, locks: LockSet, f: impl FnOnce(&Session<'_>) -> Result<T, WriteError>) -> Result<T, WriteError> {
+        self.run_with(locks, Cancel::default(), f)
+    }
+
+    /// [`Writer::run`] whose every [`Call`] `cancel` stops: git's tree killed, the job's later calls [`WriteError::Cancelled`].
+    pub fn run_with<T>(&self, locks: LockSet, cancel: Cancel, f: impl FnOnce(&Session<'_>) -> Result<T, WriteError>) -> Result<T, WriteError> {
         let held = self.scheduler.acquire(locks);
         let _pausing = held.locks().has_write().then(|| Pausing::new(self.quiet.clone(), held.id()));
-        let session = Session { writer: self, held };
+        let session = Session { writer: self, held, cancel };
         f(&session)
     }
 
     /// [`Writer::run`] of a background job, `None` when `locks` are not free now; the watchers are not paused.
     pub fn try_run_watched<T>(&self, locks: LockSet, f: impl FnOnce(&Session<'_>) -> Result<T, WriteError>) -> Option<Result<T, WriteError>> {
         let held = self.scheduler.try_acquire(locks)?;
-        Some(f(&Session { writer: self, held }))
+        Some(f(&Session { writer: self, held, cancel: Cancel::default() }))
     }
 
     /// A dangling commit of the index and the working files of `paths`, `what` its message; see [`Session::snapshot`].
@@ -325,6 +333,7 @@ impl Drop for Pausing {
 pub struct Session<'a> {
     writer: &'a Writer,
     held: Held,
+    cancel: Cancel,
 }
 
 impl Session<'_> {
@@ -338,8 +347,21 @@ impl Session<'_> {
 
     /// `call` run, whatever its exit code.
     pub fn run(&self, call: &Call) -> Result<RawOutput, WriteError> {
+        if self.cancel.cancelled() {
+            return Err(WriteError::Cancelled);
+        }
         let (mut cmd, input) = self.writer.prepare(call)?;
-        process::run_bytes(&mut cmd, input, call.timeout(self.writer.bounded), Kill::Tree).map_err(|source: RunError| WriteError::Git(GitError::Run { args: call.label(), source }))
+        let timeout = call.timeout(self.writer.bounded);
+        let failed = |source: RunError| WriteError::Git(GitError::Run { args: call.label(), source });
+        match process::run_bytes_watched(&mut cmd, input, timeout, Kill::Tree, &mut || self.cancel.cancelled()).map_err(|e| failed(RunError::Spawn(e)))? {
+            (Ended::Exited, out) => Ok(out),
+            (Ended::Stopped, _) => Err(WriteError::Cancelled),
+            (Ended::TimedOut, _) => Err(failed(RunError::Timeout(timeout))),
+        }
+    }
+
+    pub fn cancel(&self) -> &Cancel {
+        &self.cancel
     }
 
     /// `call`'s stdout, an error unless git exited 0.
@@ -382,7 +404,7 @@ impl Session<'_> {
         match self.held.nested(locks) {
             Some(held) => {
                 let _pausing = held.locks().has_write().then(|| Pausing::new(self.writer.quiet.clone(), held.id()));
-                f(&Session { writer: self.writer, held })
+                f(&Session { writer: self.writer, held, cancel: self.cancel.clone() })
             }
             None => f(self),
         }

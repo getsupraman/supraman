@@ -203,6 +203,16 @@ pub(crate) fn click(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContex
     press(view, key, MouseButton::Left, 1, cx);
 }
 
+/// A click on `key` in a frame drawn now, with no parked work run: a write under way stays under way.
+pub(crate) fn click_held(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
+    let position = frame(view, cx).borrow().get(key).unwrap_or_else(|| panic!("{key} is painted")).bounds.center();
+    let (button, modifiers) = (MouseButton::Left, Modifiers::none());
+    cx.update(|window, cx| {
+        window.dispatch_event(gpui::PlatformInput::MouseDown(MouseDownEvent { position, button, modifiers, click_count: 1, first_mouse: false }), cx);
+        window.dispatch_event(gpui::PlatformInput::MouseUp(MouseUpEvent { position, button, modifiers, click_count: 1 }), cx);
+    });
+}
+
 pub(crate) fn right_click(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
     press(view, key, MouseButton::Right, 1, cx);
 }

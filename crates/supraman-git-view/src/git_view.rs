@@ -33,6 +33,7 @@ mod wip_row;
 mod worktree_panel;
 mod worktree_rows;
 pub(crate) mod write_gate;
+mod write_strip;
 #[cfg(test)]
 pub(crate) mod test_support;
 
@@ -218,6 +219,7 @@ pub struct GitView {
     _commit_events: Subscription,
     remote: Entity<RemoteActions>,
     _remote_events: Subscription,
+    _gate_events: [Subscription; 2],
     hidden_columns: Vec<String>,
     column_menu: Option<supraman_ui::menu::ContextMenu<columns::ColumnAct>>,
     /// The commit summary takes the keyboard on the next frame.
@@ -257,6 +259,7 @@ impl GitView {
             let commit_events = cx.subscribe(&commit, Self::commit_event);
             let remote = cx.new(|cx| RemoteActions::new(gate.clone(), hits.clone(), home.clone(), cx));
             let remote_events = cx.subscribe(&remote, Self::remote_event);
+            let gate_events = [cx.subscribe(&gate, Self::gate_written), cx.observe(&gate, |_, _, cx| cx.notify())];
             let mut view = GitView {
                 folder,
                 home,
@@ -303,6 +306,7 @@ impl GitView {
                 _commit_events: commit_events,
                 remote,
                 _remote_events: remote_events,
+                _gate_events: gate_events,
                 hidden_columns: Vec::new(),
                 column_menu: None,
                 focus_summary: false,
