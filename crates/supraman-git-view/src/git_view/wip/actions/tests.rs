@@ -143,6 +143,18 @@ fn wip_write_a_second_write_is_not_queued_while_one_runs(cx: &mut TestAppContext
     assert!(staged.lines().any(|l| l == "u.txt") && !staged.lines().any(|l| l == "v.txt"), "the click while one ran queued nothing: {staged}");
 }
 
+#[gpui::test]
+fn wip_commit_button_spans_the_commit_area_at_the_form_button_height(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let (view, cx) = open(&f.dir, occupancy::Live::default(), cx);
+    let hits = test_support::repaint(&view, cx);
+    let at = |k: &str| hits.borrow().get(k).map(|h| h.bounds).unwrap_or_else(|| panic!("{k} is painted"));
+    let (area, commit) = (at(crate::git_view::wip::compose_render::AREA), at("wip-commit"));
+    let inset = gpui::px(8. + 1.);
+    assert!((commit.left() - (area.left() + inset)).abs() < gpui::px(0.5) && (commit.right() - (area.right() - inset)).abs() < gpui::px(0.5), "Commit {commit:?} spans the area {area:?} within its padding, its hit key inside the 1 px border");
+    assert_eq!(commit.size.height, supraman_ui::form::BUTTON_HEIGHT - gpui::px(2.), "Commit stands at the form buttons' height");
+}
+
 fn hook(f: &Fixture) {
     std::fs::write(f.dir.join(".git/hooks/commit-msg"), "#!/bin/sh\necho 'commit-msg: no ticket' >&2\nexit 3\n").unwrap();
 }
