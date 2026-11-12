@@ -407,7 +407,7 @@ impl Render for SettingsView {
             .bg(colors.panel_background)
             .border_r_1()
             .border_color(colors.border);
-        nav = nav.children(self.pages.nav(self.page, |this, page, cx| this.show(page, cx), cx));
+        nav = nav.children(self.pages.nav(&self.hits, self.page, |this, page, cx| this.show(page, cx), cx));
         nav = nav.child(div().flex_1()).child(
             button::ghost(&self.hits, "open-file", cx)
                 .mx_2()

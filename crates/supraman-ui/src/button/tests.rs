@@ -132,3 +132,43 @@ fn a_danger_icon_rests_on_the_errors_tint_and_hovers_on_its_solid_fill(cx: &mut 
     assert!(crate::themes::contrast(toned.hover_text, error) >= 3., "the icon legible on the solid fill");
     assert_eq!(toned.text, error, "the icon in the error colour at rest");
 }
+
+struct Keyed {
+    hits: HitTargets,
+}
+
+impl Render for Keyed {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected = cx.theme().colors().ghost_element_selected;
+        let row = |n: &str, on: bool| {
+            let keys = RowKeys { id: format!("session-{n}").into(), group: format!("session-group-{n}").into(), hit: format!("session-row-{n}").into() };
+            row_in(&self.hits, keys, on.then_some(selected), cx).h(px(24.)).child(n.to_string())
+        };
+        div().w(px(200.)).flex().flex_col().child(row("a", true)).child(row("b", false))
+    }
+}
+
+fn hovered_fills(view: &gpui::Entity<Keyed>, hit: &str, cx: &mut VisualTestContext) -> Vec<gpui::Background> {
+    let bounds = view.read_with(cx, |v, _| v.hits.borrow().get(hit).map(|h| h.bounds)).unwrap_or_else(|| panic!("{hit} paints"));
+    cx.simulate_mouse_move(bounds.center(), None, gpui::Modifiers::none());
+    view.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+    cx.update(|window, _| {
+        let middle = bounds.center().scale(window.scale_factor());
+        window.painted_quads().into_iter().filter(|q| q.bounds.contains(&middle) && q.content_mask.bounds.contains(&middle)).map(|q| q.background).collect()
+    })
+}
+
+#[gpui::test]
+fn a_row_under_its_own_hit_key_keeps_its_selected_fill_hovered_and_another_takes_the_hover(cx: &mut TestAppContext) {
+    cx.update(|cx| crate::init_globals(cx, "test"));
+    let (view, cx) = cx.add_window_view(|_, _| Keyed { hits: HitTargets::default() });
+    cx.run_until_parked();
+    let colors = cx.update(|_, cx| cx.theme().colors().clone());
+    let (selected, hover) = (gpui::Background::from(colors.ghost_element_selected), gpui::Background::from(colors.ghost_element_hover));
+    let shown = hovered_fills(&view, "session-row-a", cx);
+    assert!(shown.contains(&selected) && !shown.contains(&hover), "the selected row under the pointer keeps its fill: {shown:?}");
+    let other = hovered_fills(&view, "session-row-b", cx);
+    assert!(other.contains(&hover) && !other.contains(&selected), "an unselected row under the pointer takes the hover: {other:?}");
+    assert!(view.read_with(cx, |v, _| v.hits.borrow().get("session-a").is_none()), "the hit key is the row's own, not its id");
+}

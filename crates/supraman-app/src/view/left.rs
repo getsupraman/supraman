@@ -1036,10 +1036,13 @@ impl FleetView {
 
         let (w, r, clicked) = (workspace.to_string(), repo.to_string(), row.clone());
         let target = MenuTarget::Session { workspace: workspace.to_string(), repo: repo.to_string(), session_id: s.session_id.clone() };
-        div()
-            .id(SharedString::from(format!("session-{}{at}", s.id)))
-            .group(group)
-            .relative()
+        let tint = status.warning.opacity(0.12);
+        let keys = button::RowKeys {
+            id: format!("session-{}{at}", s.id).into(),
+            group,
+            hit: format!("session-row-{}{at}", s.session_id).into(),
+        };
+        button::row_in(&self.hits, keys, shown.then_some(if blocked { tint } else { colors.ghost_element_selected }), cx)
             .flex()
             .flex_none()
             .flex_col()
@@ -1047,9 +1050,8 @@ impl FleetView {
             .pr_2()
             .py(px(1.))
             .text_sm()
-            .hover(|s| s.bg(colors.ghost_element_hover))
-            .when(shown, |d| d.bg(colors.ghost_element_selected).border_l_2().border_color(colors.border_focused).pl(indent - px(2.)))
-            .when(blocked, |d| d.bg(status.warning.opacity(0.12)).hover(|s| s.bg(status.warning.opacity(0.18))))
+            .when(shown, |d| d.border_l_2().border_color(colors.border_focused).pl(indent - px(2.)))
+            .when(blocked && !shown, |d| d.bg(tint).hover(|s| s.bg(status.warning.opacity(0.18))))
             .when(dimmed, |d| d.opacity(DIMMED))
             .child(line)
             .when_some(waiting_for, |d, w| {
@@ -1063,7 +1065,6 @@ impl FleetView {
             .when_some(hook, |d, h| {
                 d.child(clipped(format!("hook-{}{at}", s.id), h, false).pl(px(grid::LABEL)).text_xs().text_color(secondary(cx)))
             })
-            .child(hit_target(&self.hits, format!("session-row-{}{at}", s.session_id)))
             .on_drag(DraggedSession { session_id: s.session_id.clone(), title: fleet::display_name(s).to_string().into() }, |row, _, _, cx| {
                 cx.new(|_| row.clone())
             })

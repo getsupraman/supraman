@@ -12,14 +12,18 @@ use crate::icon::Icon;
 use crate::ink;
 
 fn base(hits: &HitTargets, key: SharedString, hover: impl FnOnce(StyleRefinement) -> StyleRefinement, active: Hsla) -> Stateful<Div> {
+    keyed(hits, RowKeys::one(key), hover, active)
+}
+
+fn keyed(hits: &HitTargets, keys: RowKeys, hover: impl FnOnce(StyleRefinement) -> StyleRefinement, active: Hsla) -> Stateful<Div> {
     div()
-        .id(key.clone())
-        .group(key.clone())
+        .id(keys.id)
+        .group(keys.group)
         .relative()
         .cursor_pointer()
         .hover(hover)
         .active(|s| s.bg(active))
-        .child(hit_target(hits, key.to_string()))
+        .child(hit_target(hits, keys.hit.to_string()))
 }
 
 /// Borderless, the ghost fill on hover, a deeper one pressed; the caller lays it out.
@@ -30,9 +34,28 @@ pub fn ghost(hits: &HitTargets, key: impl Into<SharedString>, cx: &App) -> State
 
 /// A [`ghost`] list row; while it is the selected one it is filled `selected` and its hover is off.
 pub fn row(hits: &HitTargets, key: impl Into<SharedString>, selected: Option<Hsla>, cx: &App) -> Stateful<Div> {
+    row_in(hits, RowKeys::one(key.into()), selected, cx)
+}
+
+/// A [`row`] whose element id, hover group and hit key differ (the sidebar's session row).
+pub fn row_in(hits: &HitTargets, keys: RowKeys, selected: Option<Hsla>, cx: &App) -> Stateful<Div> {
+    let colors = cx.theme().colors();
     match selected {
-        Some(fill) => base(hits, key.into(), move |s| s.bg(fill), cx.theme().colors().ghost_element_active).bg(fill),
-        None => ghost(hits, key, cx),
+        Some(fill) => keyed(hits, keys, move |s| s.bg(fill), colors.ghost_element_active).bg(fill),
+        None => keyed(hits, keys, |s| s.bg(colors.ghost_element_hover), colors.ghost_element_active),
+    }
+}
+
+/// A [`row_in`]'s element id, hover group and hit key.
+pub struct RowKeys {
+    pub id: SharedString,
+    pub group: SharedString,
+    pub hit: SharedString,
+}
+
+impl RowKeys {
+    pub fn one(key: SharedString) -> Self {
+        Self { id: key.clone(), group: key.clone(), hit: key }
     }
 }
 

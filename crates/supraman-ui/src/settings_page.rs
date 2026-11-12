@@ -4,6 +4,9 @@
 use gpui::{AnyElement, App, ClickEvent, Context, FontWeight, Hsla, IntoElement, ParentElement as _, SharedString, Styled as _, div, prelude::*};
 use theme::ActiveTheme as _;
 
+use crate::button;
+use crate::hit::HitTargets;
+
 pub struct SettingsPage<V: 'static> {
     pub id: &'static str,
     pub title: &'static str,
@@ -46,15 +49,14 @@ impl<V: 'static> SettingsPages<V> {
         id.and_then(|id| self.get(id)).or(self.pages.first()).map_or("", |page| page.id)
     }
 
-    /// One entry per page with its icon and title, `active` highlighted; a click calls `select` with its id.
-    pub fn nav(&self, active: &str, select: fn(&mut V, &'static str, &mut Context<V>), cx: &mut Context<V>) -> Vec<AnyElement> {
+    /// One [`button::row`] per page with its icon and title under `settings-page-<id>`, `active` selected; a click calls `select` with its id.
+    pub fn nav(&self, hits: &HitTargets, active: &str, select: fn(&mut V, &'static str, &mut Context<V>), cx: &mut Context<V>) -> Vec<AnyElement> {
         let colors = cx.theme().colors().clone();
         self.pages
             .iter()
             .map(|page| {
                 let (id, on) = (page.id, page.id == active);
-                div()
-                    .id(id)
+                button::row(hits, format!("settings-page-{id}"), on.then_some(colors.element_selected), cx)
                     .mx_2()
                     .px_2()
                     .py_1()
@@ -63,11 +65,7 @@ impl<V: 'static> SettingsPages<V> {
                     .gap_2()
                     .rounded_sm()
                     .text_sm()
-                    .cursor_pointer()
-                    .when(on, |d| d.bg(colors.element_selected))
                     .when(!on, |d| d.text_color(colors.text_muted))
-                    .hover(|s| s.bg(colors.ghost_element_hover))
-                    .active(|s| s.bg(colors.ghost_element_active))
                     .child(match page.mark {
                         Some(mark) => div().w_4().flex().items_center().child(mark(if on { colors.text } else { colors.text_muted })),
                         None => div().w_4().font_family(crate::fonts::icons()).text_xs().child(page.icon),
@@ -123,6 +121,49 @@ mod tests {
         assert_eq!(pages.get("about").map(|p| p.title), Some("about"));
         assert_eq!((pages.resolve(Some("about")), pages.resolve(Some("gitman")), pages.resolve(None)), ("about", "sessions", "sessions"));
         assert_eq!(SettingsPages::<View>::default().resolve(None), "");
+    }
+
+    struct Nav {
+        pages: SettingsPages<Nav>,
+        hits: HitTargets,
+    }
+
+    impl Render for Nav {
+        fn render(&mut self, _: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div().w(gpui::px(180.)).children(self.pages.nav(&self.hits, "sessions", |_, _, _| {}, cx))
+        }
+    }
+
+    fn listed(id: &'static str) -> SettingsPage<Nav> {
+        SettingsPage { id, title: id, icon: "", mark: None, render: |_, _| Vec::new() }
+    }
+
+    fn hovered_fills(view: &gpui::Entity<Nav>, id: &str, cx: &mut gpui::VisualTestContext) -> Vec<gpui::Background> {
+        let hits = view.read_with(cx, |v, _| v.hits.clone());
+        let row = hits.borrow().get(&format!("settings-page-{id}")).map(|h| h.bounds).unwrap_or_else(|| panic!("page {id} paints"));
+        cx.simulate_mouse_move(row.center(), None, gpui::Modifiers::none());
+        view.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        cx.update(|window, _| {
+            let middle = row.center().scale(window.scale_factor());
+            window.painted_quads().into_iter().filter(|q| q.bounds.contains(&middle) && q.content_mask.bounds.contains(&middle)).map(|q| q.background).collect()
+        })
+    }
+
+    #[gpui::test]
+    fn a_hovered_open_page_keeps_its_selected_fill_and_another_page_takes_the_hover(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| crate::init_globals(cx, "test"));
+        let (view, cx) = cx.add_window_view(|_, _| Nav {
+            pages: SettingsPages::default().register(listed("sessions")).register(listed("about")),
+            hits: HitTargets::default(),
+        });
+        cx.run_until_parked();
+        let colors = cx.update(|_, cx| cx.theme().colors().clone());
+        let (selected, hover) = (gpui::Background::from(colors.element_selected), gpui::Background::from(colors.ghost_element_hover));
+        let open = hovered_fills(&view, "sessions", cx);
+        assert!(open.contains(&selected) && !open.contains(&hover), "the open page under the pointer keeps its selected fill: {open:?}");
+        let other = hovered_fills(&view, "about", cx);
+        assert!(other.contains(&hover) && !other.contains(&selected), "another page under the pointer takes the hover: {other:?}");
     }
 
     #[test]
