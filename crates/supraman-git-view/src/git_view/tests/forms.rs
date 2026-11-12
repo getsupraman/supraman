@@ -190,3 +190,23 @@ fn edit_remote_opens_filled_and_saves_its_url_push_url_and_name(cx: &mut TestApp
     keys(&view, "escape", cx);
     assert!(!test_support::painted(&view, add::EDIT_KEY, cx), "Esc closes");
 }
+
+#[gpui::test]
+fn the_ref_panels_overlay_card_lies_over_an_open_form_and_takes_its_clicks(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let home = tempfile::tempdir().unwrap();
+    let (view, cx) = test_support::open(&f.dir, Opts::default().home(home.path()).size(1400., 900.), cx);
+    let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
+    panel.update(cx, |p, cx| p.toggle_shut(cx));
+    view.update(cx, |v, cx| v.remote.update(cx, |r, cx| r.open_add(cx)));
+    settle(&view, cx);
+    click(&view, "refpanel-strip-local", cx);
+    assert_eq!(panel.read_with(cx, |p, _| p.overlay()), Some(ref_panel::Section::Local));
+    let hits = test_support::repaint(&view, cx);
+    let (form, row) = (hits.borrow().get(add::KEY).unwrap().bounds, hits.borrow().get("refpanel-overlay-row-feature").unwrap().bounds);
+    assert!(form.contains(&row.center()), "the card's row lies over the form: {form:?} {row:?}");
+    click(&view, "refpanel-overlay-row-feature", cx);
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Commit(f.sha("rename").into())), "the click lands on the card's row");
+    assert_eq!(panel.read_with(cx, |p, _| p.overlay()), None, "the pick closes the card");
+    assert!(test_support::painted(&view, add::KEY, cx), "the form stays open under it");
+}

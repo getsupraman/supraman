@@ -149,6 +149,6 @@ impl RefPanel {
                     this.close_overlay(cx);
                 }
             }));
-        Some(deferred(card).with_priority(supraman_ui::menu::FLOAT).into_any_element())
+        Some(deferred(card).with_priority(supraman_ui::menu::CARD).into_any_element())
     }
 }
