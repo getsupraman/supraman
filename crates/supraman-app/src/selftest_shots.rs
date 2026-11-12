@@ -436,7 +436,7 @@ async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path
     Ok(())
 }
 
-/// The REMOTE header hovered, its + in the count's place; then Add Remote open in the commit panel's place.
+/// The REMOTE header hovered, its + in the count's place; then Add Remote, and Edit Remote of `origin` filled in, in the form slot beside the ref panel.
 async fn git_add_remote(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let header = crate::selftest::until(view, cx, Duration::from_secs(10), "the REMOTE header", |v| v.hits.borrow().get("refpanel-row-remote").map(|h| h.bounds)).await?;
     cx.update(|window, cx| {
@@ -451,10 +451,18 @@ async fn git_add_remote(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWind
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-git-add-remote.png"), None, cx).await?;
     println!("shot: {}", shot.display());
-    crate::selftest::click(view, "git-add-remote-close", cx).await
+    crate::selftest::click(view, "git-add-remote-close", cx).await?;
+    crate::selftest::press(view, "refpanel-row-remote/origin", MouseButton::Right, cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "origin's menu", |v| v.hits.borrow().contains_key("menu-remote-edit-origin").then_some(())).await?;
+    crate::selftest::click(view, "menu-remote-edit-origin", cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "Edit Remote", |v| v.hits.borrow().contains_key("git-edit-remote-ok").then_some(())).await?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-git-edit-remote.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    crate::selftest::click(view, "git-edit-remote-close", cx).await
 }
 
-/// The WORKTREES header hovered, its + in the count's place beside Refresh; then Create Worktree open, its reference's picker shown.
+/// The WORKTREES header hovered, its + in the count's place beside Refresh; then Create Worktree in the form slot beside the ref panel, its reference's picker shown, then shut.
 async fn git_add_worktree(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let header = crate::selftest::until(view, cx, Duration::from_secs(10), "the WORKTREES header", |v| v.hits.borrow().get("refpanel-row-worktrees").map(|h| h.bounds)).await?;
     cx.update(|window, cx| {
@@ -468,6 +476,12 @@ async fn git_add_worktree(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWi
     crate::selftest::until(view, cx, Duration::from_secs(10), "Create Worktree", |v| v.hits.borrow().contains_key("git-add-worktree-refs").then_some(())).await?;
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-git-add-worktree.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    let escape = gpui::Keystroke { modifiers: gpui::Modifiers::default(), key: "escape".into(), key_char: None };
+    cx.update(|window, cx| window.dispatch_keystroke(escape, cx))?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the picker shut", |v| (!v.hits.borrow().contains_key("git-add-worktree-refs")).then_some(())).await?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-git-add-worktree-form.png"), None, cx).await?;
     println!("shot: {}", shot.display());
     crate::selftest::click(view, "git-add-worktree-close", cx).await
 }
