@@ -5,4 +5,4 @@ pub const LIGHT: &str =r##"{"themes":[{"name":"Selftest Light","appearance":"lig
 "text":"#1F1F1F","text.muted":"#5A5A5A","text.placeholder":"#6E6E6E","border":"#D0D0D0","border.variant":"#E2E2E2","border.focused":"#005FB8","border.selected":"#005FB8",
 "tab_bar.background":"#F3F3F3","tab.active_background":"#FFFFFF","tab.inactive_background":"#F3F3F3","title_bar.background":"#F3F3F3","status_bar.background":"#F3F3F3",
 "terminal.background":"#FFFFFF","terminal.foreground":"#1F1F1F",
-"warning":"#8A5A00","success":"#1E7A35","error":"#B3261E","info":"#005FB8","hint":"#5A5A5A"}}]}"##;
+"warning":"#8A5A00","success":"#1E7A35","error":"#B3261E","info":"#005FB8","hint":"#5A5A5A","supraman.attention":"#DCD4FF"}}]}"##;

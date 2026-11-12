@@ -1,11 +1,9 @@
 //! The Git tab's lane palette: Supraman's ten colours, a theme's `gitman.lane.0`–`9` over them, held to the lane floors.
 
-use std::{collections::HashMap, sync::Mutex};
-
 use gpui::Hsla;
 use theme::Theme;
 
-use super::{Adjustment, NAME_FLOOR, SECONDARY_FLOOR, contrast, hex, nearest_holding, over, parse_color};
+use super::{Adjustment, Kept, NAME_FLOOR, SECONDARY_FLOOR, contrast, hex, nearest_holding, over, parse_color};
 
 pub const LANES: usize = 10;
 
@@ -29,12 +27,11 @@ pub const PILL_HOVER: f32 = 0.36;
 pub const LINE_FLOOR: f32 = 3.;
 
 /// Each fitted theme's lanes by `Theme::id`.
-static FITTED: Mutex<Option<HashMap<String, [Hsla; LANES]>>> = Mutex::new(None);
+static FITTED: Kept<[Hsla; LANES]> = Kept::new();
 
 /// The lanes `theme` paints with: its fitted ones, else Supraman's for its appearance.
 pub fn lanes(theme: &Theme) -> [Hsla; LANES] {
-    let fitted = FITTED.lock().unwrap_or_else(|e| e.into_inner());
-    fitted.as_ref().and_then(|m| m.get(theme.id.as_str()).copied()).unwrap_or_else(|| defaults(theme))
+    FITTED.get(&theme.id).unwrap_or_else(|| defaults(theme))
 }
 
 pub fn defaults(theme: &Theme) -> [Hsla; LANES] {
@@ -89,18 +86,13 @@ pub fn fit(theme: &Theme, set: &[Option<Hsla>; LANES]) -> Vec<Adjustment> {
             adjusted.push(Adjustment { key: KEYS[i].into(), old: hex(old), new: hex(*lane), was: line(old), now: line(*lane) });
         }
     }
-    FITTED.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_default().insert(theme.id.clone(), lanes);
+    FITTED.keep(&theme.id, lanes);
     adjusted
 }
 
 /// Keeps `from`'s lanes for the same theme under its new id.
 pub(super) fn carry(from: &str, to: &str) {
-    let mut fitted = FITTED.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(m) = fitted.as_mut()
-        && let Some(lanes) = m.get(from).copied()
-    {
-        m.insert(to.to_owned(), lanes);
-    }
+    FITTED.carry(from, to);
 }
 
 #[cfg(test)]

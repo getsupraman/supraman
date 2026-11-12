@@ -80,6 +80,8 @@ pub(crate) const TABLE: &str = "git";
 pub use keys::bind_keys;
 const NEAR_END: Pixels = px(1400.);
 const PANEL_WIDTH: Pixels = px(380.);
+/// The toolbar's height: a toolbar button, its padding and the rule under it.
+pub(crate) const TOOLBAR: Pixels = px(35.);
 const GRAPH_MIN: f32 = 320.;
 const PANEL_MIN: f32 = 260.;
 /// The ref panel shrinks this much faster than the graph and the commit panel beside it.
@@ -886,6 +888,14 @@ impl GitView {
     }
 }
 
+impl GitView {
+    fn toolbar(&self, cx: &mut Context<Self>) -> Div {
+        let bar = div().h(TOOLBAR).flex().items_start().border_b_1().border_color(cx.theme().colors().border);
+        let bar = bar.child(self.undo.clone()).child(self.stash_buttons(cx)).child(self.remote_buttons(cx));
+        div().relative().flex_none().child(bar).child(hit_target(&self.hits, "git-toolbar".into()))
+    }
+}
+
 fn notice(title: &str, detail: String, cx: &App) -> Div {
     placeholder(title.to_string(), [detail], cx).size_full().gap_2().px_6().bg(cx.theme().colors().editor_background)
 }
@@ -904,7 +914,7 @@ impl Render for GitView {
         self.wip_panel.update(cx, |p, cx| p.ensure_composer(window, cx));
         self.branch.update(cx, |b, cx| b.ensure_dialog(window, cx));
         self.take_focus_summary(window, cx);
-        let band = self.band(window, cx).map(|b| div().absolute().top_0().left_0().right_0().occlude().child(b));
+        let band = self.band(window, cx).map(|b| supraman_ui::confirm::cover(b, TOOLBAR * 2.));
         let content = match &self.load {
             Load::Loading => notice("Reading the history…", self.folder.display().to_string(), cx).into_any_element(),
             Load::Problem(problem) => self.problem(problem, cx),
@@ -929,7 +939,7 @@ impl Render for GitView {
             .text_sm()
             .flex()
             .flex_col()
-            .child(div().flex().items_start().border_b_1().border_color(cx.theme().colors().border).child(self.undo.clone()).child(self.stash_buttons(cx)).child(self.remote_buttons(cx)))
+            .child(self.toolbar(cx))
             .child(
                 div()
                     .relative()
@@ -941,10 +951,9 @@ impl Render for GitView {
                     .children(self.layout_notice(cx))
                     .children(self.settings_notice(cx))
                     .children(self.follow_notice(cx))
-                    .child(div().flex_1().min_h_0().child(content))
-                    .child(hit_target(&self.hits, "git-below-toolbar".into()))
-                    .children(band),
+                    .child(div().flex_1().min_h_0().child(content)),
             )
+            .children(band)
             .children(self.render_find())
             .children(self.render_column_menu(cx))
     }

@@ -1,4 +1,4 @@
-//! The tab's band: the first question or prompt of its owners, across the tab under its toolbar.
+//! The tab's band: the first question or prompt of its owners, over the tab's toolbar.
 
 use gpui::{App, Context, Div, FocusHandle, Window, prelude::*};
 

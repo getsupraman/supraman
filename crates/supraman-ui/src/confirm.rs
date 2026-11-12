@@ -6,6 +6,7 @@ use theme::ActiveTheme as _;
 use crate::banner;
 use crate::button;
 use crate::hit::{HitTargets, hit_target};
+use crate::themes;
 
 /// The height of a band's row of answers: the toolbar's.
 pub const ROW: Pixels = px(34.);
@@ -193,13 +194,28 @@ fn answer_button<V: 'static>(
         .into_any_element()
 }
 
-/// A prompt band: `message`, then `items` (fields, then answers) centred in a [`ROW`]; paints `<key>-band` and `<key>-text`.
+/// A prompt band on the [`themes::attention`] fill: `message`, then `items` (fields, then answers) centred in a [`ROW`]; paints `<key>-band` and `<key>-text`.
 pub fn band(hits: &HitTargets, key: &str, message: impl IntoElement, items: impl IntoIterator<Item = AnyElement>, cx: &App) -> Div {
-    let colors = cx.theme().colors();
-    let text = div().relative().min_w_0().mr_4().py_1().text_sm().text_color(colors.text).child(message).child(hit_target(hits, format!("{key}-text")));
+    let text = div().relative().min_w_0().mr_4().py_1().text_sm().text_color(cx.theme().colors().text).child(message).child(hit_target(hits, format!("{key}-text")));
     let row = div().flex().flex_none().items_center().gap_3().h(ROW).pr_2().children(items);
-    let tinted = div().flex().flex_wrap().justify_center().items_center().px(px(10.)).bg(banner::tint(cx.theme().status().info)).child(text).child(row);
-    div().relative().w_full().bg(colors.editor_background).child(tinted).child(hit_target(hits, format!("{key}-band")))
+    div()
+        .relative()
+        .w_full()
+        .flex()
+        .flex_wrap()
+        .justify_center()
+        .items_center()
+        .content_center()
+        .px(px(10.))
+        .bg(themes::attention::attention(cx.theme()))
+        .child(text)
+        .child(row)
+        .child(hit_target(hits, format!("{key}-band")))
+}
+
+/// `band` over the top of its owner (a `relative` element) at least `height` tall, its content centred, nothing under it reachable.
+pub fn cover(band: Div, height: Pixels) -> Div {
+    div().absolute().top_0().left_0().right_0().occlude().child(band.min_h(height))
 }
 
 #[cfg(test)]
@@ -214,6 +230,7 @@ mod tests {
         answers: Vec<Answer>,
         focus: FocusHandle,
         width: Pixels,
+        cover: Option<Pixels>,
     }
 
     impl Render for Asking {
@@ -222,13 +239,18 @@ mod tests {
                 this.answers.push(answer);
                 cx.notify();
             }, cx);
-            div().w(self.width).h(px(400.)).child(band.track_focus(&self.focus))
+            let band = band.track_focus(&self.focus);
+            let placed = match self.cover {
+                Some(height) => cover(band, height),
+                None => band,
+            };
+            div().relative().w(self.width).h(px(400.)).child(div().h(px(50.)).child(hit_target(&self.hits, "under".into()))).child(placed)
         }
     }
 
     fn open(confirm: Confirm<u8>, width: f32, cx: &mut TestAppContext) -> (gpui::Entity<Asking>, &mut VisualTestContext) {
         cx.update(|cx| crate::init_globals(cx, "test"));
-        let (view, cx) = cx.add_window_view(|_, cx| Asking { hits: HitTargets::default(), confirm, answers: Vec::new(), focus: cx.focus_handle(), width: px(width) });
+        let (view, cx) = cx.add_window_view(|_, cx| Asking { hits: HitTargets::default(), confirm, answers: Vec::new(), focus: cx.focus_handle(), width: px(width), cover: None });
         cx.run_until_parked();
         (view, cx)
     }
@@ -254,6 +276,29 @@ mod tests {
         let (left, right) = (text.left() - band.left(), band.right() - cancel.right());
         assert!((left - right).abs() < px(24.), "centred as one group: {left:?} left, {right:?} right");
         assert_eq!(band.size.height, ROW, "one row");
+    }
+
+    #[gpui::test]
+    fn a_cover_band_lies_over_the_top_of_its_owner_at_its_height_with_its_content_centred(cx: &mut TestAppContext) {
+        let (view, cx) = open(deleting(), 1000., cx);
+        view.update(cx, |v, cx| {
+            v.cover = Some(px(70.));
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let [band, under, text, yes] = ["ask-band", "under", "ask-text", "ask-yes"].map(|k| at(&view, k, cx));
+        assert_eq!((band.origin, band.size.width, band.size.height), (under.origin, px(1000.), px(70.)), "over the owner's top, the height asked");
+        assert!(band.bottom() >= under.bottom(), "covers what lies there");
+        for (b, k) in [(text, "text"), (yes, "yes")] {
+            assert!((b.center().y - band.center().y).abs() < px(1.), "the {k} centred vertically: {b:?} in {band:?}");
+        }
+        view.update(cx, |v, cx| {
+            v.width = px(320.);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let [band, text, yes] = ["ask-band", "ask-text", "ask-yes"].map(|k| at(&view, k, cx));
+        assert!(band.size.height > px(70.) && yes.top() >= text.bottom(), "too narrow: it grows by the wrapped row");
     }
 
     #[gpui::test]
