@@ -109,6 +109,11 @@ pub fn run_bytes(cmd: &mut Command, input: Option<Vec<u8>>, timeout: Duration, k
     }
 }
 
+/// [`run_bytes`] that also kills the child once `stop` returns true (a write's Cancel).
+pub fn run_bytes_watched(cmd: &mut Command, input: Option<Vec<u8>>, timeout: Duration, kill: Kill, stop: &mut dyn FnMut() -> bool) -> std::io::Result<(Ended, RawOutput)> {
+    run_raw(cmd, input, timeout, kill, Some(stop))
+}
+
 /// How often a [`run_watched`] `stop` is asked.
 const STOP_TICK: Duration = Duration::from_millis(20);
 
