@@ -25,6 +25,7 @@ pub(crate) const KEY: &str = "git-add-worktree";
 pub(crate) const REFS: &str = "git-add-worktree-refs";
 pub(crate) const NEEDS_REF: &str = "Pick the reference to check out";
 pub(crate) const NEEDS_FOLDER: &str = "Type the working directory";
+pub(crate) const CREATING: &str = "Creating the worktree…";
 
 const ANSWERS: Answers<BranchActions> = Answers { ok: BranchActions::submit_add_worktree, close: BranchActions::close_add_worktree };
 
@@ -273,9 +274,17 @@ impl BranchActions {
         cx.notify();
     }
 
-    /// Adds the worktree; the form closes once it is made.
+    /// Whether this form's add runs.
+    pub(crate) fn creating(&self) -> bool {
+        matches!(self.writes.doing(), Some((_, Doing::Worktree(_))))
+    }
+
+    /// Adds the worktree; the form closes once it is made, and stays open with the toast's why when it is not.
     pub(crate) fn submit_add_worktree(&mut self, cx: &mut Context<Self>) {
         let Some(adding) = &self.adding else { return };
+        if self.creating() {
+            return;
+        }
         if let Some(why) = adding.why_not(cx).or_else(|| self.busy(cx)) {
             return cx.emit(super::BranchEvent::Why(why.into()));
         }
@@ -336,7 +345,7 @@ impl BranchActions {
         let adding = self.adding.as_ref()?;
         let fields = adding.fields.as_ref()?;
         let reference = self.ref_field(adding, &fields.reference, cx);
-        let browse = button::action(&self.hits, format!("{KEY}-browse"), "Browse", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.browse(window, cx)));
+        let browse = form::sized(button::action(&self.hits, format!("{KEY}-browse"), "Browse", button::Tone::Neutral, button::Fill::Outline, cx)).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.browse(window, cx)));
         let browse = button::focusable(browse, &fields.browse, cx.listener(|this, _: &Press, window, cx| this.browse(window, cx)), cx);
         let folder = div().flex().items_center().gap_2().child(form::input(&self.hits, format!("{KEY}-folder"), &fields.folder)).child(browse).into_any_element();
         let rows = vec![
@@ -344,8 +353,9 @@ impl BranchActions {
             ("Worktree branch to create (optional)".into(), form::input(&self.hits, format!("{KEY}-branch"), &fields.branch)),
             ("Working directory".into(), folder),
         ];
-        let why = adding.why_not(cx).or_else(|| self.busy(cx));
-        let form = Form { key: KEY.into(), icon: Icon::Worktree, title: "Create Worktree".into(), ok: "Create Worktree".into(), why: why.map(Into::into), answers: ANSWERS };
+        let running = self.creating();
+        let why = if running { Some(CREATING) } else { adding.why_not(cx).or_else(|| self.busy(cx)) };
+        let form = Form { key: KEY.into(), icon: Icon::Worktree, title: "Create Worktree".into(), ok: "Create Worktree".into(), why: why.map(Into::into), running, answers: ANSWERS };
         Some(form.render(&self.hits, rows, adding.order(cx), Some(&fields.ok), cx))
     }
 

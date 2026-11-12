@@ -13,6 +13,12 @@ use crate::platform::process::{Job, no_window, resume, suspended, wait_exit};
 
 pub const GIT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// A timeout that never passes: the child runs until it exits.
+pub const NO_TIMEOUT: Duration = Duration::MAX;
+
+/// How long one wait for an exit lasts while there is no deadline.
+const UNBOUNDED_TICK: Duration = Duration::from_secs(3600);
+
 /// What a finished child left behind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Output {
@@ -114,13 +120,13 @@ fn run_raw(cmd: &mut Command, input: Option<Vec<u8>>, timeout: Duration, kill: K
     let (done, settled) = mpsc::channel();
     let stdout = drain(child.stdout.take(), done.clone());
     let stderr = drain(child.stderr.take(), done);
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now().checked_add(timeout);
     let (ended, code) = loop {
-        let left = deadline.saturating_duration_since(Instant::now());
+        let left = deadline.map_or(UNBOUNDED_TICK, |d| d.saturating_duration_since(Instant::now()));
         let wait = if stop.is_some() { left.min(STOP_TICK) } else { left };
         match wait_exit(&mut child, wait) {
             Ok(Some(status)) => break (Ended::Exited, status.code()),
-            Ok(None) if Instant::now() >= deadline => break (Ended::TimedOut, None),
+            Ok(None) if deadline.is_some_and(|d| Instant::now() >= d) => break (Ended::TimedOut, None),
             Ok(None) if stop.as_mut().is_some_and(|stop| stop()) => break (Ended::Stopped, None),
             Ok(None) => {}
             Err(e) => {
