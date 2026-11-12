@@ -306,3 +306,36 @@ fn settled<T>(what: &str, mut f: impl FnMut() -> Result<T, String>) -> T {
     }
     last.unwrap_or_else(|why| panic!("{what}: {why}"))
 }
+
+fn hook(f: &Fixture, name: &str, body: &str) {
+    let hooks = f.dir.join(".git").join("hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    std::fs::write(hooks.join(name), format!("#!/bin/sh\n{body}\n")).unwrap();
+}
+
+#[test]
+fn a_worktree_add_outlives_the_fixed_timeout_of_a_short_call() {
+    let f = Fixture::copy();
+    // The checkout's hook outlasts the stand-in for GIT_TIMEOUT that rev-parse and update-ref keep.
+    hook(&f, "post-checkout", "sleep 3");
+    let folder = f.temp.path().join("repo.worktrees").join("slow");
+    let writer = Writer::open(&f.repo()).unwrap().bounded_by(std::time::Duration::from_secs(1));
+    writer.run(LockSet::branch(), |s| branch::add_worktree(s, &folder, "main", Some("slow"))).unwrap();
+    assert_eq!(head(&f, &folder), "slow");
+    assert!(f.dir.join(".git/worktrees/slow/index").exists(), "git wrote the index");
+    assert!(!f.dir.join(".git/worktrees/slow/locked").exists(), "the add finished");
+}
+
+#[test]
+fn a_failed_worktree_add_leaves_no_worktree_and_no_branch() {
+    let f = Fixture::copy();
+    hook(&f, "post-checkout", "exit 1");
+    let folder = f.temp.path().join("repo.worktrees").join("doomed");
+    let failed = Fixture::write_job(&f.repo(), LockSet::branch(), |s| branch::add_worktree(s, &folder, "main", Some("doomed")));
+    assert!(matches!(&failed, Err(WriteError::Said(why)) if why.ends_with("the half-made worktree is removed")), "{failed:?}");
+    let listed = refs(&f.repo()).unwrap().worktrees;
+    assert!(!listed.iter().any(|w| w.path.ends_with("doomed")), "worktree list: {listed:?}");
+    assert!(!f.dir.join(".git/worktrees/doomed").exists());
+    assert!(!folder.exists());
+    assert!(run_git(&f.git, &f.dir, &["rev-parse", "-q", "--verify", "refs/heads/doomed"], &[], None).stdout.is_empty(), "the branch made for it is gone");
+}

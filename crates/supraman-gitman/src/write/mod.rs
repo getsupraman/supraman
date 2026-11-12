@@ -22,7 +22,9 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use supraman_core::process::{self, GIT_TIMEOUT, Kill, RawOutput, RunError};
+use std::time::Duration;
+
+use supraman_core::process::{self, GIT_TIMEOUT, Kill, NO_TIMEOUT, RawOutput, RunError};
 
 pub use guard::{Occupancy, working_in};
 pub use locks::{Access, Held, LockSet, Resource, Scheduler};
@@ -41,6 +43,9 @@ pub const PINNED: &[&str] = &[
     "-c", "color.diff=never",
     "-c", "log.showSignature=false",
 ];
+
+/// The subcommands that read or set one ref or value and keep a fixed timeout; every other write's git runs until it exits.
+const BOUNDED: &[&str] = &["rev-parse", "update-ref", "symbolic-ref", "config", "check-ref-format", "show-ref", "for-each-ref"];
 
 /// Why a write is refused while a merge, rebase, cherry-pick, revert or am is under way.
 pub const UNDER_WAY: &str = "Finish or abort the operation under way first";
@@ -147,6 +152,24 @@ impl Call {
     fn label(&self) -> String {
         self.args.join(" ")
     }
+
+    /// The subcommand after any leading `-c <key=value>` pairs.
+    fn subcommand(&self) -> Option<&str> {
+        let mut args = self.args.iter().map(String::as_str);
+        loop {
+            match args.next()? {
+                "-c" => {
+                    args.next()?;
+                }
+                sub => return Some(sub),
+            }
+        }
+    }
+
+    /// `bounded` for a [`BOUNDED`] subcommand; none for every other, since a killed checkout, reset or stash leaves the tree half-written.
+    fn timeout(&self, bounded: Duration) -> Duration {
+        if self.subcommand().is_some_and(|sub| BOUNDED.contains(&sub)) { bounded } else { NO_TIMEOUT }
+    }
 }
 
 struct PerRepo {
@@ -186,6 +209,7 @@ pub struct Writer {
     icase: bool,
     scheduler: Arc<Scheduler>,
     quiet: Arc<Quiet>,
+    bounded: Duration,
 }
 
 impl Writer {
@@ -199,7 +223,14 @@ impl Writer {
         }
         let icase = out.success() && text(&out.stdout).trim() == "true";
         let (scheduler, quiet) = per_repo(&dirs);
-        Ok(Writer { repo: top, dirs, icase, scheduler, quiet })
+        Ok(Writer { repo: top, dirs, icase, scheduler, quiet, bounded: GIT_TIMEOUT })
+    }
+
+    /// This writer with `timeout` in place of [`GIT_TIMEOUT`] for the [`BOUNDED`] subcommands.
+    #[cfg(feature = "test-support")]
+    pub fn bounded_by(mut self, timeout: Duration) -> Writer {
+        self.bounded = timeout;
+        self
     }
 
     pub fn dirs(&self) -> &Dirs {
@@ -308,7 +339,7 @@ impl Session<'_> {
     /// `call` run, whatever its exit code.
     pub fn run(&self, call: &Call) -> Result<RawOutput, WriteError> {
         let (mut cmd, input) = self.writer.prepare(call)?;
-        process::run_bytes(&mut cmd, input, GIT_TIMEOUT, Kill::Tree).map_err(|source: RunError| WriteError::Git(GitError::Run { args: call.label(), source }))
+        process::run_bytes(&mut cmd, input, call.timeout(self.writer.bounded), Kill::Tree).map_err(|source: RunError| WriteError::Git(GitError::Run { args: call.label(), source }))
     }
 
     /// `call`'s stdout, an error unless git exited 0.

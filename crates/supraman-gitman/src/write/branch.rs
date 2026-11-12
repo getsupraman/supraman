@@ -418,9 +418,9 @@ pub fn abandon(s: &Session, away: &Away) -> Result<Autostash, WriteError> {
     go_back(s, away)
 }
 
-/// Removes the worktree at `path` with what it holds (`--force`), then deletes `branch` when given.
 /// A new worktree at `folder` checking out `reference`, or `new_branch` made there; a reference that is no local branch is checked out detached.
 /// Refused for a folder that holds anything, a bad or taken name, and in git's words for a branch checked out elsewhere; not undoable.
+/// A failure removes what git made of the worktree and the new branch.
 pub fn add_worktree(s: &Session, folder: &Path, reference: &str, new_branch: Option<&str>) -> Result<(), WriteError> {
     if std::fs::read_dir(folder).is_ok_and(|mut entries| entries.next().is_some()) || folder.is_file() {
         return Err(WriteError::Refused(FOLDER_IN_USE));
@@ -437,9 +437,47 @@ pub fn add_worktree(s: &Session, folder: &Path, reference: &str, new_branch: Opt
         args.push("--detach");
     }
     args.extend([folder.as_ref(), reference]);
-    s.said(&Call::new(&args))
+    s.said(&Call::new(&args)).map_err(|failed| undo_add(s, Path::new(folder.as_ref()), new_branch, failed))
 }
 
+/// `failed` after git's half-made worktree at `folder` and the branch made for it are removed, said in its words.
+fn undo_add(s: &Session, folder: &Path, new_branch: Option<&str>, failed: WriteError) -> WriteError {
+    let registered = registered(s, folder).unwrap_or(true);
+    let made = match new_branch {
+        Some(name) => s.verify(&format!("refs/heads/{name}")).ok().flatten().map(|_| name),
+        None => None,
+    };
+    if !registered && made.is_none() {
+        return failed;
+    }
+    match remove_half_made(s, folder, registered, made) {
+        Ok(()) => WriteError::Said(format!("{failed}; the half-made worktree is removed")),
+        Err(why) => WriteError::Said(format!("{failed}; the half-made worktree at {} could not be removed: {why}", folder.display())),
+    }
+}
+
+/// Whether `worktree list` holds `folder`.
+fn registered(s: &Session, folder: &Path) -> Result<bool, WriteError> {
+    let key = supraman_core::paths::path_key(folder);
+    Ok(crate::worktrees(s.writer().repo())?.iter().any(|w| supraman_core::paths::path_key(&w.path) == key))
+}
+
+fn remove_half_made(s: &Session, folder: &Path, registered: bool, made: Option<&str>) -> Result<(), WriteError> {
+    if registered {
+        let path = folder.to_string_lossy();
+        s.run(&Call::new(&["worktree", "remove", "--force", "--force", &path]))?;
+        s.output(&Call::new(&["worktree", "prune"]))?;
+        if self::registered(s, folder)? {
+            return Err(WriteError::Said("git still lists it".into()));
+        }
+    }
+    match made {
+        Some(name) => s.output(&Call::new(&["branch", "-D", name])).map(drop),
+        None => Ok(()),
+    }
+}
+
+/// Removes the worktree at `path` with what it holds (`--force`), then deletes `branch` when given.
 pub fn remove_worktree(s: &Session, path: &Path, branch: Option<&str>) -> Result<(), WriteError> {
     let path = path.to_string_lossy();
     s.output(&Call::new(&["worktree", "remove", "--force", &path]))?;
