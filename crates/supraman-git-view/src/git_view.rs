@@ -631,10 +631,33 @@ impl GitView {
     /// Selects the row of `sha` when a loaded page holds it.
     pub(crate) fn select_sha(&mut self, sha: &str, cx: &mut Context<Self>) {
         let Some(ix) = self.pages.read(cx).rows.iter().position(|r| r.sha.as_ref() == sha) else { return };
+        self.select_ix(ix, cx);
+    }
+
+    /// Gives the graph the keys when asked or when the tab's own element holds them, on HEAD's commit while no row is selected.
+    fn graph_takes_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let held = self.focus.is_focused(window) && matches!(self.load, Load::Ready);
+        if !std::mem::take(&mut self.focus_graph) && !held {
+            return;
+        }
+        window.focus(self.table.focus_handle(), cx);
+        if self.table.selected().is_none() {
+            self.select_head(cx);
+        }
+    }
+
+    fn select_ix(&mut self, ix: usize, cx: &mut Context<Self>) {
         self.table.select(Some(ix));
         self.table.reveal(ix);
         self.selection_moved(cx);
         cx.notify();
+    }
+
+    /// Selects HEAD's commit row, when a loaded page holds it.
+    fn select_head(&mut self, cx: &mut Context<Self>) {
+        let Some(head) = self.heads.head.clone() else { return };
+        let Some(ix) = self.pages.read(cx).rows.iter().position(|r| r.sha == head && r.agent.is_none() && r.row.worktree.is_none() && !r.wip() && r.stash().is_none()) else { return };
+        self.select_ix(ix, cx);
     }
 
     /// The WIP row's index: the first row under the agent rows, when it is the WIP row.
@@ -646,10 +669,7 @@ impl GitView {
     /// Selects the WIP row, when the graph has one.
     pub(crate) fn select_wip(&mut self, cx: &mut Context<Self>) {
         let Some(ix) = self.wip_row(cx) else { return };
-        self.table.select(Some(ix));
-        self.table.reveal(ix);
-        self.selection_moved(cx);
-        cx.notify();
+        self.select_ix(ix, cx);
     }
 
     pub(crate) fn reload(&mut self, cx: &mut Context<Self>) {
@@ -940,6 +960,12 @@ fn notice(title: &str, detail: String, cx: &App) -> Div {
     placeholder(title.to_string(), [detail], cx).size_full().gap_2().px_6().bg(cx.theme().colors().editor_background)
 }
 
+impl gpui::Focusable for GitView {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
 impl Render for GitView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _stall = stall::section("render: git tab");
@@ -948,9 +974,7 @@ impl Render for GitView {
         if let Some(focus) = focus {
             window.focus(&focus, cx);
         }
-        if std::mem::take(&mut self.focus_graph) {
-            window.focus(self.table.focus_handle(), cx);
-        }
+        self.graph_takes_keys(window, cx);
         self.wip_panel.update(cx, |p, cx| p.ensure_composer(window, cx));
         self.branch.update(cx, |b, cx| b.ensure_dialog(window, cx));
         self.take_focus_summary(window, cx);

@@ -1,11 +1,12 @@
-//! The graph's selection shows whether the graph has the keys; F6 steps through the tab's panes; a closed menu gives the keys back.
+//! The graph's selection shows whether the graph has the keys; F6 steps through the tab's panes; a closed menu gives the keys back;
+//! a tab shown gives the graph the keys on HEAD's commit.
 
 use gpui::{Entity, Hsla, TestAppContext, VisualTestContext};
 use theme::ActiveTheme as _;
 use supraman_gitman::fixture::Fixture;
 use supraman_ui::themes::selection;
 
-use crate::git_view::test_support::{Opts, click, keys, menu, open, repaint, right_click, row_of};
+use crate::git_view::test_support::{Opts, click, keys, menu, open, redraw, repaint, right_click, row_of, show};
 use crate::git_view::*;
 
 fn shown(view: &Entity<GitView>, cx: &mut VisualTestContext) -> (Option<usize>, Option<Hsla>) {
@@ -109,4 +110,54 @@ fn a_menu_opened_from_the_graph_and_closed_by_esc_gives_the_graph_the_keys_back(
     let graph = view.read_with(cx, |v, _| v.table.focus_handle().clone());
     assert!(cx.update(|window, _| graph.is_focused(window)), "the graph has the keys again");
     assert_eq!(marked(&view, cx), mark(FOCUS_GRAPH));
+}
+
+fn graph_has_keys(view: &Entity<GitView>, cx: &mut VisualTestContext) -> bool {
+    let graph = view.read_with(cx, |v, _| v.table.focus_handle().clone());
+    cx.update(|window, cx| graph.contains_focused(window, cx))
+}
+
+fn head(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<Selected> {
+    view.read_with(cx, |v, _| v.heads.head.clone()).map(Selected::Commit)
+}
+
+#[gpui::test]
+fn a_tab_shown_gives_the_graph_the_keys_on_heads_commit_and_ctrl_p_opens_the_palette(cx: &mut TestAppContext) {
+    let f = Fixture::shared();
+    let (view, cx) = open(&f.dir, Opts::default().hidden(), cx);
+    assert!(!graph_has_keys(&view, cx), "the window's own element holds the keys before the tab is shown");
+    show(cx);
+    keys(&view, "ctrl-p", cx);
+    assert!(view.read_with(cx, |v, _| v.find().is_some()), "Ctrl+P opens the palette with no click");
+    assert!(repaint(&view, cx).borrow().contains_key(crate::git_view::find::ID), "the palette is painted");
+    keys(&view, "escape", cx);
+    assert!(graph_has_keys(&view, cx), "the shown tab's graph has the keys");
+    assert!(head(&view, cx).is_some());
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), head(&view, cx), "HEAD's commit is selected");
+}
+
+#[gpui::test]
+fn a_tab_shown_while_loading_selects_heads_commit_once_the_rows_land(cx: &mut TestAppContext) {
+    let f = Fixture::shared();
+    let (view, cx) = open(&f.dir, Opts::default().hidden(), cx);
+    view.update(cx, |v, cx| v.reload(cx));
+    show(cx);
+    assert!(view.read_with(cx, |v, _| matches!(v.load, Load::Loading)), "still reading the history");
+    let root = view.read_with(cx, |v, _| v.focus.clone());
+    assert!(cx.update(|window, _| root.is_focused(window)), "the tab holds the keys while it loads");
+    redraw(&view, cx);
+    assert!(graph_has_keys(&view, cx), "the graph has the keys once its rows land");
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), head(&view, cx), "HEAD's commit is selected");
+}
+
+#[gpui::test]
+fn a_selection_already_there_stays_when_the_graph_takes_the_keys(cx: &mut TestAppContext) {
+    let f = Fixture::shared();
+    let (view, cx) = open(&f.dir, Opts::default().hidden(), cx);
+    let second = row_of(&view, f.sha("second"), cx);
+    view.read_with(cx, |v, _| v.table.select(Some(second)));
+    show(cx);
+    redraw(&view, cx);
+    assert!(graph_has_keys(&view, cx));
+    assert_eq!(view.read_with(cx, |v, _| v.table.selected()), Some(second));
 }

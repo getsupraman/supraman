@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui::{Context, Entity, IntoElement, Subscription, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Render, TestAppContext, VisualTestContext, Window, div, prelude::*, px};
+use gpui::{Context, Entity, FocusHandle, Focusable as _, IntoElement, Subscription, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Render, TestAppContext, VisualTestContext, Window, div, prelude::*, px};
 use supraman_gitman::BackgroundSettings;
 use supraman_ui::hit::HitTargets;
 
@@ -14,7 +14,7 @@ use crate::occupancy;
 /// The repo's background work on, with no fetch and no maintenance.
 pub(crate) const QUIET: BackgroundSettings = BackgroundSettings { fetch_every_minutes: Some(0), maintenance: Some(false), worktree_wip: None };
 
-/// How a test opens its Git tab: layout home, live sessions, background at [`QUIET`], editor and window size.
+/// How a test opens its Git tab: layout home, live sessions, background at [`QUIET`], editor, window size, hidden.
 pub(crate) struct Opts {
     home: Option<PathBuf>,
     live: Option<occupancy::Live>,
@@ -22,11 +22,12 @@ pub(crate) struct Opts {
     background: bool,
     editor: bool,
     size: (f32, f32),
+    hidden: bool,
 }
 
 impl Default for Opts {
     fn default() -> Opts {
-        Opts { home: None, live: None, following: false, background: false, editor: false, size: (1200., 800.) }
+        Opts { home: None, live: None, following: false, background: false, editor: false, size: (1200., 800.), hidden: false }
     }
 }
 
@@ -51,6 +52,11 @@ impl Opts {
         Opts { editor: true, ..self }
     }
 
+    /// Opened as a tab not shown yet, the window's own element holding the keys until [`show`].
+    pub(crate) fn hidden(self) -> Opts {
+        Opts { hidden: true, ..self }
+    }
+
     pub(crate) fn size(self, width: f32, height: f32) -> Opts {
         Opts { size: (width, height), ..self }
     }
@@ -60,13 +66,34 @@ impl Opts {
 pub(crate) struct Holder<V: 'static> {
     pub view: Entity<V>,
     size: (f32, f32),
+    /// Opened hidden: the window's own element, and whether the view is shown in it as the app's tab, by its [`supraman_ui::focus::Group`].
+    tab: Option<(FocusHandle, FocusHandle, bool)>,
     _restore: Subscription,
 }
 
 impl<V: Render> Render for Holder<V> {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        supraman_ui::focus::root(div().w(px(self.size.0)).h(px(self.size.1))).child(self.view.clone())
+        let root = supraman_ui::focus::root(div().w(px(self.size.0)).h(px(self.size.1)));
+        let Some((area, entry, shown)) = &self.tab else { return root.child(self.view.clone()) };
+        let root = root.track_focus(area);
+        if !shown {
+            return root;
+        }
+        root.child(self.view.clone()).child(supraman_ui::focus::Group::new("tab", area, entry).paint())
     }
+}
+
+/// Shows the tab a [`Opts::hidden`] opened and draws the frames that hand it the keys, with no parked work run.
+pub(crate) fn show(cx: &mut VisualTestContext) {
+    let holder = cx.update(|window, _| window.root::<Holder<GitView>>()).flatten().expect("a Git tab's holder");
+    holder.update(cx, |h, cx| {
+        if let Some((_, _, shown)) = &mut h.tab {
+            *shown = true;
+        }
+        cx.notify();
+    });
+    cx.update(|_, _| ());
+    cx.update(|_, _| ());
 }
 
 /// A Git tab of `folder`, its first load done.
@@ -91,7 +118,7 @@ pub(crate) fn open_unchecked<'a>(folder: &Path, opts: Opts, cx: &'a mut TestAppC
             background::start_for_test(QUIET, cx);
         }
     });
-    let Opts { home, live, following, size, .. } = opts;
+    let Opts { home, live, following, size, hidden, .. } = opts;
     let folder = folder.to_path_buf();
     let (holder, cx) = cx.add_window_view(|window, cx| {
         let hits = HitTargets::default();
@@ -100,7 +127,12 @@ pub(crate) fn open_unchecked<'a>(folder: &Path, opts: Opts, cx: &'a mut TestAppC
             Some(live) => GitView::open_with(folder, home, hits, Arc::new(live), cx),
             None => GitView::open(folder, home, hits, cx),
         };
-        Holder { view, size, _restore: supraman_ui::focus::restore_on_loss(window, cx) }
+        let tab = hidden.then(|| {
+            let area = cx.focus_handle();
+            area.focus(window, cx);
+            (area, view.focus_handle(cx), false)
+        });
+        Holder { view, size, tab, _restore: supraman_ui::focus::restore_on_loss(window, cx) }
     });
     cx.update(|window, _| window.activate_window());
     let view = holder.read_with(cx, |h, _| h.view.clone());

@@ -728,7 +728,10 @@ impl Focusable for WorkView {
 }
 
 impl Render for WorkView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.focus.is_focused(window) && self.shown == Shown::Ready {
+            window.focus(&self.panes.main, cx);
+        }
         let colors = cx.theme().colors().clone();
         let body = match &self.shown {
             Shown::Loading => placeholder("Reading Workman…", Vec::<SharedString>::new(), cx).size_full().into_any_element(),

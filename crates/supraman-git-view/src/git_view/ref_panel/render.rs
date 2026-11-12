@@ -190,7 +190,7 @@ impl RefPanel {
                 .child(section.icon().svg(14., muted))
                 .child(div().text_xs().text_color(accent).child(count.total.to_string()))
                 .tooltip(Tooltip::text(section.title()))
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.toggle_overlay(section, window, cx)))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle_overlay(section, cx)))
         });
         div().flex().flex_col().items_center().gap_2().pt_1().w(STRIP).h_full().child(expand).children(sections)
     }
@@ -285,7 +285,7 @@ impl Render for RefPanel {
         let _stall = stall::section("render: ref panel");
         let bg: Hsla = cx.theme().colors().panel_background;
         if self.shut {
-            let overlay = self.render_overlay(cx);
+            let overlay = self.render_overlay(window, cx);
             let menu = self.render_menu(cx);
             return div().relative().h_full().bg(bg).text_sm().child(self.strip(cx)).children(overlay).children(menu);
         }
