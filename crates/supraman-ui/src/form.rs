@@ -16,7 +16,7 @@ use crate::tooltip::Tooltip;
 /// A form's buttons stand as high as its one-line fields.
 pub const BUTTON_HEIGHT: Pixels = SINGLE_HEIGHT;
 
-/// `button` (a `button::action`) at [`BUTTON_HEIGHT`]: a form's OK and a button beside a field (Browse).
+/// `button` (a `button::action`) at [`BUTTON_HEIGHT`]: a form's OK, a button beside a field (Browse) and the WIP panel's Commit.
 pub fn sized(button: Stateful<Div>) -> Stateful<Div> {
     button.h(BUTTON_HEIGHT).px_3()
 }

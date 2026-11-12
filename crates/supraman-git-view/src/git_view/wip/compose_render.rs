@@ -5,6 +5,8 @@ use supraman_gitman::OperationState;
 use supraman_gitman::write::conflicts::Sequence;
 use supraman_gitman::write::wip::Step;
 use supraman_ui::button;
+use supraman_ui::form;
+use supraman_ui::hit::hit_target;
 use supraman_ui::focus_order::Press;
 use supraman_ui::icon::Icon;
 use supraman_ui::tooltip::Tooltip;
@@ -15,6 +17,8 @@ use super::render::live;
 use super::actions::noun;
 use super::{Ask, Shown, WipPanel};
 use crate::git_view::keys::{MESSAGE_CONTEXT, StageAllAndCommit};
+
+pub(super) const AREA: &str = "wip-commit-area";
 
 impl WipPanel {
     fn amend_row(&self, c: &Composer, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -111,7 +115,7 @@ impl WipPanel {
         let (words, act) = self.commit_button(false, cx)?;
         let (tone, fill) = (button::Tone::Success, button::Fill::Solid);
         let ink = button::look(tone, fill, cx).text;
-        let bar = button::action(&self.hits, "wip-commit", SharedString::from(words.clone()), tone, fill, cx).child(Icon::GitCommit.svg(14., ink));
+        let bar = form::sized(button::action(&self.hits, "wip-commit", SharedString::from(words.clone()), tone, fill, cx)).w_full().child(Icon::GitCommit.svg(14., ink));
         let busy = self.busy(cx);
         Some(if act.is_none() && busy.is_none() { button::dimmed(bar) } else { live(bar, busy, cx, |this, cx| this.commit(false, cx)) })
     }
@@ -119,7 +123,7 @@ impl WipPanel {
     pub(super) fn commit_area(&self, shown: &Shown, cx: &mut Context<Self>) -> Option<Div> {
         let c = self.composer.as_ref()?;
         let border = cx.theme().colors().border_variant;
-        let area = div().flex().flex_col().flex_none().gap_2().p_2().border_t_1().border_color(border);
+        let area = div().relative().flex().flex_col().flex_none().gap_2().p_2().border_t_1().border_color(border).child(hit_target(&self.hits, AREA.into()));
         let area = match self.message_order(false, cx) {
             Some(order) => order.on(area),
             None => area,
