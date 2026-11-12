@@ -48,6 +48,7 @@ impl GitView {
                 self.refresh_after_write(cx);
             }
             RemoteEvent::Why(why) => self.toast.show_why(why.clone(), |v: &mut GitView| &mut v.toast, cx),
+            RemoteEvent::Opened => self.branch.update(cx, |b, cx| b.close_add_worktree(cx)),
             RemoteEvent::Facts(facts) => {
                 let facts = facts.clone();
                 self.branch.update(cx, |b, _| b.set_remote_facts(facts));

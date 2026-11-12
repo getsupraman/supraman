@@ -415,6 +415,24 @@ pub fn set_url(s: &Session, remote: &str, url: &str) -> Result<(), WriteError> {
     Ok(())
 }
 
+/// `remote` pushing to `push_url`; `None` or an empty one drops its push URLs, so it pushes to its URL again.
+pub fn set_push_url(s: &Session, remote: &str, push_url: Option<&str>) -> Result<(), WriteError> {
+    match push_url.map(str::trim).filter(|u| !u.is_empty()) {
+        Some(url) => s.said(&Call::new(&["remote", "set-url", "--push", "--", remote, url])),
+        None if s.run(&Call::new(&["config", "--get-all", &format!("remote.{remote}.pushurl")]))?.success() => s.said(&Call::new(&["remote", "set-url", "--delete", "--push", "--", remote, "."])),
+        None => Ok(()),
+    }
+}
+
+/// `remote` named `name`, its remote-tracking branches and upstream settings with it; refused by [`name_problem`], else in git's words.
+pub fn rename_remote(s: &Session, remote: &str, name: &str) -> Result<(), WriteError> {
+    let name = name.trim();
+    if let Some(problem) = name_problem(name) {
+        return Err(WriteError::Refused(problem));
+    }
+    s.said(&Call::new(&["remote", "rename", "--", remote, name]))
+}
+
 /// A new remote fetching from `pull_url`, pushing to `push_url` when given; refused by [`name_problem`], else in git's words.
 pub fn add_remote(s: &Session, name: &str, pull_url: &str, push_url: Option<&str>) -> Result<(), WriteError> {
     let (name, pull_url, push_url) = (name.trim(), pull_url.trim(), push_url.map(str::trim).filter(|u| !u.is_empty()));

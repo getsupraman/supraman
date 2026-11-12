@@ -1,22 +1,21 @@
-//! Create Worktree in the commit panel's place: the reference picked in the shared palette, an optional new branch and the folder;
+//! Create Worktree beside the ref panel: the reference picked in the shared palette, an optional new branch and the folder;
 //! hit keys `git-add-worktree{,-close,-ok,-ref,-branch,-folder,-browse}`, the palette's rows `git-add-worktree-refs-row-<key>`.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, SharedString, Subscription, Window, deferred, div, prelude::*, px};
+use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, FocusHandle, Focusable, SharedString, Subscription, Window, deferred, div, prelude::*};
 use supraman_gitman::write::LockSet;
 use supraman_gitman::write::branch::{self, name_problem};
 use supraman_ui::button;
-use supraman_ui::focus_order::{Dismiss, FocusOrder, NextField, Press, PreviousField};
+use supraman_ui::focus_order::{FocusOrder, NextField, Press, PreviousField};
 use supraman_ui::folder_picker::pick_folder;
-use supraman_ui::hit::hit_target;
+use supraman_ui::form::{self, Answers, Form};
 use supraman_ui::icon::Icon;
 use supraman_ui::palette::{Palette, PaletteEvent};
-use supraman_ui::text_input::{InputEvent, TextInput};
+use supraman_ui::text_input::TextInput;
 use supraman_ui::themes::secondary;
-use supraman_ui::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
 use super::{BranchActions, Doing};
@@ -26,6 +25,8 @@ pub(crate) const KEY: &str = "git-add-worktree";
 pub(crate) const REFS: &str = "git-add-worktree-refs";
 pub(crate) const NEEDS_REF: &str = "Pick the reference to check out";
 pub(crate) const NEEDS_FOLDER: &str = "Type the working directory";
+
+const ANSWERS: Answers<BranchActions> = Answers { ok: BranchActions::submit_add_worktree, close: BranchActions::close_add_worktree };
 
 #[cfg(test)]
 mod tests;
@@ -208,18 +209,8 @@ impl BranchActions {
     pub(super) fn ensure_add_worktree(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(adding) = &self.adding else { return };
         if adding.fields.is_none() {
-            let field = |placeholder: &str, window: &mut Window, cx: &mut Context<Self>| {
-                let input = cx.new(|cx| TextInput::new(placeholder.to_string(), None, window, cx));
-                let sub = cx.subscribe(&input, |this: &mut BranchActions, _, e: &InputEvent, cx| match e {
-                    InputEvent::Confirm => this.submit_add_worktree(cx),
-                    InputEvent::Cancel => this.close_add_worktree(cx),
-                    InputEvent::Edited => this.suggest_worktree(cx),
-                    _ => cx.notify(),
-                });
-                (input, sub)
-            };
-            let (branch, b) = field("Optional: a new branch", window, cx);
-            let (folder, f) = field("Where the worktree goes", window, cx);
+            let (branch, b) = form::field("Optional: a new branch", "", ANSWERS, Self::suggest_worktree, window, cx);
+            let (folder, f) = form::field("Where the worktree goes", "", ANSWERS, Self::suggest_worktree, window, cx);
             if let Some(a) = self.adding.as_mut() {
                 a.fields = Some(Fields { branch, folder, reference: cx.focus_handle(), browse: cx.focus_handle(), ok: cx.focus_handle(), _events: [b, f] });
             }
@@ -340,50 +331,22 @@ impl BranchActions {
             .into_any_element()
     }
 
-    /// The form as the commit panel's place shows it, while it is open.
+    /// The form as the tab's form slot shows it, while it is open.
     pub(crate) fn render_add_worktree(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let adding = self.adding.as_ref()?;
         let fields = adding.fields.as_ref()?;
         let reference = self.ref_field(adding, &fields.reference, cx);
-        let colors = cx.theme().colors();
-        let (muted, border) = (secondary(colors), colors.border);
-        let close = button::icon(&self.hits, format!("{KEY}-close"), Icon::Close.svg(14., muted), px(22.), cx)
-            .tooltip(Tooltip::text("Close (Esc)"))
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.close_add_worktree(cx)));
-        let title = div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .px_3()
-            .py_2()
-            .border_b_1()
-            .border_color(border)
-            .child(Icon::Worktree.svg(16., muted))
-            .child(div().flex_1().font_weight(FontWeight::SEMIBOLD).child("Create Worktree"))
-            .child(close);
-        let labelled = |label: &'static str, field: AnyElement| div().flex().flex_col().gap_1().child(div().text_xs().text_color(muted).child(label)).child(field);
-        let input = |key: &str, input: &Entity<TextInput>| div().relative().flex_1().min_w_0().child(input.clone()).child(hit_target(&self.hits, format!("{KEY}-{key}"))).into_any_element();
         let browse = button::action(&self.hits, format!("{KEY}-browse"), "Browse", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.browse(window, cx)));
         let browse = button::focusable(browse, &fields.browse, cx.listener(|this, _: &Press, window, cx| this.browse(window, cx)), cx);
-        let folder = div().flex().items_center().gap_2().child(input("folder", &fields.folder)).child(browse).into_any_element();
+        let folder = div().flex().items_center().gap_2().child(form::input(&self.hits, format!("{KEY}-folder"), &fields.folder)).child(browse).into_any_element();
+        let rows = vec![
+            ("Reference to checkout".into(), reference),
+            ("Worktree branch to create (optional)".into(), form::input(&self.hits, format!("{KEY}-branch"), &fields.branch)),
+            ("Working directory".into(), folder),
+        ];
         let why = adding.why_not(cx).or_else(|| self.busy(cx));
-        let ok = button::action(&self.hits, format!("{KEY}-ok"), "Create Worktree", button::Tone::Success, button::Fill::Solid, cx);
-        let ok = match why {
-            Some(why) => button::dimmed(ok).tooltip(Tooltip::text(why)),
-            None => ok.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.submit_add_worktree(cx))),
-        };
-        let ok = button::focusable(ok, &fields.ok, cx.listener(|this, _: &Press, _, cx| this.submit_add_worktree(cx)), cx);
-        let body = div()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .p_3()
-            .child(labelled("Reference to checkout", reference))
-            .child(labelled("Worktree branch to create (optional)", input("branch", &fields.branch)))
-            .child(labelled("Working directory", folder))
-            .child(div().flex().child(ok));
-        let form = adding.order(cx).on(div()).on_action(cx.listener(|this, _: &Dismiss, _, cx| this.close_add_worktree(cx))).relative().size_full().flex().flex_col().bg(colors.panel_background).child(title).child(body).child(hit_target(&self.hits, KEY.to_string()));
-        Some(form.into_any_element())
+        let form = Form { key: KEY.into(), icon: Icon::Worktree, title: "Create Worktree".into(), ok: "Create Worktree".into(), why: why.map(Into::into), answers: ANSWERS };
+        Some(form.render(&self.hits, rows, adding.order(cx), Some(&fields.ok), cx))
     }
 
     /// The worktree is made: the form closed.

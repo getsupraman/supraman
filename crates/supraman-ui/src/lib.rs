@@ -7,6 +7,7 @@ pub mod clipped;
 pub mod confirm;
 pub mod details;
 pub mod focus_order;
+pub mod form;
 pub mod folder_picker;
 pub mod fonts;
 pub mod hit;
