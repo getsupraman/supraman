@@ -88,6 +88,8 @@ pub(crate) struct WipPanel {
     repo: Option<Repo>,
     /// Bumped by each selection; a load that finishes under another one is dropped.
     token: u64,
+    /// The token of the last read applied.
+    landed: u64,
     /// The last read keeps the lists' state.
     in_place: bool,
     state: State,
@@ -117,6 +119,7 @@ impl WipPanel {
             hits,
             repo: None,
             token: 0,
+            landed: 0,
             in_place: false,
             state: State::Loading,
             colour: 0,
@@ -226,6 +229,7 @@ impl WipPanel {
             return;
         }
         let _stall = stall::section("wip panel: apply");
+        self.landed = token;
         match loaded {
             Ok(l) => {
                 let before = self.shown().map(|s| s.state);
@@ -246,6 +250,11 @@ impl WipPanel {
             Err(why) => self.state = State::Failed(why),
         }
         cx.notify();
+    }
+
+    /// Whether a read of the working directory is under way, its files not shown yet.
+    pub(crate) fn reading(&self) -> bool {
+        matches!(self.state, State::Loading) || self.landed != self.token
     }
 
     pub(crate) fn shown(&self) -> Option<Rc<Shown>> {

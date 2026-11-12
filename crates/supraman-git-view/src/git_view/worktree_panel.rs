@@ -70,6 +70,8 @@ pub(crate) struct WorktreePanel {
     hits: HitTargets,
     /// Bumped by each read; a read that finishes under another one is dropped.
     token: u64,
+    /// The token of the last read applied.
+    landed: u64,
     /// The read under way keeps the lists' open folders and selected files.
     in_place: bool,
     state: State,
@@ -93,7 +95,7 @@ pub(crate) fn list_id(section: Section) -> &'static str {
 
 impl WorktreePanel {
     pub(crate) fn new(hits: HitTargets, cx: &mut Context<Self>) -> Self {
-        WorktreePanel { hits, token: 0, in_place: false, state: State::Empty, view: FileView::Path, order: Order::Ascending, conflicted: List::new(cx), unstaged: List::new(cx), staged: List::new(cx) }
+        WorktreePanel { hits, token: 0, landed: 0, in_place: false, state: State::Empty, view: FileView::Path, order: Order::Ascending, conflicted: List::new(cx), unstaged: List::new(cx), staged: List::new(cx) }
     }
 
     /// Shows the worktree at `path` as `wip` read it, its lists opened afresh; nothing while it is not read yet.
@@ -127,6 +129,7 @@ impl WorktreePanel {
                 _ => "Its folder is gone.".into(),
             };
             self.state = State::Failed(why);
+            self.landed = token;
             return cx.notify();
         };
         if !matches!(self.state, State::Shown(_)) {
@@ -141,6 +144,7 @@ impl WorktreePanel {
                     return;
                 }
                 let _stall = stall::section("worktree panel: apply");
+                this.landed = token;
                 for (list, tree) in [(&this.conflicted, l.conflicted_tree), (&this.unstaged, l.unstaged_tree), (&this.staged, l.staged_tree)] {
                     list.tree.set_tree(tree);
                     if !this.in_place {
@@ -156,6 +160,11 @@ impl WorktreePanel {
         })
         .detach();
         cx.notify();
+    }
+
+    /// Whether the selected worktree's files are not shown yet: its read or its lists under way.
+    pub(crate) fn reading(&self) -> bool {
+        matches!(self.state, State::Reading) || self.landed != self.token
     }
 
     pub(crate) fn shown(&self) -> Option<Rc<Shown>> {

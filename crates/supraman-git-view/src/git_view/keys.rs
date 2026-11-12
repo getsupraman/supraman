@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use gpui::{AnyElement, App, Context, KeyBinding, KeyUpEvent, div, prelude::*};
+use gpui::{AnyElement, App, Context, KeyBinding, KeyDownEvent, KeyUpEvent, Subscription, div, prelude::*};
 
 use super::diff::{self, FileStep};
 use super::{GitView, Selected};
@@ -23,6 +23,12 @@ pub(crate) const MESSAGE_CONTEXT: &str = "GitMessage";
 const GRAPH_KEYS: [&str; 10] = ["h", "shift-h", "j", "k", "pageup", "pagedown", "ctrl-up", "ctrl-down", "shift-up", "shift-down"];
 /// How long a selection rests before the panel reads its commit without a key coming up.
 pub(crate) const SETTLE: Duration = Duration::from_millis(150);
+
+/// Right pressed before the selected row's panel showed its files: the row, and the watch on its panel.
+pub(super) struct Waiting {
+    row: Selected,
+    _landed: Subscription,
+}
 
 pub fn bind_keys(cx: &mut App) {
     let c = Some(KEY_CONTEXT);
@@ -98,6 +104,7 @@ impl GitView {
 
     /// The selection moved by a key: said at once, the panel's read after [`SETTLE`] or the key's release.
     pub(super) fn stepped(&mut self, cx: &mut Context<Self>) {
+        self.right_waits = None;
         cx.emit(super::GitEvent::Selected);
         self.settle = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SETTLE).await;
@@ -140,12 +147,53 @@ impl GitView {
         self.open_diff_in(worktree, target, cx);
     }
 
-    /// Right on a row: its first file's diff, once the panel shows the row.
+    /// Whether `row`'s panel is reading it, its files not shown yet.
+    fn reading(&self, row: &Selected, cx: &App) -> bool {
+        match row {
+            Selected::Wip => self.wip_panel.read(cx).reading(),
+            Selected::Commit(_) | Selected::Stash(_) => self.panel.read(cx).reading(),
+            Selected::Worktree(_) => self.worktree_panel.read(cx).reading(),
+            Selected::Agent(_) => false,
+        }
+    }
+
+    /// Right on a row: its first file's diff, once the panel shows the row's files.
     fn open_first_file(&mut self, cx: &mut Context<Self>) {
         self.settled(cx);
-        if self.diff(cx).is_none() {
+        if self.diff(cx).is_some() {
+            return;
+        }
+        match self.selected(cx).filter(|row| self.files(cx).is_empty() && self.reading(row, cx)) {
+            Some(row) => self.wait_for_files(row, cx),
+            None => self.go_file(FileStep::First, cx),
+        }
+    }
+
+    fn wait_for_files(&mut self, row: Selected, cx: &mut Context<Self>) {
+        let landed = match &row {
+            Selected::Wip => cx.observe(&self.wip_panel, |v, _, cx| v.files_landed(cx)),
+            Selected::Commit(_) | Selected::Stash(_) => cx.observe(&self.panel, |v, _, cx| v.files_landed(cx)),
+            Selected::Worktree(_) => cx.observe(&self.worktree_panel, |v, _, cx| v.files_landed(cx)),
+            Selected::Agent(_) => return,
+        };
+        self.right_waits = Some(Waiting { row, _landed: landed });
+    }
+
+    /// The waiting row's panel changed: its first file opens once its files are shown, while it is still selected and no diff is open.
+    fn files_landed(&mut self, cx: &mut Context<Self>) {
+        let Some(row) = self.right_waits.as_ref().map(|w| w.row.clone()) else { return };
+        if self.selected(cx).as_ref() == Some(&row) && self.reading(&row, cx) {
+            return;
+        }
+        self.right_waits = None;
+        if self.selected(cx).as_ref() == Some(&row) && self.diff(cx).is_none() {
             self.go_file(FileStep::First, cx);
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn right_waits(&self) -> bool {
+        self.right_waits.is_some()
     }
 
     /// The table under the graph's own keys.
@@ -164,6 +212,11 @@ impl GitView {
             .on_action(cx.listener(|this, _: &GoToHead, _, cx| this.go_to(this.heads.head.clone(), cx)))
             .on_action(cx.listener(|this, _: &GoToUpstream, _, cx| this.go_to(this.heads.upstream.clone(), cx)))
             .on_action(cx.listener(|this, _: &OpenFirstFile, _, cx| this.open_first_file(cx)))
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, _| {
+                if matches!(e.keystroke.key.as_str(), "left" | "escape") {
+                    this.right_waits = None;
+                }
+            }))
             .on_key_up(cx.listener(|this, _: &KeyUpEvent, _, cx| this.settled(cx)))
             .child(self.render_table(cx))
             .into_any_element()

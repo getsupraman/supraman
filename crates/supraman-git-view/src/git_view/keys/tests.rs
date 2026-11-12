@@ -3,7 +3,7 @@ use supraman_gitman::fixture::{Fixture, Generated};
 
 use crate::git_view::diff::{FileStep, Of, Target};
 use crate::git_view::keys::SETTLE;
-use crate::git_view::test_support::{keys, redraw};
+use crate::git_view::test_support::{keys, redraw, row_of};
 use crate::git_view::*;
 use crate::git_view::wip::Section;
 
@@ -213,4 +213,68 @@ fn on_the_wip_row_right_opens_an_unstaged_file_first_and_the_walk_goes_on_into_t
     keys(&view, "down", cx);
     keys(&view, "down", cx);
     assert_eq!(open_target(&view, cx), Some(files[0].clone()), "from the last staged file to the first unstaged");
+}
+
+fn waits(view: &Entity<GitView>, cx: &mut VisualTestContext) -> bool {
+    view.read_with(cx, |v, _| v.right_waits())
+}
+
+fn settle(cx: &mut VisualTestContext) {
+    cx.executor().advance_clock(SETTLE * 2);
+    cx.run_until_parked();
+}
+
+/// `keys` dispatches every key before the executor runs the panel's read, so Right and Down come before it lands.
+#[gpui::test]
+fn right_before_the_commit_is_read_opens_its_first_file_once_it_lands(cx: &mut TestAppContext) {
+    let f = Fixture::shared();
+    let (view, cx) = open(&f.dir, cx);
+    let (root, second) = (row_of(&view, f.sha("root"), cx), row_of(&view, f.sha("second"), cx));
+    assert_eq!(second + 1, root, "second sits right above root");
+    click_row(&view, second, cx);
+    keys(&view, "down right", cx);
+    let target = open_target(&view, cx).expect("Right opened a file once root's files landed");
+    assert_eq!(target.path, "a.txt");
+    assert!(matches!(&target.of, Of::Commit { sha, .. } if sha == f.sha("root")), "root's own diff: {:?}", target.of);
+    assert!(!waits(&view, cx));
+}
+
+#[gpui::test]
+fn a_selection_change_drops_a_waiting_right(cx: &mut TestAppContext) {
+    let f = Fixture::shared();
+    let (view, cx) = open(&f.dir, cx);
+    let root = row_of(&view, f.sha("root"), cx);
+    click_row(&view, root, cx);
+    keys(&view, "up right down", cx);
+    assert!(open_target(&view, cx).is_none(), "second's files landed after Down: nothing opens");
+    assert!(!waits(&view, cx));
+    settle(cx);
+    assert!(open_target(&view, cx).is_none(), "root's files landing open nothing either");
+
+    keys(&view, "up right down up", cx);
+    assert!(open_target(&view, cx).is_none(), "back on second, its files landing open nothing: Down dropped the wait");
+    keys(&view, "right", cx);
+    assert!(open_target(&view, cx).is_some(), "a new Right still opens");
+    keys(&view, "left", cx);
+    keys(&view, "down right left", cx);
+    assert!(!waits(&view, cx), "Left drops it");
+    assert!(open_target(&view, cx).is_none());
+}
+
+#[gpui::test]
+fn right_on_a_commit_without_files_waits_for_nothing(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let empty = f.git(&["commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "Empty"]);
+    f.git(&["branch", "empty", empty.trim()]);
+    let (view, cx) = open(&f.dir, cx);
+    let at = row_of(&view, empty.trim(), cx);
+    click_row(&view, at + 1, cx);
+    keys(&view, "up right", cx);
+    assert_eq!(selected_sha(&view, cx), commit(empty.trim()));
+    assert!(view.read_with(cx, |v, cx| v.panel.read(cx).shown().is_some_and(|s| s.sha == empty.trim() && s.changes.is_empty())), "the empty commit is shown");
+    assert!(open_target(&view, cx).is_none());
+    assert!(!waits(&view, cx), "a load with no files ends the wait");
+    keys(&view, "down", cx);
+    settle(cx);
+    assert!(open_target(&view, cx).is_none(), "the next commit's files landing open nothing");
 }
