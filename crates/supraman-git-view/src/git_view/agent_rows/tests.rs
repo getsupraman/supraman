@@ -59,7 +59,7 @@ fn a_session_working_here_shows_as_a_row_over_the_wip_row_with_its_state_and_goe
     set(&live, vec![session("fm-beta", f.dir.join("src"), Activity::Waiting, None), session("fm-alpha", f.dir.clone(), Activity::Working, Some("a1"))], &view, cx);
     assert_eq!(kinds(&view, 3, cx), ["agent fm-alpha", "agent fm-beta", "wip"], "one row per session, by name, over the WIP row");
     assert!(painted(&view, "git-agent-0", cx) && painted(&view, "git-agent-1", cx) && painted(&view, "git-graph-0", cx));
-    assert_eq!(view.read_with(cx, |v, _| v.agents.shown.iter().map(|s| s.activity.word()).collect::<Vec<_>>()), ["working", "waiting"]);
+    assert_eq!(view.read_with(cx, |v, _| v.agents.shown().map(|s| s.activity.word()).collect::<Vec<_>>()), ["working", "waiting"]);
     assert_eq!(view.read_with(cx, |v, cx| v.wip_row(cx)), Some(2));
     assert_eq!(view.read_with(cx, |v, cx| v.pages.read(cx).commits), view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().filter(|r| r.commit()).count()), "agent rows count as no commits");
 
@@ -67,7 +67,7 @@ fn a_session_working_here_shows_as_a_row_over_the_wip_row_with_its_state_and_goe
     set(&live, vec![session("fm-alpha", f.dir.clone(), Activity::Idle, Some("a1"))], &view, cx);
     assert_eq!(kinds(&view, 2, cx), ["agent fm-alpha", "wip"], "fm-beta ended");
     assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Wip), "the selection stays on its row");
-    assert_eq!(view.read_with(cx, |v, _| v.agents.shown[0].activity), Activity::Idle, "the state follows the session");
+    assert_eq!(view.read_with(cx, |v, _| v.agents.shown().next().unwrap().activity), Activity::Idle, "the state follows the session");
 
     view.update(cx, |v, cx| v.refresh_graph(None, cx));
     cx.run_until_parked();
@@ -240,7 +240,7 @@ fn a_write_while_a_session_works_here_runs_without_a_question(cx: &mut TestAppCo
 }
 
 #[gpui::test]
-fn a_session_starting_in_another_worktree_shows_its_row_with_its_lead_at_once(cx: &mut TestAppContext) {
+fn a_session_starting_in_another_worktree_shows_its_row_with_the_sessions_agent_row_on_it_at_once(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let live = Live::default();
     let (view, cx) = open(f.dir.clone(), live.clone(), cx);
@@ -249,8 +249,9 @@ fn a_session_starting_in_another_worktree_shows_its_row_with_its_lead_at_once(cx
 
     set(&live, vec![session("fm-side", f.worktree.join("src"), Activity::Waiting, None)], &view, cx);
     let ix = row(&view, cx).expect("the session's start reads the worktrees again and lays its row out");
-    assert!(painted(&view, &format!("git-worktree-session-{ix}-0"), cx) && painted(&view, &format!("git-worktree-state-{ix}-0"), cx), "the session's lead with its state");
-    assert_eq!(agents(&view, cx), [], "not a session of this worktree");
+    assert_eq!(agents(&view, cx), [(ix - 1, "fm-side".to_string())], "its agent row stacked on the worktree's row");
+    assert!(painted(&view, &format!("git-agent-state-{}", ix - 1), cx), "the session's lead with its state");
+    assert!(!painted(&view, &format!("git-worktree-session-{ix}-0"), cx), "no lead on the worktree row");
 
     set(&live, Vec::new(), &view, cx);
     assert_eq!(row(&view, cx), None, "its end takes the row away");
