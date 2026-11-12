@@ -1,4 +1,4 @@
-//! The viewer's hunk buttons, line + and − and line menu writing through the tab, on fixture copies.
+//! The viewer's line menu writing a line, a selection or a hunk through the tab, on fixture copies.
 
 use gpui::{Entity, Modifiers, MouseButton, Pixels, Point, TestAppContext, VisualTestContext, point, px};
 use supraman_editor::{ZedEditor, rows};
@@ -7,7 +7,7 @@ use supraman_gitman::{ChangeKind, FileChange};
 
 use crate::git_view::diff::*;
 use crate::git_view::GitView;
-use crate::git_view::test_support::{Opts, open as open_tab, redraw, settle};
+use crate::git_view::test_support::{Opts, open as open_tab, redraw, repaint, settle};
 
 const PATH: &str = "picked.txt";
 const BASE: &str = "one\ntwo\nthree\nfour\nfive\nsix\nseven\n";
@@ -79,56 +79,78 @@ fn at_line(d: &Entity<DiffView>, line: u32, new: bool, cx: &mut VisualTestContex
     })
 }
 
+fn right_click(view: &Entity<GitView>, at: Point<Pixels>, cx: &mut VisualTestContext) {
+    cx.simulate_mouse_down(at, MouseButton::Right, Modifiers::none());
+    cx.simulate_mouse_up(at, MouseButton::Right, Modifiers::none());
+    settle(view, cx);
+}
+
 #[gpui::test]
-fn diff_picks_hunk_buttons_stage_and_discard_and_unstage(cx: &mut TestAppContext) {
+fn diff_picks_the_menu_stages_discards_and_unstages_a_line_s_hunk(cx: &mut TestAppContext) {
     let f = fixture();
     let (view, cx) = open(&f, cx);
     let d = show(&view, Of::Unstaged, Layout::Split, cx);
-    assert!(hit(&view, &hunk_key(0, "discard"), cx).is_some() && hit(&view, &hunk_key(1, "stage"), cx).is_some(), "each hunk has its buttons");
-    assert!(hit(&view, &hunk_key(0, "unstage"), cx).is_none(), "no Unstage on the Unstaged diff");
-
-    click(&view, &hunk_key(0, "stage"), cx);
-    assert_eq!(index(&f), "one\nTWO\nthree\nfour\nfive\nsix\nseven\n", "Stage hunk stages the first hunk only");
+    right_click(&view, at_line(&d, 1, true, cx), cx);
+    assert_eq!(d.read_with(cx, |d, _| d.menu_labels()), ["Stage this line", "Discard this line", "Stage hunk", "Discard hunk"]);
+    click(&view, "menu-hunk-stage", cx);
+    assert_eq!(index(&f), "one
+TWO
+three
+four
+five
+six
+seven
+", "Stage hunk stages the removed and the added line of the first hunk only");
     assert_eq!(d.read_with(cx, |d, _| d.hunk_count()), 1, "the viewer reads the file again");
 
-    click(&view, &hunk_key(0, "discard"), cx);
-    assert_eq!(worktree(&f), "one\nTWO\nthree\nfour\nfive\nsix\nseven\n", "Discard hunk puts the index's lines back");
+    right_click(&view, at_line(&d, 7, true, cx), cx);
+    click(&view, "menu-hunk-discard", cx);
+    assert_eq!(worktree(&f), "one
+TWO
+three
+four
+five
+six
+seven
+", "Discard hunk puts the index's lines back");
     assert_eq!(view.read_with(cx, |v, _| v.toast.text().map(str::to_string)).as_deref(), Some("Discarded a hunk; you can undo it"));
     view.update(cx, |v, cx| v.undo_bar().update(cx, |u, cx| u.undo(cx)));
     settle(&view, cx);
-    assert_eq!(worktree(&f), "one\nTWO\nthree\nfour\nfive\nsix\nSEVEN\neight\n", "Undo brings the hunk back");
+    assert_eq!(worktree(&f), WORK, "Undo brings the hunk back");
 
-    show(&view, Of::Staged, Layout::Inline, cx);
-    assert!(hit(&view, &hunk_key(0, "stage"), cx).is_none(), "no Stage on the Staged diff");
-    click(&view, &hunk_key(0, "unstage"), cx);
+    let d = show(&view, Of::Staged, Layout::Inline, cx);
+    right_click(&view, at_line(&d, 1, true, cx), cx);
+    assert_eq!(d.read_with(cx, |d, _| d.menu_labels()), ["Unstage this line", "Unstage hunk"]);
+    click(&view, "menu-hunk-unstage", cx);
     assert_eq!(index(&f), BASE, "Unstage hunk");
 }
 
 #[gpui::test]
-fn diff_picks_a_line_stages_and_unstages_from_its_gutter_button(cx: &mut TestAppContext) {
+fn diff_picks_paint_no_hunk_or_line_button_and_the_menu_stages_one_line(cx: &mut TestAppContext) {
     let f = fixture();
     let (view, cx) = open(&f, cx);
     let d = show(&view, Of::Unstaged, Layout::Inline, cx);
     let at = at_line(&d, 7, true, cx);
     cx.simulate_mouse_move(at, None, Modifiers::none());
     settle(&view, cx);
-    assert_eq!(d.read_with(cx, |d, _| d.hovered()), Some(Line { new: true, row: 7 }), "the pointer is over the added line");
-    click(&view, "diff-line-stage", cx);
-    assert_eq!(index(&f), "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n", "Stage this line stages that line only");
+    let buttons: Vec<String> = repaint(&view, cx).borrow().keys().filter(|k| k.starts_with("diff-hunk-") || k.starts_with("diff-line-")).cloned().collect();
+    assert!(buttons.is_empty(), "no hunk or line button over the text: {buttons:?}");
+    right_click(&view, at, cx);
+    click(&view, "menu-line-stage", cx);
+    assert_eq!(index(&f), "one
+two
+three
+four
+five
+six
+seven
+eight
+", "Stage this line stages that line only");
 
     let d = show(&view, Of::Staged, Layout::Split, cx);
-    let at = at_line(&d, 7, true, cx);
-    cx.simulate_mouse_move(at, None, Modifiers::none());
-    settle(&view, cx);
-    assert!(hit(&view, "diff-line-stage", cx).is_none());
-    click(&view, "diff-line-unstage", cx);
+    right_click(&view, at_line(&d, 7, true, cx), cx);
+    click(&view, "menu-line-unstage", cx);
     assert_eq!(index(&f), BASE, "Unstage this line");
-}
-
-fn right_click(view: &Entity<GitView>, at: Point<Pixels>, cx: &mut VisualTestContext) {
-    cx.simulate_mouse_down(at, MouseButton::Right, Modifiers::none());
-    cx.simulate_mouse_up(at, MouseButton::Right, Modifiers::none());
-    settle(view, cx);
 }
 
 #[gpui::test]
@@ -138,7 +160,7 @@ fn diff_picks_the_line_menu_acts_on_the_line_or_the_selection(cx: &mut TestAppCo
     let d = show(&view, Of::Unstaged, Layout::Inline, cx);
     let at = at_line(&d, 6, true, cx);
     right_click(&view, at, cx);
-    assert_eq!(d.read_with(cx, |d, _| d.menu_labels()), ["Stage this line", "Discard this line"]);
+    assert_eq!(d.read_with(cx, |d, _| d.menu_labels()), ["Stage this line", "Discard this line", "Stage hunk", "Discard hunk"], "one line: its items, then its hunk's");
     click(&view, "menu-line-discard", cx);
     assert_eq!(worktree(&f), "one\nTWO\nthree\nfour\nfive\nsix\neight\n", "Discard this line drops the added SEVEN only");
 
@@ -158,7 +180,7 @@ fn diff_picks_the_line_menu_acts_on_the_line_or_the_selection(cx: &mut TestAppCo
     let d = view.read_with(cx, |v, cx| v.diff(cx).cloned()).unwrap();
     let at = at_line(&d, 1, true, cx);
     right_click(&view, at, cx);
-    assert_eq!(d.read_with(cx, |d, _| d.menu_labels()), ["Unstage this line"]);
+    assert_eq!(d.read_with(cx, |d, _| d.menu_labels()), ["Unstage this line", "Unstage hunk"], "one line: its items, then its hunk's");
 }
 
 #[gpui::test]
@@ -167,30 +189,44 @@ fn diff_picks_wait_while_another_write_runs(cx: &mut TestAppContext) {
     let (view, cx) = open(&f, cx);
     let d = show(&view, Of::Unstaged, Layout::Split, cx);
     let gate = view.read_with(cx, |v, _| v.gate().clone());
-    let blocked = view.update(cx, |_, cx| {
+    let at = at_line(&d, 1, true, cx);
+    let (blocked, dimmed) = d.update_in(cx, |d, window, cx| {
         gate.update(cx, |g, cx| g.request(supraman_gitman::write::LockSet::refresh(), |_| Ok(()), cx));
-        d.update(cx, |d, cx| {
-            let blocked = d.picks_blocked(cx);
-            d.pick(Act::Hunk(supraman_gitman::write::lines::Pick::Stage, 0), cx);
-            blocked
-        })
+        d.open_line_menu(at, window, cx);
+        let blocked = d.picks_blocked(cx);
+        d.pick(Act::Hunk(supraman_gitman::write::lines::Pick::Stage, 0), cx);
+        (blocked, d.menu_dimmed())
     });
     assert_eq!(blocked, Some(crate::git_view::write_gate::WORKING));
+    assert_eq!(dimmed, vec![Some(crate::git_view::write_gate::WORKING.to_string()); 4], "every item dimmed with why");
     settle(&view, cx);
     assert_eq!(index(&f), BASE, "a pick while another write runs stages nothing");
     assert_eq!(view.read_with(cx, |v, _| v.toast.text().map(str::to_string)).as_deref(), Some(crate::git_view::write_gate::WORKING), "it says why");
-    click(&view, &hunk_key(0, "stage"), cx);
-    assert_eq!(index(&f), "one\nTWO\nthree\nfour\nfive\nsix\nseven\n");
+    right_click(&view, at_line(&d, 1, false, cx), cx);
+    assert_eq!(d.read_with(cx, |d, _| d.menu_dimmed()), vec![None; 4], "once the write ends");
+    click(&view, "menu-hunk-stage", cx);
+    assert_eq!(index(&f), "one
+TWO
+three
+four
+five
+six
+seven
+");
 }
 
 #[gpui::test]
 fn diff_picks_wait_while_a_merge_is_under_way(cx: &mut TestAppContext) {
     let f = fixture();
     let head = f.git(&["rev-parse", "HEAD"]);
-    std::fs::write(f.dir.join(".git/MERGE_HEAD"), format!("{head}\n")).unwrap();
+    std::fs::write(f.dir.join(".git/MERGE_HEAD"), format!("{head}
+")).unwrap();
     let (view, cx) = open(&f, cx);
     let d = show(&view, Of::Unstaged, Layout::Split, cx);
-    assert_eq!(d.read_with(cx, |d, cx| d.picks_blocked(cx)), Some("Lines cannot be staged or discarded during a merge or rebase"));
-    click(&view, &hunk_key(0, "stage"), cx);
-    assert_eq!(index(&f), BASE, "a dimmed hunk button stages nothing");
+    let why = "Lines cannot be staged or discarded during a merge or rebase";
+    assert_eq!(d.read_with(cx, |d, cx| d.picks_blocked(cx)), Some(why));
+    right_click(&view, at_line(&d, 1, true, cx), cx);
+    assert_eq!(d.read_with(cx, |d, _| d.menu_dimmed()), vec![Some(why.to_string()); 4]);
+    click(&view, "menu-hunk-stage", cx);
+    assert_eq!(index(&f), BASE, "a dimmed item stages nothing");
 }

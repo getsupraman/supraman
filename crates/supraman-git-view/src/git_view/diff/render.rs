@@ -174,11 +174,11 @@ impl DiffView {
             (Content::Text(_), Mode::File, _) => self.file_editor(window, cx).map_or_else(|| div().into_any_element(), |e| e.into_any_element()),
             (Content::Text(_), Mode::Diff, Layout::Inline) => {
                 let editor = self.inline_editor(window, cx).into_any_element();
-                self.with_picks(editor, window, cx)
+                self.with_picks(editor, cx)
             }
             (Content::Text(_), Mode::Diff, Layout::Split) => {
                 let split = self.split(window, cx).into_any_element();
-                self.with_picks(split, window, cx)
+                self.with_picks(split, cx)
             }
         }
     }
