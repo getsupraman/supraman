@@ -354,13 +354,14 @@ async fn git_palette(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowC
     git_add_worktree(view, out, cx).await?;
     git_band(view, out, cx).await?;
     git_agent(view, &dir, &fixture.worktree, out, cx).await?;
+    git_worktree_tab(view, &dir, &fixture.worktree, out, cx).await?;
     git_pills(view, out, cx).await?;
     drop(fixture);
     Ok(())
 }
 
 /// A session working in the same tab's worktree: its agent row, its page as the fleet gives it, and the sidebar's menu on a right-click;
-/// two in the other worktree: their leads on its row beside the agent row and the WIP row. The page and the menu come from `FleetView`, which no unit test builds.
+/// two in the other worktree: their agent rows stacked on its row. The page and the menu come from `FleetView`, which no unit test builds.
 async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let folder = dir.to_path_buf();
     cx.background_executor()
@@ -413,10 +414,7 @@ async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path
     println!("shot: {}", shot.display());
     let window = cx.update(|window, _| window.viewport_size())?;
     crate::selftest_git::resize(view, gpui::size(window.width * 1.5, window.height), cx).await?;
-    crate::selftest::until(view, cx, Duration::from_secs(20), "the other worktree's row with both sessions' leads", |v| {
-        v.hits.borrow().keys().any(|k| k.starts_with("git-worktree-session-") && k.ends_with("-1")).then_some(())
-    })
-    .await?;
+    crate::selftest::until(view, cx, Duration::from_secs(20), "the other worktree's row with both sessions' agent rows on it", |v| stacked_on_worktree(v, 2)).await?;
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-git-wip-rows.png"), None, cx).await?;
     println!("shot: {}", shot.display());
@@ -441,6 +439,31 @@ async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path
         v.dialogs.menu = None;
         cx.notify();
     });
+    Ok(())
+}
+
+/// A worktree row with at least `n` agent rows right above it.
+fn stacked_on_worktree(v: &FleetView, n: usize) -> Option<()> {
+    let hits = v.hits.borrow();
+    let row = |k: &String| k.strip_prefix("git-worktree-ref-")?.parse::<usize>().ok();
+    hits.keys().filter_map(row).any(|ix| ix >= n && (1..=n).all(|d| hits.contains_key(&format!("git-agent-{}", ix - d)))).then_some(())
+}
+
+/// The side worktree's own Git tab: the main checkout's row with its home icon, Open Worktree, and the main checkout's session as an agent row on it, as the main tab stacks its own;
+/// one tab's look beside the other's is what René compares, which no unit test shows.
+async fn git_worktree_tab(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    view.read_with(cx, |v, _| v.hits.borrow_mut().retain(|k, _| !k.starts_with("git-")));
+    let tab = view.update(cx, |v, cx| v.open_git(side.to_path_buf(), crate::view::git_tab::title(side), cx));
+    crate::selftest::until(view, cx, Duration::from_secs(20), "the main checkout's row with its session's agent row on it", |v| stacked_on_worktree(v, 1)).await?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-git-worktree-tab.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    view.update(cx, |v, cx| {
+        v.close_tab(tab, cx);
+        v.hits.borrow_mut().retain(|k, _| !k.starts_with("git-"));
+        v.open_git(dir.to_path_buf(), "Git · shop".into(), cx);
+    });
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the shop's Git tab again", |v| v.hits.borrow().contains_key("git-agent-0").then_some(())).await?;
     Ok(())
 }
 

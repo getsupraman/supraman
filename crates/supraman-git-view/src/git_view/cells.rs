@@ -57,6 +57,7 @@ pub(crate) fn ref_cell(row: &Row, listed: bool) -> RefCellView {
 fn kind_icon(kind: RefKind) -> Icon {
     match kind {
         RefKind::Worktree => Icon::Worktree,
+        RefKind::Main => Icon::Home,
         RefKind::Local => Icon::Local,
         RefKind::Remote => Icon::Remote,
         RefKind::Tag => Icon::Tag,
@@ -125,11 +126,11 @@ pub(crate) fn branch_header(key: &str, branch: Option<&str>, track: &str, colour
         .when(!track.is_empty(), |d| d.child(div().relative().flex_none().whitespace_nowrap().text_color(palette.muted).child(SharedString::from(track.to_string())).child(hit_target(hits, format!("{key}-upstream")))))
 }
 
-/// The icons after a pill's name: its refs' kinds, a linked worktree's last (GitKraken's order).
+/// The icons after a pill's name: its refs' kinds, the checkout holding it last (GitKraken's order).
 pub(crate) fn kind_icons(group: &RefGroup) -> Vec<Icon> {
     let mut kinds: Vec<RefKind> = group.refs.iter().map(|r| r.kind).collect();
     kinds.dedup();
-    kinds.sort_by_key(|k| *k == RefKind::Worktree);
+    kinds.sort_by_key(|k| matches!(k, RefKind::Worktree | RefKind::Main));
     kinds.into_iter().map(kind_icon).collect()
 }
 

@@ -9,6 +9,8 @@ use crate::{Head, Refs};
 pub enum RefKind {
     /// A local branch checked out in another, linked worktree.
     Worktree,
+    /// A local branch checked out in the main checkout, seen from a linked worktree.
+    Main,
     Local,
     Remote,
     Tag,
@@ -95,10 +97,14 @@ fn labels(refs: &Refs) -> Vec<(String, String, RefLabel)> {
         Head::Branch { name, .. } => Some(name.as_str()),
         Head::Detached { .. } => None,
     };
-    let checked_out = |name: &str| refs.worktrees.iter().any(|w| !w.main && w.branch.as_deref() == Some(name));
+    let held_by = |name: &str| refs.worktrees.iter().find(|w| w.branch.as_deref() == Some(name)).map(|w| w.main);
     let locals = refs.branches.iter().map(|b| {
         let head = head_branch == Some(b.name.as_str());
-        let kind = if !head && checked_out(&b.name) { RefKind::Worktree } else { RefKind::Local };
+        let kind = match held_by(&b.name) {
+            Some(false) if !head => RefKind::Worktree,
+            Some(true) if !head => RefKind::Main,
+            _ => RefKind::Local,
+        };
         (b.sha.clone(), b.name.clone(), RefLabel { kind, name: b.name.clone(), head })
     });
     let remotes = refs.remotes.iter().map(|r| {

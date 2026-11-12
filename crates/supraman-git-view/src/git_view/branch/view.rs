@@ -32,7 +32,7 @@ impl gpui::Render for DraggedPill {
 /// The local branch of a pill's group, else its remote branches.
 fn split(group: &RefGroup) -> (Vec<String>, Vec<String>, Vec<String>) {
     let of = |kinds: &[RefKind]| group.refs.iter().filter(|r| kinds.contains(&r.kind)).map(|r| r.name.clone()).collect::<Vec<_>>();
-    (of(&[RefKind::Local, RefKind::Worktree]), of(&[RefKind::Remote]), of(&[RefKind::Tag]))
+    (of(&[RefKind::Local, RefKind::Worktree, RefKind::Main]), of(&[RefKind::Remote]), of(&[RefKind::Tag]))
 }
 
 pub(crate) fn dragged(group: &RefGroup, sha: &str) -> Option<Dragged> {

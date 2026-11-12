@@ -211,6 +211,19 @@ fn layout_ref_groups_and_their_order() {
 }
 
 #[test]
+fn from_a_linked_worktree_the_main_checkouts_branch_is_main_and_its_own_head_local() {
+    let refs = Refs {
+        head: Head::Branch { name: "wt".into(), sha: Some("x".into()) },
+        branches: vec![branch("main", "x"), branch("wt", "x"), branch("free", "x")],
+        worktrees: vec![Worktree { branch: Some("main".into()), main: true, ..Worktree::default() }, Worktree { branch: Some("wt".into()), ..Worktree::default() }],
+        ..ref_order_refs()
+    };
+    let rows = Layout::new(&Refs { remotes: vec![], tags: vec![], ..refs }, false).extend(&[commit("x", &[])]);
+    let kinds: Vec<(&str, RefKind)> = rows[0].refs.iter().map(|g| (g.name.as_str(), g.kind())).collect();
+    assert_eq!(kinds, [("wt", RefKind::Local), ("main", RefKind::Main), ("free", RefKind::Local)]);
+}
+
+#[test]
 fn layout_detached_head_marks_its_commit() {
     let mut refs = ref_order_refs();
     refs.head = Head::Detached { sha: "y".into() };

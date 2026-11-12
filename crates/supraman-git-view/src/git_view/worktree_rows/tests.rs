@@ -9,7 +9,8 @@ use supraman_gitman::fixture::Fixture;
 
 use crate::git_view::background::{self, refresh_wips};
 use crate::git_view::test_support::{self, Opts, QUIET, opened, painted, press, redraw, repaint};
-use crate::git_view::{GitView, Selected};
+use crate::git_view::{GitView, Selected, cells};
+use supraman_ui::icon::Icon;
 use crate::occupancy;
 
 /// The fixture with a second linked worktree, `extra`, detached at `root`.
@@ -42,10 +43,6 @@ fn worktree_rows(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<(Str
     })
 }
 
-fn names(view: &crate::git_view::worktree_rows::WorktreeView) -> Vec<&str> {
-    view.sessions.iter().map(|s| s.name.as_str()).collect()
-}
-
 fn session(name: &str, id: &str, cwd: PathBuf) -> occupancy::LiveSession {
     occupancy::LiveSession { name: name.into(), claude_session_id: id.into(), cwd, activity: supraman_ui::marks::Activity::Working, attach: None }
 }
@@ -65,7 +62,7 @@ fn a_worktree_row_shows_above_its_head_only_while_changed_or_worked_in_and_not_w
     reread(&view, cx);
     assert_eq!(worktree_rows(&view, cx), [(path_key(&f.worktree), head(&f.worktree, &f))], "a change: its row right above its HEAD");
 
-    live.set_sessions(vec![occupancy::LiveSession { name: "fm-alpha".into(), claude_session_id: String::new(), cwd: extra.join("src"), activity: supraman_ui::marks::Activity::Working, attach: None }]);
+    live.set_sessions(vec![session("fm-alpha", "aa", extra.join("src"))]);
     reread(&view, cx);
     let mut rows = worktree_rows(&view, cx);
     rows.sort();
@@ -95,7 +92,7 @@ fn a_worktree_row_shows_above_its_head_only_while_changed_or_worked_in_and_not_w
 }
 
 #[gpui::test]
-fn a_worktree_row_says_its_counts_and_branch_or_detached_head_or_shows_the_sessions_lead(cx: &mut TestAppContext) {
+fn a_worktree_row_says_its_counts_and_branch_or_detached_head_and_its_sessions_stand_on_it_as_agent_rows(cx: &mut TestAppContext) {
     let (f, extra) = fixture();
     let live = occupancy::Live::default();
     std::fs::write(f.worktree.join("new.txt"), b"new\n").unwrap();
@@ -105,17 +102,19 @@ fn a_worktree_row_says_its_counts_and_branch_or_detached_head_or_shows_the_sessi
 
     let side = row_of(&view, &f.worktree, cx);
     let said = view.update(cx, |v, cx| v.worktree_view(side, cx)).expect("read");
-    assert_eq!((said.label.as_str(), said.counts.as_str(), names(&said)), ("side", "+1", vec![]));
+    assert_eq!((said.label.as_str(), said.counts.as_str()), ("side", "+1"));
     assert!(painted(&view, &format!("git-worktree-wip-{side}"), cx), "muted // WIP");
     assert!(painted(&view, &format!("git-worktree-ref-{side}"), cx));
 
-    live.set_sessions(vec![occupancy::LiveSession { name: "fm-alpha".into(), claude_session_id: String::new(), cwd: extra.clone(), activity: supraman_ui::marks::Activity::Working, attach: None }]);
+    live.set_sessions(vec![session("fm-alpha", "aa", extra.clone())]);
     redraw(&view, cx);
     let detached = row_of(&view, &extra, cx);
     let said = view.update(cx, |v, cx| v.worktree_view(detached, cx)).expect("read");
-    assert_eq!((said.label.as_str(), said.counts.as_str(), names(&said)), ("Detached HEAD", "✎1", vec!["fm-alpha"]));
-    assert!(painted(&view, &format!("git-worktree-session-{detached}-0"), cx) && painted(&view, &format!("git-worktree-state-{detached}-0"), cx), "the session's lead with its state");
-    assert!(!painted(&view, &format!("git-worktree-wip-{detached}"), cx), "in place of // WIP");
+    assert_eq!((said.label.as_str(), said.counts.as_str()), ("Detached HEAD", "✎1"));
+    assert_eq!(view.read_with(cx, |v, cx| v.agent_rows(cx)), [(detached - 1, "aa".to_string())], "the session's agent row right above its worktree's");
+    assert!(painted(&view, &format!("git-agent-{}", detached - 1), cx) && painted(&view, &format!("git-agent-state-{}", detached - 1), cx), "the agent row's lead with its state");
+    assert!(painted(&view, &format!("git-worktree-wip-{detached}"), cx), "the worktree row keeps // WIP");
+    assert!(!painted(&view, &format!("git-worktree-session-{detached}-0"), cx), "no lead on the worktree row");
 }
 
 #[gpui::test]
@@ -139,39 +138,125 @@ fn double_click_and_open_worktree_ask_for_the_worktrees_tab_and_a_detached_ones_
     assert_eq!(seen.borrow().last(), Some(&path_key(&extra)), "Open Worktree opens even a detached one");
 }
 
-#[gpui::test]
-fn every_session_in_a_worktree_has_its_lead_on_its_row_its_word_in_its_tooltip_and_its_own_menu(cx: &mut TestAppContext) {
-    let (f, extra) = fixture();
+/// The agent rows right above row `ix`, top down.
+fn stacked_on(view: &Entity<GitView>, ix: usize, cx: &mut VisualTestContext) -> Vec<String> {
+    let agents = view.read_with(cx, |v, cx| v.agent_rows(cx));
+    let mut above: Vec<String> = Vec::new();
+    for at in (0..ix).rev() {
+        match agents.iter().find(|(i, _)| *i == at) {
+            Some((_, id)) => above.insert(0, id.clone()),
+            None => break,
+        }
+    }
+    above
+}
+
+/// The tab at `own` shows the sessions in `other` as agent rows on its worktree row: their rendering, selection, panel and menu.
+fn other_checkouts_sessions_are_agent_rows(own: &Path, other: &Path, cx: &mut TestAppContext) {
     let live = occupancy::Live::default();
-    let (view, cx) = open(&f, live.clone(), cx);
-    live.set_sessions(vec![session("fm-beta", "bb", extra.join("src")), session("fm-alpha", "aa", extra.clone()), session("fm-here", "hh", f.dir.clone())]);
+    let (view, cx) = test_support::open(own, Opts::default().following(live.clone()).background().size(1400., 900.), cx);
+    live.set_sessions(vec![session("fm-beta", "bb", other.join("src")), session("fm-alpha", "aa", other.to_path_buf()), session("fm-here", "hh", own.to_path_buf())]);
     reread(&view, cx);
 
-    let ix = row_of(&view, &extra, cx);
-    assert_eq!(names(&view.update(cx, |v, cx| v.worktree_view(ix, cx)).expect("read")), ["fm-alpha", "fm-beta"]);
+    let ix = row_of(&view, other, cx);
+    assert_eq!(stacked_on(&view, ix, cx), ["aa", "bb"], "a row per session, by name, stacked on the other checkout's row");
+    let head = view.read_with(cx, |v, _| v.heads.head.clone()).expect("HEAD");
+    let own_row = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| r.wip() || r.sha == head)).expect("the tab's own row");
+    assert_eq!(stacked_on(&view, own_row, cx), ["hh"], "the tab's own session on its own row");
     for n in 0..2 {
-        assert!(painted(&view, &format!("git-worktree-session-{ix}-{n}"), cx), "lead {n}");
-        assert!(!painted(&view, &format!("git-worktree-state-{ix}-{n}"), cx), "lead {n}: its dot carries the state, the names get the room");
+        assert!(!painted(&view, &format!("git-worktree-session-{ix}-{n}"), cx), "no lead {n} on the worktree row");
     }
     let hits = repaint(&view, cx);
-    let (a, b) = (hits.borrow()[&format!("git-worktree-session-{ix}-0")].clone(), hits.borrow()[&format!("git-worktree-session-{ix}-1")].clone());
-    assert!(a.bounds.right() <= b.bounds.left() && (a.bounds.center().y - b.bounds.center().y).abs() < gpui::px(1.), "side by side on one row: {a:?} {b:?}");
     let commit = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| r.commit())).expect("a commit row");
-    let (agent, text) = (hits.borrow()["git-agent-0"], hits.borrow()[&format!("git-text-{commit}")]);
-    assert_eq!((agent.bounds.left(), a.bounds.left()), (text.bounds.left(), text.bounds.left()), "the agent's lead, the worktree's and a commit's message start at one x");
+    let (agent, text) = (hits.borrow()[&format!("git-agent-{}", ix - 2)], hits.borrow()[&format!("git-text-{commit}")]);
+    assert_eq!(agent.bounds.left(), text.bounds.left(), "the agent's lead and a commit's message start at one x");
 
-    supraman_ui::tooltip::LAST_SHOWN.with(|l| l.borrow_mut().take());
-    cx.simulate_mouse_move(b.bounds.center(), None, gpui::Modifiers::none());
-    cx.executor().advance_clock(std::time::Duration::from_secs(2));
-    cx.run_until_parked();
-    assert_eq!(supraman_ui::tooltip::LAST_SHOWN.with(|l| l.borrow().clone()).as_deref(), Some("fm-beta · working"), "the word in the lead's tooltip with its name");
+    press(&view, &format!("git-agent-{}", ix - 1), MouseButton::Left, 1, cx);
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Agent("bb".into())));
+    assert!(painted(&view, "git-agent-section-session", cx), "its panel");
 
     let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let s = seen.clone();
     cx.update(|_, cx| cx.subscribe(&view, move |_, e: &crate::git_view::agent_rows::AgentMenu, _| s.borrow_mut().push(e.session.name.clone())).detach());
-    press(&view, &format!("git-worktree-session-{ix}-1"), MouseButton::Right, 1, cx);
-    press(&view, &format!("git-worktree-ref-{ix}"), MouseButton::Right, 1, cx);
-    assert_eq!(*seen.borrow(), ["fm-beta", "fm-alpha"], "a lead's right-click is its session's menu, the rest of the row the first's");
+    press(&view, &format!("git-agent-{}", ix - 2), MouseButton::Right, 1, cx);
+    assert_eq!(*seen.borrow(), ["fm-alpha"], "its right-click is the session's menu");
+
+    live.set_sessions(vec![session("fm-beta", "bb", other.join("src"))]);
+    reread(&view, cx);
+    let ix = row_of(&view, other, cx);
+    assert_eq!(stacked_on(&view, ix, cx), ["bb"], "an ended session's row goes");
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Agent("bb".into())), "the selection stays on its session");
+}
+
+#[gpui::test]
+fn in_the_main_tab_a_linked_worktrees_sessions_are_agent_rows_on_its_row(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    other_checkouts_sessions_are_agent_rows(&f.dir, &f.worktree, cx);
+}
+
+#[gpui::test]
+fn in_a_worktree_tab_the_main_checkouts_sessions_are_agent_rows_on_its_row(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    other_checkouts_sessions_are_agent_rows(&f.worktree, &f.dir, cx);
+}
+
+#[gpui::test]
+fn in_a_worktree_tab_the_main_checkouts_row_and_its_branchs_pill_carry_the_home_icon(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    std::fs::write(f.dir.join("new.txt"), b"new\n").unwrap();
+    let (view, cx) = test_support::open(&f.worktree, Opts::default().following(occupancy::Live::default()).background().size(1400., 900.), cx);
+    reread(&view, cx);
+
+    let main = row_of(&view, &f.dir, cx);
+    let said = view.update(cx, |v, cx| v.worktree_view(main, cx)).expect("read");
+    assert!(said.main);
+    assert_eq!(said.icons(), [Icon::Local, Icon::Home], "the main checkout's row: home, not the tree");
+    assert!(painted(&view, &format!("git-worktree-label-{main}-icon-1"), cx));
+
+    let branch = f.at(&f.dir, &["branch", "--show-current"]);
+    let icons = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().find_map(|r| r.row.refs.iter().find(|g| g.name == branch).map(cells::kind_icons))).expect("the main checkout's branch's pill");
+    assert_eq!(icons.last(), Some(&Icon::Home), "its branch's pill: {icons:?}");
+}
+
+#[gpui::test]
+fn in_the_main_tab_a_linked_worktrees_row_and_pill_keep_the_tree(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    std::fs::write(f.worktree.join("new.txt"), b"new\n").unwrap();
+    let (view, cx) = test_support::open(&f.dir, Opts::default().following(occupancy::Live::default()).background().size(1400., 900.), cx);
+    reread(&view, cx);
+
+    let side = row_of(&view, &f.worktree, cx);
+    let said = view.update(cx, |v, cx| v.worktree_view(side, cx)).expect("read");
+    assert_eq!((said.main, said.icons()), (false, vec![Icon::Local, Icon::Worktree]));
+    let icons = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().find_map(|r| r.row.refs.iter().find(|g| g.name == "side").map(cells::kind_icons))).expect("side's pill");
+    assert_eq!(icons.last(), Some(&Icon::Worktree), "{icons:?}");
+}
+
+/// Open Worktree on another checkout's row, neither hovered nor selected.
+fn open_worktree_shows_at_rest(own: &Path, other: &Path, cx: &mut TestAppContext) {
+    std::fs::write(other.join("new.txt"), b"new\n").unwrap();
+    let (view, cx) = test_support::open(own, Opts::default().following(occupancy::Live::default()).background().size(1400., 900.), cx);
+    reread(&view, cx);
+    let ix = row_of(&view, other, cx);
+    assert_ne!(view.read_with(cx, |v, _| v.table.selected()), Some(ix));
+    let hits = repaint(&view, cx);
+    let open = hits.borrow()[&format!("git-worktree-open-{ix}")].clone();
+    assert!(open.fully_visible(), "{open:?}");
+    let seen = opened(&view, cx);
+    press(&view, &format!("git-worktree-open-{ix}"), MouseButton::Left, 1, cx);
+    assert_eq!(*seen.borrow(), [path_key(other)]);
+}
+
+#[gpui::test]
+fn open_worktree_shows_on_a_linked_worktrees_row_in_the_main_tab(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    open_worktree_shows_at_rest(&f.dir, &f.worktree, cx);
+}
+
+#[gpui::test]
+fn open_worktree_shows_on_the_main_checkouts_row_in_a_worktree_tab(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    open_worktree_shows_at_rest(&f.worktree, &f.dir, cx);
 }
 
 #[gpui::test]
