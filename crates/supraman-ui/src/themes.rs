@@ -16,6 +16,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use theme::{AccentColors, Appearance, StatusColors, Theme, ThemeColors};
 
+pub mod attention;
 pub mod lanes;
 pub mod selftest_light;
 pub mod syntax;
@@ -214,11 +215,35 @@ fn fresh_id(name: &str) -> String {
     format!("{name}#{}", GENERATION.fetch_add(1, Ordering::Relaxed))
 }
 
-/// A fresh id for a changed theme, its lanes kept.
+/// A fresh id for a changed theme, its lanes and attention kept.
 fn reid(theme: &mut Theme) {
     let id = fresh_id(&theme.name);
     lanes::carry(&theme.id, &id);
+    attention::carry(&theme.id, &id);
     theme.id = id;
+}
+
+/// Supraman's own colours fitted per theme, by `Theme::id`.
+pub(crate) struct Kept<T>(Mutex<Option<HashMap<String, T>>>);
+
+impl<T: Copy> Kept<T> {
+    pub(crate) const fn new() -> Self {
+        Kept(Mutex::new(None))
+    }
+
+    pub(crate) fn get(&self, id: &str) -> Option<T> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(id).copied())
+    }
+
+    pub(crate) fn keep(&self, id: &str, value: T) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_default().insert(id.to_owned(), value);
+    }
+
+    pub(crate) fn carry(&self, from: &str, to: &str) {
+        if let Some(value) = self.get(from) {
+            self.keep(to, value);
+        }
+    }
 }
 
 /// One Dark: the base every loaded key falls back to.
@@ -238,6 +263,7 @@ pub fn supraman_dark() -> Loaded {
     let mut adjusted = fit_backgrounds(&mut theme);
     adjusted.extend(fit_placeholder(&mut theme));
     adjusted.extend(lanes::fit(&theme, &[None; lanes::LANES]));
+    adjusted.extend(attention::fit(&theme, None));
     adjusted.extend(syntax::fit(&mut theme));
     Loaded { theme, applied: 0, ignored: Vec::new(), adjusted }
 }
@@ -262,13 +288,18 @@ pub fn from_zed(base: &Theme, zed: &ZedTheme) -> Loaded {
     };
     let (mut applied, mut ignored, mut set) = (0, Vec::new(), HashSet::new());
     let mut lane_set = [None; lanes::LANES];
+    let mut attention_set = None;
     let styles = &mut theme.styles;
     styles.syntax = syntax::defaults(theme.appearance);
     for (key, value) in &zed.style {
-        if let Some(lane) = lanes::key_lane(key) {
+        let lane = lanes::key_lane(key);
+        if lane.is_some() || key == attention::KEY {
             match value.as_str().and_then(parse_color) {
                 Some(colour) => {
-                    lane_set[lane] = Some(colour);
+                    match lane {
+                        Some(lane) => lane_set[lane] = Some(colour),
+                        None => attention_set = Some(colour),
+                    }
                     applied += 1;
                 }
                 None if value.is_null() => {}
@@ -321,6 +352,7 @@ pub fn from_zed(base: &Theme, zed: &ZedTheme) -> Loaded {
     fill_unset(styles, &set);
     let mut adjusted = fit_floors(&mut theme);
     adjusted.extend(lanes::fit(&theme, &lane_set));
+    adjusted.extend(attention::fit(&theme, attention_set));
     adjusted.extend(syntax::fit(&mut theme));
     Loaded { theme, applied, ignored, adjusted }
 }

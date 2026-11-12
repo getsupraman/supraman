@@ -91,7 +91,8 @@ impl Ask {
                     1 => format!(" {} is working there.", working[0]),
                     _ => format!(" {} are working there.", working.join(", ")),
                 };
-                ask(format!("Remove the worktree {}{and}? Changes not committed there are lost.{who}", path.display()), "Remove").danger()
+                let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+                ask(format!("Remove the worktree {name}{and}? Changes not committed there are lost.{who}"), "Remove").danger()
             }
         }
     }

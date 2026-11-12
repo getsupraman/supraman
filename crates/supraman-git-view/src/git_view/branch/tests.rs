@@ -234,7 +234,8 @@ fn a_branch_in_a_linked_worktree_shows_the_tree_and_every_menu_of_it_offers_the_
 
     click(&view, "menu-worktree-remove-branch", cx);
     let asked = asking(&view, cx).unwrap_or_default();
-    assert!(asked.starts_with("Remove the worktree ") && asked.ends_with(" and delete the branch side? Changes not committed there are lost."), "asked first, as not undoable: {asked}");
+    assert_eq!(asked, "Remove the worktree wt and delete the branch side? Changes not committed there are lost.", "asked first by the worktree's name, as not undoable");
+    assert!(!asked.contains(&f.temp.path().to_string_lossy().into_owned()), "not its parent path: {asked}");
     assert!(f.worktree.exists() && exists(&f, "refs/heads/side"), "nothing before the answer");
     click(&view, "git-ref-ask-yes", cx);
     assert!(!f.worktree.exists() && !exists(&f, "refs/heads/side"));
@@ -249,7 +250,7 @@ fn removing_a_worktree_a_live_session_works_in_names_the_session_in_its_question
     press(&view, "refpanel-name-local/side", MouseButton::Right, 1, cx);
     click(&view, "menu-worktree-remove", cx);
     let asked = asking(&view, cx).unwrap_or_default();
-    assert!(asked.starts_with("Remove the worktree ") && asked.ends_with("Changes not committed there are lost. fm-agent is working there."), "{asked}");
+    assert_eq!(asked, "Remove the worktree wt? Changes not committed there are lost. fm-agent is working there.");
     assert!(f.worktree.exists(), "nothing before the answer");
 }
 
@@ -288,16 +289,21 @@ fn band_has_keys(view: &Entity<GitView>, cx: &mut VisualTestContext) -> bool {
 }
 
 #[gpui::test]
-fn a_question_is_one_band_across_the_tab_under_the_toolbar_that_enter_and_esc_answer(cx: &mut TestAppContext) {
+fn a_question_is_one_band_over_the_toolbar_twice_its_height_that_enter_and_esc_answer(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let (view, cx) = open(&f.worktree, cx);
     press(&view, "refpanel-name-local/feature", MouseButton::Right, 1, cx);
     click(&view, "menu-ref-delete-feature", cx);
     assert!(painted(&view, "git-ref-ask-band", cx));
-    let [area, band, text, yes, cancel] = ["git-below-toolbar", "git-ref-ask-band", "git-ref-ask-text", "git-ref-ask-yes", "git-ref-ask-cancel"].map(|k| bounds(&view, k, cx));
-    assert_eq!((band.origin, band.size.width), (area.origin, area.size.width), "across the tab under the toolbar");
-    assert_eq!(band.size.height, supraman_ui::confirm::ROW, "one line");
-    assert!((yes.center().y - text.center().y).abs() < px(1.) && (cancel.center().y - text.center().y).abs() < px(1.), "the text and its answers on one line");
+    let [toolbar, band, text, yes, cancel] = ["git-toolbar", "git-ref-ask-band", "git-ref-ask-text", "git-ref-ask-yes", "git-ref-ask-cancel"].map(|k| bounds(&view, k, cx));
+    assert_eq!(toolbar.origin, gpui::Point::default(), "the toolbar is the tab's top");
+    assert_eq!((band.origin, band.size.width), (toolbar.origin, toolbar.size.width), "from the tab's top across the toolbar");
+    assert_eq!(band.size.height, toolbar.size.height * 2., "twice the toolbar's height");
+    for (b, k) in [(text, "text"), (yes, "yes"), (cancel, "cancel")] {
+        assert!((b.center().y - band.center().y).abs() < px(1.), "the {k} on the band's middle: {b:?} in {band:?}");
+    }
+    click(&view, "git-pull-menu", cx);
+    assert!(view.read_with(cx, |v, cx| v.remote.read(cx).menu_labels().is_empty()), "a click on a toolbar button under the band does not reach it");
 
     assert!(band_has_keys(&view, cx), "the band takes the keyboard");
     cx.simulate_keystrokes("enter");
