@@ -105,7 +105,7 @@ fn workman() -> FakeWorkman {
                  row("4", "Receipt email", "open", (0, 0)), row("5", "Refunds from the admin view", "open", (0, 0))]
     });
     let claim = json!({ "item": task("3", "Order summary page", "in_progress"), "run": run, "role": "worker", "agent": "fm-demo-web", "tree": r"C:\src\demo\web",
-                        "session": { "id": "s1", "name": "fm-demo-web", "role": "worker", "firstSeenAt": "x", "lastSeenAt": "x" },
+                        "session": { "id": "s1", "name": "fm-demo-web", "role": "worker", "claudeSessionId": "d0000003-0000-4000-8000-00000000demo", "firstSeenAt": "x", "lastSeenAt": "x" },
                         "acquiredAt": "2026-11-02T09:30:00+00:00", "heartbeatAt": "2026-11-02T09:55:00+00:00", "expiresAt": "2026-11-02T10:26:00+00:00", "expired": false });
     let overview = json!({
         "asOf": "2026-11-02T10:00:00+00:00", "seq": 10, "workingNow": [claim],
@@ -312,7 +312,11 @@ async fn inbox(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext
 async fn work_pages(view: &Entity<FleetView>, work: &Entity<crate::work_view::WorkView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     use crate::work_view::Page;
     work.update(cx, |w, cx| w.show_page(Page::Overview, cx));
-    crate::selftest::until(view, cx, Duration::from_secs(10), "the Overview's projects", |v| v.hits.borrow().contains_key("work-prompt-project-demo-cleanup").then_some(())).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the Overview's projects and Working now's Open", |v| {
+        let hits = v.hits.borrow();
+        (hits.contains_key("work-prompt-project-demo-cleanup") && hits.contains_key("work-working-open-checkout/3")).then_some(())
+    })
+    .await?;
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-work-overview.png"), None, cx).await?;
     println!("shot: {}", shot.display());
@@ -399,7 +403,11 @@ async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path
     crate::selftest::until(view, cx, Duration::from_secs(20), "the session's row in the tree", |v| v.tree().workspaces.iter().find(|n| n.name == WORKSPACE)?.rows().any(|r| r.session.name == "fm-demo-shop").then_some(())).await?;
     crate::selftest::until(view, cx, Duration::from_secs(20), "the session's agent row", |v| v.hits.borrow().contains_key("git-agent-0").then_some(())).await?;
     crate::selftest::click(view, "git-agent-0", cx).await?;
-    crate::selftest::until(view, cx, Duration::from_secs(10), "the agent row's page", |v| v.hits.borrow().contains_key("git-agent-section-session").then_some(())).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the agent row's page with its Open", |v| {
+        let hits = v.hits.borrow();
+        (hits.contains_key("git-agent-section-session") && hits.contains_key("git-agent-open")).then_some(())
+    })
+    .await?;
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-git-agent.png"), None, cx).await?;
     println!("shot: {}", shot.display());

@@ -488,7 +488,7 @@ async fn item_page(
         "work-row-sw2/2",
     ];
     let opened = painted(view, &sections, LOADED_WITHIN, "sw2/1 in the detail", cx).await?;
-    lines.push(format!("clicked sw2/1: the detail beside the list after {} ms (Verified, intent, Done when 2 of 3, Verified by running, Attach)", opened.as_millis()));
+    lines.push(format!("clicked sw2/1: the detail beside the list after {} ms (Verified, intent, Done when 2 of 3, Verified by running, Open)", opened.as_millis()));
 
     let reads_before = work.read_with(cx, |w, _| w.item_reads);
     fake.set(item_target(TASK_1), Answer::json(task1_page(111, launched, true)));
@@ -531,11 +531,11 @@ async fn item_page(
     lines.push("Esc cleared the selection: the run in the detail, the list kept".into());
 
     click(view, "work-row-sw2/1", cx).await?;
-    painted(view, &[&attach_key], LOADED_WITHIN, "sw2/1's Attach", cx).await?;
+    painted(view, &[&attach_key], LOADED_WITHIN, "sw2/1's Open", cx).await?;
     let attached = open_attach(view, &attach_key, &launched.id, cx).await?;
     let title = attached.title.clone();
     let closed = close_attach(view, &attached, &launched.name, cx).await?;
-    lines.push(format!("claim joined {} on claudeSessionId → Attach opened \"{title}\"; {closed}", launched.name));
+    lines.push(format!("claim joined {} on claudeSessionId → Open attached \"{title}\"; {closed}", launched.name));
     Ok(lines.join("; "))
 }
 
