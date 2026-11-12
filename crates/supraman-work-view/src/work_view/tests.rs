@@ -173,12 +173,17 @@ fn opened() -> Vec<Link> {
     OPENED.with(|o| o.borrow().clone())
 }
 
-struct Holder(Entity<WorkView>, Entity<WorkInbox>);
+/// A window root as the app's: the tab's panes in [`supraman_ui::focus`]'s order, focus lost given back.
+struct Holder(Entity<WorkView>, Entity<WorkInbox>, gpui::Subscription);
 
 impl Render for Holder {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().w(px(1500.)).h(px(900.)).child(self.0.clone())
+        focus::root(div().w(px(1500.)).h(px(900.))).child(self.0.clone())
     }
+}
+
+fn holding(cx: &mut VisualTestContext) -> Option<String> {
+    cx.update(|window, cx| focus::focused(window, cx).map(|k| k.to_string()))
 }
 
 struct Opened<'a> {
@@ -200,7 +205,7 @@ fn open(cx: &mut TestAppContext) -> Opened<'_> {
     });
     let fake = served();
     let client = Client::new(fake.base(), "fake-test-reader");
-    let (holder, cx) = cx.add_window_view(|_, cx| {
+    let (holder, cx) = cx.add_window_view(|window, cx| {
         let hub = WorkHub::ready(client, cx);
         let inbox = WorkInbox::for_test(hub.clone(), cx);
         inbox.update(cx, |i, cx| {
@@ -229,8 +234,9 @@ fn open(cx: &mut TestAppContext) -> Opened<'_> {
             view.inbox = Some(inbox.clone());
             view
         });
-        Holder(view, inbox)
+        Holder(view, inbox, focus::restore_on_loss(window, cx))
     });
+    cx.update(|window, _| window.activate_window());
     let (view, inbox) = holder.read_with(cx, |h, _| (h.0.clone(), h.1.clone()));
     settle(&view, cx);
     Opened { view, fake, inbox, cx }
@@ -456,13 +462,30 @@ fn keys_move_in_the_list_and_into_the_detail(cx: &mut TestAppContext) {
     assert_eq!(view.read_with(cx, |v, _| v.selected.clone()), Some(id(3)), "the first row stays the first");
     cx.simulate_keystrokes("enter");
     settle(&view, cx);
-    bounds(&view, "work-detail=focused", cx);
+    assert_eq!(holding(cx).as_deref(), Some(FOCUS_DETAIL), "Enter gives the detail the keys");
+    bounds(&view, &focus::mark_key(FOCUS_DETAIL), cx);
     cx.simulate_keystrokes("escape");
     settle(&view, cx);
-    assert_eq!(view.read_with(cx, |v, _| (v.detail_focused, v.selected.clone())), (false, Some(id(3))), "Esc gives the list the keys back");
+    assert_eq!((holding(cx).as_deref(), view.read_with(cx, |v, _| v.selected.clone())), (Some(FOCUS_MAIN), Some(id(3))), "Esc gives the list the keys back");
     cx.simulate_keystrokes("escape");
     settle(&view, cx);
     assert_eq!(view.read_with(cx, |v, _| v.selected.clone()), None, "a second Esc clears the selection");
+}
+
+#[gpui::test]
+fn f6_steps_through_the_navigator_list_and_detail(cx: &mut TestAppContext) {
+    let Opened { view, cx, .. } = open(cx);
+    click(&view, "work-row-pa/ra/3", cx);
+    assert_eq!(holding(cx).as_deref(), Some(FOCUS_MAIN), "a click on a row gives the list the keys");
+    assert_eq!(cx.update(|window, cx| focus::order(window, cx)), [FOCUS_NAV, FOCUS_MAIN, FOCUS_DETAIL]);
+    let mut walked = Vec::new();
+    for keys in ["f6", "f6", "f6", "shift-f6"] {
+        cx.simulate_keystrokes(keys);
+        settle(&view, cx);
+        walked.push(holding(cx));
+    }
+    assert_eq!(walked, [Some(FOCUS_DETAIL.into()), Some(FOCUS_NAV.into()), Some(FOCUS_MAIN.into()), Some(FOCUS_NAV.into())]);
+    assert!(hit(&view, &focus::mark_key(FOCUS_NAV), cx).is_some() && hit(&view, &focus::mark_key(FOCUS_MAIN), cx).is_none(), "the navigator wears the mark, the list not");
 }
 
 fn show_inbox_count(view: &Entity<WorkView>, cx: &mut VisualTestContext) -> Rc<std::cell::Cell<usize>> {

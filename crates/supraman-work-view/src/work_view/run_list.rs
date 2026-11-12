@@ -119,8 +119,7 @@ impl WorkView {
             .child(hit_target(&self.hits, key))
             .on_mouse_down(gpui::MouseButton::Right, self.on_row_mouse_down(item, cx))
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                window.focus(&this.focus, cx);
-                this.detail_focused = false;
+                window.focus(&this.panes.main, cx);
                 this.select(id.clone(), cx);
             }))
             .into_any_element()

@@ -169,14 +169,7 @@ impl WorkView {
             over: Some(self.render_over(&page, state.key, cx)),
             bar: Some(self.render_bar(&page, state.key, cx)),
         };
-        let focused = self.detail_focused;
-        let accent = cx.theme().colors().border_focused;
-        div()
-            .size_full()
-            .when(focused, |d| d.border_t_2().border_color(accent))
-            .child(details::render(detail, &self.hits, cx))
-            .child(hit_target(&self.hits, format!("work-detail={}", if focused { "focused" } else { "idle" })))
-            .into_any_element()
+        div().size_full().child(details::render(detail, &self.hits, cx)).into_any_element()
     }
 
     fn render_over(&self, page: &ItemPage, key: StateKey, cx: &mut Context<Self>) -> AnyElement {
