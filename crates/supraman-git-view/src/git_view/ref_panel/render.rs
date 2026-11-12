@@ -3,6 +3,7 @@
 use gpui::{AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla, IntoElement, Render, Window, div, prelude::*, px};
 use supraman_gitman::short_sha;
 use supraman_ui::button;
+use supraman_ui::clipped;
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
 use supraman_ui::ink;
@@ -110,12 +111,11 @@ impl RefPanel {
         let (muted, text) = (secondary(cx.theme().colors()), cx.theme().colors().text);
         let dimmed = !entry.walked(&self.walk);
         let key = format!("{list}-name-{}", row.path);
-        let mut label = highlighted(key.clone(), entry.label(), &entry.marks(&self.filter()), cx).relative().flex_shrink(1.).text_color(text).child(hit_target(&self.hits, key));
-        if let Entry::Stash { label: words, branch, .. } = entry {
-            label = label.tooltip(Tooltip::text(format!("{words} on: {branch}")));
-        }
-        let after = Self::after(entry).map(|w| div().flex_none().max_w(px(120.)).overflow_hidden().whitespace_nowrap().text_ellipsis().text_color(muted).child(w));
-        let content = div().flex().flex_1().min_w_0().items_center().gap_1().child(label).children(after);
+        let label = highlighted(key.clone(), entry.label(), &entry.marks(&self.filter()), cx).relative().flex_shrink(1.).text_color(text).child(hit_target(&self.hits, key.clone()));
+        let content = match Self::after(entry) {
+            Some(after) => div().flex().flex_1().min_w_0().child(clipped::pair(format!("{key}-line"), entry.label(), label, after, muted).flex_1()),
+            None => div().flex().flex_1().min_w_0().items_center().child(label),
+        };
         let track = Self::track(entry).map(|t| div().flex_none().px_1().text_xs().text_color(muted).child(t).into_any_element());
         let track = track.or_else(|| matches!(entry, Entry::Worktree { .. }).then(|| self.summary_element(list, row.path, &self.whole(list, row.path), cx)).flatten());
         div()

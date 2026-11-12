@@ -51,30 +51,46 @@ pub fn clipped_with(key: impl Into<SharedString>, text: impl Into<SharedString>,
         .whitespace_nowrap();
     let label = if middle { label.text_ellipsis_middle() } else { label.text_ellipsis() };
     let tooltip = cut_at(&key).is_some();
-    let measure = {
-        let (key, text) = (key.clone(), text.clone());
-        canvas(
-            move |bounds, window, _| {
-                let style = window.text_style();
-                let size = style.font_size.to_pixels(window.rem_size());
-                let run = style.to_run(text.len());
-                let width = window.text_system().shape_line(text.clone(), size, &[run], None).width;
-                let cut = width > bounds.size.width + gpui::px(0.5);
-                // a label that turned cut gets its tooltip, one that fits again loses it, in the next frame
-                if cut != tooltip {
-                    window.refresh();
-                }
-                CUT.with(|set| set.borrow_mut().painted(&key, cut.then_some(bounds)));
-            },
-            |_, _, _, _| {},
-        )
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full()
-    };
+    let measure = measure(key.clone(), text.clone(), tooltip);
     let label = label.child(text.clone()).child(measure);
     if tooltip && own_tooltip { label.tooltip(Tooltip::text(text)) } else { label }
+}
+
+/// Records under `key` whether `text` is wider than the bounds it is laid over; `shown` is what the last frame recorded.
+fn measure(key: SharedString, text: SharedString, shown: bool) -> impl IntoElement {
+    canvas(
+        move |bounds, window, _| {
+            let style = window.text_style();
+            let size = style.font_size.to_pixels(window.rem_size());
+            let run = style.to_run(text.len());
+            let width = window.text_system().shape_line(text.clone(), size, &[run], None).width;
+            let cut = width > bounds.size.width + gpui::px(0.5);
+            // a label that turned cut gets its tooltip, one that fits again loses it, in the next frame
+            if cut != shown {
+                window.refresh();
+            }
+            CUT.with(|set| set.borrow_mut().painted(&key, cut.then_some(bounds)));
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+
+/// A bright part, then muted words cut first: `bright` (the element showing `bright_text`, its own ellipsis) keeps its width up to the line's,
+/// `muted` in `muted_color` shrinks to nothing before it; `bright muted` is the tooltip while either is cut (`cut_at` `<key>-bright`, `<key>-muted`).
+pub fn pair(key: impl Into<SharedString>, bright_text: impl Into<SharedString>, bright: impl IntoElement, muted: impl Into<SharedString>, muted_color: Hsla) -> Stateful<Div> {
+    let (key, bright_text, muted) = (key.into(), bright_text.into(), muted.into());
+    let (bright_key, muted_key) = (SharedString::from(format!("{key}-bright")), SharedString::from(format!("{key}-muted")));
+    let bright_cut = cut_at(&bright_key).is_some();
+    let tooltip = bright_cut || cut_at(&muted_key).is_some();
+    let whole = SharedString::from(format!("{bright_text} {muted}"));
+    let bright = div().relative().flex().flex_none().max_w_full().min_w_0().overflow_hidden().child(bright).child(measure(bright_key, bright_text, bright_cut));
+    let muted = div().flex().flex_1().min_w_0().pl_1().text_color(muted_color).child(clipped_with(muted_key, muted, false, false));
+    let line = div().id(ElementId::Name(key)).flex().items_center().min_w_0().overflow_hidden().whitespace_nowrap().child(bright).child(muted);
+    if tooltip { line.tooltip(Tooltip::text(whole)) } else { line }
 }
 
 /// [`clipped`] over up to `lines` wrapped lines, the last cut with an ellipsis; the whole text as a tooltip while cut.
@@ -133,21 +149,4 @@ pub fn path_label(dir_key: impl Into<SharedString>, path: &str, folder: Hsla, na
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn labels_painted_longest_ago_go_first() {
-        let mut cut = Cut::default();
-        let bounds = Bounds::default();
-        for i in 0..KEPT + 10 {
-            cut.painted(&format!("label-{i}").into(), Some(bounds));
-            cut.painted(&"shown".into(), Some(bounds));
-        }
-        assert_eq!(cut.labels.len(), KEPT);
-        assert!(cut.labels.contains_key("shown") && cut.labels.contains_key(format!("label-{}", KEPT + 9).as_str()));
-        assert!(!cut.labels.contains_key("label-0"));
-        cut.painted(&"shown".into(), None);
-        assert!(!cut.labels.contains_key("shown"), "a label that fits again is forgotten");
-    }
-}
+mod tests;
