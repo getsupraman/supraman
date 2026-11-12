@@ -155,3 +155,34 @@ fn tab_walks_create_worktrees_reference_fields_and_buttons_and_wraps(cx: &mut Te
     keys(&view, "escape", cx);
     assert_eq!(form(&view, cx), None, "Esc on a focused button closes the form");
 }
+
+#[gpui::test]
+fn create_worktree_turns_while_its_add_runs_ignores_another_and_closes_on_success(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let home = tempfile::tempdir().unwrap();
+    let (view, cx) = open(&f.dir, home.path(), cx);
+    click(&view, "refpanel-worktrees-add", cx);
+    pick(&view, "feature", cx);
+    let hits = test_support::repaint(&view, cx);
+    let height = |k: &str| hits.borrow().get(k).map(|h| h.bounds.size.height).unwrap_or_else(|| panic!("{k} is painted"));
+    let field = height(&format!("{KEY}-folder"));
+    assert_eq!(field, supraman_ui::form::BUTTON_HEIGHT, "the field stands at the form's button height");
+    let inside = field - px(2.);
+    assert_eq!((height(&format!("{KEY}-ok")), height(&format!("{KEY}-browse"))), (inside, inside), "OK and Browse as high as the field, their hit keys inside the 1 px border");
+    assert!(!hits.borrow().contains_key(&format!("{KEY}-ok-turning")), "OK is still before Create");
+
+    let submit = |view: &Entity<GitView>, cx: &mut VisualTestContext| view.update(cx, |v, cx| v.branch.update(cx, |b, cx| b.submit_add_worktree(cx)));
+    submit(&view, cx);
+    let hits = test_support::frame(&view, cx);
+    assert!(hits.borrow().contains_key(&format!("{KEY}-ok-turning")), "OK turns while the add runs");
+    assert!(view.read_with(cx, |v, cx| v.branch.read(cx).creating()), "the form's write is under way");
+    let ticket = view.read_with(cx, |v, cx| v.branch.read(cx).writes.doing().map(|(t, _)| t));
+    submit(&view, cx);
+    assert_eq!(view.read_with(cx, |v, cx| v.branch.read(cx).writes.doing().map(|(t, _)| t)), ticket, "a second Create starts nothing");
+    assert_eq!(toast(&view, cx), None, "and says nothing");
+    assert!(form(&view, cx).is_some(), "the form stays open while the add runs");
+
+    settle(&view, cx);
+    assert!(toast(&view, cx).is_some_and(|t| t.starts_with("Created worktree")), "{:?}", toast(&view, cx));
+    assert_eq!(form(&view, cx), None, "the form closes by itself once the worktree is made");
+}

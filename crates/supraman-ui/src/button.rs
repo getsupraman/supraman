@@ -215,10 +215,19 @@ pub fn action(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<
 
 /// An [`action`] with `icon` in its text colour before the label, on the label's letters ([`ink::mark`]).
 pub fn action_with(hits: &HitTargets, key: impl Into<SharedString>, icon: Icon, label: impl Into<SharedString>, tone: Tone, fill: Fill, cx: &App) -> Stateful<Div> {
-    labelled(hits, key.into(), Some(icon), label.into(), tone, fill, cx)
+    let text = look(tone, fill, cx).text;
+    labelled(hits, key.into(), Some(icon.svg(12., text).into_any_element()), label.into(), tone, fill, cx)
 }
 
-fn labelled(hits: &HitTargets, key: SharedString, icon: Option<Icon>, label: SharedString, tone: Tone, fill: Fill, cx: &App) -> Stateful<Div> {
+/// An [`action_with`] whose icon turns once a second (work it started runs); it also paints under `<key>-turning`.
+pub fn action_turning(hits: &HitTargets, key: impl Into<SharedString>, icon: Icon, label: impl Into<SharedString>, tone: Tone, fill: Fill, cx: &App) -> Stateful<Div> {
+    let key = key.into();
+    let text = look(tone, fill, cx).text;
+    let turning = crate::icon::turning(icon.svg(12., text), ElementId::Name(format!("{key}-turning").into()));
+    labelled(hits, key.clone(), Some(turning.into_any_element()), label.into(), tone, fill, cx).child(hit_target(hits, format!("{key}-turning")))
+}
+
+fn labelled(hits: &HitTargets, key: SharedString, icon: Option<gpui::AnyElement>, label: SharedString, tone: Tone, fill: Fill, cx: &App) -> Stateful<Div> {
     let look = look(tone, fill, cx);
     let hover_border = if tone == Tone::Neutral { cx.theme().colors().border_selected } else { look.border };
     base(hits, key, move |s| s.bg(look.hover).border_color(hover_border), look.active)
@@ -236,7 +245,7 @@ fn labelled(hits: &HitTargets, key: SharedString, icon: Option<Icon>, label: Sha
         .text_xs()
         .text_color(look.text)
         .whitespace_nowrap()
-        .children(icon.map(|i| ink::mark(i.svg(12., look.text))))
+        .children(icon.map(ink::mark))
         .child(label)
 }
 

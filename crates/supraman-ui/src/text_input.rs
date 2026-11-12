@@ -569,7 +569,7 @@ pub const PAD_Y: Pixels = px(3.);
 pub const TEXT_LEFT: Pixels = px(9.);
 const LINE_HEIGHT: Pixels = px(18.);
 /// A single-line field: one line, [`PAD_Y`] above and below, and the border.
-const SINGLE_HEIGHT: Pixels = px(26.);
+pub const SINGLE_HEIGHT: Pixels = px(26.);
 /// A [`TextInput::quiet`] field: one line inside its 1 px border, inside a graph row's band.
 pub const QUIET_HEIGHT: Pixels = px(20.);
 

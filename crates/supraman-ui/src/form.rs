@@ -1,16 +1,25 @@
-//! Every side form: a title with its icon and ×, labelled fields, and its OK (`button::action` Success Solid) dimmed with why;
+//! Every side form: a title with its icon and ×, labelled fields, and its OK (`button::action` Success Solid, [`BUTTON_HEIGHT`]) dimmed with why,
+//! turning while the owner's write runs;
 //! Tab and Shift+Tab through its `FocusOrder`, Enter in a field its OK, Esc its close; hit keys `<key>`, `<key>-close`, `<key>-ok`.
 
-use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, FocusHandle, FontWeight, SharedString, Subscription, Window, div, prelude::*, px};
+use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Div, Entity, FocusHandle, FontWeight, Pixels, SharedString, Stateful, Subscription, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
 use crate::button;
 use crate::focus_order::{Dismiss, FocusOrder, Press};
 use crate::hit::{HitTargets, hit_target};
 use crate::icon::Icon;
-use crate::text_input::{InputEvent, TextInput};
+use crate::text_input::{InputEvent, SINGLE_HEIGHT, TextInput};
 use crate::themes::secondary;
 use crate::tooltip::Tooltip;
+
+/// A form's buttons stand as high as its one-line fields.
+pub const BUTTON_HEIGHT: Pixels = SINGLE_HEIGHT;
+
+/// `button` (a `button::action`) at [`BUTTON_HEIGHT`]: a form's OK and a button beside a field (Browse).
+pub fn sized(button: Stateful<Div>) -> Stateful<Div> {
+    button.h(BUTTON_HEIGHT).px_3()
+}
 
 /// The owner's OK and close, what the form's button, ×, Enter and Esc run.
 pub struct Answers<V> {
@@ -34,6 +43,8 @@ pub struct Form<V> {
     pub ok: SharedString,
     /// Why OK cannot act now; the button dimmed with it as tooltip.
     pub why: Option<SharedString>,
+    /// The owner's write of this form runs: OK turns, dimmed with `why`.
+    pub running: bool,
     pub answers: Answers<V>,
 }
 
@@ -78,7 +89,12 @@ impl<V: 'static> Form<V> {
             .child(div().flex_1().min_w_0().font_weight(FontWeight::SEMIBOLD).child(self.title))
             .child(close);
         let fields = fields.into_iter().map(|(label, field)| div().flex().flex_col().gap_1().child(div().text_xs().text_color(muted).child(label)).child(field));
-        let ok = button::action(hits, format!("{}-ok", self.key), self.ok, button::Tone::Success, button::Fill::Solid, cx);
+        let ok_key = format!("{}-ok", self.key);
+        let ok = if self.running {
+            button::action_turning(hits, ok_key, Icon::Refresh, self.ok, button::Tone::Success, button::Fill::Solid, cx)
+        } else {
+            button::action(hits, ok_key, self.ok, button::Tone::Success, button::Fill::Solid, cx)
+        };
         let ok = match self.why {
             Some(why) => button::dimmed(ok).tooltip(Tooltip::text(why)),
             None => ok.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| on_ok(this, cx))),
@@ -87,7 +103,7 @@ impl<V: 'static> Form<V> {
             Some(focus) => button::focusable(ok, focus, cx.listener(move |this, _: &Press, _, cx| on_ok(this, cx)), cx),
             None => ok,
         };
-        let body = div().flex().flex_col().gap_3().p_3().children(fields).child(div().flex().child(ok));
+        let body = div().flex().flex_col().gap_3().p_3().children(fields).child(div().flex().child(sized(ok)));
         order
             .on(div())
             .on_action(cx.listener(move |this, _: &Dismiss, _, cx| on_close(this, cx)))
