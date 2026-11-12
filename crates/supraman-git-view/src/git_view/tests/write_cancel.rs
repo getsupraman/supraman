@@ -29,3 +29,15 @@ fn a_long_write_shows_its_strip_and_cancel_ends_it_saying_what_git_left(cx: &mut
     let staged = f.at(&f.dir, &["diff", "--cached", "--name-only"]);
     assert!(!staged.lines().any(|l| l == "u.txt"), "the cancelled write staged nothing: {staged}");
 }
+
+#[gpui::test]
+fn a_plain_writes_strip_says_its_own_running_words(cx: &mut gpui::TestAppContext) {
+    let f = Fixture::copy();
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
+    view.update(cx, |v, cx| v.branch.update(cx, |b, cx| b.act(crate::git_view::branch::menu::RefAct::PruneWorktrees, cx)));
+    view.update(cx, |v, cx| v.gate.update(cx, |g, _| g.backdate(CANCEL_AFTER)));
+    assert!(frame(&view, cx).borrow().contains_key(CANCEL_KEY), "the prune's strip shows");
+    assert_eq!(view.read_with(cx, |v, cx| v.gate.read(cx).long().map(|(w, _)| w.to_string())).as_deref(), Some("Pruning the worktrees"));
+    settle(&view, cx);
+    assert_eq!(toast(&view, cx).as_deref(), Some("Pruned the worktrees"), "its toast is its own past tense");
+}

@@ -121,7 +121,8 @@ enum Doing {
     AddRemote(String),
     /// Edit Remote's save, with what the toast says.
     EditRemote(String),
-    Plain(String),
+    /// Its words while it runs, then its toast.
+    Plain { running: String, done: String },
 }
 
 impl Doing {
@@ -134,7 +135,7 @@ impl Doing {
             Doing::Push { remote, branch, .. } => format!("Pushing to {remote}/{branch}"),
             Doing::AddRemote(r) => format!("Adding the remote {r}"),
             Doing::EditRemote(_) => "Saving the remote".into(),
-            Doing::Plain(_) => "Working".into(),
+            Doing::Plain { running, .. } => running.clone(),
         }
     }
 }
@@ -413,7 +414,7 @@ impl RemoteActions {
                 Pushed::Behind => return self.ask(Ask::Behind { local, remote, branch }, cx),
                 Pushed::StaleLease => return self.ask(Ask::Stale { local, remote, branch }, cx),
             },
-            (Doing::Plain(words), _) => words,
+            (Doing::Plain { done, .. }, _) => done,
             (Doing::EditRemote(words), _) => {
                 self.adding = None;
                 words
@@ -436,12 +437,13 @@ impl RemoteActions {
             Some(Ask::Stale { remote, .. }) => self.act(RemoteAct::Fetch(remote), cx),
             Some(ask @ Ask::Force { .. }) => self.ask(ask, cx),
             Some(Ask::Delete { remote, refname }) => {
-                let words = format!("Deleted {} from {remote}", short(&refname));
-                self.request(Doing::Plain(words), LockSet::push(), move |s, t| remote::delete_remote_ref(s, &remote, &refname, t).map(|_| Done::Nothing), cx);
+                let what = format!("{} from {remote}", short(&refname));
+                let doing = Doing::Plain { running: format!("Deleting {what}"), done: format!("Deleted {what}") };
+                self.request(doing, LockSet::push(), move |s, t| remote::delete_remote_ref(s, &remote, &refname, t).map(|_| Done::Nothing), cx);
             }
             Some(Ask::RemoveRemote(name)) => {
-                let words = format!("Removed the remote {name}");
-                self.request(Doing::Plain(words), LockSet::remote_config(), move |s, _| remote::remove_remote(s, &name).map(|_| Done::Nothing), cx);
+                let doing = Doing::Plain { running: format!("Removing the remote {name}"), done: format!("Removed the remote {name}") };
+                self.request(doing, LockSet::remote_config(), move |s, _| remote::remove_remote(s, &name).map(|_| Done::Nothing), cx);
             }
             None => {}
         }
@@ -492,8 +494,9 @@ impl RemoteActions {
             RemoteAct::SetUpstream(local) => self.ask_upstream(local, dialogs::Then::Set, cx),
             RemoteAct::PushTo { local, remote, branch } => self.push(local, remote, branch, Force::No, cx),
             RemoteAct::PushTag { tag, remotes } => {
-                let words = format!("Pushed {tag} to {}", remotes.join(", "));
-                self.request(Doing::Plain(words), LockSet::push(), move |s, t| {
+                let to = format!("{tag} to {}", remotes.join(", "));
+                let doing = Doing::Plain { running: format!("Pushing {to}"), done: format!("Pushed {to}") };
+                self.request(doing, LockSet::push(), move |s, t| {
                     for r in &remotes {
                         if remote::push_tag(s, r, &tag, t)? != Pushed::Done {
                             return Err(WriteError::Remote(format!("{r} already has another {tag}")));
@@ -626,8 +629,8 @@ impl RemoteActions {
                 remote::pull(s, mode, prune, t).map(Done::Pulled)
             }, cx),
             dialogs::Then::Set => {
-                let words = format!("{local} tracks {remote}/{branch}");
-                self.request(Doing::Plain(words), LockSet::branch(), move |s, _| remote::set_upstream(s, &local, &remote, &branch).map(|_| Done::Nothing), cx);
+                let doing = Doing::Plain { running: format!("Setting {local}'s upstream to {remote}/{branch}"), done: format!("{local} tracks {remote}/{branch}") };
+                self.request(doing, LockSet::branch(), move |s, _| remote::set_upstream(s, &local, &remote, &branch).map(|_| Done::Nothing), cx);
             }
         }
     }

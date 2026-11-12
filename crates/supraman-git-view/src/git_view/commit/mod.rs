@@ -96,7 +96,8 @@ enum Outcome {
 enum Doing {
     Pick { sha: String, revert: bool, commit: bool },
     Rebase { branch: String, sha: String },
-    Plain(String),
+    /// Its words while it runs, then its toast.
+    Plain { running: String, done: String },
 }
 
 impl Verb for Doing {
@@ -105,7 +106,7 @@ impl Verb for Doing {
             Doing::Pick { revert: true, .. } => "Reverting the commit".into(),
             Doing::Pick { .. } => "Cherry-picking the commit".into(),
             Doing::Rebase { branch, .. } => format!("Rebasing {branch}"),
-            Doing::Plain(_) => "Working".into(),
+            Doing::Plain { running, .. } => running.clone(),
         }
     }
 }
@@ -204,18 +205,21 @@ impl CommitActions {
                 self.request(Doing::Rebase { branch, sha }, LockSet::rebase(), job, cx);
             }
             Ask::DiscardAll(paths) => {
-                let words = format!("Discarded the changes to {}", count(paths.len(), "file", "files"));
-                self.request(Doing::Plain(words), LockSet::reset(), move |s| journal::discard(s, &paths), cx);
+                let files = count(paths.len(), "file", "files");
+                let doing = Doing::Plain { running: format!("Discarding the changes to {files}"), done: format!("Discarded the changes to {files}") };
+                self.request(doing, LockSet::reset(), move |s| journal::discard(s, &paths), cx);
             }
             Ask::Ignore { ignore, untrack } => {
                 let untrack = if answer == Answer::Alt { untrack } else { Vec::new() };
-                let words = format!("Added {} to .gitignore", ignore.pattern());
-                self.request(Doing::Plain(words), index_write(), move |s| file_writes::ignore(s, &ignore, &untrack), cx);
+                let pattern = ignore.pattern();
+                let doing = Doing::Plain { running: format!("Ignoring {pattern}"), done: format!("Added {pattern} to .gitignore") };
+                self.request(doing, index_write(), move |s| file_writes::ignore(s, &ignore, &untrack), cx);
             }
-            Ask::Delete(path) => self.request(Doing::Plain(format!("Deleted {path}")), index_write(), move |s| file_writes::delete(s, &path), cx),
+            Ask::Delete(path) => self.request(Doing::Plain { running: format!("Deleting {path}"), done: format!("Deleted {path}") }, index_write(), move |s| file_writes::delete(s, &path), cx),
             Ask::Restore { sha, paths } => {
-                let words = format!("Restored {} from {}", count(paths.len(), "file", "files"), short_sha(&sha));
-                self.request(Doing::Plain(words), LockSet::reset(), move |s| file_writes::restore(s, &sha, &paths), cx);
+                let what = format!("{} from {}", count(paths.len(), "file", "files"), short_sha(&sha));
+                let doing = Doing::Plain { running: format!("Restoring {what}"), done: format!("Restored {what}") };
+                self.request(doing, LockSet::reset(), move |s| file_writes::restore(s, &sha, &paths), cx);
             }
         }
     }
@@ -232,8 +236,9 @@ impl CommitActions {
             ResetMode::Mixed => "mixed",
             ResetMode::Hard => "hard",
         };
-        let words = format!("Reset to {} ({how})", short_sha(&sha));
-        self.request(Doing::Plain(words), LockSet::reset(), move |s| commit::reset(s, &sha, mode), cx);
+        let to = format!("{} ({how})", short_sha(&sha));
+        let doing = Doing::Plain { running: format!("Resetting to {to}"), done: format!("Reset to {to}") };
+        self.request(doing, LockSet::reset(), move |s| commit::reset(s, &sha, mode), cx);
     }
 
     fn file(&mut self, act: FileAct, cx: &mut Context<Self>) {
@@ -342,7 +347,7 @@ fn said(doing: Doing, outcome: Option<Outcome>) -> (Option<String>, Option<Strin
             }
             Rebased::Conflicted => (None, Some(format!("Rebasing {branch} stopped on conflicts: resolve them in the WIP"))),
         },
-        (Doing::Plain(words), _) => (Some(words), None),
+        (Doing::Plain { done, .. }, _) => (Some(done), None),
         _ => (None, None),
     }
 }
