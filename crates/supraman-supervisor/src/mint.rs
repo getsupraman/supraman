@@ -252,9 +252,9 @@ struct Entry {
 }
 
 /// Per session name, its [`MintedSession`], persisted so a restarted app still revokes what it minted.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MintedSessions {
-    path: Option<PathBuf>,
+    path: PathBuf,
     names: BTreeMap<String, Entry>,
 }
 
@@ -274,7 +274,7 @@ impl MintedSessions {
     /// The record of `name` in any of `home`'s files, with the mint to repeat for it (`replace`, its claude session).
     pub fn find(home: &Path, name: &str) -> Option<(MintedSession, MintRequest)> {
         record_files(home).into_iter().find_map(|path| {
-            let entry = Self::load(Some(path)).ok()?.names.remove(name)?;
+            let entry = Self::load(path).ok()?.names.remove(name)?;
             let mut request = entry.mint?;
             request.replace = true;
             request.claude_session_id = entry.session.claude_session_id.clone();
@@ -282,7 +282,7 @@ impl MintedSessions {
         })
     }
 
-    pub fn empty(path: Option<PathBuf>) -> Self {
+    pub fn empty(path: PathBuf) -> Self {
         Self { path, names: BTreeMap::new() }
     }
 
@@ -296,29 +296,23 @@ impl MintedSessions {
     }
 
     /// A missing file is an empty set; a damaged one is an error, for [`Self::set_aside`].
-    pub fn load(path: Option<PathBuf>) -> std::io::Result<Self> {
-        let names = match &path {
-            Some(p) => match std::fs::read_to_string(p) {
-                Ok(text) => serde_json::from_str(&text).map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))?,
-                Err(e) if e.kind() == ErrorKind::NotFound => BTreeMap::new(),
-                Err(e) => return Err(e),
-            },
-            None => BTreeMap::new(),
+    pub fn load(path: PathBuf) -> std::io::Result<Self> {
+        let names = match std::fs::read_to_string(&path) {
+            Ok(text) => serde_json::from_str(&text).map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))?,
+            Err(e) if e.kind() == ErrorKind::NotFound => BTreeMap::new(),
+            Err(e) => return Err(e),
         };
         Ok(Self { path, names })
     }
 
     pub fn save(&self) -> std::io::Result<()> {
-        let Some(path) = &self.path else {
-            return Ok(());
-        };
-        supraman_core::fs::write_atomic(path, serde_json::to_string_pretty(&self.names).map_err(std::io::Error::other)?)
+        supraman_core::fs::write_atomic(&self.path, serde_json::to_string_pretty(&self.names).map_err(std::io::Error::other)?)
     }
 
     /// The one read-modify-write of a run record ([`Self::run_path`]), which `sm` and the app both edit: under the runs' lock, the file deleted once empty.
     pub fn edit_run<R>(path: &Path, f: impl FnOnce(&mut Self) -> R) -> std::io::Result<R> {
         let _lock = supraman_core::fs::lock_file(&path.parent().unwrap_or(Path::new(".")).join(RUNS_LOCK))?;
-        let mut records = Self::load(Some(path.to_path_buf()))?;
+        let mut records = Self::load(path.to_path_buf())?;
         let out = f(&mut records);
         if records.names.is_empty() {
             match std::fs::remove_file(path) {
@@ -700,7 +694,7 @@ pub fn runs_signed_out(keeper: &Keeper, origin: &str) -> Vec<String> {
 }
 
 fn runs_of(home: &Path) -> Vec<(PathBuf, MintedSessions)> {
-    files_ending(&runs_dir(home), ".json").into_iter().filter_map(|p| Some((p.clone(), MintedSessions::load(Some(p)).ok()?))).collect()
+    files_ending(&runs_dir(home), ".json").into_iter().filter_map(|p| Some((p.clone(), MintedSessions::load(p).ok()?))).collect()
 }
 
 /// Deletes `name`'s Workman config under `mcp_dir`; a file already gone is no error.
@@ -874,7 +868,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let path = MintedSessions::path(home.path(), "demo");
         assert_eq!(path, home.path().join("supervisor").join("demo.sessions.json"));
-        let mut s = MintedSessions::load(Some(path.clone())).unwrap();
+        let mut s = MintedSessions::load(path.clone()).unwrap();
         s.insert(
             "fm-demo-workspace",
             MintedSession {
@@ -886,11 +880,11 @@ mod tests {
             },
         );
         s.save().unwrap();
-        let back = MintedSessions::load(Some(path.clone())).unwrap();
+        let back = MintedSessions::load(path.clone()).unwrap();
         assert_eq!(back, s);
         assert!(!home.path().join("supervisor").join("demo.sessions.json.tmp").exists());
         std::fs::write(&path, "not json").unwrap();
-        assert!(MintedSessions::load(Some(path)).is_err());
+        assert!(MintedSessions::load(path).is_err());
     }
 
     #[test]
@@ -909,7 +903,7 @@ mod tests {
                 });
             }
         });
-        let records = MintedSessions::load(Some(path.clone())).unwrap();
+        let records = MintedSessions::load(path.clone()).unwrap();
         assert_eq!(records.names().count(), 2 * EACH, "an edit lost another's");
         for i in 0..2 * EACH {
             let name = if i < EACH { format!("fm-a-{i}") } else { format!("fm-b-{}", i - EACH) };
@@ -930,10 +924,10 @@ mod tests {
         )
         .unwrap();
         supraman_claude::write_mcp_config_helped(&mcp, "fm-demo-workspace", "http://127.0.0.1:1/mcp", "sm", &[]).unwrap();
-        let mut s = MintedSessions::load(Some(path.clone())).unwrap();
+        let mut s = MintedSessions::load(path.clone()).unwrap();
         assert_eq!(s.get("fm-demo-workspace").unwrap().origin, None, "a file from before m5/48");
         s.adopt_origins(&mcp).unwrap();
-        let back = MintedSessions::load(Some(path)).unwrap();
+        let back = MintedSessions::load(path).unwrap();
         assert_eq!(back.get("fm-demo-workspace").unwrap().origin.as_deref(), Some("http://127.0.0.1:1"), "saved");
         assert_eq!(back.get("fm-demo-alpha").unwrap().origin, None, "no config file: unknown");
         assert_eq!(
@@ -967,7 +961,7 @@ mod tests {
         let mut req = request();
         req.replace = false;
         let minted = HttpMinter::default().mint(fake.base(), "fake-static", &req).unwrap();
-        let mut records = MintedSessions::empty(Some(record));
+        let mut records = MintedSessions::empty(record);
         let session = MintedSession {
             session_id: minted.session_id.clone(),
             role: "workspace".into(),
@@ -1149,7 +1143,7 @@ mod tests {
         let record = MintedSessions::run_path(home.path(), NAME);
         let (keeper, token) = kept_at(home.path(), &fake, record.clone());
         let other = "bbbb0002-0000-4000-8000-000000000002";
-        let mut records = MintedSessions::load(Some(record.clone())).unwrap();
+        let mut records = MintedSessions::load(record.clone()).unwrap();
         let session = MintedSession { session_id: "9".into(), role: "workspace".into(), claude_session_id: Some(other.into()), last_active: None, origin: Some(fake.base().to_string()) };
         records.insert_minted("fm-demo-other", session, &request());
         records.save().unwrap();
@@ -1159,7 +1153,7 @@ mod tests {
             assert!(revoke_deleted_runs(&keeper, &HttpMinter::default(), signed, &mut absent, &[listed(other)]).is_empty());
         }
         assert!(!sessions.live(&token) && keeper.kept(NAME).is_none(), "the gone name is revoked");
-        let left = MintedSessions::load(Some(record)).unwrap();
+        let left = MintedSessions::load(record).unwrap();
         assert_eq!(left.names().collect::<Vec<_>>(), ["fm-demo-other"], "the other name stays in its file");
     }
 

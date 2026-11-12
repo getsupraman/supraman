@@ -377,7 +377,7 @@ impl Supervision {
                     }
                     None => {
                         let tokens = AppTokens { auth: crate::signin::auth(&self.home) };
-                        let s = Supervisor::new(desired, self.config.clone(), Claude::default(), tokens);
+                        let s = Supervisor::new(desired, &self.home, self.config.clone(), Claude::default(), tokens);
                         self.supervisors.insert(p.name.clone(), s);
                     }
                 },
