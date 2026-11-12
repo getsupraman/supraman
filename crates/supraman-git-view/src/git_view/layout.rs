@@ -11,6 +11,7 @@ use supraman_core::paths::{main_checkout, path_key};
 use supraman_core::store::{JsonStore, Save};
 
 use super::GitSizes;
+use super::details::FileView;
 
 const LOST: &str = "Git tabs open at their default layout, and none is kept until the file is fixed or removed";
 
@@ -24,6 +25,9 @@ pub(crate) struct File {
     /// The graph's columns the header menu hides, in every repo.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) hidden_columns: Vec<String>,
+    /// Path | Tree of every Git tab's file lists.
+    #[serde(default)]
+    pub(crate) file_view: FileView,
 }
 
 /// What a Git tab opens at.
@@ -119,6 +123,19 @@ pub(crate) fn hide_columns(hidden: Vec<String>, cx: &mut App) -> Option<Save> {
     layouts(cx)?.store.as_mut()?.edit(|f| {
         let changed = f.hidden_columns != hidden;
         f.hidden_columns = hidden;
+        changed
+    })
+}
+
+/// The file lists' Path | Tree, once [`ready`].
+pub(crate) fn file_view(cx: &mut App) -> FileView {
+    layouts(cx).and_then(|l| l.store.as_ref()).map(|s| s.get().file_view).unwrap_or_default()
+}
+
+pub(crate) fn set_file_view(view: FileView, cx: &mut App) -> Option<Save> {
+    layouts(cx)?.store.as_mut()?.edit(|f| {
+        let changed = f.file_view != view;
+        f.file_view = view;
         changed
     })
 }

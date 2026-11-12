@@ -98,3 +98,37 @@ fn each_tone_and_fill_paints_its_theme_colours(cx: &mut TestAppContext) {
         }
     }
 }
+
+struct Toned {
+    hits: HitTargets,
+    painted: Option<Painted>,
+}
+
+impl Render for Toned {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let error = cx.theme().status().error;
+        let mut button = icon_toned(&self.hits, "trash", crate::icon::Icon::Trash.svg(14., error), px(24.), Tone::Danger, cx);
+        let style = button.style();
+        self.painted = Some(Painted { fill: style.background.as_ref().and_then(|f| f.color()).and_then(|b| b.as_solid()), border: style.border_color, text: style.text.color });
+        div().flex().p_2().child(button)
+    }
+}
+
+#[gpui::test]
+fn a_danger_icon_rests_on_the_errors_tint_and_hovers_on_its_solid_fill(cx: &mut TestAppContext) {
+    cx.update(|cx| crate::init_globals(cx, "test"));
+    let (view, cx) = cx.add_window_view(|_, _| Toned { hits: HitTargets::default(), painted: None });
+    cx.run_until_parked();
+    let (colors, error) = cx.update(|_, cx| (cx.theme().colors().clone(), cx.theme().status().error));
+    let painted = view.read_with(cx, |v, _| v.painted).expect("painted");
+    let (outline, solid, toned) = cx.update(|_, cx| (look(Tone::Danger, Fill::Outline, cx), look(Tone::Danger, Fill::Solid, cx), icon_look(Tone::Danger, cx)));
+    assert_eq!(painted.fill, Some(outline.hover), "at rest the error's tint");
+    assert_eq!(painted.fill.map(|f| f.a), Some(error.a * 0.2), "a tint, not the solid fill");
+    assert_eq!(painted.border, Some(error), "the error's border");
+    assert_eq!(toned.hover, solid.fill, "hovered the solid error fill");
+    assert_eq!(toned.hover, error);
+    assert_ne!(toned.hover, colors.ghost_element_hover, "never the ghost's hover");
+    assert_eq!(toned.hover_text, solid.text, "the icon in a solid danger's text colour while hovered");
+    assert!(crate::themes::contrast(toned.hover_text, error) >= 3., "the icon legible on the solid fill");
+    assert_eq!(toned.text, error, "the icon in the error colour at rest");
+}

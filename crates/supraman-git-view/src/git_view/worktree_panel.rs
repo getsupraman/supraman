@@ -29,6 +29,8 @@ pub(crate) enum WorktreeEvent {
     File(Arc<Path>, Target),
     /// Open Worktree: the selected row's worktree in its own tab.
     Open,
+    /// Path | Tree chosen: every list of the tab takes it.
+    View(FileView),
 }
 
 /// The worktree shown, its lists in the panel's order.
@@ -179,6 +181,11 @@ impl WorktreePanel {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn view(&self) -> FileView {
+        self.view
+    }
+
     pub(crate) fn set_view(&mut self, view: FileView, cx: &mut Context<Self>) {
         self.view = view;
         cx.notify();
@@ -285,7 +292,7 @@ impl WorktreePanel {
 
     fn toolbar(&self, cx: &mut Context<Self>) -> Div {
         let sort = files::sort_button(&self.hits, "worktree", self.order, |this: &mut WorktreePanel, order, cx| this.set_order(order, cx), cx);
-        let toggle = files::view_toggle(&self.hits, "worktree", self.view, |this: &mut WorktreePanel, view, cx| this.set_view(view, cx), cx);
+        let toggle = files::view_toggle(&self.hits, "worktree", self.view, |_: &mut WorktreePanel, view, cx| cx.emit(WorktreeEvent::View(view)), cx);
         div().flex().flex_none().items_center().h(px(28.)).px_2().child(sort).child(div().flex_1().flex().justify_center().child(toggle)).child(div().w(px(24.)))
     }
 

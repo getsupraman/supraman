@@ -58,7 +58,7 @@ use supraman_ui::toast::ToastSlot;
 use theme::ActiveTheme as _;
 
 use cells::ref_cell;
-use details::{CommitPanel, PanelEvent};
+use details::{CommitPanel, FileView, PanelEvent};
 use diff::DiffView;
 use colours::Palette;
 use load::{Heads, Problem};
@@ -321,6 +321,8 @@ impl GitView {
     fn open_at(&mut self, key: String, cx: &mut Context<Self>) {
         let opening = layout::opening(&key, cx);
         self.hidden_columns = layout::hidden_columns(cx);
+        let view = layout::file_view(cx);
+        self.show_file_view(view, cx);
         self.apply(&opening.sizes, cx);
         self.own_graph = opening.own_graph;
         self.key = Some(key);
@@ -388,6 +390,7 @@ impl GitView {
                 self.stash.update(cx, |s, cx| s.set_message(stash, message, cx));
             }
             PanelEvent::FileMenu(click) => self.file_menu(click.clone(), cx),
+            PanelEvent::View(view) => self.set_file_view(*view, cx),
         }
     }
 
@@ -399,7 +402,21 @@ impl GitView {
                     self.open_worktree(ix, true, cx);
                 }
             }
+            WorktreeEvent::View(view) => self.set_file_view(*view, cx),
         }
+    }
+
+    /// Path | Tree for every file list of the tab, kept for every Git tab.
+    pub(crate) fn set_file_view(&mut self, view: FileView, cx: &mut Context<Self>) {
+        self.show_file_view(view, cx);
+        let save = layout::set_file_view(view, cx);
+        save_off_thread(save, cx, Self::kept);
+    }
+
+    fn show_file_view(&mut self, view: FileView, cx: &mut Context<Self>) {
+        self.panel.update(cx, |p, cx| p.set_view(view, cx));
+        self.wip_panel.update(cx, |p, cx| p.set_view(view, cx));
+        self.worktree_panel.update(cx, |p, cx| p.set_view(view, cx));
     }
 
     fn ref_event(&mut self, _: Entity<RefPanel>, e: &RefEvent, cx: &mut Context<Self>) {

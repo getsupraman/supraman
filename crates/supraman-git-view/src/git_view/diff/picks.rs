@@ -364,7 +364,7 @@ impl DiffView {
             _ => ("diff-line-stage", Icon::Plus, "Stage this line", Pick::Stage),
         };
         let colors = cx.theme().colors();
-        let button = button::icon(&self.hits, key, icon.svg(12., colors.text), px(16.), cx).bg(colors.element_background).border_1().border_color(colors.border).occlude();
+        let button = button::icon_toned(&self.hits, key, icon.svg(12., colors.text), px(16.), button::Tone::Neutral, cx).occlude();
         let button = self.acting(button, Act::Lines(pick, vec![hover.line]), self.picks_blocked(cx), tip, cx);
         Some(deferred(anchored().position(point(x + px(2.), y)).child(button)).into_any_element())
     }

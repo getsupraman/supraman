@@ -498,6 +498,10 @@ async fn git_band(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowCont
     crate::selftest::click(view, "git-ref-ask-cancel", cx).await
 }
 
+fn mv(position: gpui::Point<gpui::Pixels>, cx: &mut AsyncWindowContext) -> anyhow::Result<gpui::DispatchEventResult> {
+    cx.update(|window, cx| window.dispatch_event(gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent { position, pressed_button: None, modifiers: gpui::Modifiers::default() }), cx))
+}
+
 /// The graph's pills at the normal width, one hovered, and cut in a narrow Branch / Tag column, which the column's double-click then resets; what René compares with GitKraken by eye.
 async fn git_pills(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let away = cx.update(|window, _| window.viewport_size())?;
@@ -506,7 +510,6 @@ async fn git_pills(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowCon
         v.hits.borrow().iter().filter(|(k, _)| k.starts_with("git-pill-")).map(|(_, h)| h.bounds).min_by(|a, b| a.top().partial_cmp(&b.top()).unwrap_or(std::cmp::Ordering::Equal))
     })
     .await?;
-    let mv = |position, cx: &mut AsyncWindowContext| cx.update(|window, cx| window.dispatch_event(gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent { position, pressed_button: None, modifiers: gpui::Modifiers::default() }), cx));
     mv(gpui::point(away.width - gpui::px(4.), away.height - gpui::px(4.)), cx)?;
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-git-pills.png"), None, cx).await?;
@@ -534,12 +537,19 @@ async fn git_pills(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowCon
     crate::selftest::double_click(view, "git-divider-refs", cx).await
 }
 
-/// The same tab's WIP panel: staged and unstaged files and a typed summary in the commit area.
+/// The same tab's WIP panel: staged and unstaged files and a typed summary in the commit area, then Discard all hovered.
 async fn git_wip(view: &Entity<FleetView>, git: &Entity<crate::git_view::GitView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     git.update(cx, |g, cx| g.draft_commit("Stage, discard and commit from the WIP panel", cx));
     crate::selftest::until(view, cx, Duration::from_secs(10), "the commit area", |v| v.hits.borrow().contains_key("wip-commit").then_some(())).await?;
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-git-wip.png"), None, cx).await?;
     println!("shot: {}", shot.display());
+    let trash = crate::selftest::until(view, cx, Duration::from_secs(10), "Discard all", |v| v.hits.borrow().get("wip-discard-all").map(|h| h.bounds.center())).await?;
+    mv(trash, cx)?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-git-discard-hover.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    let away = cx.update(|window, _| window.viewport_size())?;
+    mv(gpui::point(away.width - gpui::px(4.), away.height - gpui::px(4.)), cx)?;
     Ok(())
 }

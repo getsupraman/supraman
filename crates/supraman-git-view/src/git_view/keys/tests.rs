@@ -142,6 +142,7 @@ fn a_held_key_reads_the_commit_once_it_comes_up_or_settles(cx: &mut TestAppConte
 fn right_opens_the_first_file_and_left_or_escape_go_back_to_the_row(cx: &mut TestAppContext) {
     let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
+    view.update(cx, |v, cx| v.set_file_view(FileView::Tree, cx));
     let root = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| r.sha.as_ref() == f.sha("root")).unwrap());
     click_row(&view, root, cx);
     let files = view.read_with(cx, |v, cx| v.panel.read(cx).file_order(f.sha("root")));
@@ -175,6 +176,7 @@ fn right_opens_the_first_file_and_left_or_escape_go_back_to_the_row(cx: &mut Tes
 fn up_and_down_in_the_viewer_walk_the_files_and_wrap(cx: &mut TestAppContext) {
     let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
+    view.update(cx, |v, cx| v.set_file_view(FileView::Tree, cx));
     let root = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| r.sha.as_ref() == f.sha("root")).unwrap());
     click_row(&view, root, cx);
     keys(&view, "right", cx);

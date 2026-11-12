@@ -1,3 +1,4 @@
+mod file_view;
 mod focus;
 mod forms;
 mod paint;
