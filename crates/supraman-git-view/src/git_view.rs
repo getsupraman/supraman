@@ -842,7 +842,7 @@ impl GitView {
         self.remote.update(cx, |r, cx| r.render_add(cx)).or_else(|| self.branch.update(cx, |b, cx| b.render_add_worktree(cx)))
     }
 
-    /// `rest` right of the ref panel, which in a narrow tab gives its width before the graph and commit panel do; `form` is the open form's width.
+    /// `rest` right of the ref panel, which in a narrow tab gives its width before the graph and commit panel do, down to its least while a form `form` wide is open.
     fn with_refs(&mut self, rest: AnyElement, form: f32, cx: &mut Context<Self>) -> AnyElement {
         let refs = self.ref_panel.read(cx);
         let (shut, width) = (refs.shut(), refs.width());
@@ -854,7 +854,8 @@ impl GitView {
         }
         let panel_min = if form > 0. { f32::from(self.panel_width).max(PANEL_MIN) } else { PANEL_MIN };
         let rest_min = px(GRAPH_MIN + panel_min + 1. + form);
-        let left = div().relative().flex_shrink(REFS_SHRINK).min_w_0().overflow_hidden().w(width).h_full().child(panel).child(hit_target(&self.hits, REFS_PANE.into()));
+        let least = if form > 0. { ref_panel::MIN_WIDTH } else { px(0.) };
+        let left = div().relative().flex_shrink(REFS_SHRINK).min_w(least).overflow_hidden().w(width).h_full().child(panel).child(hit_target(&self.hits, REFS_PANE.into()));
         let rest = div().flex_grow(1.).flex_basis(rest_min).min_w_0().h_full().child(rest);
         SplitPane { id: "refpanel-split".into(), min_first: ref_panel::MIN_WIDTH, min_second: rest_min, default: ref_panel::DEFAULT_WIDTH }
             .render(left, rest, |this: &mut GitView, width, cx| this.ref_panel.update(cx, |p, cx| p.set_width(width, cx)), |this: &mut GitView, cx| this.keep_layout(cx), cx)

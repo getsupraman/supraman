@@ -59,16 +59,19 @@ fn a_form_opens_between_the_ref_panel_and_the_graph_and_takes_its_width_from_the
 }
 
 #[gpui::test]
-fn in_a_narrow_tab_the_form_takes_the_graphs_width_and_then_the_ref_panels(cx: &mut TestAppContext) {
+fn in_a_narrow_tab_the_form_takes_the_graphs_width_and_the_ref_panel_keeps_its_least(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let home = tempfile::tempdir().unwrap();
-    let (view, cx) = test_support::open(&f.dir, Opts::default().home(home.path()).size(1100., 700.), cx);
-    let (refs_before, _, graph_before, panel) = places(&view, None, cx);
-
-    open_form(&view, "refpanel-remote-add", cx);
-    let (refs, graph) = beside(&view, add::KEY, panel, cx);
-    assert!(graph.size.width < graph_before.size.width && graph.size.width >= px(GRAPH_MIN) - px(2.), "the graph gives down to its least: {graph_before:?} {graph:?}");
-    assert!(refs.size.width < refs_before.size.width, "then the ref panel gives the rest: {refs_before:?} {refs:?}");
+    for (width, refs_give) in [(1300., false), (1100., true), (950., true)] {
+        let (view, cx) = test_support::open(&f.dir, Opts::default().home(home.path()).size(width, 700.), cx);
+        let (refs_before, _, graph_before, panel) = places(&view, None, cx);
+        open_form(&view, "refpanel-remote-add", cx);
+        let (refs, graph) = beside(&view, add::KEY, panel, cx);
+        assert!(graph.size.width < graph_before.size.width, "{width}: the graph gives: {graph_before:?} {graph:?}");
+        assert!(refs.size.width >= ref_panel::MIN_WIDTH - px(1.), "{width}: the ref panel keeps its least: {refs:?}");
+        assert_eq!(refs.size.width < refs_before.size.width, refs_give, "{width}: the ref panel gives once the graph is at its least: {refs_before:?} {refs:?}");
+        assert!(test_support::painted(&view, "refpanel-row-remote/origin", cx), "{width}: the ref panel's rows stay in view");
+    }
 }
 
 #[gpui::test]
