@@ -80,8 +80,8 @@ fn paint_mark(pane: &Pane, bounds: Bounds<Pixels>, hits: &HitTargets, window: &m
 }
 
 /// One of the things a window shows in turn in one place (its tabs): when it is shown in another's place it
-/// takes the keys once painted, what it held when last shown, else `entry`; never from a popup holding them (what
-/// holds them outside every pane and its region, painted under [`restore_on_loss`]).
+/// takes the keys once painted, what it held when last shown, else `entry`; never from its own content (a field it
+/// focused as it opened) or a popup (what holds them outside every pane and its region, painted under [`restore_on_loss`]).
 #[derive(Clone)]
 pub struct Group {
     key: SharedString,
@@ -127,8 +127,11 @@ impl Group {
         }
         let target = {
             let state = state.borrow();
-            let popup = window.focused(cx).is_some_and(|f| !self.region.contains(&f, window) && !state.shown.iter().any(|p| p.region.contains(&f, window)));
-            if popup {
+            let focused = window.focused(cx);
+            let restored = |f: &FocusHandle| state.restored.as_ref().and_then(WeakFocusHandle::upgrade).as_ref() == Some(f);
+            let inside = focused.as_ref().is_some_and(|f| *f != self.region && !restored(f) && self.region.contains(f, window));
+            let popup = focused.is_some_and(|f| !self.region.contains(&f, window) && !state.shown.iter().any(|p| p.region.contains(&f, window)));
+            if inside || popup {
                 return;
             }
             state.group_leaves.get(&self.key).and_then(WeakFocusHandle::upgrade).filter(|leaf| self.region.contains(leaf, window)).unwrap_or_else(|| self.entry.clone())
@@ -153,12 +156,14 @@ pub fn restore_on_loss<V: 'static>(window: &mut Window, cx: &mut Context<V>) -> 
 /// Focuses what the pane that last held the focus held, while that pane is shown, else gpui's nearest focusable
 /// ancestor of what lost it; whether it focused anything.
 pub fn restore(window: &mut Window, cx: &mut App) -> bool {
+    let state = state(window, cx);
     let target = {
-        let state = state(window, cx);
         let state = state.borrow();
         state.held.as_ref().and_then(|key| state.shown.iter().find(|p| &p.key == key)).map(|pane| state.target(pane, window))
     };
-    target.or_else(|| window.focus_lost_restore_target(cx)).map(|t| window.focus(&t, cx)).is_some()
+    let target = target.or_else(|| window.focus_lost_restore_target(cx));
+    state.borrow_mut().restored = target.as_ref().map(FocusHandle::downgrade);
+    target.map(|t| window.focus(&t, cx)).is_some()
 }
 
 /// The shown panes' keys in F6's order.
@@ -200,6 +205,8 @@ struct State {
     group: Option<SharedString>,
     /// What each group last held inside its region.
     group_leaves: HashMap<SharedString, WeakFocusHandle>,
+    /// What [`restore`] last focused: a pane's, never a shown group's own pick.
+    restored: Option<WeakFocusHandle>,
 }
 
 impl State {

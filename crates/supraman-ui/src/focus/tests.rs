@@ -150,6 +150,8 @@ struct Tabs {
     shown: usize,
     popup: Option<FocusHandle>,
     hits: HitTargets,
+    /// Each tab's content a pane under one key, as every Git tab's graph is `git-graph`.
+    shared_pane: bool,
     /// What the window would show when a group takes the keys, as the app's active tab.
     active: std::rc::Rc<std::cell::Cell<usize>>,
     _restore: gpui::Subscription,
@@ -158,7 +160,8 @@ struct Tabs {
 impl Render for Tabs {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let tab = self.shown;
-        let content = div().id(KEYS[tab]).size_full().track_focus(&self.entries[tab]).child(div().id("field").size_4().track_focus(&self.fields[tab]));
+        let field = div().id("field").size_4().track_focus(&self.fields[tab]);
+        let content = div().id(KEYS[tab]).relative().size_full().track_focus(&self.entries[tab]).child(field).children(self.shared_pane.then(|| Pane::new("content", &self.entries[tab]).paint(&self.hits)));
         let area = div().id("area").relative().w(px(200.)).h_full().track_focus(&self.area).child(content).child(self.group(tab).paint());
         let sidebar = div().id("sidebar").relative().w(px(100.)).h_full().track_focus(&self.sidebar).child(Pane::new("sidebar", &self.sidebar).paint(&self.hits));
         root(div().flex().size_full()).child(sidebar).child(area).children(self.popup.as_ref().map(|p| div().id("popup").size_4().track_focus(p)))
@@ -178,7 +181,7 @@ fn open_tabs(cx: &mut TestAppContext) -> (Entity<Tabs>, &mut VisualTestContext) 
         let area = cx.focus_handle();
         area.focus(window, cx);
         let (entries, fields) = ([cx.focus_handle(), cx.focus_handle()], [cx.focus_handle(), cx.focus_handle()]);
-        Tabs { sidebar: cx.focus_handle(), area, entries, fields, shown: 0, popup: None, hits: HitTargets::default(), active: Default::default(), _restore: restore_on_loss(window, cx) }
+        Tabs { sidebar: cx.focus_handle(), area, entries, fields, shown: 0, popup: None, hits: HitTargets::default(), shared_pane: false, active: Default::default(), _restore: restore_on_loss(window, cx) }
     });
     cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
@@ -244,4 +247,35 @@ fn a_tab_no_longer_shown_when_it_would_take_the_keys_leaves_them(cx: &mut TestAp
     });
     cx.run_until_parked();
     assert!(!focused_is(&entries[1], cx) && focused_is(&area, cx), "B painted while A is the active one does not take the keys");
+}
+
+#[gpui::test]
+fn a_tab_that_focused_its_own_field_as_it_opened_keeps_it(cx: &mut TestAppContext) {
+    let (view, cx) = open_tabs(cx);
+    let fields = view.read_with(cx, |v, _| v.fields.clone());
+    view.update_in(cx, |v, window, cx| {
+        v.shown = 1;
+        v.active.set(1);
+        window.focus(&v.fields[1], cx);
+        cx.notify();
+    });
+    cx.run_until_parked();
+    assert!(focused_is(&fields[1], cx), "B's own field keeps the keys, not B's entry");
+}
+
+#[gpui::test]
+fn tabs_sharing_a_pane_key_each_get_back_what_they_held(cx: &mut TestAppContext) {
+    let (view, cx) = open_tabs(cx);
+    view.update(cx, |v, _| v.shared_pane = true);
+    let fields = view.read_with(cx, |v, _| v.fields.clone());
+    show_tab(&view, 1, cx);
+    cx.update(|window, cx| window.focus(&fields[1], cx));
+    cx.run_until_parked();
+    show_tab(&view, 0, cx);
+    cx.update(|window, cx| window.focus(&fields[0], cx));
+    cx.run_until_parked();
+    show_tab(&view, 1, cx);
+    assert!(focused_is(&fields[1], cx), "B's field, not the shared pane's restore onto B's entry");
+    show_tab(&view, 0, cx);
+    assert!(focused_is(&fields[0], cx));
 }
