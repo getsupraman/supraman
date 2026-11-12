@@ -8,8 +8,12 @@ use crate::hit::{HitTargets, hit_target};
 
 /// The deferred priority of every layer that floats over its view and is not a menu (a pill group's list, an overlay card).
 pub const FLOAT: usize = 1;
+/// A side form laid over its view's content, above [`FLOAT`], and what floats inside it (its picker).
+pub const FORM: usize = FLOAT + 1;
+/// A toast, a palette or a prompt band over a view that may hold a [`FORM`].
+pub const OVER_FORM: usize = FORM + 1;
 /// Every menu's deferred priority: above every other deferred layer.
-pub const PRIORITY: usize = FLOAT + 1;
+pub const PRIORITY: usize = OVER_FORM + 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MenuItem<A> {

@@ -1,4 +1,4 @@
-//! The tab's form slot between the ref panel and the graph: Add Remote, Edit Remote and Create Worktree, on a fixture copy and its bare temp remote.
+//! The open form laid over the graph at the ref panel's right edge: Add Remote, Edit Remote and Create Worktree, on a fixture copy and its bare temp remote.
 
 use gpui::{Bounds, Entity, Pixels, TestAppContext, VisualTestContext, px};
 use supraman_gitman::fixture::Fixture;
@@ -11,21 +11,25 @@ use crate::git_view::test_support::{self, Opts, click, keys, redraw, right_click
 const WORKTREE: &str = "git-add-worktree";
 
 /// The ref panel's, the open form's (when `form`), the graph's and the commit panel's bounds in a frame drawn now.
-fn places(view: &Entity<GitView>, form: Option<&str>, cx: &mut VisualTestContext) -> (Bounds<Pixels>, Option<Bounds<Pixels>>, Bounds<Pixels>, Bounds<Pixels>) {
+fn places(view: &Entity<GitView>, form: Option<&str>, cx: &mut VisualTestContext) -> (Option<Bounds<Pixels>>, Option<Bounds<Pixels>>, Bounds<Pixels>, Bounds<Pixels>) {
     let hits = test_support::repaint(view, cx);
     let at = |k: &str| hits.borrow().get(k).map(|h| h.bounds).unwrap_or_else(|| panic!("{k} is painted"));
-    (at(REFS_PANE), form.map(at), at(GRAPH_PANE), at(PANEL_PANE))
+    (hits.borrow().get(REFS_PANE).map(|h| h.bounds), form.map(at), at(GRAPH_PANE), at(PANEL_PANE))
 }
 
-/// The form lies between the ref panel and the graph, `FORM_WIDTH` wide, the commit panel as it was.
-fn beside(view: &Entity<GitView>, form: &str, before: Bounds<Pixels>, cx: &mut VisualTestContext) -> (Bounds<Pixels>, Bounds<Pixels>) {
+/// The form lies over the graph from its left edge, `FORM_WIDTH` wide (or the graph's width when narrower) and the column's height; nothing else moves.
+fn over(view: &Entity<GitView>, form: &str, closed: (Option<Bounds<Pixels>>, Bounds<Pixels>, Bounds<Pixels>), cx: &mut VisualTestContext) -> Bounds<Pixels> {
     let (refs, at, graph, panel) = places(view, Some(form), cx);
     let at = at.unwrap();
-    assert!(refs.right() <= at.left() && at.left() - refs.right() < px(8.), "{form} right of the ref panel: {refs:?} {at:?}");
-    assert!(at.right() <= graph.left() && graph.left() - at.right() < px(2.), "{form} left of the graph: {at:?} {graph:?}");
-    assert!((at.size.width - px(FORM_WIDTH)).abs() < px(2.), "{form} is {FORM_WIDTH} wide: {at:?}");
-    assert_eq!(panel, before, "{form}: the commit panel stays as it was");
-    (refs, graph)
+    assert_eq!((refs, graph, panel), closed, "{form}: the ref panel, the graph and the commit panel stay where they were");
+    if let Some(refs) = refs {
+        assert!(refs.right() <= at.left() && at.left() - refs.right() < px(8.), "{form} at the ref panel's right edge: {refs:?} {at:?}");
+        assert_eq!((at.top(), at.bottom()), (refs.top(), refs.bottom()), "{form} spans the ref panel's column");
+    }
+    assert_eq!(at.left(), graph.left(), "{form} starts at the graph's left edge: {at:?} {graph:?}");
+    assert_eq!((at.top(), at.bottom()), (graph.top(), graph.bottom()), "{form} is the graph's height");
+    assert!((at.size.width - px(FORM_WIDTH).min(graph.size.width)).abs() < px(2.), "{form} is {FORM_WIDTH} wide, within the graph: {at:?} {graph:?}");
+    at
 }
 
 fn open_form(view: &Entity<GitView>, plus: &str, cx: &mut VisualTestContext) {
@@ -40,37 +44,65 @@ fn open_form(view: &Entity<GitView>, plus: &str, cx: &mut VisualTestContext) {
 }
 
 #[gpui::test]
-fn a_form_opens_between_the_ref_panel_and_the_graph_and_takes_its_width_from_the_graph(cx: &mut TestAppContext) {
+fn a_form_covers_the_graph_at_the_ref_panels_edge_and_nothing_moves(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let home = tempfile::tempdir().unwrap();
     let (view, cx) = test_support::open(&f.dir, Opts::default().home(home.path()).size(1400., 900.), cx);
-    let (refs_before, _, graph_before, panel) = places(&view, None, cx);
+    let (refs, _, graph, panel) = places(&view, None, cx);
 
     open_form(&view, "refpanel-remote-add", cx);
-    let (refs, graph) = beside(&view, add::KEY, panel, cx);
-    assert_eq!(refs, refs_before, "a wide tab keeps the ref panel's width");
-    assert!((graph_before.size.width - graph.size.width - px(FORM_WIDTH)).abs() < px(2.), "the graph gives the form its width: {graph_before:?} {graph:?}");
-
+    over(&view, add::KEY, (refs, graph, panel), cx);
     open_form(&view, "refpanel-worktrees-add", cx);
-    beside(&view, WORKTREE, panel, cx);
+    over(&view, WORKTREE, (refs, graph, panel), cx);
     keys(&view, "escape", cx);
     keys(&view, "escape", cx);
-    assert_eq!(places(&view, None, cx), (refs_before, None, graph_before, panel), "closed, the tab is as it was");
+    assert_eq!(places(&view, None, cx), (refs, None, graph, panel), "closed, the tab is as it was");
 }
 
 #[gpui::test]
-fn in_a_narrow_tab_the_form_takes_the_graphs_width_and_the_ref_panel_keeps_its_least(cx: &mut TestAppContext) {
+fn a_click_on_a_pill_under_the_form_lands_on_the_form(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let home = tempfile::tempdir().unwrap();
-    for (width, refs_give) in [(1300., false), (1100., true), (950., true)] {
+    let (view, cx) = test_support::open(&f.dir, Opts::default().home(home.path()).size(1400., 900.), cx);
+    open_form(&view, "refpanel-remote-add", cx);
+    let hits = test_support::repaint(&view, cx);
+    let form = hits.borrow().get(add::KEY).unwrap().bounds;
+    let selected = view.read_with(cx, |v, cx| v.selected(cx));
+    let under = hits.borrow().iter().filter(|(k, h)| k.starts_with("git-pill-") && form.contains(&h.bounds.center())).map(|(k, _)| k.clone()).collect::<Vec<_>>();
+    assert!(under.len() > 1, "pills lie under the form: {under:?}");
+    for pill in under {
+        click(&view, &pill, cx);
+        assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), selected, "{pill}: the click stays on the form");
+        assert!(test_support::painted(&view, add::KEY, cx), "{pill}: the form stays open");
+    }
+    let outside = hits.borrow().get(PANEL_PANE).unwrap().bounds;
+    assert!(!form.intersects(&outside), "the commit panel lies outside the form");
+}
+
+#[gpui::test]
+fn with_the_ref_panel_shut_the_form_starts_at_the_strip(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let home = tempfile::tempdir().unwrap();
+    let (view, cx) = test_support::open(&f.dir, Opts::default().home(home.path()).size(1400., 900.), cx);
+    view.update(cx, |v, cx| v.ref_panel.update(cx, |p, cx| p.toggle_shut(cx)));
+    let (refs, _, graph, panel) = places(&view, None, cx);
+    assert_eq!(refs, None, "shut, the ref panel is its strip");
+    view.update(cx, |v, cx| v.remote.update(cx, |r, cx| r.open_add(cx)));
+    settle(&view, cx);
+    let at = over(&view, add::KEY, (refs, graph, panel), cx);
+    assert!(at.left() > px(0.) && at.left() < px(60.), "the form starts at the strip's right edge: {at:?}");
+}
+
+#[gpui::test]
+fn in_a_narrow_tab_the_form_stays_within_the_graph_and_nothing_moves(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let home = tempfile::tempdir().unwrap();
+    for width in [1300., 1100., 950., 700.] {
         let (view, cx) = test_support::open(&f.dir, Opts::default().home(home.path()).size(width, 700.), cx);
-        let (refs_before, _, graph_before, panel) = places(&view, None, cx);
+        let (refs, _, graph, panel) = places(&view, None, cx);
         open_form(&view, "refpanel-remote-add", cx);
-        let (refs, graph) = beside(&view, add::KEY, panel, cx);
-        assert!(graph.size.width < graph_before.size.width, "{width}: the graph gives: {graph_before:?} {graph:?}");
-        assert!(refs.size.width >= ref_panel::MIN_WIDTH - px(1.), "{width}: the ref panel keeps its least: {refs:?}");
-        assert_eq!(refs.size.width < refs_before.size.width, refs_give, "{width}: the ref panel gives once the graph is at its least: {refs_before:?} {refs:?}");
-        assert!(test_support::painted(&view, "refpanel-row-remote/origin", cx), "{width}: the ref panel's rows stay in view");
+        let at = over(&view, add::KEY, (refs, graph, panel), cx);
+        assert!(at.right() <= graph.right(), "{width}: the form ends within the graph: {at:?} {graph:?}");
     }
 }
 
