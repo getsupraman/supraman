@@ -1073,11 +1073,11 @@ async fn relay_step(
     if reply.from_name != target {
         bail!("{} came from {:?}, not {target}", reply.file, reply.from_name);
     }
-    let attach_key = format!("msg-attach-{w}/{}", reply.file);
+    let attach_key = format!("msg-open-{w}/{}", reply.file);
     wait_painted(view, &attach_key, Duration::from_secs(5), cx).await?;
     Claude::default().stop(&target_row.id).context("stop the target")?;
     println!(
-        "step r: {still_direct} | launched {target} ({}, `{}`) | direct: {DIRECT_SENDS} sends into its pipe in {}, all `sent direct`, {answered} of {DIRECT_SENDS} nonces answered with sm tell after {} (none held or dropped) | fallback (empty registry dir): `{}` → drop {} → row `relay starting` after {}, {relay_name} ({}) armed and `relay ready` after {} (labels {labels:?}), glyph {glyph} painted, no row of its own → outbox {} from {} with {nonce} after {} (round trip), in the app's Messages after {} with Attach; {target} stopped",
+        "step r: {still_direct} | launched {target} ({}, `{}`) | direct: {DIRECT_SENDS} sends into its pipe in {}, all `sent direct`, {answered} of {DIRECT_SENDS} nonces answered with sm tell after {} (none held or dropped) | fallback (empty registry dir): `{}` → drop {} → row `relay starting` after {}, {relay_name} ({}) armed and `relay ready` after {} (labels {labels:?}), glyph {glyph} painted, no row of its own → outbox {} from {} with {nonce} after {} (round trip), in the app's Messages after {} with Open; {target} stopped",
         target_row.id,
         launch.lines().next().unwrap_or_default(),
         secs(sent_in),

@@ -11,7 +11,7 @@ use supraman_ui::{button, fonts};
 use supraman_workman::{Claim, Honesty, InboxRow, OverviewRun, Rollup};
 
 use super::cards::{self, Card};
-use super::item::attach_target;
+use super::item::holder_session;
 use super::navigator::done_total;
 use super::projects::{active, closed_runs};
 use super::state::StateKey;
@@ -204,22 +204,9 @@ impl WorkView {
             let id = claim.item.id.clone();
             let holder = claim.holder().to_string();
             let facts = claim_facts(&claim, now);
-            let found = attach_target(&claim, &live);
+            let found = holder_session(&claim, &live);
             let mark = Mark::Filled(found.map_or(cx.theme().status().info, |s| s.activity.color(cx)));
-            let session = match found.and_then(|s| s.attach.clone()) {
-                Some(target) => {
-                    button::ghost(&self.hits, format!("work-working-session-{qref}"), cx)
-                        .text_color(colors.text_accent)
-                        .child(SharedString::from(holder))
-                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                            cx.stop_propagation();
-                            let attach = this.link.attach.clone();
-                            attach(&target, window, cx);
-                        }))
-                        .into_any_element()
-                }
-                None => div().child(SharedString::from(holder)).into_any_element(),
-            };
+            let open = found.map(|s| self.open_control(format!("work-working-open-{qref}"), &s.claude_session_id, cx));
             card = card.child(
                 div()
                     .flex()
@@ -246,10 +233,12 @@ impl WorkView {
                                     .relative()
                                     .flex()
                                     .flex_wrap()
+                                    .items_center()
                                     .gap_1()
                                     .text_xs()
                                     .text_color(colors.text_muted)
-                                    .child(session)
+                                    .child(SharedString::from(holder))
+                                    .children(open)
                                     .children(facts.iter().map(|t| SharedString::from(format!("· {t}"))))
                                     .child(hit_target(&self.hits, format!("work-working-facts-{qref}={}", facts.join(" · ")))),
                             ),

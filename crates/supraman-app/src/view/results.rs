@@ -49,9 +49,9 @@ impl FleetView {
     }
 
     /// A click opens what needs no new claude; the row's own double-click also resumes.
-    fn open_result(&mut self, workspace: &str, repo: &str, hit: &SessionHit, window: &mut gpui::Window, cx: &mut Context<Self>) {
+    fn open_result(&mut self, workspace: &str, repo: &str, hit: &SessionHit, cx: &mut Context<Self>) {
         if matches!(self.open_of(&hit.row), Open::Tab(_) | Open::Attach) {
-            self.open_row(workspace, repo, &hit.row, window, cx);
+            self.open_row(workspace, repo, &hit.row, cx);
         }
     }
 
@@ -154,9 +154,9 @@ impl FleetView {
             .flex_none()
             .cursor_pointer()
             .child(self.render_session(workspace, repo, &hit.row, grid::indent(level), cx))
-            .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+            .on_click(cx.listener(move |this, e: &ClickEvent, _, cx| {
                 if e.click_count() == 1 {
-                    this.open_result(&w, &r, &h, window, cx);
+                    this.open_result(&w, &r, &h, cx);
                 }
             }))
             .into_any_element()

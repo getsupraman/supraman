@@ -11,7 +11,9 @@ use supraman_ui::marks::Activity;
 
 use crate::git_view::test_support::{self, Opts, painted, press, redraw, repaint};
 use super::super::{GitView, Selected};
-use super::{AgentMenu, AttachAgent};
+use super::{AgentMenu, OpenAgent, PageAction, SessionPage, SessionPages};
+use supraman_ui::icon::Icon;
+use supraman_ui::session::Opening;
 use crate::occupancy::{Live, LiveSession};
 
 fn open<'a>(folder: PathBuf, live: Live, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
@@ -91,36 +93,78 @@ fn on_a_clean_tree_the_agent_row_stands_over_heads_row(cx: &mut TestAppContext) 
     assert_eq!(agents(&view, cx), [(at - 1, "fm-alpha".to_string())], "already working when the tab opened");
 }
 
+/// A fleet with a page of `paged` only, whose Open runs for a session it can attach.
+fn pages(paged: &'static str) -> SessionPages {
+    let opening = |s: &LiveSession| Opening { icon: Icon::Attach, hint: if s.attach.is_some() { "Attach in a new tab" } else { "shown now" }.into(), runs: s.attach.is_some() };
+    SessionPages {
+        page: Rc::new(move |s, _| {
+            (s.claude_session_id == paged).then(|| SessionPage {
+                title: s.name.clone(),
+                pill: ("Working".into(), gpui::red()),
+                sections: vec![],
+                open: opening(s),
+                actions: vec![PageAction { key: "stop-session".into(), label: "Stop".into(), dimmed: None }],
+            })
+        }),
+        act: Rc::new(|_, _, _, _| {}),
+        opening: Rc::new(move |s, _| opening(s)),
+    }
+}
+
 #[gpui::test]
-fn selecting_an_agent_row_shows_the_session_and_attach_asks_for_it(cx: &mut TestAppContext) {
+fn selecting_an_agent_row_shows_the_session_and_open_asks_the_fleet_for_it(cx: &mut TestAppContext) {
     let f = Fixture::copy();
-    std::fs::write(f.dir.join("new.txt"), b"new\n").unwrap();
+    std::fs::write(f.dir.join("new.txt"), b"new
+").unwrap();
     let live = Live::default();
     let (view, cx) = open(f.dir.clone(), live.clone(), cx);
+    view.update(cx, |v, cx| v.set_session_pages(pages("fm-gamma"), cx));
     let alpha = session("fm-alpha", f.dir.join("src"), Activity::Working, Some("a1"));
     set(&live, vec![alpha.clone(), session("fm-beta", f.dir.clone(), Activity::Idle, None)], &view, cx);
     let heard = Rc::new(RefCell::new(Vec::new()));
     let seen = heard.clone();
-    cx.update(|_, cx| cx.subscribe(&view, move |_, e: &AttachAgent, _| seen.borrow_mut().push(e.0.clone())).detach());
+    cx.update(|_, cx| cx.subscribe(&view, move |_, e: &OpenAgent, _| seen.borrow_mut().push(e.0.clone())).detach());
 
     press(&view, "git-agent-0", MouseButton::Left, 1, cx);
     assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Agent("fm-alpha".into())));
-    assert!(painted(&view, "git-agent-section-session", cx), "the session's page");
-    press(&view, "git-agent-attach", MouseButton::Left, 1, cx);
-    assert_eq!(*heard.borrow(), [alpha.clone()], "Attach asks for the session");
+    assert!(painted(&view, "git-agent-section-session", cx), "the session's folder and state");
+    press(&view, "git-agent-open", MouseButton::Left, 1, cx);
+    assert_eq!(*heard.borrow(), [alpha.clone()], "Open asks the fleet for the session");
 
     press(&view, "git-agent-1", MouseButton::Left, 1, cx);
     assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Agent("fm-beta".into())));
-    press(&view, "git-agent-attach", MouseButton::Left, 1, cx);
-    assert_eq!(heard.borrow().len(), 1, "a session that cannot be attached: Attach is dimmed");
+    press(&view, "git-agent-open", MouseButton::Left, 1, cx);
+    assert_eq!(heard.borrow().len(), 1, "a session Open cannot open: dimmed with the fleet's why");
 
     press(&view, "git-agent-0", MouseButton::Left, 2, cx);
-    assert_eq!(heard.borrow().len(), 2, "a double-click attaches too");
+    assert_eq!(heard.borrow().len(), 2, "a double-click opens too");
 
     set(&live, vec![session("fm-gamma", f.dir.clone(), Activity::Working, None), alpha.clone()], &view, cx);
     assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Agent("fm-alpha".into())), "the selection follows its session's row");
     set(&live, vec![session("fm-gamma", f.dir.clone(), Activity::Working, None)], &view, cx);
     assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), None, "the selected session ended");
+}
+
+#[gpui::test]
+fn the_fleets_page_shows_open_first_then_its_actions(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    std::fs::write(f.dir.join("new.txt"), b"new
+").unwrap();
+    let live = Live::default();
+    let (view, cx) = open(f.dir.clone(), live.clone(), cx);
+    view.update(cx, |v, cx| v.set_session_pages(pages("fm-alpha"), cx));
+    let alpha = session("fm-alpha", f.dir.clone(), Activity::Working, Some("a1"));
+    set(&live, vec![alpha.clone()], &view, cx);
+    let heard = Rc::new(RefCell::new(Vec::new()));
+    let seen = heard.clone();
+    cx.update(|_, cx| cx.subscribe(&view, move |_, e: &OpenAgent, _| seen.borrow_mut().push(e.0.clone())).detach());
+
+    press(&view, "git-agent-0", MouseButton::Left, 1, cx);
+    let hits = repaint(&view, cx);
+    let (open, stop) = (hits.borrow()["git-agent-open"].bounds, hits.borrow()["git-agent-stop-session"].bounds);
+    assert!(open.right() <= stop.left(), "Open first: {open:?} before {stop:?}");
+    press(&view, "git-agent-open", MouseButton::Left, 1, cx);
+    assert_eq!(*heard.borrow(), [alpha], "the page's Open asks the fleet");
 }
 
 #[gpui::test]
@@ -135,7 +179,7 @@ fn two_sessions_of_one_name_are_two_rows_each_selected_and_attached_by_its_own_i
     assert_eq!(agents(&view, cx), [(0, "uuid-1".to_string()), (1, "uuid-2".to_string())], "a row per session, keyed by its claude session id");
     let heard = Rc::new(RefCell::new(Vec::new()));
     let seen = heard.clone();
-    cx.update(|_, cx| cx.subscribe(&view, move |_, e: &AttachAgent, _| seen.borrow_mut().push(e.0.clone())).detach());
+    cx.update(|_, cx| cx.subscribe(&view, move |_, e: &OpenAgent, _| seen.borrow_mut().push(e.0.clone())).detach());
 
     press(&view, "git-agent-1", MouseButton::Left, 2, cx);
     assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Agent("uuid-2".into())));

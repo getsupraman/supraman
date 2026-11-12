@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use gpui::{AnyElement, ClickEvent, Context, ScrollHandle, SharedString, div, prelude::*};
 use supraman_core::paths::{path_key, within};
-use supraman_ui::button;
+use supraman_ui::{button, session};
 use supraman_ui::details::{self, Section};
 use theme::ActiveTheme as _;
 
@@ -281,14 +281,19 @@ impl FleetView {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let page_key = page.key();
+        let mut opener = None;
         let (title, pill, sections, items) = match &page.target {
-            MenuTarget::Session { workspace, repo, .. } => {
-                let (title, sections) = self.session_sections(page, cx)?;
+            MenuTarget::Session { workspace, repo, session_id } => {
                 let row = page.seen.as_ref()?;
-                let words = row_details::session_pill(row, page.listed);
-                let color = if page.listed { crate::fleet::State::of_row(row).mark(cx).color() } else { colors.text_muted };
-                let items = if page.listed { self.session_menu(workspace, repo, row, None, cx) } else { Vec::new() };
-                (title, (words, color), sections, items)
+                let folder = page.folder.as_ref().map(|(n, p)| (n.as_str(), p.as_path()));
+                let view = self.session_view(workspace, repo, row, folder, &page.disk, page.listed, true, cx);
+                let (fleet, sid) = (cx.weak_entity(), session_id.clone());
+                let on_open = move |_: &mut gpui::Window, cx: &mut gpui::App| {
+                    fleet.update(cx, |this, cx| this.open_session(&sid, cx)).ok();
+                };
+                let open = session::open(&self.hits, format!("details-{page_key}-open"), &view.open.opening(), button::Fill::Solid, on_open, cx);
+                opener = Some(open.into_any_element());
+                (view.title, view.pill, view.sections, view.actions)
             }
             MenuTarget::Workspace(w) => {
                 let (node, sections) = self.workspace_sections(w, cx)?;
@@ -300,7 +305,7 @@ impl FleetView {
             }
             MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) | MenuTarget::OtherSchedule(_) => return None,
         };
-        let actions = self.action_buttons(page, items, cx);
+        let actions = opener.into_iter().chain(self.action_buttons(page, items, cx)).collect();
         let workspace = match &page.target {
             MenuTarget::Session { workspace, .. } => workspace.clone(),
             _ => String::new(),

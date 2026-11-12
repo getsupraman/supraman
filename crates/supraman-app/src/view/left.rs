@@ -624,9 +624,7 @@ impl FleetView {
             let shown = shown.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 cx.stop_propagation();
                 match &does {
-                    InboxButton::Remedy(Remedy::Attach { id }) => {
-                        this.attach_by_id(&workspace, id, window, cx);
-                    }
+                    InboxButton::Remedy(Remedy::Attach { id }) => this.open_by_id(id, cx),
                     InboxButton::Remedy(Remedy::Retry | Remedy::Remint { .. } | Remedy::Adopt { .. }) | InboxButton::Retry => this.retry(&workspace, &name, cx),
                     InboxButton::Remedy(Remedy::RunInTerminal { cwd, command }) => {
                         this.run_in_terminal(cwd.clone(), command.clone(), window, cx);
@@ -756,30 +754,6 @@ impl FleetView {
 
     pub(super) fn hover_icon(&self, key: String, icon: Icon, tip: &'static str, group: &SharedString, shown: bool, cx: &gpui::App) -> Stateful<Div> {
         button::revealed(&self.hits, key, icon.svg(14., cx.theme().colors().text_muted), px(SLOT), group.clone(), shown, cx).tooltip(Tooltip::text(tip))
-    }
-
-    pub(super) fn open_of(&self, row: &SessionRow) -> Open {
-        Open::of(row, self.session_tab(&row.session), self.active, self.resumable(row))
-    }
-
-    /// The row's one open action, as its slot runs it; a refusal shows why.
-    pub(super) fn open_row(&mut self, workspace: &str, repo: &str, row: &SessionRow, window: &mut gpui::Window, cx: &mut Context<Self>) {
-        let s = &row.session;
-        let open = self.open_of(row);
-        match open {
-            Open::Tab(id) => self.activate_tab(id, cx),
-            Open::Attach => {
-                self.attach(workspace, repo, s, window, cx);
-            }
-            Open::Resume => {
-                self.resume(workspace, repo, s, window, cx);
-            }
-            Open::Elsewhere | Open::Supervised => {
-                let text = format!("{}: {}", fleet::display_name(s), open.hint().unwrap_or_default());
-                self.toast.show_why(text, |this: &mut Self| &mut this.toast, cx);
-            }
-            Open::Shown | Open::Foreign | Open::Nothing => {}
-        }
     }
 
     fn workspace_selected(&self, workspace: &WorkspaceNode, cx: &gpui::App) -> bool {
@@ -1094,9 +1068,9 @@ impl FleetView {
                 cx.new(|_| row.clone())
             })
             .when(shown, |d| d.child(hit_target(&self.hits, format!("marked-{}{at}", s.session_id))))
-            .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+            .on_click(cx.listener(move |this, e: &ClickEvent, _, cx| {
                 if e.click_count() == 2 {
-                    this.open_row(&w, &r, &clicked, window, cx);
+                    this.open_row(&w, &r, &clicked, cx);
                 }
             }))
             .on_mouse_down(
@@ -1216,32 +1190,20 @@ impl FleetView {
         let s = &row.session;
         let at = row.scope(workspace);
         let group = SharedString::from(format!("session-group-{}{at}", s.session_id));
-        let shown = self.is_marked(s);
         let open = self.open_of(row);
-        let (workspace, repo, session) = (workspace.to_string(), repo.to_string(), s.clone());
-        let tip = open.hint().unwrap_or_default();
-        match open {
-            // open in a tab not shown now: a state, so it shows without a hover
-            Open::Tab(tab) => Some(self.hover_icon(format!("tab-link-{}{at}", s.id), Icon::Tab, tip, &group, true, cx).on_click(cx.listener(
-                move |this, _: &ClickEvent, _, cx| {
-                    cx.stop_propagation();
-                    this.activate_tab(tab, cx);
-                },
-            ))),
-            Open::Attach => Some(self.hover_icon(format!("attach-{}{at}", s.id), Icon::Attach, tip, &group, shown, cx).on_click(cx.listener(
-                move |this, _: &ClickEvent, window, cx| {
-                    cx.stop_propagation();
-                    this.attach(&workspace, &repo, &session, window, cx);
-                },
-            ))),
-            Open::Resume => Some(self.hover_icon(format!("resume-{}{at}", s.id), Icon::Resume, tip, &group, shown, cx).on_click(cx.listener(
-                move |this, _: &ClickEvent, window, cx| {
-                    cx.stop_propagation();
-                    this.resume(&workspace, &repo, &session, window, cx);
-                },
-            ))),
-            _ => None,
-        }
+        let key = match open {
+            Open::Tab(_) => "tab-link",
+            Open::Attach => "attach",
+            Open::Resume => "resume",
+            _ => return None,
+        };
+        // open in a tab not shown now: a state, so it shows without a hover
+        let shown = matches!(open, Open::Tab(_)) || self.is_marked(s);
+        let (workspace, repo, row) = (workspace.to_string(), repo.to_string(), row.clone());
+        Some(self.hover_icon(format!("{key}-{}{at}", s.id), open.icon(), open.hint(), &group, shown, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            cx.stop_propagation();
+            this.open_row(&workspace, &repo, &row, cx);
+        })))
     }
 
     /// `supervised in <ws>` (a click reveals it there), `also in <ws>, …`.

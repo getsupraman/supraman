@@ -67,6 +67,8 @@ mod listing;
 mod mail;
 mod manage;
 mod menu;
+mod session_open;
+mod session_page;
 pub(crate) use supraman_git_view::occupancy;
 pub(crate) mod notices;
 mod polls;
@@ -1117,11 +1119,6 @@ impl FleetView {
             .ok();
         })
         .detach();
-    }
-
-    pub fn attach_by_id(&mut self, workspace: &str, id: &str, window: &mut Window, cx: &mut Context<Self>) -> Option<u64> {
-        let session = self.sessions.iter().find(|s| s.id == id)?.clone();
-        Some(self.attach(workspace, "supervised", &session, window, cx))
     }
 
     /// Typed, not run: the human answers the trust prompt, never Supraman; a PowerShell tab (see C113).

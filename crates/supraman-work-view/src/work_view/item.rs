@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use supraman_ui::session::LiveSession;
+use supraman_ui::session::{LiveSession, Opening};
 use supraman_workman::{Claim, ItemPage};
 
 use super::*;
@@ -8,7 +8,9 @@ use super::*;
 #[derive(Clone)]
 pub struct FleetLink {
     pub live: Rc<dyn Fn() -> Vec<LiveSession>>,
-    pub attach: Rc<dyn Fn(&str, &mut Window, &mut App)>,
+    /// What the fleet's one Open does for claude's session id, and running it.
+    pub opening: Rc<dyn Fn(&str, &App) -> Opening>,
+    pub open: Rc<dyn Fn(&str, &mut Window, &mut App)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -50,12 +52,23 @@ pub(crate) fn item_to_reload(event: &StreamEvent, open: &OpenItem) -> bool {
     }
 }
 
-pub(crate) fn attach_target<'a>(claim: &Claim, live: &'a [LiveSession]) -> Option<&'a LiveSession> {
+pub(crate) fn holder_session<'a>(claim: &Claim, live: &'a [LiveSession]) -> Option<&'a LiveSession> {
     let sid = claim.session.as_ref()?.claude_session_id.as_deref().filter(|s| !s.is_empty())?;
     live.iter().find(|s| s.claude_session_id == sid)
 }
 
 impl WorkView {
+    /// The fleet's Open of claude's session `sid`, as every session's.
+    pub(crate) fn open_control(&self, key: String, sid: &str, cx: &mut Context<Self>) -> AnyElement {
+        let opening = (self.link.opening)(sid, cx);
+        let (view, sid) = (cx.weak_entity(), sid.to_string());
+        let on_open = move |window: &mut Window, cx: &mut App| {
+            let Some(open) = view.upgrade().map(|v| v.read(cx).link.open.clone()) else { return };
+            open(&sid, window, cx);
+        };
+        supraman_ui::session::open(&self.hits, key, &opening, supraman_ui::button::Fill::Solid, on_open, cx).into_any_element()
+    }
+
     pub(crate) fn show_detail(&mut self, id: String, cx: &mut Context<Self>) {
         if self.item.as_ref().is_some_and(|open| open.id == id) {
             return;
@@ -177,10 +190,10 @@ mod tests {
             session: Some(Session { name: "aw-b".into(), claude_session_id: sid.map(str::to_string), ..Default::default() }),
             ..Default::default()
         };
-        assert_eq!(attach_target(&claim(Some("uuid-b")), &live).and_then(|s| s.attach.as_deref()), Some("bbbbbbbb"));
-        assert_eq!(attach_target(&claim(Some("uuid-gone")), &live), None, "the name alone is not a join");
-        assert_eq!(attach_target(&claim(None), &live), None);
-        assert_eq!(attach_target(&claim(Some("")), &[LiveSession { claude_session_id: String::new(), ..live[0].clone() }]), None);
-        assert_eq!(attach_target(&Claim::default(), &live), None);
+        assert_eq!(holder_session(&claim(Some("uuid-b")), &live).and_then(|s| s.attach.as_deref()), Some("bbbbbbbb"));
+        assert_eq!(holder_session(&claim(Some("uuid-gone")), &live), None, "the name alone is not a join");
+        assert_eq!(holder_session(&claim(None), &live), None);
+        assert_eq!(holder_session(&claim(Some("")), &[LiveSession { claude_session_id: String::new(), ..live[0].clone() }]), None);
+        assert_eq!(holder_session(&Claim::default(), &live), None);
     }
 }
