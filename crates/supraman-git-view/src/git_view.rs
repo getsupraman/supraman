@@ -201,6 +201,7 @@ pub struct GitView {
     band: band::Band,
     /// The panels' read of a selection a key moved, waiting for the key to come up.
     settle: Option<Task<()>>,
+    right_waits: Option<keys::Waiting>,
     follow: refresh::Follow,
     /// The repo's key in the layout file, once read.
     key: Option<String>,
@@ -286,6 +287,7 @@ impl GitView {
                 focus_graph: false,
                 band: band::Band::new(cx),
                 settle: None,
+                right_waits: None,
                 follow: refresh::Follow::default(),
                 key: None,
                 own_graph: false,
@@ -578,6 +580,7 @@ impl GitView {
     }
 
     pub(crate) fn close_diff(&mut self, cx: &mut Context<Self>) {
+        self.right_waits = None;
         if self.viewer.update(cx, |v, cx| v.close(cx)) {
             cx.notify();
         }
@@ -605,6 +608,7 @@ impl GitView {
 
     fn selection_moved(&mut self, cx: &mut Context<Self>) {
         self.settle = None;
+        self.right_waits = None;
         self.load_details(cx);
         cx.emit(GitEvent::Selected);
     }

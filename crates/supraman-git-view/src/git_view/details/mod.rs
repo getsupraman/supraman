@@ -356,6 +356,15 @@ impl CommitPanel {
         cx.notify();
     }
 
+    /// Whether the selected commit's files are not shown yet.
+    pub(crate) fn reading(&self) -> bool {
+        match self.state {
+            State::Loading => true,
+            State::Shown(_) => self.stale || self.whole_reading(),
+            State::Empty | State::Failed(_) => false,
+        }
+    }
+
     /// Whether View all files waits for the whole tree.
     fn whole_reading(&self) -> bool {
         self.all_files && self.whole != Whole::Read
