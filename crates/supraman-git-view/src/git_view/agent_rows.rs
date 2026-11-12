@@ -11,7 +11,7 @@ use supraman_ui::details::{self, Page, Section};
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::marks::Mark;
 use supraman_ui::clipped::clipped;
-use supraman_ui::session;
+use supraman_ui::session::{self, Opening};
 use supraman_ui::tooltip::Tooltip;
 use supraman_ui::{button, placeholder};
 
@@ -21,8 +21,8 @@ use supraman_core::text::capitalised;
 use super::{GitView, Selected, background, cells, graph};
 use crate::occupancy::{Live, LiveSession};
 
-/// Attach asked for this session, in a terminal tab of the fleet's.
-pub struct AttachAgent(pub LiveSession);
+/// Open asked for this session: the fleet's one open (its tab, an attach or a resume).
+pub struct OpenAgent(pub LiveSession);
 
 /// A right-click on this session's row: the fleet's menu of the session, at `position` in the window.
 pub struct AgentMenu {
@@ -37,23 +37,22 @@ pub struct PageAction {
     pub dimmed: Option<String>,
 }
 
-/// The fleet's page of a live session, the facts and actions of its Details tab.
+/// The fleet's page of a live session, its Details tab's but the transcript: the facts, Open, then the menu's actions.
 pub struct SessionPage {
     pub title: String,
     pub pill: (String, Hsla),
     pub sections: Vec<Section>,
+    pub open: Opening,
     pub actions: Vec<PageAction>,
 }
 
-/// How an agent row's panel reads its session's page from the fleet, and runs one of its actions.
+/// How an agent row's panel reads its session's page from the fleet, runs one of its actions, and what Open does for a session it has no page of.
 #[derive(Clone)]
 pub struct SessionPages {
     pub page: Rc<dyn Fn(&LiveSession, &App) -> Option<SessionPage>>,
     pub act: Rc<dyn Fn(&LiveSession, &str, &mut Window, &mut App)>,
+    pub opening: Rc<dyn Fn(&LiveSession, &App) -> Opening>,
 }
-
-/// Why Attach is dimmed.
-pub(crate) const NOT_ATTACHABLE: &str = "Only a running background session can be attached";
 
 /// The longest the live watch sleeps before it looks whether the tab is still open.
 const WAKE_AT_LEAST: Duration = Duration::from_secs(60);
@@ -86,7 +85,7 @@ impl Agents {
     }
 }
 
-impl EventEmitter<AttachAgent> for GitView {}
+impl EventEmitter<OpenAgent> for GitView {}
 impl EventEmitter<AgentMenu> for GitView {}
 
 impl GitView {
@@ -240,7 +239,7 @@ impl GitView {
             .size_full()
             .on_click(cx.listener(move |this, e: &ClickEvent, _, cx| {
                 if e.click_count() == 2 {
-                    this.attach_agent(&id, cx);
+                    this.open_agent(&id, cx);
                 }
             }))
             .on_mouse_down(MouseButton::Right, cx.listener(move |this, e: &MouseDownEvent, _, cx| this.agent_menu(&menu_id, e.position, cx)))
@@ -262,36 +261,39 @@ impl GitView {
         cx.emit(AgentMenu { session, position });
     }
 
-    fn attach_agent(&mut self, id: &str, cx: &mut Context<Self>) {
-        if let Some(session) = self.shown_agent(id).filter(|s| s.attach.is_some()).cloned() {
-            cx.emit(AttachAgent(session));
+    fn open_agent(&mut self, id: &str, cx: &mut Context<Self>) {
+        if let Some(session) = self.shown_agent(id).cloned() {
+            cx.emit(OpenAgent(session));
         }
     }
 
-    /// The selected agent row's session: the fleet's page of it, else its folder and state with Attach, dimmed with why when it cannot be.
+    /// The selected agent row's session: the fleet's page of it, else its folder and state with Open, dimmed with why when it cannot run.
     pub(super) fn render_agent_panel(&mut self, id: &str, cx: &mut Context<Self>) -> AnyElement {
         let Some(session) = self.shown_agent(id).cloned() else {
             return placeholder::placeholder("The session ended.", Vec::<String>::new(), cx).size_full().into_any_element();
         };
         let scroll = self.agents.scroll.clone();
         let hits = self.hits.clone();
-        if let Some(page) = self.agents.pages.as_ref().and_then(|p| (p.page)(&session, cx)) {
-            let actions = page.actions.into_iter().map(|a| self.page_action(&session, a, cx)).collect();
+        let pages = self.agents.pages.clone();
+        if let Some(page) = pages.as_ref().and_then(|p| (p.page)(&session, cx)) {
+            let open = self.open_control(id, &page.open, cx);
+            let actions = std::iter::once(open).chain(page.actions.into_iter().map(|a| self.page_action(&session, a, cx))).collect();
             let page = Page { key: "git-agent", title: page.title, pill: Some(page.pill), sections: &page.sections, actions, scroll: &scroll, on_link: None, top: None, over: None, bar: None };
             return details::render(page, &hits, cx);
         }
         let sections = [Section::new("session", "Session").path("Working directory", &session.cwd).row("State", session.activity.word())];
-        let attach = button::action(&self.hits, "git-agent-attach", "Attach", button::Tone::Neutral, button::Fill::Outline, cx);
-        let attach = match session.attach {
-            Some(_) => {
-                let id = id.to_string();
-                attach.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.attach_agent(&id, cx))).into_any_element()
-            }
-            None => button::dimmed(attach).tooltip(Tooltip::text(NOT_ATTACHABLE)).into_any_element(),
-        };
+        let actions = pages.map(|p| (p.opening)(&session, cx)).map(|opening| self.open_control(id, &opening, cx)).into_iter().collect();
         let pill = (capitalised(session.activity.word()), session.activity.color(cx));
-        let page = Page { key: "git-agent", title: session.name.clone(), pill: Some(pill), sections: &sections, actions: vec![attach], scroll: &scroll, on_link: None, top: None, over: None, bar: None };
+        let page = Page { key: "git-agent", title: session.name.clone(), pill: Some(pill), sections: &sections, actions, scroll: &scroll, on_link: None, top: None, over: None, bar: None };
         details::render(page, &hits, cx)
+    }
+
+    fn open_control(&self, id: &str, opening: &Opening, cx: &mut Context<Self>) -> AnyElement {
+        let (view, id) = (cx.weak_entity(), id.to_string());
+        let on_open = move |_: &mut Window, cx: &mut App| {
+            view.update(cx, |this, cx| this.open_agent(&id, cx)).ok();
+        };
+        session::open(&self.hits, "git-agent-open", opening, button::Fill::Outline, on_open, cx).into_any_element()
     }
 
     fn page_action(&self, session: &LiveSession, action: PageAction, cx: &mut Context<Self>) -> AnyElement {

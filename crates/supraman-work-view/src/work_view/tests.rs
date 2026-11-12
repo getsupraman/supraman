@@ -158,7 +158,11 @@ fn repo_of(dir: &Path) -> Option<MintRepo> {
 
 thread_local! {
     static OPENED: RefCell<Vec<Link>> = const { RefCell::new(Vec::new()) };
-    static ATTACHED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static SESSIONS_OPENED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+fn attach_opening() -> supraman_ui::session::Opening {
+    supraman_ui::session::Opening { icon: supraman_ui::icon::Icon::Attach, hint: "Attach in a new tab".into(), runs: true }
 }
 
 fn record(link: &Link, _: &mut App) {
@@ -215,7 +219,7 @@ fn open(cx: &mut TestAppContext) -> Opened<'_> {
             folders: folders(),
             home: None,
             hits: HitTargets::default(),
-            link: FleetLink { live: Rc::new(move || live.clone()), attach: Rc::new(|id, _, _| ATTACHED.with(|a| a.borrow_mut().push(id.to_string()))) },
+            link: FleetLink { live: Rc::new(move || live.clone()), opening: Rc::new(|_, _| attach_opening()), open: Rc::new(|id, _, _| SESSIONS_OPENED.with(|a| a.borrow_mut().push(id.to_string()))) },
             open_link_with: record,
             repo_of,
         };
@@ -535,8 +539,11 @@ fn c2_the_overview_says_what_needs_you_and_who_works_on_what(cx: &mut TestAppCon
 
     bounds(&view, "work-working-pa/ra/3", cx);
     assert!(hit(&view, "work-working-pc/rc/1", cx).is_none(), "a claim in a project of no folder is not this workspace's");
-    click(&view, "work-working-session-pa/ra/3", cx);
-    assert_eq!(ATTACHED.with(|a| a.borrow().clone()), ["live0001"], "the claim's Supraman session opens");
+    let facts = view.read_with(cx, |v, _| v.hits.borrow().iter().find(|(k, _)| k.starts_with("work-working-facts-pa/ra/3=")).map(|(_, h)| h.bounds)).expect("the holder's line");
+    let (name, open) = (facts, bounds(&view, "work-working-open-pa/ra/3", cx));
+    assert!(open.top() >= name.top() - px(4.) && open.bottom() <= name.bottom() + px(4.), "Open on the holder's line: {open:?} in {name:?}");
+    click(&view, "work-working-open-pa/ra/3", cx);
+    assert_eq!(SESSIONS_OPENED.with(|a| a.borrow().clone()), ["uuid-live"], "the claim's Supraman session opens through the fleet's Open");
 
     for key in ["work-tile-closed without independent proof=1", "work-tile-forced closures=4", "work-tile-follow-ups open=3", "work-tile-tasks open=6"] {
         bounds(&view, key, cx);
@@ -683,7 +690,7 @@ fn show_project_lands_on_its_first_active_run_else_the_overview(cx: &mut TestApp
         folders: folders(),
         home: None,
         hits: HitTargets::default(),
-        link: FleetLink { live: Rc::new(Vec::new), attach: Rc::new(|_, _, _| {}) },
+        link: FleetLink { live: Rc::new(Vec::new), opening: Rc::new(|_, _| attach_opening()), open: Rc::new(|_, _, _| {}) },
         open_link_with: record,
         repo_of,
     };

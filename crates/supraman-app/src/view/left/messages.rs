@@ -1,6 +1,7 @@
 //! The Messages section: the controllers' messages to the human, each with Reply, and the reply box.
 
 use super::*;
+use supraman_ui::session;
 
 pub(super) fn message_key(workspace: &str, m: &OutboxMessage) -> String {
     format!("{workspace}/{}", m.file)
@@ -126,7 +127,7 @@ impl FleetView {
                     .child(self.message_body(&key, m, cx))
                     .children(ask.map(|state| self.message_answer(workspace, m, &key, state, cx))),
             )
-            .children(self.message_attach(workspace, m, &key, now, cx))
+            .children(self.message_open(m, &key, cx))
             .child(dismiss)
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 if !this.sidebar.expanded.remove(&key) {
@@ -161,22 +162,15 @@ impl FleetView {
         body
     }
 
-    // every row, not the tree's: a sender in the workspace root but outside its repos has no tree row
-    fn message_attach(&self, workspace: &String, m: &OutboxMessage, key: &str, now: i64, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let id = self
-            .sessions
-            .iter()
-            .find(|s| !m.from_name.is_empty() && s.name == m.from_name && fleet::attachable(s, &s.health(now)))
-            .map(|s| s.id.clone())?;
-        let workspace = workspace.clone();
-        Some(
-            button::action(&self.hits, format!("msg-attach-{key}"), "Attach", button::Tone::Neutral, button::Fill::Solid, cx)
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    cx.stop_propagation();
-                    this.attach_by_id(&workspace, &id, window, cx);
-                }))
-                .into_any_element(),
-        )
+    /// The sender's Open, while `claude agents` lists it.
+    fn message_open(&self, m: &OutboxMessage, key: &str, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let sid = self.sessions.iter().find(|s| !m.from_name.is_empty() && s.name == m.from_name).map(|s| s.session_id.clone())?;
+        let opening = self.session_opening(&sid);
+        let fleet = cx.weak_entity();
+        let on_open = move |_: &mut gpui::Window, cx: &mut gpui::App| {
+            fleet.update(cx, |this, cx| this.open_session(&sid, cx)).ok();
+        };
+        Some(session::open(&self.hits, format!("msg-open-{key}"), &opening, button::Fill::Solid, on_open, cx).into_any_element())
     }
 
     fn message_answer(&self, workspace: &String, m: &OutboxMessage, key: &str, state: &AskState, cx: &mut Context<Self>) -> Div {

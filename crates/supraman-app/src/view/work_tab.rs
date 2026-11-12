@@ -6,6 +6,7 @@ use std::rc::Rc;
 use gpui::Context;
 
 use super::{FleetView, Tab, TabKind, occupancy};
+use crate::fleet::Open;
 use crate::work_view::{self, FleetLink, WorkView};
 
 impl FleetView {
@@ -18,15 +19,15 @@ impl FleetView {
         }
         let id = self.next_tab_id;
         self.next_tab_id += 1;
-        let fleet = cx.weak_entity();
-        let name = workspace.to_string();
+        let (fleet, reader) = (cx.weak_entity(), cx.weak_entity());
         let link = FleetLink {
             live: {
                 let live = self.occupancy.clone();
                 Rc::new(move || live.sessions())
             },
-            attach: Rc::new(move |id, window, cx| {
-                fleet.update(cx, |fleet, cx| fleet.attach_by_id(&name, id, window, cx)).ok();
+            opening: Rc::new(move |sid, cx| reader.upgrade().map_or_else(|| Open::Unlisted.opening(), |f| f.read(cx).session_opening(sid))),
+            open: Rc::new(move |sid, _, cx| {
+                fleet.update(cx, |fleet, cx| fleet.open_session(sid, cx)).ok();
             }),
         };
         let found = self.workspaces.iter().find(|w| w.name == workspace);

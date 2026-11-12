@@ -2,17 +2,17 @@
 
 use std::rc::Rc;
 
-use gpui::{ClickEvent, FontWeight, Hsla};
+use gpui::{FontWeight, Hsla};
 use supraman_core::time::{near, rfc3339_local, rfc3339_ms};
 use supraman_ui::placeholder::placeholder;
 use supraman_ui::details::{self, Section};
 use supraman_ui::hit::hit_target;
 use supraman_ui::marks::dot;
 use supraman_ui::segmented::{Segment, segmented};
-use supraman_ui::{banner, button, fonts};
+use supraman_ui::{banner, fonts};
 use supraman_workman::{BriefFor, ItemPage, Report, Verification};
 
-use super::item::attach_target;
+use super::item::holder_session;
 use super::state::{StateKey, independent};
 use super::*;
 
@@ -182,12 +182,7 @@ impl WorkView {
     fn render_over(&self, page: &ItemPage, key: StateKey, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let live = (self.link.live)();
-        let attach = page.claim.as_ref().and_then(|c| attach_target(c, &live)).and_then(|session| Some((session.name.clone(), session.attach.clone()?))).map(|(name, id)| {
-            button::action(&self.hits, format!("work-attach-{id}"), format!("Attach to {name}"), button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                let attach = this.link.attach.clone();
-                attach(&id, window, cx);
-            }))
-        });
+        let open = page.claim.as_ref().and_then(|c| holder_session(c, &live)).map(|s| self.open_control(format!("work-open-{}", s.claude_session_id), &s.claude_session_id, cx));
         div()
             .relative()
             .flex()
@@ -195,7 +190,7 @@ impl WorkView {
             .gap_1()
             .child(div().font_family(fonts::MONO).text_xs().text_color(colors.text_muted).child(SharedString::from(page.item.qualified_ref.clone())))
             .child(self.ref_actions("work-detail", &page.item, cx))
-            .children(attach)
+            .children(open)
             .child(hit_target(&self.hits, format!("work-pill-{}={}", page.item.qualified_ref, key.as_str())))
             .into_any_element()
     }

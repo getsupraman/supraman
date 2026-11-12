@@ -7,7 +7,9 @@ use supraman_core::time::ago;
 use supraman_core::{Event, FolderKind, Workspace, owners};
 use supraman_git_view::occupancy::LiveSession;
 use gpui::App;
+use supraman_ui::icon::Icon;
 use supraman_ui::marks::{Activity, Mark};
+use supraman_ui::session::Opening;
 use theme::ActiveTheme as _;
 use supraman_supervisor::{relay_session_name, repo_session_name, workspace_session_name};
 
@@ -672,7 +674,7 @@ impl State {
     }
 }
 
-/// What a session row's action slot and its double-click do.
+/// What a session's Open does: the row's action slot, its double-click and every page's Open ([`supraman_ui::session::open`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Open {
     Tab(u64),
@@ -682,6 +684,8 @@ pub enum Open {
     Foreign,
     Elsewhere,
     Supervised,
+    /// The page's session is not in the list Supraman reads now.
+    Unlisted,
     Nothing,
 }
 
@@ -701,17 +705,35 @@ impl Open {
         }
     }
 
-    pub fn hint(self) -> Option<&'static str> {
+    /// Every word said of a session's Open: its tooltip, its why while dimmed, its Details fact.
+    pub fn hint(self) -> &'static str {
         match self {
-            Self::Tab(_) => Some("Show its tab"),
-            Self::Shown => Some("shown now"),
-            Self::Attach => Some("Attach in a new tab"),
-            Self::Resume => Some("Resume in a new tab"),
-            Self::Foreign => Some("another Supraman session"),
-            Self::Elsewhere => Some("runs in another terminal: resuming here would start a second claude on it"),
-            Self::Supervised => Some("the supervisor runs it while it is wanted: Start the workspace from its menu"),
-            Self::Nothing => None,
+            Self::Tab(_) => "Show its tab",
+            Self::Shown => "shown now",
+            Self::Attach => "Attach in a new tab",
+            Self::Resume => "Resume in a new tab",
+            Self::Foreign => "another Supraman session",
+            Self::Elsewhere => "runs in another terminal: resuming here would start a second claude on it",
+            Self::Supervised => "the supervisor runs it while it is wanted: Start the workspace from its menu",
+            Self::Unlisted => "not in the sessions Supraman lists now",
+            Self::Nothing => "neither running in the background to attach nor resumable",
         }
+    }
+
+    pub fn icon(self) -> Icon {
+        match self {
+            Self::Tab(_) | Self::Shown => Icon::Tab,
+            Self::Resume => Icon::Resume,
+            _ => Icon::Attach,
+        }
+    }
+
+    pub fn runs(self) -> bool {
+        matches!(self, Self::Tab(_) | Self::Attach | Self::Resume)
+    }
+
+    pub fn opening(self) -> Opening {
+        Opening { icon: self.icon(), hint: self.hint().into(), runs: self.runs() }
     }
 }
 
@@ -912,8 +934,9 @@ mod tests {
         foreign.foreign = true;
         assert_eq!(Open::of(&foreign, None, None, true), Open::Foreign);
         assert_eq!(Open::of(&foreign, Some(3), None, true), Open::Foreign, "nothing for another Supraman's, even in a tab");
-        assert_eq!(Open::Nothing.hint(), None);
-        assert_eq!(Open::Foreign.hint(), Some("another Supraman session"));
+        assert_eq!(Open::Foreign.hint(), "another Supraman session");
+        let runs: Vec<bool> = [Open::Tab(1), Open::Attach, Open::Resume, Open::Shown, Open::Foreign, Open::Elsewhere, Open::Supervised, Open::Unlisted, Open::Nothing].map(Open::runs).into();
+        assert_eq!(runs, [true, true, true, false, false, false, false, false, false], "only a tab, an attach or a resume opens");
     }
 
     #[test]

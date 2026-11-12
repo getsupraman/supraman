@@ -470,7 +470,7 @@ async fn item_page(
     fake.set(item_target(TASK_1), Answer::json(task1_page(110, launched, false)));
 
     click(view, "work-row-sw2/1", cx).await?;
-    let attach_key = format!("work-attach-{}", launched.id);
+    let attach_key = format!("work-open-{}", launched.session_id);
     let check = |i: usize, done: bool| format!("work-detail-section-criteria-check-{i}={}", if done { "done" } else { "open" });
     let (c1, c2, c3) = (check(0, true), check(1, true), check(2, false));
     let sections = [

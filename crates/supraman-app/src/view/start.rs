@@ -253,14 +253,14 @@ impl FleetView {
         out
     }
 
-    fn open_start_link(&mut self, workspace: &str, target: &str, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_start_link(&mut self, workspace: &str, target: &str, cx: &mut Context<Self>) {
         if let Some(id) = target.strip_prefix("schedule:") {
             self.open_schedule(workspace, id, At::Top, cx);
         } else if let Some((repo, session_id)) = target.strip_prefix("session:").and_then(|t| t.split_once('\u{0}')) {
             let tree = self.tree();
             let row = tree.workspaces.iter().filter(|n| n.name == workspace).flat_map(|n| &n.repos).flat_map(|r| &r.sessions).find(|r| r.session.session_id == session_id).cloned();
             if let Some(row) = row {
-                self.open_row(workspace, repo, &row, window, cx);
+                self.open_row(workspace, repo, &row, cx);
             }
         }
     }
@@ -321,7 +321,7 @@ impl FleetView {
         ];
         let sections = self.start_sections(&page.workspace);
         let workspace = page.workspace.clone();
-        let on_link: details::OnLink<Self> = Rc::new(move |this: &mut Self, target: &str, window, cx| this.open_start_link(&workspace, target, window, cx));
+        let on_link: details::OnLink<Self> = Rc::new(move |this: &mut Self, target: &str, _, cx| this.open_start_link(&workspace, target, cx));
         let title = if page.scheduled { format!("New scheduled task in {}", page.workspace) } else { format!("New task in {}", page.workspace) };
         let key = format!("start-{tab}");
         let page = details::Page { key: &key, title, pill: None, sections: &sections, actions, scroll: &page.scroll, on_link: Some(on_link), top: Some(form.into_any_element()), over: None, bar: None };

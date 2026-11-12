@@ -187,9 +187,18 @@ const SOLID_ACTIVE: f32 = 0.7;
 
 /// Every labelled button: `label` centred at [`HEIGHT`] in [`look`]'s colours of `tone` and `fill`.
 pub fn action(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<SharedString>, tone: Tone, fill: Fill, cx: &App) -> Stateful<Div> {
+    labelled(hits, key.into(), None, label.into(), tone, fill, cx)
+}
+
+/// An [`action`] with `icon` in its text colour before the label, on the label's letters ([`ink::mark`]).
+pub fn action_with(hits: &HitTargets, key: impl Into<SharedString>, icon: Icon, label: impl Into<SharedString>, tone: Tone, fill: Fill, cx: &App) -> Stateful<Div> {
+    labelled(hits, key.into(), Some(icon), label.into(), tone, fill, cx)
+}
+
+fn labelled(hits: &HitTargets, key: SharedString, icon: Option<Icon>, label: SharedString, tone: Tone, fill: Fill, cx: &App) -> Stateful<Div> {
     let look = look(tone, fill, cx);
     let hover_border = if tone == Tone::Neutral { cx.theme().colors().border_selected } else { look.border };
-    base(hits, key.into(), move |s| s.bg(look.hover).border_color(hover_border), look.active)
+    base(hits, key, move |s| s.bg(look.hover).border_color(hover_border), look.active)
         .flex()
         .flex_none()
         .items_center()
@@ -204,7 +213,8 @@ pub fn action(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<
         .text_xs()
         .text_color(look.text)
         .whitespace_nowrap()
-        .child(label.into())
+        .children(icon.map(|i| ink::mark(i.svg(12., look.text))))
+        .child(label)
 }
 
 /// `button` dimmed, with the plain cursor, while it cannot act; its click must then do nothing.

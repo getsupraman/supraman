@@ -131,8 +131,8 @@ pub fn session(f: &SessionFacts, now_ms: i64) -> Vec<Section> {
         StartedBy::Hand => session.row("Started by", "a [+] tab in this window"),
         StartedBy::Outside => session.row("Started by", "outside Supraman"),
     };
-    if let Some(h) = f.open.hint() {
-        session = session.row("Open", h);
+    if f.open != Open::Nothing {
+        session = session.row("Open", f.open.hint());
     }
     let id = if s.id.is_empty() { &s.session_id } else { &s.id };
     session = session.row("Id", id.clone());

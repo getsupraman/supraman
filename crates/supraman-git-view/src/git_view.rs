@@ -72,7 +72,7 @@ use wip::WipPanel;
 use worktree_panel::{WorktreeEvent, WorktreePanel};
 use write_gate::WriteGate;
 
-pub use agent_rows::{AgentMenu, AttachAgent, PageAction, SessionPage, SessionPages};
+pub use agent_rows::{AgentMenu, OpenAgent, PageAction, SessionPage, SessionPages};
 
 /// The table's id: its hit keys are `git-col-<c>`, `git-divider-<c>`, `git-row-<n>`.
 pub(crate) const TABLE: &str = "git";
