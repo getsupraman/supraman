@@ -171,15 +171,15 @@ impl GitView {
         let Some(row) = self.pages.read(cx).rows.get(ix).cloned() else { return };
         let Some(g) = row.row.refs.get(group).cloned() else { return };
         let refs = self.branch.read(cx).refs().clone();
-        let Some(subject) = group_subject(&refs, &g, &row.sha) else { return };
+        let sha = self.pill_sha(&row, cx).to_string();
+        let Some(subject) = group_subject(&refs, &g, &sha) else { return };
         let graph = pill_graph_items(&self.ref_panel, &g, cx);
-        let sha = row.sha.to_string();
         self.branch.update(cx, |b, cx| b.open_commit_menu(vec![subject], sha, graph, position, cx));
     }
 
-    /// The graph pill of row `ix`'s group `group` double-clicked: its local branch, else its one remote one, else a menu.
+    /// The graph pill of row `ix`'s group `group` double-clicked: its local branch, else its one remote one, else a menu; a worktree row's cell opens it instead.
     pub(crate) fn pill_double_clicked(&mut self, ix: usize, group: usize, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let Some(g) = self.pages.read(cx).rows.get(ix).and_then(|r| r.row.refs.get(group)).cloned() else { return };
+        let Some(g) = self.pages.read(cx).rows.get(ix).filter(|r| r.worktree().is_none()).and_then(|r| r.row.refs.get(group)).cloned() else { return };
         let (locals, remotes, _) = split(&g);
         let target = match (locals.first(), remotes.as_slice()) {
             (Some(local), _) => Target::Branch(local.clone()),
@@ -196,7 +196,7 @@ impl GitView {
     /// `pill` dropped on row `ix`'s group `group`.
     pub(crate) fn pill_dropped(&mut self, pill: &DraggedPill, ix: usize, group: usize, window: &Window, cx: &mut Context<Self>) {
         let Some(row) = self.pages.read(cx).rows.get(ix).cloned() else { return };
-        let Some(target) = row.row.refs.get(group).and_then(|g| dragged(g, &row.sha)) else { return };
+        let Some(target) = row.row.refs.get(group).and_then(|g| dragged(g, &self.pill_sha(&row, cx))) else { return };
         let Some(source) = dragged(&pill.group, &pill.sha) else { return };
         let position = window.mouse_position();
         self.branch.update(cx, |b, cx| b.dropped(source, target, position, cx));

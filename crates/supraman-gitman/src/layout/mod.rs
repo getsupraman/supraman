@@ -35,7 +35,7 @@ pub struct Row {
     pub detached_head: bool,
     /// The stash whose index commit the row is.
     pub stash: Option<Arc<Stash>>,
-    /// The other worktree whose work in progress the row is.
+    /// The other worktree whose work in progress the row is; its `refs` are its branch's group, taken from its HEAD's row.
     pub worktree: Option<Arc<Path>>,
 }
 
@@ -71,6 +71,8 @@ impl Row {
 pub struct WorktreeRow {
     pub head: String,
     pub path: PathBuf,
+    /// `None` when detached.
+    pub branch: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -88,8 +90,8 @@ pub struct Layout {
     handed: HashMap<String, Handed>,
     /// Each stash by its index commit, the newest of those sharing one.
     stashes: Arc<HashMap<String, Arc<Stash>>>,
-    /// The worktrees' WIP rows by their HEAD commit.
-    worktrees: Arc<HashMap<String, Vec<Arc<Path>>>>,
+    /// The worktrees' WIP rows by their HEAD commit, each with its branch's group.
+    worktrees: Arc<HashMap<String, Vec<(Arc<Path>, Arc<[RefGroup]>)>>>,
     wip: bool,
     rows: usize,
     none: Arc<[RefGroup]>,
@@ -107,11 +109,13 @@ impl Layout {
         Layout { lanes: Lanes::default(), refs: Arc::new(refs), handed: HashMap::new(), stashes: Arc::new(stashes), worktrees: Arc::default(), wip, rows: 0, none: Arc::from([]) }
     }
 
-    /// With a WIP row for each of `worktrees`, each above its HEAD's row, on its own lane, its edge dashed.
+    /// With a WIP row for each of `worktrees`, each above its HEAD's row, on its own lane, its edge dashed; its branch's group moves from its HEAD's row onto it.
     pub fn with_worktrees(mut self, worktrees: &[WorktreeRow]) -> Layout {
-        let mut by_head: HashMap<String, Vec<Arc<Path>>> = HashMap::new();
+        let mut by_head: HashMap<String, Vec<(Arc<Path>, Arc<[RefGroup]>)>> = HashMap::new();
+        let index = Arc::make_mut(&mut self.refs);
         for w in worktrees {
-            by_head.entry(w.head.clone()).or_default().push(Arc::from(w.path.as_path()));
+            let taken = w.branch.as_deref().and_then(|b| index.take_branch(&w.head, b));
+            by_head.entry(w.head.clone()).or_default().push((Arc::from(w.path.as_path()), taken.into_iter().collect()));
         }
         self.worktrees = Arc::new(by_head);
         self
@@ -131,10 +135,11 @@ impl Layout {
             rows.push(self.row(None, placed, None));
         }
         for (sha, parents) in commits {
-            for path in self.worktrees.get(sha).cloned().unwrap_or_default() {
+            for (path, refs) in self.worktrees.get(sha).cloned().unwrap_or_default() {
                 let placed = self.lanes.place("", &[sha], true, true);
                 let mut row = self.row(None, placed, None);
                 row.worktree = Some(path);
+                row.refs = refs;
                 rows.push(row);
             }
             let stash = self.stashes.get(sha).cloned();

@@ -48,7 +48,7 @@ impl RefGroup {
 }
 
 /// Every commit's ref groups in order, and the branch groups it hands to its ancestors as ghost refs.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(super) struct RefIndex {
     pub groups: HashMap<String, Arc<[RefGroup]>>,
     pub branches: HashMap<String, Arc<[RefGroup]>>,
@@ -83,6 +83,16 @@ impl RefIndex {
             index.groups.insert(sha, groups.into());
         }
         index
+    }
+
+    /// Takes the group of local `branch` out of `sha`'s groups; the ghost refs it hands to ancestors stay.
+    pub fn take_branch(&mut self, sha: &str, branch: &str) -> Option<RefGroup> {
+        let groups = self.groups.get(sha)?;
+        let at = groups.iter().position(|g| g.refs.iter().any(|r| r.name == branch && !matches!(r.kind, RefKind::Remote | RefKind::Tag)))?;
+        let mut kept = groups.to_vec();
+        let taken = kept.remove(at);
+        self.groups.insert(sha.to_string(), kept.into());
+        Some(taken)
     }
 }
 

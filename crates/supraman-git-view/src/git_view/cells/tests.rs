@@ -12,9 +12,10 @@ use crate::git_view::graph::{GAP, LINE};
 use crate::git_view::test_support::{self, Opts, redraw, repaint, row_of};
 use crate::git_view::GitView;
 
-/// The fixture's tab with a change in its linked worktree `wt`, so that worktree has a row.
+/// The fixture's tab with a change in its linked worktree `wt`, so that worktree has a row, and a branch `keep` beside its `side`, so `second` keeps a `+N`.
 fn open<'a>(f: &Fixture, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
     std::fs::write(f.worktree.join("new.txt"), b"new\n").unwrap();
+    f.git(&["branch", "-q", "keep", f.sha("second")]);
     let (view, cx) = test_support::open(&f.dir, Opts::default().background().size(1400., 900.), cx);
     let id = view.entity_id();
     cx.update(|_, cx| refresh_wips(id, cx));
@@ -99,7 +100,7 @@ fn icons_whole(hits: &HitTargets, name: &str, pill: Bounds<Pixels>) {
 fn at_a_narrow_branch_column_every_pill_is_cut_inside_it_and_drops_whole_icons(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let (view, cx) = open(&f, cx);
-    let rows = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().enumerate().filter(|(_, r)| !r.row.refs.is_empty()).map(|(i, _)| i).collect::<Vec<_>>());
+    let rows = view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().enumerate().filter(|(_, r)| r.commit() && !r.row.refs.is_empty()).map(|(i, _)| i).collect::<Vec<_>>());
     let w = worktree_row(&view, cx);
     let pills: Vec<(String, String)> = rows.iter().map(|ix| (format!("git-pill-{ix}"), format!("git-ref-{ix}"))).chain([(format!("git-worktree-ref-{w}"), format!("git-worktree-label-{w}"))]).collect();
     assert!(rows.len() >= 3, "{rows:?}");
