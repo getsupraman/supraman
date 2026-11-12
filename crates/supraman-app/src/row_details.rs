@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use supraman_claude::{Health, Kind, Status};
 use supraman_ui::details::Section;
 
-use crate::fleet::{self, Open, SessionRow, State};
+use crate::fleet::{self, SessionRow, State};
 use supraman_core::text::capitalised;
 use supraman_ui::marks::Activity;
 use supraman_core::time::{ago, date_words};
@@ -49,7 +49,6 @@ pub struct SessionFacts<'a> {
     pub claimed: Option<Option<String>>,
     /// The Workman sign-in of the [+] tab running it.
     pub sign_in: Option<String>,
-    pub open: Open,
     /// Why its menu has no Adopt ([`fleet::Adoption::No`]).
     pub adopt: Option<String>,
     pub disk: &'a OnDisk,
@@ -68,17 +67,12 @@ pub fn session_pill(row: &SessionRow, listed: bool) -> String {
 
 fn state_words(row: &SessionRow) -> String {
     let state = State::of_row(row);
-    let said = match (&row.health, state) {
-        (_, State::Closed) => "its process ended; the transcript stays and it can be resumed".to_string(),
-        (_, State::Live(Activity::Working)) => "on a turn".to_string(),
-        (Health::Blocked { waiting_for: Some(w) }, _) => format!("for {w}"),
-        (_, State::Live(Activity::Waiting)) => "for an answer".to_string(),
-        (_, State::Live(Activity::Idle)) => "waits for a prompt".to_string(),
-        (_, State::Stopped) => "no process runs it".to_string(),
-        (Health::Orphaned { last_state }, _) => format!("the process ended while the session was {}", last_state.as_str()),
-        _ => return capitalised(state.word()),
-    };
-    format!("{}: {said}", capitalised(state.word()))
+    match (&row.health, state) {
+        (_, State::Closed | State::Live(Activity::Working)) => state.word().to_string(),
+        (Health::Blocked { waiting_for: Some(w) }, _) => format!("waiting for {w}"),
+        (Health::Orphaned { last_state }, State::Interrupted) => format!("ended while {}", last_state.as_str()),
+        _ => state.word().to_string(),
+    }
 }
 
 fn reported(row: &SessionRow) -> Option<String> {
@@ -106,8 +100,8 @@ pub fn session(f: &SessionFacts, now_ms: i64) -> Vec<Section> {
     session = session.row("Name", fleet::display_name(s)).row(
         "Kind",
         match &s.kind {
-            Kind::Background => "Background: claude's daemon runs it".to_string(),
-            Kind::Interactive => "Interactive: it runs in a terminal".to_string(),
+            Kind::Background => "background".to_string(),
+            Kind::Interactive => "interactive".to_string(),
             Kind::Other(o) => o.clone(),
         },
     );
@@ -131,9 +125,6 @@ pub fn session(f: &SessionFacts, now_ms: i64) -> Vec<Section> {
         StartedBy::Hand => session.row("Started by", "a [+] tab in this window"),
         StartedBy::Outside => session.row("Started by", "outside Supraman"),
     };
-    if f.open != Open::Nothing {
-        session = session.row("Open", f.open.hint());
-    }
     let id = if s.id.is_empty() { &s.session_id } else { &s.id };
     session = session.row("Id", id.clone());
     if !s.session_id.is_empty() && s.session_id != *id {
@@ -204,9 +195,9 @@ pub fn workspace(facts: &WorkspaceFacts, now_ms: i64) -> Vec<Section> {
     let mut ws = Section::new("workspace", "Workspace").row("Name", facts.name.clone()).row(
         "State",
         match facts.started {
-            Some(true) => "Started: the supervisor keeps its wanted sessions running",
-            Some(false) => "Stopped: the supervisor runs none of its sessions",
-            None => "Never started",
+            Some(true) => "started",
+            Some(false) => "stopped",
+            None => "never started",
         },
     );
     if let Some(h) = facts.home.as_ref().filter(|h| !h.is_empty()) {
@@ -290,7 +281,6 @@ mod tests {
             started_by: StartedBy::Supervisor,
             claimed: Some(Some("m5/59".into())),
             sign_in: None,
-            open: Open::Attach,
             adopt: None,
             disk,
             listed: true,
@@ -313,13 +303,12 @@ mod tests {
                 "",
                 "Session",
                 "Name  fm-demo-workspace",
-                "Kind  Background: claude's daemon runs it",
-                "State  Working: on a turn",
+                "Kind  background",
+                "State  working",
                 "claude reports  state working, status busy",
                 &started,
                 &written,
                 "Started by  Supraman's supervisor",
-                "Open  Attach in a new tab",
                 "Id  77aa88bb",
                 "UUID  77aa88bb-x",
                 "Also in  larchsys",
@@ -342,6 +331,17 @@ mod tests {
     }
 
     #[test]
+    fn a_sessions_page_has_no_open_fact_and_says_its_kind_and_state_in_one_word() {
+        let mut r = row(Health::Idle);
+        r.session.kind = Kind::Interactive;
+        let disk = OnDisk::default();
+        let sections = session(&facts(&r, &disk), NOW);
+        let lines: Vec<String> = text("x", &sections).lines().map(str::to_string).collect();
+        assert!(!lines.iter().any(|l| l.starts_with("Open  ")), "the page's Open button carries the hint: {lines:?}");
+        assert!(lines.contains(&"Kind  interactive".to_string()) && lines.contains(&"State  idle".to_string()), "{lines:?}");
+    }
+
+    #[test]
     fn a_hook_is_its_last_activity_and_a_schedules_run_links_its_schedule() {
         let mut r = row(Health::Blocked { waiting_for: Some("permission prompt".into()) });
         r.hook = Some(HookSignal { last: supraman_core::Event::from_payload("Stop", r#"{"session_id":"77aa88bb-x"}"#, NOW - 12_000).unwrap(), compacted_at: None });
@@ -351,7 +351,7 @@ mod tests {
         f.claimed = None;
         let sections = session(&f, NOW);
         let page = text("x", &sections);
-        assert!(page.contains("\nState  Waiting: for permission prompt\n"), "{page}");
+        assert!(page.contains("\nState  waiting for permission prompt\n"), "{page}");
         assert!(page.contains("\nLast activity  turn ended 12 s ago\n"), "{page}");
         assert!(page.contains("\nOpen the workspace's Work tab to see what it claims."), "{page}");
         assert!(page.ends_with("\nNo transcript found under claude's projects folder."), "{page}");
@@ -370,11 +370,11 @@ mod tests {
         f.started_by = StartedBy::Outside;
         let page = text(&session_title(&r), &session(&f, NOW));
         assert!(page.starts_with("77aa88bb\n\nSession\nThe last poll no longer lists it"), "{page}");
-        assert!(page.contains("\nName  77aa88bb\n") && page.contains("\nState  Closed: its process ended") && !page.contains("\nStarted  "), "{page}");
+        assert!(page.contains("\nName  77aa88bb\n") && page.contains("\nState  closed\n") && !page.contains("\nStarted  "), "{page}");
         assert!(page.contains("\nStarted by  outside Supraman\n"), "{page}");
         assert_eq!(session_pill(&r, false), "Not listed");
         let gone = row(Health::Orphaned { last_state: supraman_claude::SessionState::Working });
-        assert!(text("x", &session(&facts(&gone, &disk), NOW)).contains("\nState  Interrupted: the process ended while the session was working\n"));
+        assert!(text("x", &session(&facts(&gone, &disk), NOW)).contains("\nState  ended while working\n"));
     }
 
     #[test]
@@ -397,7 +397,7 @@ mod tests {
                 "",
                 "Workspace",
                 "Name  demo",
-                "State  Started: the supervisor keeps its wanted sessions running",
+                "State  started",
                 r"Home  C:\nowhere\demo",
                 "Sessions  3 in the tree",
                 "Relay  relay ready",
@@ -412,7 +412,7 @@ mod tests {
                 "",
                 "Workspace session",
                 "Name  fm-demo-workspace",
-                "State  Idle: waits for a prompt",
+                "State  idle",
                 "Id  77aa88bb",
                 "UUID  77aa88bb-x",
             ]
@@ -420,7 +420,7 @@ mod tests {
         );
         let bare = WorkspaceFacts { name: "gaia".into(), ..Default::default() };
         let page = text("gaia", &workspace(&bare, NOW));
-        assert!(page.contains("\nState  Never started\n") && page.contains("\nNone yet: Edit folders… adds one.\n") && page.ends_with("\nWorkspace session\nNot wanted."), "{page}");
+        assert!(page.contains("\nState  never started\n") && page.contains("\nNone yet: Edit folders… adds one.\n") && page.ends_with("\nWorkspace session\nNot wanted."), "{page}");
         assert_eq!(workspace_pill(None), "Never started");
     }
 }

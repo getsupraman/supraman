@@ -211,7 +211,6 @@ impl FleetView {
             started_by: self.started_by(workspace, row),
             claimed,
             sign_in: self.hand_tab(row).and_then(|t| t.workman.clone()),
-            open: self.open_of(row),
             adopt,
             disk,
             listed,

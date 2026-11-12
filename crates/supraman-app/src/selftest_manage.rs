@@ -212,7 +212,7 @@ async fn row_details(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWind
     let wants = [
         format!("{ADDED}\n"),
         format!("\nName  {ADDED}\n"),
-        "\nState  Never started\n".into(),
+        "\nState  never started\n".into(),
         "\nalpha  ".into(),
         " (disabled)\n".into(),
         "\nWorkspace session\nNot wanted.".into(),
