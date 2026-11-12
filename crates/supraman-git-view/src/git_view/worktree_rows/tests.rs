@@ -275,3 +275,48 @@ fn a_conflicted_worktree_row_shows_the_conflict_node_and_its_upstreams_ahead_and
         assert!(painted(&view, &key, cx), "{key}");
     }
 }
+
+/// The groups row `ix`'s Branch / Tag cell shows with its list open, ghost included.
+fn shown_groups(view: &Entity<GitView>, ix: usize, cx: &mut VisualTestContext) -> Vec<String> {
+    view.read_with(cx, |v, cx| {
+        let shown = cells::ref_cell(&v.pages.read(cx).rows[ix].row, true);
+        shown.first.into_iter().chain(shown.list).map(|g| g.name).collect()
+    })
+}
+
+fn group_menu(view: &Entity<GitView>, ix: usize, name: &str, cx: &mut VisualTestContext) -> Vec<String> {
+    let group = view.read_with(cx, |v, cx| v.pages.read(cx).rows[ix].row.refs.iter().position(|g| g.name == name)).unwrap_or_else(|| panic!("a pill {name}"));
+    view.update(cx, |v, cx| v.pill_menu(ix, group, gpui::point(gpui::px(300.), gpui::px(300.)), cx));
+    cx.run_until_parked();
+    test_support::menu(&view, cx)
+}
+
+#[gpui::test]
+fn a_shown_worktree_rows_branch_is_on_that_row_only_and_its_pill_keeps_the_branch_menu(cx: &mut TestAppContext) {
+    let (f, _) = fixture();
+    let (view, cx) = open(&f, occupancy::Live::default(), cx);
+    let side_head = head(&f.worktree, &f);
+    let commit = test_support::row_of(&view, &side_head, cx);
+    assert!(shown_groups(&view, commit, cx).contains(&"side".to_string()), "no worktree row: the commit shows side");
+    let commit_menu = group_menu(&view, commit, "side", cx);
+    assert!(commit_menu.iter().any(|l| l == "Remove worktree"), "{commit_menu:?}");
+
+    std::fs::write(f.worktree.join("new.txt"), b"new\n").unwrap();
+    reread(&view, cx);
+    let row = row_of(&view, &f.worktree, cx);
+    let commit = test_support::row_of(&view, &side_head, cx);
+    assert_eq!(commit, row + 1, "the worktree row right above its HEAD");
+    assert_eq!(view.read_with(cx, |v, cx| v.pages.read(cx).rows[row].row.refs.iter().map(|g| g.name.clone()).collect::<Vec<_>>()), ["side"]);
+    assert!(painted(&view, &format!("git-worktree-ref-{row}"), cx), "the worktree row shows side");
+    let shown = shown_groups(&view, commit, cx);
+    assert!(!shown.contains(&"side".to_string()), "its commit leaves side out: {shown:?}");
+    assert_eq!(view.read_with(cx, |v, cx| v.pages.read(cx).rows[commit].row.more()), shown.len().saturating_sub(1), "the +N counts the groups shown");
+
+    test_support::right_click(&view, &format!("git-worktree-ref-{row}"), cx);
+    assert_eq!(test_support::menu(&view, cx), commit_menu, "the worktree row's pill gives the menu the commit's pill gave");
+
+    cx.update(|_, cx| background::apply(BackgroundSettings { worktree_wip: Some(false), ..QUIET }, cx));
+    cx.run_until_parked();
+    let commit = test_support::row_of(&view, &side_head, cx);
+    assert!(shown_groups(&view, commit, cx).contains(&"side".to_string()), "worktree_wip off: the commit shows side again");
+}

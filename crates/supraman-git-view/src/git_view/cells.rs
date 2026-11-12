@@ -149,7 +149,7 @@ fn icons(key: &str, icons: Vec<Icon>, colour: Hsla, hits: &HitTargets) -> Div {
 }
 
 /// A pill of row `ix`'s group `group`: its menu, double-click checkout, drag and drop.
-fn acting(pill: Div, key: String, ix: usize, group: &RefGroup, at: usize, sha: SharedString, palette: &Palette, cx: &mut Context<GitView>) -> Stateful<Div> {
+pub(crate) fn acting(pill: Div, key: String, ix: usize, group: &RefGroup, at: usize, sha: SharedString, palette: &Palette, cx: &mut Context<GitView>) -> Stateful<Div> {
     let drop_border = palette.text;
     let dragged = DraggedPill { group: group.clone(), sha };
     pill.id(SharedString::from(format!("{key}-act")))

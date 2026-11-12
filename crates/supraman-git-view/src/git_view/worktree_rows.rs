@@ -3,7 +3,7 @@
 
 use gpui::{AnyElement, ClickEvent, Context, SharedString, div, prelude::*, px};
 use supraman_core::paths::path_key;
-use supraman_gitman::{WorktreeRow, WorktreeWip};
+use supraman_gitman::{RefKind, WorktreeRow, WorktreeWip};
 use supraman_ui::button;
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
@@ -67,7 +67,7 @@ impl GitView {
             .other_wips(cx)
             .iter()
             .filter(|w| w.status().is_some() && (w.counts().total() > 0 || !occupancy.who_works_in(w.path()).is_empty()))
-            .filter_map(|w| Some(WorktreeRow { head: w.head()?.to_string(), path: w.path().to_path_buf() }))
+            .filter_map(|w| Some(WorktreeRow { head: w.head()?.to_string(), path: w.path().to_path_buf(), branch: w.branch().map(str::to_string) }))
             .collect();
         rows.sort();
         rows
@@ -174,11 +174,27 @@ impl GitView {
         cells::wip_message(row, wip, tail, palette)
     }
 
-    /// Its branch's pill, the checkout's icon last (the main checkout's home), then Open Worktree.
+    /// The commit a pill of `row` names: a worktree row's HEAD, else the row's own.
+    pub(crate) fn pill_sha(&self, row: &GraphRow, cx: &Context<Self>) -> SharedString {
+        let Some(path) = row.worktree() else { return row.sha.clone() };
+        let head = background::wips(cx.entity_id(), cx).and_then(|w| w.read(cx).get(path).and_then(|w| w.head().map(str::to_string)));
+        head.map(SharedString::from).unwrap_or_default()
+    }
+
+    /// Its branch's pill, the checkout's icon last (the main checkout's home), then Open Worktree; the pill acts as its branch group's on a commit.
     fn worktree_ref(&self, ix: usize, view: &WorktreeView, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
-        let colour = self.pages.read(cx).rows[ix].row.colour;
-        let face = cells::Face { head: false, name: view.label.clone().into(), icons: view.icons() };
-        let label = cells::pill(format!("git-worktree-label-{ix}"), face, colour, palette, &self.hits).relative().child(hit_target(&self.hits, format!("git-worktree-ref-{ix}")));
+        let row = self.pages.read(cx).rows[ix].clone();
+        let mut icons = view.icons();
+        if row.row.refs.iter().flat_map(|g| g.refs.iter()).any(|r| r.kind == RefKind::Remote) {
+            icons.insert(icons.len() - 1, Icon::Remote);
+        }
+        let face = cells::Face { head: false, name: view.label.clone().into(), icons };
+        let key = format!("git-worktree-label-{ix}");
+        let label = cells::pill(key.clone(), face, row.row.colour, palette, &self.hits).relative().child(hit_target(&self.hits, format!("git-worktree-ref-{ix}")));
+        let label = match row.row.refs.first() {
+            Some(group) => cells::acting(label, key, ix, group, 0, self.pill_sha(&row, cx), palette, cx).into_any_element(),
+            None => label.into_any_element(),
+        };
         let open = button::icon(&self.hits, format!("git-worktree-open-{ix}"), Icon::GitGraph.svg(12., palette.muted), px(18.), cx)
             .tooltip(Tooltip::text("Open Worktree"))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
