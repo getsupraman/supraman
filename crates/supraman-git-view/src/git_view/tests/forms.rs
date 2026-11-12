@@ -141,7 +141,18 @@ fn edit_remote_opens_filled_and_saves_its_url_push_url_and_name(cx: &mut TestApp
     assert_eq!((read[0].name.as_str(), read[0].url.as_str(), read[0].push_url.as_deref()), ("upstream", elsewhere.as_str(), None), "renamed, its URL set and an empty push URL removed");
     assert!(test_support::painted(&view, "refpanel-row-remote/upstream", cx), "the REMOTE section lists it by its new name");
 
+    f.git(&["remote", "add", "mirror", "C:/mirror.git"]);
     edit(&view, "upstream", cx);
+    type_in(&view, 0, "mirror", cx);
+    type_in(&view, 1, "C:/other.git", cx);
+    click(&view, "git-edit-remote-ok", cx);
+    settle(&view, cx);
+    assert_eq!(toast(&view, cx).as_deref(), Some("Remote mirror already exists."), "git's refusal in its words");
+    assert!(test_support::painted(&view, add::EDIT_KEY, cx), "the form stays open");
+    let read = remotes(&f.repo()).unwrap();
+    let of = |name: &str| read.iter().find(|r| r.name == name).map(|r| r.url.as_str());
+    assert_eq!((of("upstream"), of("mirror")), (Some(elsewhere.as_str()), Some("C:/mirror.git")), "a refused rename writes nothing, the URL included");
+
     type_in(&view, 1, "", cx);
     assert_eq!(view.read_with(cx, |v, cx| v.remote.read(cx).adding().unwrap().why_not(cx)), Some(add::NEEDS_URL), "an empty URL dims Save");
     keys(&view, "escape", cx);

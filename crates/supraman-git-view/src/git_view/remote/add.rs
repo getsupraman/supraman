@@ -152,22 +152,23 @@ impl RemoteActions {
         }, cx);
     }
 
-    /// The URL, then the push URL, then the name, each only when changed.
+    /// The name, then the URL and the push URL under it, each only when changed; a refused name writes nothing.
     fn submit_edit(&mut self, cx: &mut Context<Self>) {
         let Some((was, renamed, url, push)) = self.adding.as_ref().and_then(|a| a.changes(cx)) else { return };
         if renamed.is_none() && url.is_none() && push.is_none() {
             return self.close_add(cx);
         }
-        let words = format!("Saved remote {}", renamed.as_deref().unwrap_or(&was));
+        let name = renamed.clone().unwrap_or_else(|| was.clone());
+        let words = format!("Saved remote {name}");
         self.request(Doing::EditRemote(words), LockSet::remote_config(), move |s, _| {
+            if let Some(new) = &renamed {
+                remote::rename_remote(s, &was, new)?;
+            }
             if let Some(url) = &url {
-                remote::set_url(s, &was, url)?;
+                remote::set_url(s, &name, url)?;
             }
             if let Some(push) = &push {
-                remote::set_push_url(s, &was, push.as_deref())?;
-            }
-            if let Some(name) = &renamed {
-                remote::rename_remote(s, &was, name)?;
+                remote::set_push_url(s, &name, push.as_deref())?;
             }
             Ok(Done::Nothing)
         }, cx);
