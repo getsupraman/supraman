@@ -135,6 +135,7 @@ fn a_wip_files_menu_ignores_untracks_and_deletes(cx: &mut gpui::TestAppContext) 
 fn a_commits_file_is_restored_from_it_asked_first_over_local_changes(cx: &mut gpui::TestAppContext) {
     let f = Fixture::copy();
     let (view, cx) = open(&f.dir, Opts::default(), cx);
+    view.update(cx, |v, cx| v.set_file_view(crate::git_view::details::FileView::Tree, cx));
     view.update(cx, |v, cx| v.select_sha(f.sha("second"), cx));
     cx.run_until_parked();
     right_click(&view, "commit-tree-row-a.txt", cx);

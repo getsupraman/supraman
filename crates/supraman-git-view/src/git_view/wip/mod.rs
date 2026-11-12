@@ -269,6 +269,11 @@ impl WipPanel {
         cx.notify();
     }
 
+    #[cfg(test)]
+    pub(crate) fn view(&self) -> FileView {
+        self.view
+    }
+
     pub(crate) fn set_view(&mut self, view: FileView, cx: &mut Context<Self>) {
         self.view = view;
         cx.notify();

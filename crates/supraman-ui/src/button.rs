@@ -50,6 +50,33 @@ pub fn icon(hits: &HitTargets, key: impl Into<SharedString>, icon: Svg, side: Pi
         .child(icon.group_hover(key, |s| s.text_color(text)))
 }
 
+/// A square icon button in [`icon_look`]'s colours of `tone`; the icon keeps its own colour and takes the hover's text colour while hovered.
+pub fn icon_toned(hits: &HitTargets, key: impl Into<SharedString>, icon: Svg, side: Pixels, tone: Tone, cx: &App) -> Stateful<Div> {
+    let key = key.into();
+    let look = icon_look(tone, cx);
+    base(hits, key.clone(), move |s| s.bg(look.hover), look.active)
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(side)
+        .rounded_sm()
+        .border_1()
+        .border_color(look.border)
+        .bg(look.fill)
+        .child(icon.group_hover(key, move |s| s.text_color(look.hover_text)))
+}
+
+/// An [`icon_toned`]'s colours: Neutral [`look`]'s Solid; a status tone its Outline tinted at rest and its Solid hovered.
+pub fn icon_look(tone: Tone, cx: &App) -> Look {
+    let solid = look(tone, Fill::Solid, cx);
+    if tone == Tone::Neutral {
+        return solid;
+    }
+    let outline = look(tone, Fill::Outline, cx);
+    Look { fill: outline.hover, border: outline.border, text: outline.text, hover: solid.fill, hover_text: solid.text, active: solid.hover }
+}
+
 /// An [`icon`] always laid out and painted (slot and hit key kept), shown while `group` is hovered or `shown`.
 pub fn revealed(hits: &HitTargets, key: impl Into<SharedString>, icon: Svg, side: Pixels, group: impl Into<SharedString>, shown: bool, cx: &App) -> Stateful<Div> {
     reveal(self::icon(hits, key, icon, side, cx), group, shown)
@@ -119,13 +146,14 @@ pub enum Fill {
 /// Every [`action`]'s height.
 pub const HEIGHT: Pixels = px(20.);
 
-/// An [`action`]'s colours: its fill, border and text, and its fill hovered and pressed.
+/// An [`action`]'s colours: its fill, border and text, its fill and text hovered, and its fill pressed.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Look {
     pub fill: Hsla,
     pub border: Hsla,
     pub text: Hsla,
     pub hover: Hsla,
+    pub hover_text: Hsla,
     pub active: Hsla,
 }
 
@@ -139,10 +167,10 @@ pub fn look(tone: Tone, fill: Fill, cx: &App) -> Look {
     };
     let clear = gpui::transparent_black();
     match (tone, fill) {
-        (None, Fill::Solid) => Look { fill: colors.element_background, border: colors.border, text: colors.text, hover: colors.element_hover, active: colors.element_active },
-        (None, Fill::Outline) => Look { fill: clear, border: colors.border, text: colors.text, hover: colors.element_hover, active: colors.element_active },
-        (Some(tone), Fill::Solid) => Look { fill: tone, border: tone, text: on(tone), hover: tone.opacity(SOLID_HOVER), active: tone.opacity(SOLID_ACTIVE) },
-        (Some(tone), Fill::Outline) => Look { fill: clear, border: tone, text: tone, hover: tone.opacity(TINT), active: tone.opacity(TINT_HOVER) },
+        (None, Fill::Solid) => Look { fill: colors.element_background, border: colors.border, text: colors.text, hover: colors.element_hover, hover_text: colors.text, active: colors.element_active },
+        (None, Fill::Outline) => Look { fill: clear, border: colors.border, text: colors.text, hover: colors.element_hover, hover_text: colors.text, active: colors.element_active },
+        (Some(tone), Fill::Solid) => Look { fill: tone, border: tone, text: on(tone), hover: tone.opacity(SOLID_HOVER), hover_text: on(tone), active: tone.opacity(SOLID_ACTIVE) },
+        (Some(tone), Fill::Outline) => Look { fill: clear, border: tone, text: tone, hover: tone.opacity(TINT), hover_text: tone, active: tone.opacity(TINT_HOVER) },
     }
 }
 

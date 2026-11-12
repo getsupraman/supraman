@@ -170,7 +170,7 @@ impl CommitPanel {
     fn toolbar(&self, cx: &mut Context<Self>) -> Div {
         let colors = cx.theme().colors().clone();
         let sort = files::sort_button(&self.hits, "commit", self.order, |this: &mut CommitPanel, order, cx| this.set_order(order, cx), cx);
-        let toggle = (!self.all_files).then(|| files::view_toggle(&self.hits, "commit", self.view, |this: &mut CommitPanel, view, cx| this.set_view(view, cx), cx));
+        let toggle = (!self.all_files).then(|| files::view_toggle(&self.hits, "commit", self.view, |_: &mut CommitPanel, view, cx| cx.emit(PanelEvent::View(view)), cx));
         let all = self.all_files;
         let tick = button::checkbox(&self.hits, "commit-all-files", all, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_all_files(!all, cx)));
         div()

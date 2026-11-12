@@ -57,6 +57,8 @@ pub(crate) enum PanelEvent {
     StashMessage(StashRef, String),
     /// A file or folder of a list right-clicked.
     FileMenu(super::commit::files::FileClick),
+    /// Path | Tree chosen: every list of the tab takes it.
+    View(FileView),
 }
 
 /// The commit shown, its texts ready to paint.
@@ -100,8 +102,11 @@ pub(crate) enum State {
     Shown(Rc<Shown>),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Every Git tab's one Path | Tree choice for its file lists, kept as the layout file's `file_view`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub(crate) enum FileView {
+    #[default]
     Path,
     Tree,
 }
@@ -149,7 +154,7 @@ impl CommitPanel {
             state: State::Empty,
             stale: false,
             colour: 0,
-            view: FileView::Tree,
+            view: FileView::Path,
             all_files: false,
             whole: Whole::Unread,
             whole_expand: None,

@@ -320,6 +320,7 @@ fn commit_details_keep_the_last_counts_and_files_unpainted_while_the_next_commit
     let (f, sha) = (&nested.0, nested.1.clone());
     let (view, cx) = open(&f.dir, Opts::default(), cx);
     let panel = panel_of(&view, cx);
+    panel.update(cx, |p, cx| p.set_view(FileView::Tree, cx));
     select(&view, &sha, cx);
     let painted = repaint(&view, cx);
     assert!(painted.borrow().contains_key("commit-tree-row-docs"));

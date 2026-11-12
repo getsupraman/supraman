@@ -170,11 +170,9 @@ impl RefPanel {
     fn strip(&self, cx: &mut Context<Self>) -> Div {
         let open = self.overlay();
         let selected = cx.theme().colors().element_selected;
-        let (accent, muted, border) = (cx.theme().colors().text_accent, secondary(cx.theme().colors()), cx.theme().colors().border);
-        let expand = button::icon(&self.hits, format!("{LIST}-expand"), Icon::ChevronRight.svg(14., muted), px(24.), cx)
+        let (accent, muted) = (cx.theme().colors().text_accent, secondary(cx.theme().colors()));
+        let expand = button::icon_toned(&self.hits, format!("{LIST}-expand"), Icon::ChevronRight.svg(14., muted), px(24.), button::Tone::Neutral, cx)
             .rounded_full()
-            .border_1()
-            .border_color(border)
             .tooltip(Tooltip::text("Expand the ref panel (Ctrl+J)"))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_shut(cx)));
         let counts = self.counts();

@@ -38,8 +38,7 @@ impl WipPanel {
 
     /// The red trash button: Discard all changes, asked first.
     fn discard_all_button(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let error = cx.theme().status().error;
-        let trash = button::icon(&self.hits, "wip-discard-all", Icon::Trash.svg(14., error), px(24.), cx).border_1().border_color(error).bg(banner::tint(error));
+        let trash = button::icon_toned(&self.hits, "wip-discard-all", Icon::Trash.svg(14., cx.theme().status().error), px(24.), button::Tone::Danger, cx);
         let busy = self.busy(cx);
         let trash = if busy.is_none() { trash.tooltip(Tooltip::text("Discard all changes")) } else { trash };
         live(trash, busy, cx, |this, cx| this.ask(Ask::DiscardAll, cx))
@@ -100,7 +99,7 @@ impl WipPanel {
 
     fn toolbar(&self, cx: &mut Context<Self>) -> Div {
         let sort = files::sort_button(&self.hits, "wip", self.order, |this: &mut WipPanel, order, cx| this.set_order(order, cx), cx);
-        let toggle = files::view_toggle(&self.hits, "wip", self.view, |this: &mut WipPanel, view, cx| this.set_view(view, cx), cx);
+        let toggle = files::view_toggle(&self.hits, "wip", self.view, |_: &mut WipPanel, view, cx| cx.emit(PanelEvent::View(view)), cx);
         div().flex().flex_none().items_center().h(px(28.)).px_2().child(sort).child(div().flex_1().flex().justify_center().child(toggle)).child(div().w(px(24.)))
     }
 
