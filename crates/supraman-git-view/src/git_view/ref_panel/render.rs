@@ -4,6 +4,7 @@ use gpui::{AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla, IntoElem
 use supraman_gitman::short_sha;
 use supraman_ui::button;
 use supraman_ui::clipped;
+use supraman_ui::focus;
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
 use supraman_ui::ink;
@@ -290,6 +291,11 @@ impl Render for RefPanel {
         }
         let bar = self.bar(window, cx);
         let menu = self.render_menu(cx);
-        div().size_full().flex().flex_col().bg(bg).text_sm().child(bar).child(self.list(cx)).children(menu)
+        let pane = match Section::ALL.into_iter().find(|s| self.shows(*s)) {
+            Some(first) => focus::Pane::new(crate::git_view::FOCUS_REFS, &self.focus).entry(self.tree.get(first).focus_handle()),
+            None => focus::Pane::new(crate::git_view::FOCUS_REFS, &self.focus),
+        };
+        let panel = div().relative().size_full().flex().flex_col().bg(bg).text_sm().track_focus(&self.focus).child(bar).child(self.list(cx));
+        panel.child(pane.paint(&self.hits)).children(menu)
     }
 }

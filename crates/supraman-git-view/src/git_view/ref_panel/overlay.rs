@@ -44,7 +44,7 @@ impl RefPanel {
     /// Opens `section`'s overlay with the keyboard in it once its tree is built, or closes it when it is the one open.
     pub(crate) fn toggle_overlay(&mut self, section: Section, window: &mut Window, cx: &mut Context<Self>) {
         if self.overlay() == Some(section) {
-            return self.close_overlay(window, cx);
+            return self.close_overlay(cx);
         }
         let tree = TreeState::new(cx);
         tree.match_with(|entry: &Entry, filter| entry.matches(filter));
@@ -55,13 +55,11 @@ impl RefPanel {
         cx.notify();
     }
 
-    /// Closes the overlay; the tab takes the keyboard when the overlay held it.
-    pub(crate) fn close_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(overlay) = self.overlay.take() else { return };
-        if overlay.focus.contains_focused(window, cx) {
-            window.focus(&self.tab, cx);
+    /// Closes the overlay; [`supraman_ui::focus`] gives the keyboard back when the overlay held it.
+    pub(crate) fn close_overlay(&mut self, cx: &mut Context<Self>) {
+        if self.overlay.take().is_some() {
+            cx.notify();
         }
-        cx.notify();
     }
 
     /// Builds the open overlay's tree off the UI thread; the rows shown until then stay.
@@ -88,10 +86,10 @@ impl RefPanel {
         cx.notify();
     }
 
-    fn overlay_picked(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
+    fn overlay_picked(&mut self, path: &str, cx: &mut Context<Self>) {
         let Some(section) = self.overlay() else { return };
         if self.picked(&format!("{}/{path}", section.key()), cx) {
-            self.close_overlay(window, cx);
+            self.close_overlay(cx);
         }
     }
 
@@ -108,7 +106,7 @@ impl RefPanel {
             .row_height(px(ROW))
             .mark(px(MARK), |this, row, _, cx| this.paint_mark(OVERLAY, row, cx))
             .lead(|_, row, _, cx| RefPanel::lead(row, cx))
-            .on_select(|this, path, window, cx| this.overlay_picked(path, window, cx))
+            .on_select(|this, path, _, cx| this.overlay_picked(path, cx))
             .render(cx)
             .flex_shrink(1.)
             .min_h_0()
@@ -135,15 +133,15 @@ impl RefPanel {
             .child(hit_target(&self.hits, OVERLAY.into()))
             .child(header)
             .child(list)
-            .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
                 if e.keystroke.key == "escape" {
                     cx.stop_propagation();
-                    this.close_overlay(window, cx);
+                    this.close_overlay(cx);
                 }
             }))
-            .on_mouse_down_out(cx.listener(|this, e: &MouseDownEvent, window, cx| {
+            .on_mouse_down_out(cx.listener(|this, e: &MouseDownEvent, _, cx| {
                 if !this.on_own_icon(e.position) {
-                    this.close_overlay(window, cx);
+                    this.close_overlay(cx);
                 }
             }));
         Some(deferred(card).with_priority(supraman_ui::menu::FLOAT).into_any_element())

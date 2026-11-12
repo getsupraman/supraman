@@ -122,14 +122,14 @@ pub(crate) struct RefPanel {
     collapsed: Vec<String>,
     overlay: Option<overlay::Overlay>,
     menu: Option<ContextMenu<RefAction>>,
-    /// The tab's own focus, where the keyboard goes when the overlay holding it closes.
-    tab: FocusHandle,
+    /// The panel's pane.
+    focus: FocusHandle,
 }
 
 impl EventEmitter<RefEvent> for RefPanel {}
 
 impl RefPanel {
-    pub(crate) fn new(hits: HitTargets, tab: FocusHandle, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(hits: HitTargets, cx: &mut Context<Self>) -> Self {
         RefPanel {
             hits,
             entries: Arc::new(Vec::new()),
@@ -150,7 +150,7 @@ impl RefPanel {
             collapsed: Vec::new(),
             overlay: None,
             menu: None,
-            tab,
+            focus: cx.focus_handle(),
         }
     }
 

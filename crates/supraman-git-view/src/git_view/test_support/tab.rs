@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui::{Context, Entity, IntoElement, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Render, TestAppContext, VisualTestContext, Window, div, prelude::*, px};
+use gpui::{Context, Entity, IntoElement, Subscription, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Render, TestAppContext, VisualTestContext, Window, div, prelude::*, px};
 use supraman_gitman::BackgroundSettings;
 use supraman_ui::hit::HitTargets;
 
@@ -56,15 +56,16 @@ impl Opts {
     }
 }
 
-/// A window holding one view at a fixed size.
+/// A window holding one view at a fixed size, a root as the app's: its panes in [`supraman_ui::focus`]'s order, focus lost given back.
 pub(crate) struct Holder<V: 'static> {
     pub view: Entity<V>,
     size: (f32, f32),
+    _restore: Subscription,
 }
 
 impl<V: Render> Render for Holder<V> {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().w(px(self.size.0)).h(px(self.size.1)).child(self.view.clone())
+        supraman_ui::focus::root(div().w(px(self.size.0)).h(px(self.size.1))).child(self.view.clone())
     }
 }
 
@@ -92,15 +93,16 @@ pub(crate) fn open_unchecked<'a>(folder: &Path, opts: Opts, cx: &'a mut TestAppC
     });
     let Opts { home, live, following, size, .. } = opts;
     let folder = folder.to_path_buf();
-    let (holder, cx) = cx.add_window_view(|_, cx| {
+    let (holder, cx) = cx.add_window_view(|window, cx| {
         let hits = HitTargets::default();
         let view = match live {
             Some(live) if following => GitView::open_following(folder, home, hits, live, cx),
             Some(live) => GitView::open_with(folder, home, hits, Arc::new(live), cx),
             None => GitView::open(folder, home, hits, cx),
         };
-        Holder { view, size }
+        Holder { view, size, _restore: supraman_ui::focus::restore_on_loss(window, cx) }
     });
+    cx.update(|window, _| window.activate_window());
     let view = holder.read_with(cx, |h, _| h.view.clone());
     cx.run_until_parked();
     redraw(&view, cx);

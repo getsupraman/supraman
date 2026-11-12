@@ -46,7 +46,7 @@ use gpui::{AnyElement, App, AppContext as _, Context, Div, Entity, EventEmitter,
 use supraman_gitman::write::Occupancy;
 use supraman_gitman::{Repo, WipCounts, WorktreeRow};
 use supraman_ui::hit::{HitTargets, hit_target};
-use supraman_ui::{banner, button, menu};
+use supraman_ui::{banner, button, focus, menu};
 use supraman_ui::tooltip::Tooltip;
 use supraman_ui::icon::Icon;
 use supraman_ui::placeholder::placeholder;
@@ -92,6 +92,11 @@ pub(crate) const FORM_WIDTH: f32 = 320.;
 pub(crate) const REFS_PANE: &str = "git-refs-pane";
 pub(crate) const GRAPH_PANE: &str = "git-graph-pane";
 pub(crate) const PANEL_PANE: &str = "git-panel-pane";
+/// The tab's panes in [`supraman_ui::focus`]'s order.
+pub(crate) const FOCUS_REFS: &str = "git-refs";
+pub(crate) const FOCUS_GRAPH: &str = "git-graph";
+pub(crate) const FOCUS_PANEL: &str = "git-panel";
+pub(crate) const FOCUS_DIFF: &str = "git-diff";
 
 /// A tab's sizes in whole pixels and its ref panel's state.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -218,6 +223,8 @@ pub struct GitView {
     focus_summary: bool,
     /// The tab's own: a click on nothing focusable in it keeps the keyboard in the tab's key context.
     focus: FocusHandle,
+    /// The right panel's pane, whichever panel it shows.
+    panel_focus: FocusHandle,
 }
 
 impl EventEmitter<GitEvent> for GitView {}
@@ -237,7 +244,7 @@ impl GitView {
             let wip_panel = cx.new(|cx| WipPanel::new(hits.clone(), gate.clone(), cx));
             let worktree_panel = cx.new(|cx| WorktreePanel::new(hits.clone(), cx));
             let focus = cx.focus_handle();
-            let ref_panel = cx.new(|cx| RefPanel::new(hits.clone(), focus.clone(), cx));
+            let ref_panel = cx.new(|cx| RefPanel::new(hits.clone(), cx));
             let events = [cx.subscribe(&panel, Self::panel_event), cx.subscribe(&wip_panel, Self::panel_event), cx.subscribe(&ref_panel, Self::ref_event), cx.subscribe(&worktree_panel, Self::worktree_event)];
             let undo = cx.new(|cx| UndoBar::new(gate.clone(), hits.clone(), cx));
             let undo_events = cx.subscribe(&undo, Self::undo_event);
@@ -298,6 +305,7 @@ impl GitView {
                 column_menu: None,
                 focus_summary: false,
                 focus,
+                panel_focus: cx.focus_handle(),
             };
             view.start(cx);
             view
@@ -828,6 +836,10 @@ impl GitView {
     }
 
     fn render_split(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let pane = match self.diff(cx) {
+            Some(diff) => focus::Pane::new(FOCUS_DIFF, diff.read(cx).focus_handle()).later(),
+            None => focus::Pane::new(FOCUS_GRAPH, self.table.focus_handle()),
+        };
         let first = match self.diff(cx).cloned() {
             Some(view) if self.selected(cx) == Some(Selected::Wip) => div()
                 .size_full()
@@ -844,8 +856,9 @@ impl GitView {
             deferred(div().absolute().top_0().bottom_0().left_0().w(px(FORM_WIDTH)).max_w_full().occlude().border_r_1().border_color(border).child(form)).with_priority(menu::FORM)
         });
         let toast = self.toast.render(&self.hits, "git-toast", cx).map(|t| deferred(t).with_priority(menu::OVER_FORM));
-        let table = div().relative().flex_1().min_w_0().h_full().child(first).child(hit_target(&self.hits, GRAPH_PANE.into())).children(form).children(toast);
-        let panel = div().relative().flex_shrink(1.).min_w_0().flex().flex_col().w(self.panel_width).h_full().child(self.render_panel(cx)).child(hit_target(&self.hits, PANEL_PANE.into()));
+        let table = div().relative().flex_1().min_w_0().h_full().child(first).child(hit_target(&self.hits, GRAPH_PANE.into())).child(pane.paint(&self.hits)).children(form).children(toast);
+        let panel = div().relative().flex_shrink(1.).min_w_0().flex().flex_col().w(self.panel_width).h_full().track_focus(&self.panel_focus).child(self.render_panel(cx)).child(hit_target(&self.hits, PANEL_PANE.into()));
+        let panel = panel.child(focus::Pane::new(FOCUS_PANEL, &self.panel_focus).paint(&self.hits));
         let split = SplitPane { id: "git-split".into(), min_first: px(GRAPH_MIN), min_second: px(PANEL_MIN), default: PANEL_WIDTH }
             .render_second(table, panel, |this: &mut GitView, width, cx| {
                 this.panel_width = width;

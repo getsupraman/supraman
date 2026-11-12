@@ -591,7 +591,7 @@ impl RemoteActions {
             let it = supraman_ui::menu::item(format!("pull-default-{}", bar::key_of(choice)), bar::words(choice), RemoteAct::SetDefault(choice)).ticked(choice == self.pull);
             items.push(if i == 0 { it.under("Set as default") } else { it });
         }
-        self.menu = Some(ContextMenu::new("The button does the default".into(), position, items));
+        self.menu = Some(ContextMenu::new("The button does the default", position, items));
         cx.notify();
     }
 

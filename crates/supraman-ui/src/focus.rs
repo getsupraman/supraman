@@ -92,14 +92,15 @@ pub fn restore_on_loss<V: 'static>(window: &mut Window, cx: &mut Context<V>) -> 
     })
 }
 
-/// Focuses what the pane that last held the focus held, while that pane is shown; whether it did.
+/// Focuses what the pane that last held the focus held, while that pane is shown, else gpui's nearest focusable
+/// ancestor of what lost it; whether it focused anything.
 pub fn restore(window: &mut Window, cx: &mut App) -> bool {
     let target = {
         let state = state(window, cx);
         let state = state.borrow();
         state.held.as_ref().and_then(|key| state.shown.iter().find(|p| &p.key == key)).map(|pane| state.target(pane, window))
     };
-    target.map(|t| window.focus(&t, cx)).is_some()
+    target.or_else(|| window.focus_lost_restore_target(cx)).map(|t| window.focus(&t, cx)).is_some()
 }
 
 /// The shown panes' keys in F6's order.

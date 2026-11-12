@@ -127,7 +127,7 @@ fn palette_remote(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<(St
     let rows = palette.read_with(cx, |p, _| {
         p.shown().iter().filter(|(e, _)| e.text().starts_with("Remote: ")).map(|(e, _)| (e.key().to_string(), e.text(), e.dimmed().map(|w| w.to_string()))).collect()
     });
-    view.update_in(cx, |v, window, cx| v.close_find(window, cx));
+    view.update(cx, |v, cx| v.close_find(cx));
     rows
 }
 

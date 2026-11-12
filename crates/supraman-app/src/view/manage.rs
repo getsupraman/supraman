@@ -41,7 +41,7 @@ impl FleetView {
 
     pub fn open_add_menu(&mut self, cx: &mut Context<Self>) {
         let position = self.hits.borrow().get("add-workspace").map(|h| h.bounds.bottom_left()).unwrap_or_default();
-        self.dialogs.menu = Some(ContextMenu::new("Add workspace".into(), position, add_items()));
+        self.dialogs.menu = Some(ContextMenu::new("Add workspace", position, add_items()));
         cx.notify();
     }
 
