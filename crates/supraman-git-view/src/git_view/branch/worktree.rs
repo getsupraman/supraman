@@ -328,7 +328,7 @@ impl BranchActions {
             .child(Icon::ChevronDown.svg(12., muted))
             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_picker(window, cx)));
         let field = button::focusable(field, focus, cx.listener(|this, _: &Press, window, cx| this.open_picker(window, cx)), cx);
-        let picker = adding.picking.as_ref().map(|(p, _)| deferred(div().absolute().top_full().left_0().right_0().child(p.clone())).with_priority(supraman_ui::menu::FLOAT));
+        let picker = adding.picking.as_ref().map(|(p, _)| deferred(div().absolute().top_full().left_0().right_0().child(p.clone())).with_priority(supraman_ui::menu::FORM));
         div()
             .relative()
             .when(picker.is_some(), |d| {
