@@ -348,6 +348,7 @@ async fn git_palette(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowC
     git_wip(view, &git, out, cx).await?;
     git_add_remote(view, out, cx).await?;
     git_add_worktree(view, out, cx).await?;
+    git_band(view, out, cx).await?;
     git_agent(view, &dir, &fixture.worktree, out, cx).await?;
     git_pills(view, out, cx).await?;
     drop(fixture);
@@ -469,6 +470,18 @@ async fn git_add_worktree(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWi
     let shot = capture(out.join("supraman-git-add-worktree.png"), None, cx).await?;
     println!("shot: {}", shot.display());
     crate::selftest::click(view, "git-add-worktree-close", cx).await
+}
+
+/// The worktree's removal asked in the band over the toolbar; its look (the attention fill against the panels, the answers' colours) is what René judges, which no unit test shows.
+async fn git_band(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    crate::selftest::press(view, "refpanel-name-local/side", MouseButton::Right, cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the branch's menu", |v| v.hits.borrow().contains_key("menu-worktree-remove").then_some(())).await?;
+    crate::selftest::click(view, "menu-worktree-remove", cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the band over the toolbar", |v| v.hits.borrow().contains_key("git-ref-ask-band").then_some(())).await?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-git-band.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    crate::selftest::click(view, "git-ref-ask-cancel", cx).await
 }
 
 /// The graph's pills at the normal width, one hovered, and cut in a narrow Branch / Tag column, which the column's double-click then resets; what René compares with GitKraken by eye.
