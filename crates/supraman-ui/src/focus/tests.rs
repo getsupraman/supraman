@@ -150,6 +150,8 @@ struct Tabs {
     shown: usize,
     popup: Option<FocusHandle>,
     hits: HitTargets,
+    /// What the window would show when a group takes the keys, as the app's active tab.
+    active: std::rc::Rc<std::cell::Cell<usize>>,
     _restore: gpui::Subscription,
 }
 
@@ -157,9 +159,16 @@ impl Render for Tabs {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let tab = self.shown;
         let content = div().id(KEYS[tab]).size_full().track_focus(&self.entries[tab]).child(div().id("field").size_4().track_focus(&self.fields[tab]));
-        let area = div().id("area").relative().w(px(200.)).h_full().track_focus(&self.area).child(content).child(Group::new(KEYS[tab], &self.area, &self.entries[tab]).paint());
+        let area = div().id("area").relative().w(px(200.)).h_full().track_focus(&self.area).child(content).child(self.group(tab).paint());
         let sidebar = div().id("sidebar").relative().w(px(100.)).h_full().track_focus(&self.sidebar).child(Pane::new("sidebar", &self.sidebar).paint(&self.hits));
         root(div().flex().size_full()).child(sidebar).child(area).children(self.popup.as_ref().map(|p| div().id("popup").size_4().track_focus(p)))
+    }
+}
+
+impl Tabs {
+    fn group(&self, tab: usize) -> Group {
+        let active = self.active.clone();
+        Group::new(KEYS[tab], &self.area, &self.entries[tab]).while_shown(move |_| active.get() == tab)
     }
 }
 
@@ -169,7 +178,7 @@ fn open_tabs(cx: &mut TestAppContext) -> (Entity<Tabs>, &mut VisualTestContext) 
         let area = cx.focus_handle();
         area.focus(window, cx);
         let (entries, fields) = ([cx.focus_handle(), cx.focus_handle()], [cx.focus_handle(), cx.focus_handle()]);
-        Tabs { sidebar: cx.focus_handle(), area, entries, fields, shown: 0, popup: None, hits: HitTargets::default(), _restore: restore_on_loss(window, cx) }
+        Tabs { sidebar: cx.focus_handle(), area, entries, fields, shown: 0, popup: None, hits: HitTargets::default(), active: Default::default(), _restore: restore_on_loss(window, cx) }
     });
     cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
@@ -179,6 +188,7 @@ fn open_tabs(cx: &mut TestAppContext) -> (Entity<Tabs>, &mut VisualTestContext) 
 fn show_tab(view: &Entity<Tabs>, tab: usize, cx: &mut VisualTestContext) {
     view.update(cx, |v, cx| {
         v.shown = tab;
+        v.active.set(tab);
         cx.notify();
     });
     cx.run_until_parked();
@@ -222,4 +232,16 @@ fn a_tab_shown_takes_the_keys_from_a_pane_but_not_from_a_popup(cx: &mut TestAppC
     cx.run_until_parked();
     show_tab(&view, 0, cx);
     assert!(focused_is(&popup, cx), "an open popup keeps them");
+}
+
+#[gpui::test]
+fn a_tab_no_longer_shown_when_it_would_take_the_keys_leaves_them(cx: &mut TestAppContext) {
+    let (view, cx) = open_tabs(cx);
+    let (area, entries) = view.read_with(cx, |v, _| (v.area.clone(), v.entries.clone()));
+    view.update(cx, |v, cx| {
+        v.shown = 1;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    assert!(!focused_is(&entries[1], cx) && focused_is(&area, cx), "B painted while A is the active one does not take the keys");
 }

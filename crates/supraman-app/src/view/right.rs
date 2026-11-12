@@ -87,13 +87,14 @@ impl FleetView {
 
     /// The shown tab takes the keys: what it held when last shown, else its view's own (the Git and Work tabs
     /// hand them to the graph and the list), else the content area's.
-    fn tab_keys(&self, tab: &Tab, cx: &App) -> supraman_ui::focus::Group {
+    fn tab_keys(&self, tab: &Tab, cx: &Context<Self>) -> supraman_ui::focus::Group {
         let entry = match &tab.kind {
             TabKind::Git(view) => view.focus_handle(cx),
             TabKind::Work(view) => view.focus_handle(cx),
             _ => self.focus.clone(),
         };
-        supraman_ui::focus::Group::new(format!("tab-{}", tab.id), &self.focus, &entry)
+        let (fleet, id) = (cx.weak_entity(), tab.id);
+        supraman_ui::focus::Group::new(format!("tab-{id}"), &self.focus, &entry).while_shown(move |cx| fleet.upgrade().is_some_and(|f| f.read(cx).active == Some(id)))
     }
 
     fn render_tab_content(&mut self, cx: &mut Context<Self>) -> AnyElement {

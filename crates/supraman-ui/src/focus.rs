@@ -87,12 +87,18 @@ pub struct Group {
     key: SharedString,
     region: FocusHandle,
     entry: FocusHandle,
+    shown: Rc<dyn Fn(&App) -> bool>,
 }
 
 impl Group {
     /// `region` contains what the place shows, whichever group it is.
     pub fn new(key: impl Into<SharedString>, region: &FocusHandle, entry: &FocusHandle) -> Self {
-        Self { key: key.into(), region: region.clone(), entry: entry.clone() }
+        Self { key: key.into(), region: region.clone(), entry: entry.clone(), shown: Rc::new(|_| true) }
+    }
+
+    /// Whether it is still the one shown when it would take the keys: a key handled after its paint may have shown another.
+    pub fn while_shown(self, shown: impl Fn(&App) -> bool + 'static) -> Self {
+        Self { shown: Rc::new(shown), ..self }
     }
 
     /// The last child of the place's element.
@@ -116,6 +122,9 @@ impl Group {
     }
 
     fn take_keys(&self, state: &Rc<RefCell<State>>, window: &mut Window, cx: &mut App) {
+        if !(self.shown)(cx) {
+            return;
+        }
         let target = {
             let state = state.borrow();
             let popup = window.focused(cx).is_some_and(|f| !self.region.contains(&f, window) && !state.shown.iter().any(|p| p.region.contains(&f, window)));
