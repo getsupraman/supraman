@@ -57,7 +57,10 @@ pub struct SettingsView {
     fleet: WeakEntity<FleetView>,
     pages: SettingsPages<SettingsView>,
     page: &'static str,
+    /// The page's pane; `nav` the page list's.
     focus: FocusHandle,
+    nav: FocusHandle,
+    _restore: gpui::Subscription,
     hits: HitTargets,
     /// As last shown: a change re-reads settings.toml.
     workman: WorkmanStatus,
@@ -153,6 +156,8 @@ impl SettingsView {
             pages,
             page,
             focus: cx.focus_handle(),
+            nav: cx.focus_handle(),
+            _restore: supraman_ui::focus::restore_on_loss(window, cx),
             hits,
             workman,
             catalog: Catalog::default(),
@@ -398,6 +403,8 @@ impl Render for SettingsView {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let mut nav = div()
+            .relative()
+            .track_focus(&self.nav)
             .flex()
             .flex_col()
             .w(px(180.))
@@ -425,6 +432,7 @@ impl Render for SettingsView {
             Some(page) => (page.title, (page.render)(self, cx)),
             None => ("", Vec::new()),
         };
+        let nav = nav.child(supraman_ui::focus::Pane::new("settings-pages", &self.nav).paint(&self.hits));
         let content = div()
             .id("settings-page")
             .flex()
@@ -443,18 +451,18 @@ impl Render for SettingsView {
                 )
             })
             .children(rows);
+        let page = div().relative().flex().flex_1().min_w_0().track_focus(&self.focus).child(content).child(supraman_ui::focus::Pane::new("settings-page", &self.focus).paint(&self.hits));
 
-        div()
+        supraman_ui::focus::root(div())
             .size_full()
             .flex()
             .flex_col()
             .font_family(supraman_ui::fonts::UI)
             .bg(colors.background)
             .text_color(colors.text)
-            .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
             .child(crate::titlebar::render("Settings", None, &self.hits, window, cx))
-            .child(div().flex().flex_1().min_h_0().child(nav).child(content))
+            .child(div().flex().flex_1().min_h_0().child(nav).child(page))
     }
 }
 

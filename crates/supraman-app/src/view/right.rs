@@ -63,8 +63,23 @@ impl FleetView {
             .h_full()
             .min_w_0()
             .child(bar)
-            .child(div().relative().flex_1().min_h_0().child(content).children(self.pane_toast.render(&self.hits, "pane-toast", cx)))
+            .child(self.content_area(content, cx))
             .into_any_element()
+    }
+
+    /// The tab's content under [`FleetView::focus`]: a pane of its own unless its tab lays out panes.
+    fn content_area(&mut self, content: AnyElement, cx: &mut Context<Self>) -> gpui::Div {
+        let tab = self.active.and_then(|id| self.tab(id));
+        let pane = match tab.map(|t| (&t.kind, t.terminal.is_some())) {
+            None | Some((TabKind::Git(_) | TabKind::Work(_), _)) => None,
+            Some((TabKind::Details(_), _)) => Some("details"),
+            Some((TabKind::Schedule(_), _)) => Some("schedule"),
+            Some((TabKind::Start(_), _)) => Some("start"),
+            Some((_, true)) => Some("terminal"),
+            Some(_) => Some("tab"),
+        };
+        let area = div().relative().flex_1().min_h_0().track_focus(&self.focus).child(content).children(self.pane_toast.render(&self.hits, "pane-toast", cx));
+        area.children(pane.map(|key| supraman_ui::focus::Pane::new(key, &self.focus).paint(&self.hits)))
     }
 
     fn render_tab_content(&mut self, cx: &mut Context<Self>) -> AnyElement {
