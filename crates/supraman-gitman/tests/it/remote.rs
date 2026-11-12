@@ -193,6 +193,29 @@ fn add_remote_adds_with_or_without_a_push_url_and_refuses_a_bad_or_taken_name() 
     assert_eq!(names, ["mirror", "origin", "split"]);
 }
 
+#[test]
+fn a_remote_is_renamed_and_its_push_url_set_and_dropped() {
+    let f = Fixture::copy();
+    let mine = clone(&f, "mine");
+    let of = |name: &str| remotes(&Repo::new(f.git.clone(), &mine)).unwrap().into_iter().find(|r| r.name == name);
+    let url = of("origin").unwrap().url;
+
+    write(&f, &mine, LockSet::remote_config(), |s| remote::set_push_url(s, "origin", Some("C:/push-here.git"))).unwrap();
+    assert_eq!(of("origin").unwrap().push_url.as_deref(), Some("C:/push-here.git"));
+    write(&f, &mine, LockSet::remote_config(), |s| remote::set_push_url(s, "origin", Some(" "))).unwrap();
+    assert_eq!(of("origin").unwrap().push_url, None, "an empty push URL pushes to the pull URL again");
+    write(&f, &mine, LockSet::remote_config(), |s| remote::set_push_url(s, "origin", None)).unwrap();
+
+    write(&f, &mine, LockSet::remote_config(), |s| remote::rename_remote(s, "origin", "upstream")).unwrap();
+    assert!(of("origin").is_none());
+    assert_eq!(of("upstream").unwrap().url, url);
+    assert_eq!(f.at(&mine, &["rev-parse", "--abbrev-ref", "main@{upstream}"]), "upstream/main", "the upstream follows the new name");
+    let bad = write(&f, &mine, LockSet::remote_config(), |s| remote::rename_remote(s, "upstream", "two words"));
+    assert!(matches!(bad, Err(WriteError::Refused("A name cannot hold a space"))), "{bad:?}");
+    let gone = write(&f, &mine, LockSet::remote_config(), |s| remote::rename_remote(s, "nowhere", "else"));
+    assert!(matches!(&gone, Err(WriteError::Said(_))), "{gone:?}");
+}
+
 /// A fake ssh that says how far it got, notes its Windows pid, and waits on its child `cat` for ever.
 fn slow_ssh(dir: &Path) -> (String, PathBuf) {
     let pid = dir.join("ssh.pid");

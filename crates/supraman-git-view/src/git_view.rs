@@ -86,6 +86,12 @@ const GRAPH_MIN: f32 = 320.;
 const PANEL_MIN: f32 = 260.;
 /// The ref panel shrinks this much faster than the graph and the commit panel beside it.
 const REFS_SHRINK: f32 = 1000.;
+/// The form slot's width between the ref panel and the graph.
+pub(crate) const FORM_WIDTH: f32 = 320.;
+/// The hit keys of the ref panel's, the graph's and the commit panel's places.
+pub(crate) const REFS_PANE: &str = "git-refs-pane";
+pub(crate) const GRAPH_PANE: &str = "git-graph-pane";
+pub(crate) const PANEL_PANE: &str = "git-panel-pane";
 
 /// A tab's sizes in whole pixels and its ref panel's state.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -787,14 +793,8 @@ impl GitView {
 }
 
 impl GitView {
-    /// Add Remote or Create Worktree while open, else the WIP panel for the WIP row, else the commit panel under the banner of a dirty tree.
+    /// The WIP panel for the WIP row, else the commit panel under the banner of a dirty tree.
     fn render_panel(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        if let Some(form) = self.remote.update(cx, |r, cx| r.render_add(cx)) {
-            return form;
-        }
-        if let Some(form) = self.branch.update(cx, |b, cx| b.render_add_worktree(cx)) {
-            return form;
-        }
         let selected = self.selected(cx);
         if selected == Some(Selected::Wip) {
             return div().size_full().child(self.wip_panel.clone()).into_any_element();
@@ -822,19 +822,28 @@ impl GitView {
             Some(view) => view.into_any_element(),
             None => self.render_graph(cx),
         };
-        let table = div().relative().flex_1().min_w_0().h_full().child(first).children(self.toast.render(&self.hits, "git-toast", cx));
-        let panel = div().flex_shrink(1.).min_w_0().flex().flex_col().w(self.panel_width).h_full().child(self.render_panel(cx));
+        let table = div().relative().flex_1().min_w_0().h_full().child(first).children(self.toast.render(&self.hits, "git-toast", cx)).child(hit_target(&self.hits, GRAPH_PANE.into()));
+        let panel = div().relative().flex_shrink(1.).min_w_0().flex().flex_col().w(self.panel_width).h_full().child(self.render_panel(cx)).child(hit_target(&self.hits, PANEL_PANE.into()));
         let split = SplitPane { id: "git-split".into(), min_first: px(GRAPH_MIN), min_second: px(PANEL_MIN), default: PANEL_WIDTH }
             .render_second(table, panel, |this: &mut GitView, width, cx| {
                 this.panel_width = width;
                 cx.notify();
             }, |this: &mut GitView, cx| this.keep_layout(cx), cx)
             .size_full();
-        self.with_refs(split.into_any_element(), cx)
+        let Some(form) = self.render_form(cx) else { return self.with_refs(split.into_any_element(), 0., cx) };
+        let border = cx.theme().colors().border;
+        let slot = div().flex_none().w(px(FORM_WIDTH)).h_full().border_r_1().border_color(border).child(form);
+        let rest = div().flex().size_full().child(slot).child(div().flex_1().min_w_0().h_full().child(split));
+        self.with_refs(rest.into_any_element(), FORM_WIDTH, cx)
     }
 
-    /// `rest` right of the ref panel, which in a narrow tab gives its width before the graph and commit panel do.
-    fn with_refs(&mut self, rest: AnyElement, cx: &mut Context<Self>) -> AnyElement {
+    /// Add Remote, Edit Remote or Create Worktree, the one form open.
+    fn render_form(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        self.remote.update(cx, |r, cx| r.render_add(cx)).or_else(|| self.branch.update(cx, |b, cx| b.render_add_worktree(cx)))
+    }
+
+    /// `rest` right of the ref panel, which in a narrow tab gives its width before the graph and commit panel do; `form` is the open form's width.
+    fn with_refs(&mut self, rest: AnyElement, form: f32, cx: &mut Context<Self>) -> AnyElement {
         let refs = self.ref_panel.read(cx);
         let (shut, width) = (refs.shut(), refs.width());
         let panel = self.ref_panel.clone();
@@ -843,8 +852,9 @@ impl GitView {
             let strip = div().flex_none().h_full().border_r_1().border_color(border).child(panel);
             return div().flex().size_full().child(strip).child(div().flex_1().min_w_0().h_full().child(rest)).into_any_element();
         }
-        let rest_min = px(GRAPH_MIN + PANEL_MIN + 1.);
-        let left = div().flex_shrink(REFS_SHRINK).min_w_0().overflow_hidden().w(width).h_full().child(panel);
+        let panel_min = if form > 0. { f32::from(self.panel_width).max(PANEL_MIN) } else { PANEL_MIN };
+        let rest_min = px(GRAPH_MIN + panel_min + 1. + form);
+        let left = div().relative().flex_shrink(REFS_SHRINK).min_w_0().overflow_hidden().w(width).h_full().child(panel).child(hit_target(&self.hits, REFS_PANE.into()));
         let rest = div().flex_grow(1.).flex_basis(rest_min).min_w_0().h_full().child(rest);
         SplitPane { id: "refpanel-split".into(), min_first: ref_panel::MIN_WIDTH, min_second: rest_min, default: ref_panel::DEFAULT_WIDTH }
             .render(left, rest, |this: &mut GitView, width, cx| this.ref_panel.update(cx, |p, cx| p.set_width(width, cx)), |this: &mut GitView, cx| this.keep_layout(cx), cx)

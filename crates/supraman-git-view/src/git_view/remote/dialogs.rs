@@ -1,9 +1,9 @@
-//! The remote calls' prompts in the tab's band: a branch's upstream, a remote's URL and ssh's prompt.
+//! The remote calls' prompts in the tab's band: a branch's upstream and ssh's prompt.
 
 use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Div, Entity, Subscription, Window, div, prelude::*, px};
 use supraman_core::askpass::{Asked, Prompt, Reply};
 use supraman_gitman::write::remote::PullMode;
-use supraman_gitman::{Remote, mask_userinfo};
+use supraman_gitman::Remote;
 use supraman_ui::button;
 use supraman_ui::confirm::band;
 use supraman_ui::hit::hit_target;
@@ -52,22 +52,6 @@ impl UpstreamDialog {
         if let Some((f, _)) = &self.field {
             f.update(cx, |i, cx| i.set_text(branch, cx));
         }
-    }
-}
-
-pub(crate) struct EditRemote {
-    pub(crate) name: String,
-    pub(crate) was: String,
-    field: Option<(Entity<TextInput>, Subscription)>,
-}
-
-impl EditRemote {
-    pub(crate) fn new(name: String, was: String) -> EditRemote {
-        EditRemote { name, was, field: None }
-    }
-
-    pub(crate) fn url(&self, cx: &gpui::App) -> String {
-        self.field.as_ref().map(|(f, _)| f.read(cx).text().trim().to_string()).unwrap_or_default()
     }
 }
 
@@ -148,11 +132,6 @@ impl RemoteActions {
             let made = field(&local, "Branch on the remote", false, |this, cx| this.submit_upstream(cx), window, cx);
             self.upstream.as_mut().map(|d| d.field = Some(made));
         }
-        if let Some(e) = self.editing.as_ref().filter(|e| e.field.is_none()) {
-            let shown = mask_userinfo(&e.was);
-            let made = field(&shown, "URL", false, |this, cx| this.submit_edit(cx), window, cx);
-            self.editing.as_mut().map(|e| e.field = Some(made));
-        }
         if self.prompting.as_ref().is_some_and(|p| p.field.is_none() && !matches!(p.prompt, Prompt::HostKey { .. })) {
             let made = field("", "Passphrase", true, |this, cx| this.answer_prompt(true, cx), window, cx);
             self.prompting.as_mut().map(|p| p.field = Some(made));
@@ -161,7 +140,6 @@ impl RemoteActions {
 
     fn close_dialogs(&mut self, cx: &mut Context<Self>) {
         self.upstream = None;
-        self.editing = None;
         if let Some(p) = self.prompting.take() {
             p.cancel();
         }
@@ -193,12 +171,12 @@ impl RemoteActions {
         self.upstream.as_ref()
     }
 
-    /// The question, else the upstream, the URL or ssh's prompt, as the tab's band; `true` when its field holds the keyboard.
+    /// The question, else the upstream or ssh's prompt, as the tab's band; `true` when its field holds the keyboard.
     pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<(Div, bool)> {
         if let Some(band) = self.writes.band_answer(&self.hits, "git-remote-ask", Self::answer_force, cx) {
             return Some((band, false));
         }
-        self.render_upstream(cx).or_else(|| self.render_edit(cx)).or_else(|| self.render_prompt(cx))
+        self.render_upstream(cx).or_else(|| self.render_prompt(cx))
     }
 
     fn cancel_button(&self, key: &str, words: &str, cx: &mut Context<Self>) -> AnyElement {
@@ -234,14 +212,6 @@ impl RemoteActions {
             self.cancel_button("git-upstream-cancel", "Cancel", cx),
         ];
         Some((band(&self.hits, "git-upstream", ask.replace("{}", &d.local), items, cx), true))
-    }
-
-    fn render_edit(&self, cx: &mut Context<Self>) -> Option<(Div, bool)> {
-        let e = self.editing.as_ref()?;
-        let (field, _) = e.field.as_ref()?;
-        let ok = button::action(&self.hits, "git-edit-remote-ok", "Save", button::Tone::Success, button::Fill::Solid, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.submit_edit(cx)));
-        let items = vec![self.field(field, "git-edit-remote-field", 2. * FIELD), ok.into_any_element(), self.cancel_button("git-edit-remote-cancel", "Cancel", cx)];
-        Some((band(&self.hits, "git-edit-remote", format!("The URL {} fetches from and pushes to", e.name), items, cx), true))
     }
 
     fn render_prompt(&self, cx: &mut Context<Self>) -> Option<(Div, bool)> {

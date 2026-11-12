@@ -1,27 +1,30 @@
-//! Add Remote in the commit panel's place: Name, Pull URL and an optional Push URL; hit keys `git-add-remote{,-close,-ok,-name,-pull,-push}`.
+//! Add Remote and Edit Remote beside the ref panel: Name, Pull URL and an optional Push URL;
+//! hit keys `git-add-remote{,-close,-ok,-name,-pull,-push}`, Edit's `git-edit-remote…`.
 
-use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, Subscription, Window, div, prelude::*, px};
-use supraman_gitman::write::remote;
+use gpui::{AnyElement, Context, Entity, FocusHandle, Focusable, SharedString, Subscription, Window};
 use supraman_gitman::write::LockSet;
-use supraman_ui::button;
-use supraman_ui::focus_order::{Dismiss, FocusOrder, Press};
-use supraman_ui::hit::hit_target;
+use supraman_gitman::write::remote;
+use supraman_gitman::{Remote, mask_userinfo};
+use supraman_ui::focus_order::FocusOrder;
+use supraman_ui::form::{self, Answers, Form};
 use supraman_ui::icon::Icon;
-use supraman_ui::text_input::{InputEvent, TextInput};
-use supraman_ui::themes::secondary;
-use supraman_ui::tooltip::Tooltip;
-use theme::ActiveTheme as _;
+use supraman_ui::text_input::TextInput;
 
 use super::{Doing, Done, RemoteActions};
 
 pub(crate) const KEY: &str = "git-add-remote";
+pub(crate) const EDIT_KEY: &str = "git-edit-remote";
 pub(crate) const NEEDS_NAME: &str = "Type the remote's name";
 pub(crate) const NEEDS_URL: &str = "Type the URL it pulls from";
 
 const FIELDS: [(&str, &str, &str); 3] = [("name", "Name", "origin"), ("pull", "Pull URL", "https://github.com/owner/repo.git"), ("push", "Push URL (optional)", "The pull URL")];
 
+const ANSWERS: Answers<RemoteActions> = Answers { ok: RemoteActions::submit_add, close: RemoteActions::close_add };
+
 #[derive(Default)]
 pub(crate) struct AddRemote {
+    /// The remote Edit Remote changes; `None` adds one.
+    editing: Option<Remote>,
     fields: Vec<(Entity<TextInput>, Subscription)>,
     ok: Option<FocusHandle>,
 }
@@ -31,7 +34,11 @@ impl AddRemote {
         self.fields.get(at).map(|(f, _)| f.read(cx).text().trim().to_string()).unwrap_or_default()
     }
 
-    /// Name, Pull URL, Push URL, then Add Remote.
+    fn key(&self) -> &'static str {
+        if self.editing.is_some() { EDIT_KEY } else { KEY }
+    }
+
+    /// Name, Pull URL, Push URL, then OK.
     fn order(&self, cx: &gpui::App) -> FocusOrder {
         FocusOrder::new(self.fields.iter().map(|(f, _)| f.focus_handle(cx)).chain(self.ok.clone()))
     }
@@ -46,7 +53,7 @@ impl AddRemote {
         (self.text(0, cx), self.text(1, cx), Some(self.text(2, cx)).filter(|p| !p.is_empty()))
     }
 
-    /// Why Add Remote cannot act on what is typed.
+    /// Why OK cannot act on what is typed.
     pub(crate) fn why_not(&self, cx: &gpui::App) -> Option<&'static str> {
         let (name, pull, _) = self.typed(cx);
         if name.is_empty() {
@@ -58,19 +65,49 @@ impl AddRemote {
         }
     }
 
+    /// The fields as Edit Remote first shows them: its name, URL and push URL, userinfo masked.
+    fn shown(remote: Option<&Remote>) -> [String; 3] {
+        remote.map_or_else(Default::default, |r| [r.name.clone(), mask_userinfo(&r.url), r.push_url.as_deref().map(mask_userinfo).unwrap_or_default()])
+    }
+
+    /// Edit Remote's changes: a new name, URL and push URL (`Some(None)` to drop it), each `None` when unchanged.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn changes(&self, cx: &gpui::App) -> Option<(String, Option<String>, Option<String>, Option<Option<String>>)> {
+        let was = self.editing.as_ref()?;
+        let [name, url, push] = Self::shown(Some(was));
+        let (typed_name, typed_url, typed_push) = self.typed(cx);
+        let renamed = Some(typed_name).filter(|n| *n != name);
+        let url = Some(typed_url).filter(|u| *u != url);
+        let push = (typed_push.clone().unwrap_or_default() != push).then_some(typed_push);
+        Some((was.name.clone(), renamed, url, push))
+    }
+
     #[cfg(test)]
     pub(crate) fn type_in(&self, at: usize, text: &str, cx: &mut gpui::App) {
         if let Some((f, _)) = self.fields.get(at) {
             f.update(cx, |i, cx| i.set_text(text, cx));
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn texts(&self, cx: &gpui::App) -> [String; 3] {
+        [0, 1, 2].map(|at| self.text(at, cx))
+    }
 }
 
 impl RemoteActions {
     pub(crate) fn open_add(&mut self, cx: &mut Context<Self>) {
-        if self.adding.is_none() {
+        if self.adding.as_ref().is_none_or(|a| a.editing.is_some()) {
             self.adding = Some(AddRemote::default());
         }
+        cx.notify();
+    }
+
+    /// Edit Remote: the form filled in with `name`'s URLs.
+    pub(super) fn edit_remote(&mut self, name: String, cx: &mut Context<Self>) {
+        let Some(r) = self.remotes.iter().find(|r| r.name == name) else { return };
+        self.adding = Some(AddRemote { editing: Some(r.clone()), ..Default::default() });
+        cx.emit(super::RemoteEvent::Opened);
         cx.notify();
     }
 
@@ -86,42 +123,53 @@ impl RemoteActions {
 
     /// The form's fields, made once a window is at hand, Name taking the keyboard.
     pub(super) fn ensure_add_fields(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.adding.as_ref().is_none_or(|a| !a.fields.is_empty()) {
-            return;
+        let Some(adding) = self.adding.as_ref().filter(|a| a.fields.is_empty()) else { return };
+        let shown = AddRemote::shown(adding.editing.as_ref());
+        let fields: Vec<_> = FIELDS.iter().zip(&shown).map(|((_, _, placeholder), text)| form::field(placeholder, text, ANSWERS, |_, cx| cx.notify(), window, cx)).collect();
+        if let Some((name, _)) = fields.first() {
+            name.update(cx, |i, cx| i.focus(window, cx));
         }
-        let fields = FIELDS
-            .iter()
-            .enumerate()
-            .map(|(at, (_, _, placeholder))| {
-                let input = cx.new(|cx| TextInput::new(placeholder.to_string(), None, window, cx));
-                if at == 0 {
-                    input.update(cx, |i, cx| i.focus(window, cx));
-                }
-                let sub = cx.subscribe(&input, |this: &mut RemoteActions, _, e: &InputEvent, cx| match e {
-                    InputEvent::Confirm => this.submit_add(cx),
-                    InputEvent::Cancel => this.close_add(cx),
-                    _ => cx.notify(),
-                });
-                (input, sub)
-            })
-            .collect();
         if let Some(a) = self.adding.as_mut() {
             a.fields = fields;
             a.ok = Some(cx.focus_handle());
         }
     }
 
-    /// Adds the remote and fetches it; the form closes once the remote is added.
+    /// Adds the remote and fetches it, or saves Edit Remote's changes; the form closes once they are written.
     pub(crate) fn submit_add(&mut self, cx: &mut Context<Self>) {
         let Some(adding) = &self.adding else { return };
         if let Some(why) = adding.why_not(cx).map(str::to_string).or_else(|| self.busy(cx)) {
             return cx.emit(super::RemoteEvent::Why(why));
+        }
+        if adding.editing.is_some() {
+            return self.submit_edit(cx);
         }
         let (name, pull, push) = adding.typed(cx);
         let prune = self.prune;
         self.request(Doing::AddRemote(name.clone()), LockSet::remote_config(), move |s, t| {
             remote::add_remote(s, &name, &pull, push.as_deref())?;
             Ok(Done::Added(remote::fetch(s, &name, prune, t).err().map(|e| e.to_string())))
+        }, cx);
+    }
+
+    /// The URL, then the push URL, then the name, each only when changed.
+    fn submit_edit(&mut self, cx: &mut Context<Self>) {
+        let Some((was, renamed, url, push)) = self.adding.as_ref().and_then(|a| a.changes(cx)) else { return };
+        if renamed.is_none() && url.is_none() && push.is_none() {
+            return self.close_add(cx);
+        }
+        let words = format!("Saved remote {}", renamed.as_deref().unwrap_or(&was));
+        self.request(Doing::EditRemote(words), LockSet::remote_config(), move |s, _| {
+            if let Some(url) = &url {
+                remote::set_url(s, &was, url)?;
+            }
+            if let Some(push) = &push {
+                remote::set_push_url(s, &was, push.as_deref())?;
+            }
+            if let Some(name) = &renamed {
+                remote::rename_remote(s, &was, name)?;
+            }
+            Ok(Done::Nothing)
         }, cx);
     }
 
@@ -137,46 +185,14 @@ impl RemoteActions {
         cx.notify();
     }
 
-    /// The form as the commit panel's place shows it, while it is open.
+    /// The form as the tab's form slot shows it, while it is open.
     pub(crate) fn render_add(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let adding = self.adding.as_ref()?;
-        let colors = cx.theme().colors();
-        let (muted, border) = (secondary(colors), colors.border);
-        let close = button::icon(&self.hits, format!("{KEY}-close"), Icon::Close.svg(14., muted), px(22.), cx)
-            .tooltip(Tooltip::text("Close (Esc)"))
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.close_add(cx)));
-        let title = div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .px_3()
-            .py_2()
-            .border_b_1()
-            .border_color(border)
-            .child(Icon::Remote.svg(16., muted))
-            .child(div().flex_1().font_weight(FontWeight::SEMIBOLD).child("Add Remote"))
-            .child(close);
-        let fields = FIELDS.iter().enumerate().map(|(at, (key, label, _))| {
-            let field = adding.fields.get(at).map(|(f, _)| f.clone());
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(div().text_xs().text_color(muted).child(*label))
-                .child(div().relative().children(field).child(hit_target(&self.hits, format!("{KEY}-{key}"))))
-        });
+        let key = adding.key();
+        let (title, ok) = if adding.editing.is_some() { ("Edit Remote", "Save") } else { ("Add Remote", "Add Remote") };
+        let fields = FIELDS.iter().zip(&adding.fields).map(|((field, label, _), (input, _))| (SharedString::from(*label), form::input(&self.hits, format!("{key}-{field}"), input))).collect();
         let why = adding.why_not(cx).map(str::to_string).or_else(|| self.busy(cx));
-        let ok = button::action(&self.hits, format!("{KEY}-ok"), "Add Remote", button::Tone::Success, button::Fill::Solid, cx);
-        let ok = match why {
-            Some(why) => button::dimmed(ok).tooltip(Tooltip::text(why)),
-            None => ok.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.submit_add(cx))),
-        };
-        let ok = match &adding.ok {
-            Some(focus) => button::focusable(ok, focus, cx.listener(|this, _: &Press, _, cx| this.submit_add(cx)), cx),
-            None => ok,
-        };
-        let body = div().flex().flex_col().gap_3().p_3().children(fields).child(div().flex().child(ok));
-        let form = adding.order(cx).on(div()).on_action(cx.listener(|this, _: &Dismiss, _, cx| this.close_add(cx))).relative().size_full().flex().flex_col().bg(colors.panel_background).child(title).child(body).child(hit_target(&self.hits, KEY.to_string()));
-        Some(form.into_any_element())
+        let form = Form { key: key.into(), icon: Icon::Remote, title: title.into(), ok: ok.into(), why: why.map(Into::into), answers: ANSWERS };
+        Some(form.render(&self.hits, fields, adding.order(cx), adding.ok.as_ref(), cx))
     }
 }

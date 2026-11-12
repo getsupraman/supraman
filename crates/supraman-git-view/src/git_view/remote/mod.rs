@@ -1,6 +1,6 @@
 //! The tab's fetch, pull and push, each through the tab's [`WriteGate`] off the UI thread with progress and Cancel.
 
-mod add;
+pub(crate) mod add;
 mod bar;
 mod dialogs;
 pub(crate) mod menu;
@@ -22,7 +22,7 @@ use supraman_gitman::write::remote::{self, Force, Progress, PullChoice, PullMode
 use supraman_gitman::write::rebase::Rebased;
 use supraman_gitman::write::{LockSet, Session, WriteError};
 use supraman_core::Settings;
-use supraman_gitman::{Head, Refs, Remote, Repo, mask_userinfo};
+use supraman_gitman::{Head, Refs, Remote, Repo};
 use supraman_ui::confirm::{Answer, Confirm};
 use supraman_ui::hit::HitTargets;
 use supraman_ui::menu::{ContextMenu, MenuItem};
@@ -73,6 +73,8 @@ pub(crate) enum RemoteEvent {
     Why(String),
     /// The remotes and the pull default the ref menus read.
     Facts(Arc<RemoteFacts>),
+    /// Edit Remote opened in the tab's form slot.
+    Opened,
 }
 
 /// A question before a remote call.
@@ -117,6 +119,8 @@ enum Doing {
     Pull(PullMode),
     Push { local: String, remote: String, branch: String },
     AddRemote(String),
+    /// Edit Remote's save, with what the toast says.
+    EditRemote(String),
     Plain(String),
 }
 
@@ -129,6 +133,7 @@ impl Doing {
             Doing::Pull(_) => "Pulling".into(),
             Doing::Push { remote, branch, .. } => format!("Pushing to {remote}/{branch}"),
             Doing::AddRemote(r) => format!("Adding the remote {r}"),
+            Doing::EditRemote(_) => "Saving the remote".into(),
             Doing::Plain(_) => "Working".into(),
         }
     }
@@ -170,7 +175,6 @@ pub(crate) struct RemoteActions {
     cancelled: Option<u64>,
     menu: Option<ContextMenu<RemoteAct>>,
     upstream: Option<UpstreamDialog>,
-    editing: Option<dialogs::EditRemote>,
     adding: Option<add::AddRemote>,
     prompting: Option<Prompting>,
 }
@@ -194,7 +198,6 @@ impl RemoteActions {
             cancelled: None,
             menu: None,
             upstream: None,
-            editing: None,
             adding: None,
             prompting: None,
         }
@@ -404,6 +407,10 @@ impl RemoteActions {
                 Pushed::StaleLease => return self.ask(Ask::Stale { local, remote, branch }, cx),
             },
             (Doing::Plain(words), _) => words,
+            (Doing::EditRemote(words), _) => {
+                self.adding = None;
+                words
+            }
             _ => String::new(),
         };
         cx.emit(RemoteEvent::Wrote(Some(toast).filter(|t| !t.is_empty())));
@@ -616,22 +623,6 @@ impl RemoteActions {
                 self.request(Doing::Plain(words), LockSet::branch(), move |s, _| remote::set_upstream(s, &local, &remote, &branch).map(|_| Done::Nothing), cx);
             }
         }
-    }
-
-    fn edit_remote(&mut self, name: String, cx: &mut Context<Self>) {
-        let Some(r) = self.remotes.iter().find(|r| r.name == name) else { return };
-        self.editing = Some(dialogs::EditRemote::new(name, r.url.clone()));
-        cx.notify();
-    }
-
-    fn submit_edit(&mut self, cx: &mut Context<Self>) {
-        let Some(edit) = self.editing.take() else { return };
-        let (name, url) = (edit.name.clone(), edit.url(cx));
-        if url.is_empty() || url == mask_userinfo(&edit.was) {
-            return cx.notify();
-        }
-        let words = format!("{name} now fetches from {}", mask_userinfo(&url));
-        self.request(Doing::Plain(words), LockSet::remote_config(), move |s, _| remote::set_url(s, &name, &url).map(|_| Done::Nothing), cx);
     }
 }
 

@@ -1,4 +1,5 @@
 mod focus;
+mod forms;
 mod paint;
 mod stream;
 
