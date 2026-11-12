@@ -6,7 +6,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use gpui::{
     App, BorderStyle, Bounds, Context, FocusHandle, Global, InteractiveElement, IntoElement, KeyBinding, ParentElement, Pixels, SharedString, Styled as _, Subscription,
-    Window, WindowId, canvas, outline,
+    WeakFocusHandle, Window, WindowId, canvas, outline,
 };
 use theme::ActiveTheme as _;
 
@@ -122,7 +122,7 @@ impl Group {
             if popup {
                 return;
             }
-            state.group_leaves.get(&self.key).filter(|leaf| self.region.contains(leaf, window)).unwrap_or(&self.entry).clone()
+            state.group_leaves.get(&self.key).and_then(WeakFocusHandle::upgrade).filter(|leaf| self.region.contains(leaf, window)).unwrap_or_else(|| self.entry.clone())
         };
         window.focus(&target, cx);
     }
@@ -190,7 +190,7 @@ struct State {
     /// The group last shown.
     group: Option<SharedString>,
     /// What each group last held inside its region.
-    group_leaves: HashMap<SharedString, FocusHandle>,
+    group_leaves: HashMap<SharedString, WeakFocusHandle>,
 }
 
 impl State {
@@ -207,7 +207,7 @@ impl State {
     /// Keeps what `group` held in the last frame: its region's focused element, none when the region itself held it.
     fn keep_group_leaf(&mut self, group: &SharedString, region: &FocusHandle, window: &Window, cx: &App) {
         match window.focused(cx).filter(|leaf| leaf != region && region.contains_focused(window, cx)) {
-            Some(leaf) => self.group_leaves.insert(group.clone(), leaf),
+            Some(leaf) => self.group_leaves.insert(group.clone(), leaf.downgrade()),
             None if region.is_focused(window) => self.group_leaves.remove(group),
             None => None,
         };
