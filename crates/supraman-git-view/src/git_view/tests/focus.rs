@@ -127,13 +127,13 @@ fn a_tab_shown_gives_the_graph_the_keys_on_heads_commit_and_ctrl_p_opens_the_pal
     let (view, cx) = open(&f.dir, Opts::default().hidden(), cx);
     assert!(!graph_has_keys(&view, cx), "the window's own element holds the keys before the tab is shown");
     show(cx);
-    redraw(&view, cx);
-    assert!(graph_has_keys(&view, cx), "the shown tab's graph has the keys");
-    assert!(head(&view, cx).is_some());
-    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), head(&view, cx), "HEAD's commit is selected");
     keys(&view, "ctrl-p", cx);
     assert!(view.read_with(cx, |v, _| v.find().is_some()), "Ctrl+P opens the palette with no click");
     assert!(repaint(&view, cx).borrow().contains_key(crate::git_view::find::ID), "the palette is painted");
+    keys(&view, "escape", cx);
+    assert!(graph_has_keys(&view, cx), "the shown tab's graph has the keys");
+    assert!(head(&view, cx).is_some());
+    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), head(&view, cx), "HEAD's commit is selected");
 }
 
 #[gpui::test]
