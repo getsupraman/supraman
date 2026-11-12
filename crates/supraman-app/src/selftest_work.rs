@@ -524,11 +524,13 @@ async fn item_page(
     lines.push("Evidence: the report beside the controller's verification; Notes; Activity's 3 events".into());
 
     escape(cx)?;
-    painted(view, &["work-pill-sw2=doing", "work-row-sw2/1"], LOADED_WITHIN, "the run in the detail after Esc", cx).await?;
+    painted(view, &[&supraman_ui::focus::mark_key("work-main")], LOADED_WITHIN, "the list's mark after Esc from the detail", cx).await?;
+    escape(cx)?;
+    painted(view, &["work-pill-sw2=doing", "work-row-sw2/1"], LOADED_WITHIN, "the run in the detail after a second Esc", cx).await?;
     if work.read_with(cx, |w, _| w.selected.is_some()) {
         bail!("Escape left a row selected");
     }
-    lines.push("Esc cleared the selection: the run in the detail, the list kept".into());
+    lines.push("Esc from the detail gave the list the keys, a second cleared the selection: the run in the detail, the list kept".into());
 
     click(view, "work-row-sw2/1", cx).await?;
     painted(view, &[&attach_key], LOADED_WITHIN, "sw2/1's Open", cx).await?;
