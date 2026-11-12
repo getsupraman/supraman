@@ -16,7 +16,7 @@ use super::branch::OpenGit;
 use super::colours::Palette;
 use super::live::Refresh;
 use super::load::GraphRow;
-use super::ref_panel::RefWips;
+use super::ref_panel::{RefWips, worktrees};
 use super::wip_row::conflict_node;
 use super::{GitView, Load, Selected, TABLE, agent_rows, background, cells, graph};
 use crate::occupancy::LiveSession;
@@ -90,6 +90,7 @@ impl GitView {
             landed: wips.is_some_and(|w| w.landed()),
             own: top.as_deref().map(path_key),
             said: self.other_wips(cx).iter().map(|w| (path_key(w.path()), WorktreeView::of(w, Vec::new()))).collect(),
+            removing: self.branch.read(cx).removing().map(path_key),
         };
         self.ref_panel.update(cx, |p, cx| p.set_wips(shown, cx));
     }
@@ -166,12 +167,14 @@ impl GitView {
             .into_any_element()
     }
 
-    /// The leads or `// WIP`, then the conflict node or the counts, then the upstream's ahead and behind.
+    /// The leads or `// WIP`, then the conflict node, the counts or the remove's turning icon, then the upstream's ahead and behind.
     fn worktree_message(&self, ix: usize, row: &GraphRow, view: WorktreeView, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let lead = self.worktree_leads(ix, &view.sessions, row.worktree(), palette, cx);
+        let removing = row.worktree().zip(self.branch.read(cx).removing()).is_some_and(|(row, removing)| path_key(row) == path_key(removing));
         let counts = match view.conflicted {
-            0 => div().child(SharedString::from(view.counts)),
-            n => conflict_node(n, format!("git-conflict-node-{ix}"), &self.hits, palette, cx),
+            _ if removing => worktrees::turning(&self.hits, format!("git-worktree-removing-{ix}"), Some("Removing…"), palette.muted),
+            0 => div().child(SharedString::from(view.counts)).into_any_element(),
+            n => conflict_node(n, format!("git-conflict-node-{ix}"), &self.hits, palette, cx).into_any_element(),
         };
         let upstream = div().relative().child(SharedString::from(view.upstream.clone())).child(hit_target(&self.hits, format!("git-worktree-upstream-{ix}")));
         let tail = div().flex().items_center().gap_2().child(counts).when(!view.upstream.is_empty(), |d| d.child(upstream));

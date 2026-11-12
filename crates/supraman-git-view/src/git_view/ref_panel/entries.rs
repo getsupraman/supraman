@@ -195,7 +195,7 @@ pub(crate) fn entries(refs: &Refs) -> Vec<(String, Entry)> {
     remotes.sort_by_cached_key(|r| by_parts(&r.name));
     out.extend(remotes.into_iter().map(|r| (format!("remote/{}", r.name), Entry::Remote { name: r.name.clone(), sha: r.sha.clone() })));
     out.extend(refs.worktrees.iter().enumerate().map(|(i, w)| {
-        let folder = w.path.file_name().map_or_else(|| w.path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        let folder = supraman_core::paths::folder_name(&w.path);
         let label = w.branch.clone().unwrap_or_else(|| folder.clone());
         let folder = (folder != label).then_some(folder);
         (format!("worktrees/{i}"), Entry::Worktree { label, folder, main: i == 0, sha: w.head.clone() })

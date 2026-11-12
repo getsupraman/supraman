@@ -8,7 +8,7 @@ pub(crate) mod worktree;
 #[cfg(test)]
 mod tests;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gpui::{AppContext as _, ClipboardItem, Context, Entity, EventEmitter, Pixels, Point, Render, Window, div, prelude::*};
@@ -30,6 +30,7 @@ use super::ref_panel::RefAction;
 use super::remote::RemoteFacts;
 use super::remote::menu as remote_menu;
 use super::write_gate::{STILL_OPENING, WriteGate, Writes, Written};
+use supraman_core::paths::folder_name;
 use supraman_core::text::capitalised;
 
 /// A ref write ran, or did not, or wants the tab.
@@ -37,6 +38,8 @@ use supraman_core::text::capitalised;
 pub(crate) enum BranchEvent {
     /// It ran: the toast it says, if any; the tab refreshes.
     Wrote(Option<String>),
+    /// A worktree's remove started (true) or ended: its rows show it.
+    Removing(bool),
     Why(String),
     /// Done without a write: the toast.
     Said(String),
@@ -91,8 +94,7 @@ impl Ask {
                     1 => format!(" {} is working there.", working[0]),
                     _ => format!(" {} are working there.", working.join(", ")),
                 };
-                let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
-                ask(format!("Remove the worktree {name}{and}? Changes not committed there are lost.{who}"), "Remove").danger()
+                ask(format!("Remove the worktree {}{and}? Changes not committed there are lost.{who}", folder_name(path)), "Remove").danger()
             }
         }
     }
@@ -114,6 +116,7 @@ enum Doing {
     Merge { source: String, into: String },
     Rebase { branch: String, onto: String },
     Worktree(PathBuf),
+    RemoveWorktree(PathBuf),
     Plain(String),
 }
 
@@ -166,6 +169,14 @@ impl BranchActions {
         self.writes.busy(cx)
     }
 
+    /// The worktree whose remove runs.
+    pub(crate) fn removing(&self) -> Option<&Path> {
+        match self.writes.doing()? {
+            (_, Doing::RemoveWorktree(path)) => Some(path),
+            _ => None,
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn asking(&self) -> Option<&str> {
         self.writes.asked()
@@ -216,8 +227,9 @@ impl BranchActions {
                 self.request(Doing::Plain(words), LockSet::branch(), move |s| branch::delete_tag(s, &name), cx);
             }
             (Some(Ask::RemoveWorktree { path, branch, .. }), _) => {
-                let words = format!("Removed the worktree {}", path.display());
-                self.request(Doing::Plain(words), LockSet::branch_delete(), move |s| branch::remove_worktree(s, &path, branch.as_deref()), cx);
+                let removing = path.clone();
+                self.request(Doing::RemoveWorktree(removing), LockSet::branch_delete(), move |s| branch::remove_worktree(s, &path, branch.as_deref()), cx);
+                cx.emit(BranchEvent::Removing(true));
             }
             _ => {}
         }
@@ -362,6 +374,9 @@ impl BranchActions {
 
     fn written(&mut self, w: &Written, cx: &mut Context<Self>) {
         let Some(doing) = self.writes.written(w) else { return };
+        if matches!(doing, Doing::RemoveWorktree(_)) {
+            cx.emit(BranchEvent::Removing(false));
+        }
         let outcome = self.writes.kept();
         if let Err(why) = &w.result {
             cx.emit(BranchEvent::Wrote(None));
@@ -391,6 +406,7 @@ impl BranchActions {
             },
             (Doing::Created { what }, _) => format!("Created {what}"),
             (Doing::Worktree(folder), _) => self.added_worktree(&folder),
+            (Doing::RemoveWorktree(path), _) => format!("Removed the worktree {}", folder_name(&path)),
             (Doing::Plain(words), Some(Outcome::Checkout(CheckedOut::Done(stash)))) => with_stash(words, &stash),
             (Doing::Plain(words), _) => words,
             (_, _) => String::new(),

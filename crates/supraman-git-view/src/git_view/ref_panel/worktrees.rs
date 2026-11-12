@@ -1,12 +1,12 @@
-//! The WORKTREES section's marks, WIP summaries and Refresh WIPs; hit keys `<list>-mark-<path>`, `<list>-wip[-reading]-<path>`, `refpanel-worktrees-refresh`.
+//! The WORKTREES section's marks, WIP summaries and Refresh WIPs; hit keys `<list>-mark-<path>`, `<list>-wip[-reading]-<path>`, `<list>-removing-<path>`, `refpanel-worktrees-refresh`.
 
 use std::collections::HashMap;
 
-use gpui::{AnyElement, ClickEvent, Context, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, ClickEvent, Context, Hsla, SharedString, div, prelude::*, px};
 use supraman_core::paths::path_key;
 use supraman_gitman::Worktree;
 use supraman_ui::button;
-use supraman_ui::hit::hit_target;
+use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::{self, Icon};
 use supraman_ui::themes::secondary;
 use supraman_ui::tooltip::Tooltip;
@@ -28,12 +28,15 @@ pub(crate) struct RefWips {
     pub(crate) own: Option<String>,
     /// Each other worktree's words, by [`path_key`].
     pub(crate) said: HashMap<String, WorktreeView>,
+    /// The [`path_key`] of the worktree whose remove runs.
+    pub(crate) removing: Option<String>,
 }
 
 /// What a worktree row shows at its right.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Summary {
     Reading,
+    Removing,
     /// `2↑ 1↓`, then `+1 ✎2 −1`; either may be empty.
     Said { upstream: String, counts: String },
 }
@@ -59,6 +62,9 @@ impl RefPanel {
     /// The summary of the worktree row at the panel's whole `path`: none for the tab's own.
     pub(crate) fn summary(&self, path: &str) -> Option<Summary> {
         let key = path_key(&self.worktree(path)?.path);
+        if self.wips.removing.as_deref() == Some(key.as_str()) {
+            return Some(Summary::Removing);
+        }
         if self.wips.own.as_deref() == Some(key.as_str()) {
             return None;
         }
@@ -73,10 +79,8 @@ impl RefPanel {
         let muted = secondary(cx.theme().colors());
         let line = div().relative().flex().flex_none().items_center().gap_1p5().px_1().text_xs().whitespace_nowrap().text_color(muted);
         Some(match self.summary(whole)? {
-            Summary::Reading => {
-                let key = format!("{list}-wip-reading-{row}");
-                line.child(icon::turning(Icon::Refresh.svg(ICON, muted), SharedString::from(key.clone()))).child(hit_target(&self.hits, key)).into_any_element()
-            }
+            Summary::Reading => line.child(turning(&self.hits, format!("{list}-wip-reading-{row}"), None, muted)).into_any_element(),
+            Summary::Removing => line.child(turning(&self.hits, format!("{list}-removing-{row}"), Some("Removing…"), muted)).into_any_element(),
             Summary::Said { upstream, counts } => {
                 let part = |words: String| (!words.is_empty()).then(|| div().child(SharedString::from(words)));
                 line.children(part(upstream)).children(part(counts)).child(hit_target(&self.hits, format!("{list}-wip-{row}"))).into_any_element()
@@ -114,6 +118,15 @@ impl RefPanel {
                 cx.emit(RefEvent::RefreshWips);
             }));
         Some(button.into_any_element())
+    }
+}
+
+/// A worktree row's turning icon under `key`, with `tip` as its tooltip: a read or a remove under way.
+pub(crate) fn turning(hits: &HitTargets, key: String, tip: Option<&'static str>, colour: Hsla) -> AnyElement {
+    let mark = div().id(SharedString::from(format!("{key}-turning"))).relative().flex().items_center().child(icon::turning(Icon::Refresh.svg(ICON, colour), SharedString::from(key.clone()))).child(hit_target(hits, key));
+    match tip {
+        Some(tip) => mark.tooltip(Tooltip::text(tip)).into_any_element(),
+        None => mark.into_any_element(),
     }
 }
 

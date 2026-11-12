@@ -96,6 +96,13 @@ impl GitView {
                 }
                 self.refresh_after_write(cx);
             }
+            BranchEvent::Removing(started) => {
+                if !started {
+                    crate::git_view::background::refresh_wips(cx.entity_id(), cx);
+                }
+                self.hand_wips(cx);
+                cx.notify();
+            }
             BranchEvent::Why(why) => self.toast.show_why(why.clone(), |v: &mut GitView| &mut v.toast, cx),
             BranchEvent::Said(words) => self.toast.show(words.clone(), |v: &mut GitView| &mut v.toast, cx),
             BranchEvent::SelectWip => self.select_wip(cx),

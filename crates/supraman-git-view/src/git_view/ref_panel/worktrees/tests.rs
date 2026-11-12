@@ -8,11 +8,13 @@ use gpui::{Entity, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, TestApp
 use supraman_core::paths::path_key;
 use supraman_gitman::fixture::{Fixture, git_in};
 use supraman_gitman::write::LockSet;
+use supraman_ui::confirm::Answer;
 use supraman_ui::icon::Icon;
 
 use crate::git_view::background::{self, refresh_wips};
 use crate::git_view::ref_panel::{Entry, RefPanel, RefWips};
-use crate::git_view::test_support::{self, Opts, painted, redraw, settle};
+use crate::git_view::branch::menu::RefAct;
+use crate::git_view::test_support::{self, Opts, frame, painted, redraw, settle, toast};
 use crate::git_view::{GitView, Selected};
 use crate::occupancy;
 
@@ -74,6 +76,7 @@ fn entry(view: &Entity<GitView>, path: &str, cx: &mut VisualTestContext) -> Entr
 fn summary(view: &Entity<GitView>, path: &str, cx: &mut VisualTestContext) -> Option<String> {
     panel(view, cx).read_with(cx, |p, _| p.summary(path)).map(|s| match s {
         crate::git_view::ref_panel::Summary::Reading => "reading".to_string(),
+        crate::git_view::ref_panel::Summary::Removing => "removing".to_string(),
         crate::git_view::ref_panel::Summary::Said { upstream, counts } => [upstream, counts].into_iter().filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" "),
     })
 }
@@ -119,12 +122,12 @@ fn a_worktree_row_shows_its_icon_its_lock_or_prunable_mark_its_folder_where_it_d
 
     let p = panel(&view, cx);
     let landed = p.read_with(cx, |p, _| p.summary(&wt));
-    p.update(cx, |p, cx| p.set_wips(RefWips { reading: true, landed: false, own: Some(path_key(&t.f.dir)), said: Default::default() }, cx));
+    p.update(cx, |p, cx| p.set_wips(RefWips { reading: true, landed: false, own: Some(path_key(&t.f.dir)), said: Default::default(), removing: None }, cx));
     assert_eq!(summary(&view, &wt, cx).as_deref(), Some("reading"), "a spinner while the first read runs");
     assert!(painted(&view, &format!("refpanel-wip-reading-{wt}"), cx));
     assert!(painted(&view, "refpanel-worktrees-refresh-turning", cx), "Refresh WIPs turns while a read runs");
     assert_eq!(summary(&view, &main, cx), None, "never on the tab's own");
-    p.update(cx, |p, cx| p.set_wips(RefWips { reading: true, landed: true, own: None, said: Default::default() }, cx));
+    p.update(cx, |p, cx| p.set_wips(RefWips { reading: true, landed: true, own: None, said: Default::default(), removing: None }, cx));
     assert_eq!(summary(&view, &wt, cx), None, "no spinner once a read has landed");
     assert!(landed.is_some());
 }
@@ -213,4 +216,66 @@ fn a_read_the_tabs_write_held_off_runs_again_once_the_write_ends(cx: &mut TestAp
     settle(&view, cx);
     assert_eq!(reads(&view, cx), read + 1, "the write's refresh runs the skipped read");
     assert_eq!(summary(&view, &extra, cx).as_deref(), Some("+1"));
+}
+
+/// The graph's row of the worktree at `dir`.
+fn graph_row(view: &Entity<GitView>, dir: &Path, cx: &mut VisualTestContext) -> Option<usize> {
+    view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().position(|r| r.worktree().is_some_and(|p| path_key(p) == path_key(dir))))
+}
+
+/// Remove asked for the worktree at `dir` and answered, its write requested and not yet run.
+fn remove_unparked(view: &Entity<GitView>, dir: &Path, cx: &mut VisualTestContext) {
+    let path = dir.to_path_buf();
+    view.update(cx, |v, cx| {
+        v.branch.update(cx, |b, cx| {
+            b.act(RefAct::RemoveWorktree { path, branch: None }, cx);
+            b.answer(Answer::Yes, cx);
+        })
+    });
+}
+
+#[gpui::test]
+fn a_worktree_being_removed_turns_on_its_rows_until_the_remove_lands(cx: &mut TestAppContext) {
+    let t = trees();
+    std::fs::write(t.extra.join("new.txt"), b"new
+").unwrap();
+    std::fs::write(t.f.worktree.join("new.txt"), b"new
+").unwrap();
+    let (view, cx) = open(&t.f, cx);
+    reread(&view, cx);
+    let (extra, wt) = (row(&view, &t.extra, cx), row(&view, &t.f.worktree, cx));
+    let ix = graph_row(&view, &t.extra, cx).expect("the changed worktree's graph row");
+    let other = graph_row(&view, &t.f.worktree, cx).expect("the other changed worktree's graph row");
+
+    remove_unparked(&view, &t.extra, cx);
+    let hits = frame(&view, cx);
+    let shown = |key: &str| hits.borrow().contains_key(key);
+    assert!(shown(&format!("refpanel-removing-{extra}")), "the ref panel's row turns while the remove runs");
+    assert!(shown(&format!("git-worktree-removing-{ix}")), "and its graph row, in place of its counts");
+    assert!(!shown(&format!("refpanel-removing-{wt}")) && !shown(&format!("git-worktree-removing-{other}")), "no other row");
+    assert!(shown(&format!("refpanel-wip-{wt}")), "the other row keeps its summary");
+    assert_eq!(summary(&view, &extra, cx).as_deref(), Some("removing"));
+
+    settle(&view, cx);
+    assert!(!t.extra.exists(), "the remove ran");
+    assert_eq!(toast(&view, cx).as_deref(), Some("Removed the worktree extra"));
+    assert!(!painted(&view, &format!("refpanel-removing-{extra}"), cx), "the spinner goes");
+    assert_eq!(graph_row(&view, &t.extra, cx), None, "its graph row goes");
+    assert!(panel(&view, cx).read_with(cx, |p, _| p.entries().iter().all(|(path, _)| p.worktree(path).is_none_or(|w| path_key(&w.path) != path_key(&t.extra)))), "the ref panel's row is gone");
+}
+
+#[gpui::test]
+fn a_refused_remove_drops_the_spinner_and_keeps_the_row(cx: &mut TestAppContext) {
+    let t = trees();
+    let (view, cx) = open(&t.f, cx);
+    reread(&view, cx);
+    let wt = row(&view, &t.f.worktree, cx);
+
+    remove_unparked(&view, &t.f.worktree, cx);
+    assert!(frame(&view, cx).borrow().contains_key(&format!("refpanel-removing-{wt}")));
+    settle(&view, cx);
+    assert!(t.f.worktree.exists(), "git refuses a locked worktree");
+    assert!(toast(&view, cx).is_some_and(|why| why.contains("locked")), "the toast says why: {:?}", toast(&view, cx));
+    assert!(!painted(&view, &format!("refpanel-removing-{wt}"), cx), "the spinner goes");
+    assert_eq!(row(&view, &t.f.worktree, cx), wt, "the row stays");
 }
