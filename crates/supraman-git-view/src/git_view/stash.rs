@@ -227,7 +227,7 @@ impl StashActions {
     }
 
     pub(crate) fn open_menu(&mut self, stash: StashRef, position: Point<Pixels>, cx: &mut Context<Self>) {
-        self.menu = Some(ContextMenu { title: stash.label.clone(), position, items: menu_items(&stash, |a, s| (a, s)) });
+        self.menu = Some(ContextMenu::new(stash.label.clone(), position, menu_items(&stash, |a, s| (a, s))));
         cx.notify();
     }
 

@@ -130,7 +130,7 @@ impl FleetView {
         let work = if workspace.is_some() { Work::Reading } else { Work::NoWorkspace };
         let title = tab.label();
         let items = with_workman(self.tab_menu_items(id, folder.as_deref(), &repo, cx), folder.as_deref(), &work);
-        self.dialogs.menu = Some(ContextMenu { title, position, items });
+        self.dialogs.menu = Some(ContextMenu::new(title, position, items));
         cx.notify();
         let Some(folder) = folder else { return };
         if repo == Repo::Reading {

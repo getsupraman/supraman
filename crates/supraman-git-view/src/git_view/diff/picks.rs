@@ -236,7 +236,7 @@ impl DiffView {
             items = items.into_iter().map(|i| i.dimmed(why)).collect();
         }
         let picks = self.picks.as_mut().expect("picks are on");
-        picks.menu = Some(ContextMenu { title, position, items });
+        picks.menu = Some(ContextMenu::new(title, position, items));
         cx.notify();
     }
 

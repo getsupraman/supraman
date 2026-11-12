@@ -1,7 +1,12 @@
-//! A right-click menu of items carrying the owner's action type. One menu at a time; a click outside it or
-//! choosing an item closes it.
+//! A right-click menu of items carrying the owner's action type. One menu at a time; a click outside it, Esc
+//! or choosing an item closes it.
 
-use gpui::{AnyElement, ClickEvent, Context, Div, MouseDownEvent, Pixels, Point, SharedString, Window, anchored, deferred, div, prelude::*, px};
+use std::{
+    cell::{Cell, OnceCell},
+    rc::Rc,
+};
+
+use gpui::{AnyElement, App, ClickEvent, Context, Div, FocusHandle, KeyDownEvent, MouseDownEvent, Pixels, Point, SharedString, Window, anchored, canvas, deferred, div, prelude::*, px};
 use theme::{ActiveTheme as _, ThemeColors};
 
 use crate::hit::{HitTargets, hit_target};
@@ -53,14 +58,30 @@ impl<A> MenuItem<A> {
     }
 }
 
+/// While shown it holds the focus, given back by [`crate::focus`] when it closes; Esc closes it.
 pub struct ContextMenu<A> {
     pub title: String,
     pub position: Point<Pixels>,
     pub items: Vec<MenuItem<A>>,
+    focus: OnceCell<FocusHandle>,
+    asked: Cell<bool>,
+}
+
+impl<A> ContextMenu<A> {
+    pub fn new(title: impl Into<String>, position: Point<Pixels>, items: Vec<MenuItem<A>>) -> Self {
+        Self { title: title.into(), position, items, focus: OnceCell::new(), asked: Cell::new(false) }
+    }
+
+    /// Focuses the menu once, after the frame that first paints it.
+    fn take_focus(&self, cx: &mut App) -> impl IntoElement + use<A> {
+        let focus = self.focus.get_or_init(|| cx.focus_handle()).clone();
+        let ask = !self.asked.replace(true);
+        canvas(move |_, window, cx| if ask { window.defer(cx, move |window, cx| window.focus(&focus, cx)) }, |_, _, _, _| {}).absolute().size_0()
+    }
 }
 
 impl<A: Clone + 'static> ContextMenu<A> {
-    /// Over everything ([`PRIORITY`]), kept in the window, under `menu`; `on_pick` and `on_dismiss` (a click outside) must close it.
+    /// Over everything ([`PRIORITY`]), kept in the window, under `menu`; `on_pick` and `on_dismiss` (a click outside, Esc) must close it.
     pub fn render<V: 'static>(
         &self,
         hits: &HitTargets,
@@ -69,8 +90,19 @@ impl<A: Clone + 'static> ContextMenu<A> {
         cx: &mut Context<V>,
     ) -> AnyElement {
         let colors = cx.theme().colors().clone();
+        let taken = self.take_focus(cx);
+        let focus = self.focus.get().cloned().expect("take_focus made it");
+        let on_dismiss = Rc::new(on_dismiss);
+        let on_escape = on_dismiss.clone();
         let mut list = div()
             .id("context-menu")
+            .track_focus(&focus)
+            .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _, cx| {
+                if e.keystroke.key == "escape" {
+                    cx.stop_propagation();
+                    on_escape(this, cx);
+                }
+            }))
             .relative()
             .flex()
             .flex_col()
@@ -85,6 +117,7 @@ impl<A: Clone + 'static> ContextMenu<A> {
             .occlude()
             .on_mouse_down_out(cx.listener(move |this, _: &MouseDownEvent, _, cx| on_dismiss(this, cx)))
             .child(hit_target(hits, "menu".into()))
+            .child(taken)
             .child(caption(&self.title, &colors));
         for entry in &self.items {
             let key = format!("menu-{}", entry.key);

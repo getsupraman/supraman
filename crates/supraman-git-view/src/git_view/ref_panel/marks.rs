@@ -158,7 +158,7 @@ impl RefPanel {
             return;
         }
         let title = path.split_once('/').map_or(path, |(_, rest)| rest).to_string();
-        self.menu = Some(ContextMenu { title, position, items });
+        self.menu = Some(ContextMenu::new(title, position, items));
         cx.notify();
     }
 
@@ -202,7 +202,7 @@ impl RefPanel {
     pub(super) fn open_section_menu(&mut self, section: Section, position: Point<Pixels>, cx: &mut Context<Self>) {
         let items = self.section_items(section);
         if !items.is_empty() {
-            self.menu = Some(ContextMenu { title: section.title().to_string(), position, items });
+            self.menu = Some(ContextMenu::new(section.title().to_string(), position, items));
             cx.notify();
         }
     }
