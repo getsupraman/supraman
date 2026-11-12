@@ -512,3 +512,43 @@ fn refs_sort_by_name_parts_ignoring_case_as_before() {
     }).collect();
     assert_eq!(got, want);
 }
+
+struct Narrow(Entity<RefPanel>);
+
+impl gpui::Render for Narrow {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+        use gpui::{ParentElement as _, Styled as _};
+        gpui::div().w(px(170.)).h_full().flex().flex_col().child(self.0.clone())
+    }
+}
+
+#[gpui::test]
+fn a_narrow_panel_cuts_a_worktrees_folder_and_a_stashs_branch_before_their_names_and_shows_the_whole_text(cx: &mut TestAppContext) {
+    use supraman_ui::clipped::cut_at;
+    use supraman_ui::tooltip::LAST_SHOWN;
+    cx.update(|cx| supraman_ui::init_globals(cx, "test"));
+    let hits = HitTargets::default();
+    let mut refs = refs();
+    refs.worktrees[0].path = PathBuf::from("C:/src/repository-in-a-folder-with-a-long-name");
+    refs.stashes[1].branch = "feature/a-branch-with-a-long-name".into();
+    let panel = cx.update(|cx| cx.new(|cx| RefPanel::new(hits.clone(), cx.focus_handle(), cx)));
+    panel.update(cx, |p, cx| p.set_refs(&refs, cx));
+    let (_, cx) = cx.add_window_view(|_, _| Narrow(panel.clone()));
+    cx.run_until_parked();
+    cx.update(|window, _| window.refresh());
+    cx.run_until_parked();
+    for (path, whole) in [("worktrees/0", "main repository-in-a-folder-with-a-long-name"), ("stashes/1", "Try this on: feature/a-branch-with-a-long-name")] {
+        let line = format!("refpanel-name-{path}-line");
+        assert!(cut_at(&format!("{line}-muted")).is_some(), "{path}: the muted part is cut");
+        assert!(cut_at(&format!("{line}-bright")).is_none(), "{path}: the bright name stays whole");
+        let at = hits.borrow().get(&format!("refpanel-name-{path}")).unwrap_or_else(|| panic!("{path} not painted")).bounds.center();
+        LAST_SHOWN.with(|l| l.borrow_mut().take());
+        cx.simulate_mouse_move(at, None, gpui::Modifiers::none());
+        cx.executor().advance_clock(std::time::Duration::from_secs(2));
+        cx.run_until_parked();
+        assert_eq!(LAST_SHOWN.with(|l| l.borrow().clone()).as_deref(), Some(whole), "{path}: hovering shows the whole text");
+        cx.simulate_mouse_move(gpui::point(px(900.), px(900.)), None, gpui::Modifiers::none());
+        cx.executor().advance_clock(std::time::Duration::from_secs(2));
+        cx.run_until_parked();
+    }
+}
