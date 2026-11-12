@@ -31,6 +31,7 @@ use gpui::{
 };
 use theme::ActiveTheme as _;
 
+use supraman_ui::focus;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::menu::ContextMenu;
 use supraman_ui::placeholder::placeholder;
@@ -264,7 +265,7 @@ pub struct WorkView {
     pub(crate) toast: ToastSlot,
     menu: Option<ContextMenu<RowAction>>,
     focus: FocusHandle,
-    pub(crate) detail_focused: bool,
+    pub(crate) panes: Panes,
     pub(crate) layout: layout::Layout,
     link: FleetLink,
     pub(crate) open_link_with: fn(&Link, &mut App),
@@ -284,6 +285,17 @@ pub struct WorkView {
     /// What every relative time here is measured from: `now_ms`, or a fixture's fixed time.
     pub now: fn() -> i64,
 }
+
+/// The Work tab's panes in [`supraman_ui::focus`]: the navigator, the list or page, the detail.
+pub(crate) struct Panes {
+    pub(crate) nav: FocusHandle,
+    pub(crate) main: FocusHandle,
+    pub(crate) detail: FocusHandle,
+}
+
+pub(crate) const FOCUS_NAV: &str = "work-nav";
+pub(crate) const FOCUS_MAIN: &str = "work-main";
+pub(crate) const FOCUS_DETAIL: &str = "work-detail";
 
 pub struct Opening {
     pub workspace: String,
@@ -335,7 +347,7 @@ impl WorkView {
             toast: ToastSlot::default(),
             menu: None,
             focus: cx.focus_handle(),
-            detail_focused: false,
+            panes: Panes { nav: cx.focus_handle(), main: cx.focus_handle(), detail: cx.focus_handle() },
             layout: layout::Layout::default(),
             link,
             open_link_with,
@@ -618,22 +630,15 @@ impl WorkView {
 
     pub(crate) fn clear_selection(&mut self, cx: &mut Context<Self>) {
         self.selected = None;
-        self.detail_focused = false;
         if let Some(run) = self.shown_run().map(str::to_string) {
             self.show_detail(run, cx);
         }
         cx.notify();
     }
 
-    /// Esc: the list again from the detail, else no selection; whether it did anything.
+    /// Esc: the menu or prompts closed, else no selection; whether it did anything.
     pub fn escape(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.menu.take().is_some() || self.prompts.collapse() {
-            cx.notify();
-            return true;
-        }
-        if self.detail_focused {
-            self.detail_focused = false;
-            cx.notify();
+        if self.close_popups(cx) {
             return true;
         }
         if self.selected.is_some() {
@@ -643,7 +648,15 @@ impl WorkView {
         false
     }
 
-    /// Up/Down move in the list, Enter/Right give the detail the keys, Left takes them back.
+    fn close_popups(&mut self, cx: &mut Context<Self>) -> bool {
+        let closed = self.menu.take().is_some() || self.prompts.collapse();
+        if closed {
+            cx.notify();
+        }
+        closed
+    }
+
+    /// Up/Down move in the list, Enter/Right give the detail the keys, Left or Esc takes them back.
     fn on_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let m = &e.keystroke.modifiers;
         if m.control && !m.alt && !m.shift && e.keystroke.key == "p" && self.shown == Shown::Ready {
@@ -654,8 +667,9 @@ impl WorkView {
         if m.modified() || self.palette.is_some() {
             return;
         }
+        let detail = self.panes.detail.contains_focused(window, cx);
         let handled = match e.keystroke.key.as_str() {
-            "up" | "down" if !self.detail_focused => self.step(if e.keystroke.key == "up" { -1 } else { 1 }, cx),
+            "up" | "down" if !detail => self.step(if e.keystroke.key == "up" { -1 } else { 1 }, cx),
             "up" | "down" => {
                 let by = if e.keystroke.key == "up" { -40. } else { 40. };
                 let offset = self.detail_scroll.offset();
@@ -663,14 +677,18 @@ impl WorkView {
                 cx.notify();
                 true
             }
-            "enter" | "right" if self.selected.is_some() && !self.detail_focused => {
-                self.detail_focused = true;
-                cx.notify();
+            "enter" | "right" if self.selected.is_some() && !detail => {
+                window.focus(&self.panes.detail, cx);
                 true
             }
-            "left" if self.detail_focused => {
-                self.detail_focused = false;
-                cx.notify();
+            "left" if detail => {
+                window.focus(&self.panes.main, cx);
+                true
+            }
+            "escape" if detail => {
+                if !self.close_popups(cx) {
+                    window.focus(&self.panes.main, cx);
+                }
                 true
             }
             "escape" => self.escape(cx),
@@ -752,10 +770,13 @@ impl WorkView {
     fn render_main(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let Page::Run(run) = self.page.clone() else {
             let page = if self.page == Page::Activity { self.render_activity_page(cx) } else { self.render_overview(cx) };
-            return div().relative().size_full().child(page).child(hit_target(&self.hits, "work-page".into())).into_any_element();
+            let pane = focus::Pane::new(FOCUS_MAIN, &self.panes.main).paint(&self.hits);
+            return div().relative().size_full().track_focus(&self.panes.main).child(page).child(hit_target(&self.hits, "work-page".into())).child(pane).into_any_element();
         };
-        let list = div().flex_grow(1.).flex_basis(px(layout::LIST_MIN)).min_w_0().h_full().child(self.render_run_page(&run, cx));
-        let detail = div().flex_shrink(1.).min_w_0().w(self.layout.detail()).h_full().relative().border_l_1().border_color(cx.theme().colors().border).child(self.render_detail(cx)).child(hit_target(&self.hits, "work-detail-column".into()));
+        let list = div().relative().flex_grow(1.).flex_basis(px(layout::LIST_MIN)).min_w_0().h_full().track_focus(&self.panes.main).child(self.render_run_page(&run, cx));
+        let list = list.child(focus::Pane::new(FOCUS_MAIN, &self.panes.main).paint(&self.hits));
+        let detail = div().flex_shrink(1.).min_w_0().w(self.layout.detail()).h_full().relative().border_l_1().border_color(cx.theme().colors().border).track_focus(&self.panes.detail).child(self.render_detail(cx));
+        let detail = detail.child(hit_target(&self.hits, "work-detail-column".into())).child(focus::Pane::new(FOCUS_DETAIL, &self.panes.detail).paint(&self.hits));
         layout::detail_split()
             .render_second(list, detail, |this: &mut WorkView, width, cx| {
                 this.layout.set_detail(width);
@@ -771,7 +792,8 @@ impl WorkView {
             let strip = div().flex_none().h_full().border_r_1().border_color(cx.theme().colors().border).child(self.render_nav_strip(cx));
             return div().flex().size_full().child(strip).child(div().flex_1().min_w_0().h_full().child(main)).into_any_element();
         }
-        let nav = div().flex_shrink(0.5).min_w_0().overflow_hidden().w(self.layout.nav()).h_full().child(self.render_navigator(cx));
+        let nav = div().relative().flex_shrink(0.5).min_w_0().overflow_hidden().w(self.layout.nav()).h_full().track_focus(&self.panes.nav).child(self.render_navigator(cx));
+        let nav = nav.child(focus::Pane::new(FOCUS_NAV, &self.panes.nav).paint(&self.hits));
         let rest = div().flex_grow(1.).flex_basis(px(layout::LIST_MIN + layout::DETAIL_MIN + 1.)).min_w_0().h_full().child(main);
         layout::nav_split()
             .render(nav, rest, |this: &mut WorkView, width, cx| {

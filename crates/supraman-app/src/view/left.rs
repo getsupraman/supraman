@@ -313,6 +313,8 @@ impl FleetView {
             .child(self.render_search_box())
             .child(body)
             .children(toast)
+            .track_focus(&self.sidebar.focus)
+            .child(supraman_ui::focus::Pane::new("sidebar", &self.sidebar.focus).paint(&self.hits))
             .into_any_element()
     }
 

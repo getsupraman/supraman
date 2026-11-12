@@ -6,6 +6,7 @@ pub mod button;
 pub mod clipped;
 pub mod confirm;
 pub mod details;
+pub mod focus;
 pub mod focus_order;
 pub mod form;
 pub mod folder_picker;
@@ -62,6 +63,7 @@ pub fn init_globals(cx: &mut App, program_version: &str) {
     themes::apply(cx, None, themes::TerminalColors::Theme, None);
     table::bind_keys(cx);
     focus_order::bind_keys(cx);
+    focus::bind_keys(cx);
 }
 
 /// gpui's platform info, warnings and errors: to `<dir>/`[`LOG_FILE`] with a log folder, else to stderr.

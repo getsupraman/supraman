@@ -26,6 +26,8 @@ pub struct Sidebar {
     pub expanded: HashSet<String>,
     pub closed_expanded: HashSet<String>,
     pub(super) search_marks: HashMap<String, crate::search::Marks>,
+    /// The sidebar's pane in [`supraman_ui::focus`].
+    pub(super) focus: gpui::FocusHandle,
 }
 
 pub(super) struct CachedTree {
@@ -52,6 +54,7 @@ impl Sidebar {
             expanded: HashSet::new(),
             closed_expanded: HashSet::new(),
             search_marks: HashMap::new(),
+            focus: cx.focus_handle(),
         }
     }
 }

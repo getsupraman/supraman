@@ -35,7 +35,7 @@ impl GitView {
             .collect();
         items.push(item("column-default", "Reset columns to default", ColumnAct::Default).rule());
         items.push(item("column-compact", "Compact layout", ColumnAct::Compact));
-        self.column_menu = Some(ContextMenu { title: "Columns".into(), position, items });
+        self.column_menu = Some(ContextMenu::new("Columns", position, items));
         cx.notify();
     }
 

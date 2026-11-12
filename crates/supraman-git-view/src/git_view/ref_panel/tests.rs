@@ -38,7 +38,7 @@ fn refs() -> Refs {
 
 fn panel(cx: &mut TestAppContext, hidden: &[&str]) -> Entity<RefPanel> {
     let hidden: Vec<String> = hidden.iter().map(|h| h.to_string()).collect();
-    let panel = cx.update(|cx| cx.new(|cx| RefPanel::new(HitTargets::default(), cx.focus_handle(), cx)));
+    let panel = cx.update(|cx| cx.new(|cx| RefPanel::new(HitTargets::default(), cx)));
     panel.update(cx, |p, cx| {
         p.restore(&GitSizes { hidden, ..GitSizes::default() }, cx);
         p.set_refs(&refs(), cx);
@@ -257,7 +257,7 @@ fn a_solo_walks_only_its_branch_and_head_and_persists_with_the_layout(cx: &mut T
     assert_eq!(local.shown, 2, "LOCAL counts main and topic/solo: {local:?}");
     let sizes = view.read_with(cx, |v, cx| v.sizes(cx));
     let back = serde_json::from_value::<GitSizes>(serde_json::to_value(&sizes).unwrap()).unwrap();
-    let restored = cx.update(|_, cx| cx.new(|cx| RefPanel::new(HitTargets::default(), cx.focus_handle(), cx)));
+    let restored = cx.update(|_, cx| cx.new(|cx| RefPanel::new(HitTargets::default(), cx)));
     restored.update(cx, |p, cx| p.restore(&back, cx));
     assert_eq!(restored.read_with(cx, |p, _| p.walk().clone()), panel.read_with(cx, |p, _| p.walk().clone()), "the solo comes back from the saved sizes");
     click(&view, "refpanel-mark-local/topic/solo", cx);
@@ -531,7 +531,7 @@ fn a_narrow_panel_cuts_a_worktrees_folder_and_a_stashs_branch_before_their_names
     let mut refs = refs();
     refs.worktrees[0].path = PathBuf::from("C:/src/repository-in-a-folder-with-a-long-name");
     refs.stashes[1].branch = "feature/a-branch-with-a-long-name".into();
-    let panel = cx.update(|cx| cx.new(|cx| RefPanel::new(hits.clone(), cx.focus_handle(), cx)));
+    let panel = cx.update(|cx| cx.new(|cx| RefPanel::new(hits.clone(), cx)));
     panel.update(cx, |p, cx| p.set_refs(&refs, cx));
     let (_, cx) = cx.add_window_view(|_, _| Narrow(panel.clone()));
     cx.run_until_parked();

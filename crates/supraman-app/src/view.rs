@@ -481,7 +481,7 @@ impl FleetView {
         let updates = crate::updates::Updates::start(home.clone(), |v: &mut Self| &mut v.updates, cx);
         let tabs_writes = Self::tabs_writer(home.clone(), cx);
         Self::detect_shells(cx);
-        cx.on_focus_lost(window, |this, window, cx| this.focus.focus(window, cx)).detach();
+        cx.on_focus_lost(window, |this, window, cx| if !supraman_ui::focus::restore(window, cx) { this.focus.focus(window, cx) }).detach();
         let search = cx.new(|cx| TextInput::new("Search sessions, workspaces, repos (Ctrl+Shift+E)", None, window, cx));
         cx.subscribe_in(&search, window, Self::on_search_event).detach();
         Self {
@@ -1829,13 +1829,12 @@ impl Render for FleetView {
         self.wake_blink();
         self.hits.borrow_mut().clear();
         let colors = cx.theme().colors().clone();
-        div()
+        supraman_ui::focus::root(div())
             .size_full()
             .flex()
             .font_family(supraman_ui::fonts::UI)
             .bg(colors.background)
             .text_color(colors.text)
-            .track_focus(&self.focus)
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::on_tab_chord))
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| this.focus_search(window, cx)))

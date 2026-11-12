@@ -188,7 +188,7 @@ impl FleetView {
         };
         let shells = self.term_look.shell_default.found().cloned().expect("default_of found the shells");
         let position = self.hits.borrow().get("new-shell-menu").map(|h| h.bounds.bottom_left()).unwrap_or_default();
-        self.dialogs.menu = Some(ContextMenu { title: "New shell".into(), position, items: menu_items(&shells, &default) });
+        self.dialogs.menu = Some(ContextMenu::new("New shell", position, menu_items(&shells, &default)));
         cx.notify();
     }
 }

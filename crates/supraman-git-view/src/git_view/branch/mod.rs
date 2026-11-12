@@ -486,7 +486,7 @@ impl BranchActions {
     }
 
     pub(crate) fn show_menu(&mut self, title: String, items: Vec<MenuItem<RefAct>>, position: Point<Pixels>, cx: &mut Context<Self>) {
-        self.menu = (!items.is_empty()).then(|| ContextMenu { title, position, items });
+        self.menu = (!items.is_empty()).then(|| ContextMenu::new(title, position, items));
         cx.notify();
     }
 }

@@ -8,7 +8,7 @@ mod tests;
 
 use std::rc::Rc;
 
-use gpui::{AnyElement, App, AppContext as _, Context, Entity, FocusHandle, SharedString, Subscription, Window, div, prelude::*, px};
+use gpui::{AnyElement, App, AppContext as _, Context, Entity, SharedString, Subscription, Window, div, prelude::*, px};
 use supraman_ui::palette::{Entry as _, Mode, Palette, PaletteEvent, Rank};
 use supraman_ui::store::save_off_thread;
 
@@ -26,8 +26,6 @@ pub(crate) const ID: &str = "git-find";
 pub(crate) struct Find {
     pub(crate) palette: Entity<Palette<GitEntry>>,
     _events: Subscription,
-    /// What had the keyboard when it opened.
-    back: Option<FocusHandle>,
 }
 
 fn mode(key: &'static str, chip: &str, placeholder: &str, prefix: Option<char>, empty: String, rank: Rank<GitEntry>) -> Mode<GitEntry> {
@@ -65,14 +63,13 @@ impl GitView {
             });
             return;
         }
-        let back = window.focused(cx);
         let palette = self.new_palette(window, cx);
         if let Some(mode) = mode {
             palette.update(cx, |p, cx| p.enter_mode(mode, cx));
         }
         palette.update(cx, |p, cx| p.focus(window, cx));
         let events = cx.subscribe_in(&palette, window, Self::on_find);
-        self.find = Some(Find { palette, _events: events, back });
+        self.find = Some(Find { palette, _events: events });
         self.read_files(cx);
         if let Some(why) = frecency::take_notice(cx) {
             self.toast.show_why(why, |v: &mut GitView| &mut v.toast, cx);
@@ -127,26 +124,24 @@ impl GitView {
         }
     }
 
-    pub fn close_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(find) = self.find.take() else { return };
-        match find.back {
-            Some(back) => window.focus(&back, cx),
-            None => window.focus(&self.focus, cx),
+    /// Closes the palette; [`supraman_ui::focus`] gives the keyboard back unless a pick took it.
+    pub fn close_find(&mut self, cx: &mut Context<Self>) {
+        if self.find.take().is_some() {
+            cx.notify();
         }
-        cx.notify();
     }
 
-    fn on_find(&mut self, palette: &Entity<Palette<GitEntry>>, event: &PaletteEvent<GitEntry>, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_find(&mut self, palette: &Entity<Palette<GitEntry>>, event: &PaletteEvent<GitEntry>, _: &mut Window, cx: &mut Context<Self>) {
         match event {
             PaletteEvent::Query(_) => {}
-            PaletteEvent::Close => self.close_find(window, cx),
+            PaletteEvent::Close => self.close_find(cx),
             PaletteEvent::Open(entry) => {
                 let (query, top) = palette.read_with(cx, |p, cx| (p.query(cx), p.mode().is_none()));
                 if top {
                     let save = frecency::remember(&entry.key(), &query, supraman_core::time::now_ms(), cx);
                     save_off_thread(save, cx, |_, _, _| {});
                 }
-                self.close_find(window, cx);
+                self.close_find(cx);
                 self.open_entry(entry.clone(), cx);
             }
         }

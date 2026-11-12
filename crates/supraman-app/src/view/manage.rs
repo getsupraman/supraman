@@ -41,7 +41,7 @@ impl FleetView {
 
     pub fn open_add_menu(&mut self, cx: &mut Context<Self>) {
         let position = self.hits.borrow().get("add-workspace").map(|h| h.bounds.bottom_left()).unwrap_or_default();
-        self.dialogs.menu = Some(ContextMenu { title: "Add workspace".into(), position, items: add_items() });
+        self.dialogs.menu = Some(ContextMenu::new("Add workspace", position, add_items()));
         cx.notify();
     }
 
@@ -143,7 +143,7 @@ impl FleetView {
     }
 
     pub fn open_menu(&mut self, target: MenuTarget, position: Point<Pixels>, cx: &mut Context<Self>) {
-        self.dialogs.menu = self.menu_for(&target, None, cx).map(|(title, items)| ContextMenu { title, position, items });
+        self.dialogs.menu = self.menu_for(&target, None, cx).map(|(title, items)| ContextMenu::new(title, position, items));
         cx.notify();
         let session_id = match &target {
             MenuTarget::Session { session_id, .. } => Some(session_id.clone()),

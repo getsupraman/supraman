@@ -59,16 +59,13 @@ impl WorkView {
     }
 
     pub(crate) fn show_row_menu(&mut self, target: &ItemRef, position: Point<Pixels>, cx: &mut Context<Self>) {
-        self.menu = Some(ContextMenu {
-            title: target.qualified_ref.clone(),
-            position,
-            items: vec![
-                item("work-web", "Open in Workman web", RowAction::OpenWeb(target.clone())),
-                item("work-copy-ref", "Copy ref", RowAction::CopyRef(target.clone())),
-                item("work-copy-link", "Copy link", RowAction::CopyLink(target.clone())),
-                item("work-copy-title", "Copy title", RowAction::CopyTitle(target.clone())),
-            ],
-        });
+        let items = vec![
+            item("work-web", "Open in Workman web", RowAction::OpenWeb(target.clone())),
+            item("work-copy-ref", "Copy ref", RowAction::CopyRef(target.clone())),
+            item("work-copy-link", "Copy link", RowAction::CopyLink(target.clone())),
+            item("work-copy-title", "Copy title", RowAction::CopyTitle(target.clone())),
+        ];
+        self.menu = Some(ContextMenu::new(target.qualified_ref.clone(), position, items));
         cx.notify();
     }
 

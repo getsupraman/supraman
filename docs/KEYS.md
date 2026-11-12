@@ -16,6 +16,7 @@ paste on Ctrl+V, find on Ctrl+Shift+F, no copy on select, plain-text copy). Code
 | Ctrl+W | close the active tab, as its × does; in a terminal tab as Ctrl+T |
 | Ctrl+Shift+T, Ctrl+Shift+W | as Ctrl+T and Ctrl+W, in every tab |
 | Ctrl+Alt+T | reopen the last tab closed in this run (the last 20 are kept; a New task, Schedule or Details tab is not) |
+| F6, Shift+F6 | the next / previous pane, wrapping: the sidebar, then the active tab's panes (a terminal tab, Details, Schedule or New task its page; the Git tab its ref panel while open, graph, right panel, then the diff viewer while open; the Work tab its navigator while open, list or page, detail); in the settings window its page list, then the page. The pane holding the keys has a thin edge in the theme's focus colour. Also from a terminal tab, whose program never gets F6. A pane comes back to what it held; a closed menu, palette, band or form gives the keys back to the pane that had them |
 | Ctrl+, | settings |
 | Ctrl+Shift+E | the search box over the tree, its text selected; also from a terminal tab (VS Code's Explorer chord; Ctrl+Shift+F is the terminal's find bar, and a Ctrl+letter belongs to the program in the tab) |
 | F5 | refresh: read the running sessions (`claude agents`) and the closed ones' transcripts now, as the action bar's ↻ does, while no terminal tab is active (no tab, or a Work tab). With a terminal tab active, F5 goes to its program; use ↻ there |

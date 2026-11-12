@@ -35,17 +35,9 @@ impl FocusOrder {
 
     /// The next member (the previous one with `back`) focused, wrapping; the first (the last) while none holds the focus.
     pub fn step(&self, back: bool, window: &mut Window, cx: &mut App) {
-        let n = self.0.len();
-        if n == 0 {
-            return;
+        if let Some(to) = stepped(self.focused(window, cx), self.0.len(), back) {
+            self.0[to].focus(window, cx);
         }
-        let to = match self.focused(window, cx) {
-            Some(at) if back => (at + n - 1) % n,
-            Some(at) => (at + 1) % n,
-            None if back => n - 1,
-            None => 0,
-        };
-        self.0[to].focus(window, cx);
     }
 
     /// `form` with Tab and Shift+Tab stepping through this order.
@@ -55,6 +47,19 @@ impl FocusOrder {
             .on_action(move |_: &NextField, window, cx| self.step(false, window, cx))
             .on_action(move |_: &PreviousField, window, cx| back.step(true, window, cx))
     }
+}
+
+/// The member after `at` of `n` (before it with `back`), wrapping; the first (the last) from none; `None` of none.
+pub fn stepped(at: Option<usize>, n: usize, back: bool) -> Option<usize> {
+    if n == 0 {
+        return None;
+    }
+    Some(match at {
+        Some(at) if back => (at + n - 1) % n,
+        Some(at) => (at + 1) % n,
+        None if back => n - 1,
+        None => 0,
+    })
 }
 
 #[cfg(test)]
