@@ -174,11 +174,15 @@ fn opened() -> Vec<Link> {
 }
 
 /// A window root as the app's: the tab's panes in [`supraman_ui::focus`]'s order, focus lost given back.
-struct Holder(Entity<WorkView>, Entity<WorkInbox>, gpui::Subscription);
+struct Holder {
+    view: Entity<WorkView>,
+    inbox: Entity<WorkInbox>,
+    _restore: gpui::Subscription,
+}
 
 impl Render for Holder {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        focus::root(div().w(px(1500.)).h(px(900.))).child(self.0.clone())
+        focus::root(div().w(px(1500.)).h(px(900.))).child(self.view.clone())
     }
 }
 
@@ -234,10 +238,10 @@ fn open(cx: &mut TestAppContext) -> Opened<'_> {
             view.inbox = Some(inbox.clone());
             view
         });
-        Holder(view, inbox, focus::restore_on_loss(window, cx))
+        Holder { view, inbox, _restore: focus::restore_on_loss(window, cx) }
     });
     cx.update(|window, _| window.activate_window());
-    let (view, inbox) = holder.read_with(cx, |h, _| (h.0.clone(), h.1.clone()));
+    let (view, inbox) = holder.read_with(cx, |h, _| (h.view.clone(), h.inbox.clone()));
     settle(&view, cx);
     Opened { view, fake, inbox, cx }
 }

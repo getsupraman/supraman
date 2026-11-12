@@ -172,9 +172,16 @@ struct Windows(HashMap<WindowId, Rc<RefCell<State>>>);
 
 impl Global for Windows {}
 
+/// The window's state; a new window's entry drops those of windows closed since.
 fn state(window: &Window, cx: &mut App) -> Rc<RefCell<State>> {
     let id = window.window_handle().window_id();
-    cx.default_global::<Windows>().0.entry(id).or_default().clone()
+    if let Some(state) = cx.default_global::<Windows>().0.get(&id) {
+        return state.clone();
+    }
+    let open: Vec<WindowId> = cx.windows().iter().map(|w| w.window_id()).collect();
+    let windows = &mut cx.global_mut::<Windows>().0;
+    windows.retain(|kept, _| open.contains(kept));
+    windows.entry(id).or_default().clone()
 }
 
 #[cfg(test)]
