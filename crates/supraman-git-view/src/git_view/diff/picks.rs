@@ -148,7 +148,12 @@ impl DiffView {
             Pick::Discard => lines::discard(s, &picked),
         };
         picks.menu = None;
-        if let Some(ticket) = picks.gate.update(cx, |g, cx| g.request(locks, job, cx)) {
+        let words = match pick {
+            Pick::Stage => "Staging the lines",
+            Pick::Unstage => "Unstaging the lines",
+            Pick::Discard => "Discarding the lines",
+        };
+        if let Some(ticket) = picks.gate.update(cx, |g, cx| g.request(locks, words.into(), job, cx)) {
             picks.doing = Some((ticket, act));
         }
         cx.notify();

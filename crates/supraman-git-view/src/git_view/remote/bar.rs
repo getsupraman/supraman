@@ -87,7 +87,7 @@ impl GitView {
             }))
     }
 
-    /// Pull with its ▾, Push, and while a call runs its words, progress and Cancel.
+    /// Pull with its ▾, Push, and the write strip.
     pub(in crate::git_view) fn remote_buttons(&self, cx: &mut Context<Self>) -> Div {
         let [pull_why, push_why] = self.remote_why_not(cx);
         let remote = self.remote.read(cx);
@@ -97,14 +97,7 @@ impl GitView {
             Some((r, b)) => format!("Push to {r}/{b}"),
             None => "Push, choosing its upstream first".into(),
         };
-        let strip = remote.progress().map(|(doing, progress)| {
-            let said = match progress {
-                Some(p) => format!("{doing}: {} {}%", p.phase, p.percent),
-                None => format!("{doing}…"),
-            };
-            let cancel = button::action(&self.hits, CANCEL_KEY, "Cancel", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.remote.update(cx, |r, cx| r.cancel(cx))));
-            div().flex().items_center().gap_2().px_2().text_xs().text_color(cx.theme().colors().text_muted).child(said).child(cancel)
-        });
+        let strip = self.write_strip(cx);
         let colors = cx.theme().colors();
         let menu = button::toolbar(&self.hits, PULL_MENU_KEY, Icon::ChevronDown.svg(12., colors.text_muted), false, colors.text_muted, cx)
             .tooltip(Tooltip::text("Choose a pull, or the default the button does"))

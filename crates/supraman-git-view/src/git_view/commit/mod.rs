@@ -22,7 +22,7 @@ use supraman_ui::hit::HitTargets;
 use files::FileAct;
 
 use super::details::reword::kept_words;
-use super::write_gate::{STILL_OPENING, WriteGate, Writes, Written};
+use super::write_gate::{STILL_OPENING, Verb, WriteGate, Writes, Written};
 use supraman_core::text::capitalised;
 
 /// What a commit's, the WIP row's or a file's menu item does.
@@ -97,6 +97,17 @@ enum Doing {
     Pick { sha: String, revert: bool, commit: bool },
     Rebase { branch: String, sha: String },
     Plain(String),
+}
+
+impl Verb for Doing {
+    fn running(&self) -> String {
+        match self {
+            Doing::Pick { revert: true, .. } => "Reverting the commit".into(),
+            Doing::Pick { .. } => "Cherry-picking the commit".into(),
+            Doing::Rebase { branch, .. } => format!("Rebasing {branch}"),
+            Doing::Plain(_) => "Working".into(),
+        }
+    }
 }
 
 pub(crate) struct CommitActions {

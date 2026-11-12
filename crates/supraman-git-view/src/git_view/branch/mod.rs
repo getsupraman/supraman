@@ -29,7 +29,7 @@ use menu::{Dragged, Facts, RefAct, Subject};
 use super::ref_panel::RefAction;
 use super::remote::RemoteFacts;
 use super::remote::menu as remote_menu;
-use super::write_gate::{STILL_OPENING, WriteGate, Writes, Written};
+use super::write_gate::{STILL_OPENING, Verb, WriteGate, Writes, Written};
 use supraman_core::paths::folder_name;
 use supraman_core::text::capitalised;
 
@@ -118,6 +118,22 @@ enum Doing {
     Worktree(PathBuf),
     RemoveWorktree(PathBuf),
     Plain(String),
+}
+
+impl Verb for Doing {
+    fn running(&self) -> String {
+        match self {
+            Doing::Checkout(Plan::Branch(name) | Plan::Track { name, .. } | Plan::Forward { name, .. } | Plan::Clash { name, .. }) => format!("Checking out {name}"),
+            Doing::Checkout(Plan::Detached(sha)) => format!("Checking out {}", supraman_gitman::short_sha(sha)),
+            Doing::Checkout(_) => "Checking out".into(),
+            Doing::Created { what } => format!("Creating {what}"),
+            Doing::Merge { source, into } => format!("Merging {source} into {into}"),
+            Doing::Rebase { branch, onto } => format!("Rebasing {branch} onto {onto}"),
+            Doing::Worktree(_) => "Creating the worktree".into(),
+            Doing::RemoveWorktree(path) => format!("Removing the worktree {}", supraman_core::paths::folder_name(path)),
+            Doing::Plain(_) => "Working".into(),
+        }
+    }
 }
 
 pub(crate) struct BranchActions {

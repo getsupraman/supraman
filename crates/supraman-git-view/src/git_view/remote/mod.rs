@@ -1,7 +1,7 @@
 //! The tab's fetch, pull and push, each through the tab's [`WriteGate`] off the UI thread with progress and Cancel.
 
 pub(crate) mod add;
-mod bar;
+pub(super) mod bar;
 mod dialogs;
 pub(crate) mod menu;
 
@@ -27,7 +27,7 @@ use supraman_ui::confirm::{Answer, Confirm};
 use supraman_ui::hit::HitTargets;
 use supraman_ui::menu::{ContextMenu, MenuItem};
 
-use super::write_gate::{WriteGate, Writes, Written};
+use super::write_gate::{Verb, WriteGate, Writes, Written};
 use supraman_core::text::capitalised;
 pub(crate) use bar::{caption, words};
 pub(crate) use dialogs::{Prompting, UpstreamDialog};
@@ -161,6 +161,12 @@ struct Running {
     cancel: Arc<AtomicBool>,
 }
 
+impl Verb for Running {
+    fn running(&self) -> String {
+        self.doing.running()
+    }
+}
+
 pub(crate) struct RemoteActions {
     hits: HitTargets,
     writes: Writes<Ask, Running, Done>,
@@ -291,6 +297,7 @@ impl RemoteActions {
         if let Some((ticket, running)) = self.writes.doing() {
             running.cancel.store(true, Ordering::SeqCst);
             self.cancelled = Some(ticket);
+            self.writes.gate().update(cx, |g, _| g.cancel());
             cx.notify();
         }
     }
@@ -379,9 +386,9 @@ impl RemoteActions {
             self.cancelled = None;
             return self.added(name, fetched, cx);
         }
-        if self.cancelled.take() == Some(w.ticket) {
-            cx.emit(RemoteEvent::Wrote(None));
-            return cx.emit(RemoteEvent::Why(format!("{} was cancelled", running.doing.running())));
+        self.cancelled = None;
+        if w.cancelled.is_some() {
+            return;
         }
         if let Err(why) = &w.result {
             cx.emit(RemoteEvent::Wrote(None));

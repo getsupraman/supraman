@@ -2,12 +2,14 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use futures::FutureExt as _;
 use futures::future::Shared;
 use gpui::{App, AppContext as _, Context, Div, Entity, EventEmitter, Subscription, Task};
 use supraman_gitman::Repo;
-use supraman_gitman::write::{LockSet, Occupancy, Session, WriteError, Writer};
+use supraman_gitman::OperationState;
+use supraman_gitman::write::{Cancel, Left, LockSet, Occupancy, Session, WriteError, Writer, left};
 use supraman_ui::confirm::{Answer, Confirm};
 use supraman_ui::hit::HitTargets;
 
@@ -17,10 +19,46 @@ pub(crate) const WORKING: &str = "Working…";
 /// Why a write cannot start before the tab's writer is open.
 pub(crate) const STILL_OPENING: &str = "The repository is still opening; try again in a moment";
 
-/// The write of `ticket` ran: its error's words, if it failed.
+/// How long a write runs before the toolbar shows it with its Cancel.
+pub(crate) const CANCEL_AFTER: Duration = Duration::from_secs(5);
+
+/// The write of `ticket` ran: its error's words, if it failed; `cancelled` what a cancel left, in the toast's words.
 pub(crate) struct Written {
     pub(crate) ticket: u64,
     pub(crate) result: Result<(), String>,
+    pub(crate) cancelled: Option<String>,
+}
+
+/// A write's words while it runs, the strip's: `Committing`, `Checking out stage`.
+pub(crate) trait Verb {
+    fn running(&self) -> String;
+}
+
+/// The write under way.
+struct Job {
+    ticket: u64,
+    words: String,
+    started: Instant,
+    cancel: Cancel,
+}
+
+/// What a cancelled write `words` left, in git's terms; Supraman never deletes an `index.lock`.
+pub(crate) fn left_words(words: &str, left: &Left) -> String {
+    let under_way = match left.state {
+        OperationState::None => None,
+        OperationState::Merge => Some("a merge"),
+        OperationState::Rebase { .. } => Some("a rebase"),
+        OperationState::Am => Some("a patch series"),
+        OperationState::Revert { .. } => Some("a revert"),
+        OperationState::CherryPick { .. } => Some("a cherry-pick"),
+    };
+    let mut said = vec![format!("{words} was cancelled")];
+    said.extend(under_way.map(|op| format!("{op} is under way")));
+    said.extend(left.index_lock.as_ref().map(|_| "git left index.lock: remove it once no git runs".to_string()));
+    if said.len() == 1 {
+        said.push("git left nothing under way".into());
+    }
+    said.join("; ")
 }
 
 /// The tab's writer once the gate holds it: `None` when the open failed.
@@ -28,7 +66,7 @@ pub(crate) type Opening = Shared<Task<Option<Writer>>>;
 
 pub(crate) struct WriteGate {
     occupancy: Arc<dyn Occupancy>,
-    running: bool,
+    running: Option<Job>,
     tickets: u64,
     writer: Option<Writer>,
     opening: Option<Opening>,
@@ -39,7 +77,7 @@ impl EventEmitter<Written> for WriteGate {}
 impl WriteGate {
     /// `occupancy` answers from memory: it is asked on the UI thread.
     pub(crate) fn new(occupancy: Arc<dyn Occupancy>) -> WriteGate {
-        WriteGate { occupancy, running: false, tickets: 0, writer: None, opening: None }
+        WriteGate { occupancy, running: None, tickets: 0, writer: None, opening: None }
     }
 
     /// The tab's one writer of `repo`, opened off the UI thread by the first call and again after an open failed.
@@ -75,23 +113,32 @@ impl WriteGate {
         self.writer.as_ref().map(|w| w.dirs().top.clone())
     }
 
-    /// Runs `job` holding `locks` on the checkout; its [`Written`]'s ticket, or `None` while busy or before the writer is open.
-    pub(crate) fn request(&mut self, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) -> Option<u64> {
+    /// Runs `job` holding `locks` on the checkout, `words` what it does; its [`Written`]'s ticket, or `None` while busy or before the writer is open.
+    pub(crate) fn request(&mut self, locks: LockSet, words: String, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) -> Option<u64> {
         let writer = self.writer.clone().filter(|_| self.busy().is_none())?;
         self.tickets += 1;
         let ticket = self.tickets;
-        self.running = true;
-        let ran = cx.background_spawn(async move { writer.run(locks, job).map_err(|e| e.to_string()) });
+        let cancel = Cancel::default();
+        self.running = Some(Job { ticket, words, started: Instant::now(), cancel: cancel.clone() });
+        let ran = cx.background_spawn(async move {
+            match writer.run_with(locks, cancel, job) {
+                Ok(()) => (Ok(()), None),
+                Err(WriteError::Cancelled) => (Err(WriteError::Cancelled.to_string()), Some(left(writer.dirs()))),
+                Err(e) => (Err(e.to_string()), None),
+            }
+        });
         cx.spawn(async move |this, cx| {
-            let result = ran.await;
+            let (result, left) = ran.await;
             this.update(cx, |this, cx| {
-                this.running = false;
-                cx.emit(Written { ticket, result });
+                let words = this.running.take().map(|j| j.words).unwrap_or_default();
+                let cancelled = left.map(|left| left_words(&words, &left));
+                cx.emit(Written { ticket, result, cancelled });
                 cx.notify();
             })
             .ok();
         })
         .detach();
+        self.tick(cx);
         cx.notify();
         Some(ticket)
     }
@@ -103,7 +150,47 @@ impl WriteGate {
 
     /// Why no other write can start now: one runs.
     pub(crate) fn busy(&self) -> Option<&'static str> {
-        self.running.then_some(WORKING)
+        self.running.as_ref().map(|_| WORKING)
+    }
+
+    /// The write under way once it has run [`CANCEL_AFTER`]: its words and its whole seconds.
+    pub(crate) fn long(&self) -> Option<(&str, u64)> {
+        let job = self.running.as_ref()?;
+        let ran = job.started.elapsed();
+        (ran >= CANCEL_AFTER).then(|| (job.words.as_str(), ran.as_secs()))
+    }
+
+    /// Ends the write under way: its git's tree killed, its later calls refused.
+    pub(crate) fn cancel(&mut self) {
+        if let Some(job) = &self.running {
+            job.cancel.cancel();
+        }
+    }
+
+    /// Repaints at [`CANCEL_AFTER`] and each second after while the write runs, for its strip.
+    fn tick(&self, cx: &mut Context<Self>) {
+        let Some(job) = &self.running else { return };
+        let (ticket, first) = (job.ticket, CANCEL_AFTER.saturating_sub(job.started.elapsed()));
+        cx.spawn(async move |this, cx| {
+            let mut wait = first;
+            loop {
+                cx.background_executor().timer(wait).await;
+                let runs = |this: &mut WriteGate, cx: &mut Context<WriteGate>| this.running.as_ref().is_some_and(|j| j.ticket == ticket).then(|| cx.notify());
+                if this.update(cx, runs).ok().flatten().is_none() {
+                    return;
+                }
+                wait = Duration::from_secs(1);
+            }
+        })
+        .detach();
+    }
+
+    /// The write under way as if it had started `ago` earlier.
+    #[cfg(test)]
+    pub(crate) fn backdate(&mut self, ago: Duration) {
+        if let Some(job) = &mut self.running {
+            job.started -= ago;
+        }
     }
 }
 
@@ -116,7 +203,7 @@ pub(crate) struct Writes<A, D, O = ()> {
     _gate: [Subscription; 2],
 }
 
-impl<A: 'static, D: 'static, O: Send + 'static> Writes<A, D, O> {
+impl<A: 'static, D: Verb + 'static, O: Send + 'static> Writes<A, D, O> {
     /// `written` hears every write of the gate end; the owner repaints as the gate changes.
     pub(crate) fn new<T: 'static>(gate: Entity<WriteGate>, written: fn(&mut T, &Written, &mut Context<T>), cx: &mut Context<T>) -> Self {
         let heard = cx.subscribe(&gate, move |this, _, w: &Written, cx| written(this, w, cx));
@@ -145,7 +232,8 @@ impl<A: 'static, D: 'static, O: Send + 'static> Writes<A, D, O> {
         if self.gate.read(cx).writer().is_none() {
             return Err(STILL_OPENING);
         }
-        let ticket = self.gate.update(cx, |g, cx| g.request(locks, job, cx));
+        let words = doing.running();
+        let ticket = self.gate.update(cx, |g, cx| g.request(locks, words, job, cx));
         if let Some(ticket) = ticket {
             self.doing = Some((ticket, doing));
         }
@@ -253,9 +341,9 @@ mod tests {
         let heard = written.clone();
         cx.update(|cx| cx.subscribe(&gate, move |_, w: &Written, _| heard.borrow_mut().push(w.result.clone())).detach());
 
-        gate.update(cx, |g, cx| g.request(LockSet::new().write(Resource::Index), stage("u.txt"), cx));
+        gate.update(cx, |g, cx| g.request(LockSet::new().write(Resource::Index), "Staging".into(), stage("u.txt"), cx));
         assert_eq!(gate.read_with(cx, |g, _| g.busy()), Some(WORKING));
-        assert_eq!(gate.update(cx, |g, cx| g.request(LockSet::new().write(Resource::Index), stage("u.txt"), cx)), None, "a second write is not queued while one runs");
+        assert_eq!(gate.update(cx, |g, cx| g.request(LockSet::new().write(Resource::Index), "Staging".into(), stage("u.txt"), cx)), None, "a second write is not queued while one runs");
         cx.run_until_parked();
         assert_eq!(*written.borrow(), [Ok(())]);
         assert_eq!(gate.read_with(cx, |g, _| g.busy()), None, "free once the write ran");
@@ -263,7 +351,7 @@ mod tests {
 
         std::fs::write(f.worktree.join("w.txt"), b"w
 ").unwrap();
-        side.update(cx, |g, cx| g.request(LockSet::new().write(Resource::Index), stage("w.txt"), cx));
+        side.update(cx, |g, cx| g.request(LockSet::new().write(Resource::Index), "Staging".into(), stage("w.txt"), cx));
         cx.run_until_parked();
         assert!(staged(&f, &f.worktree).contains(&"w.txt".into()));
     }

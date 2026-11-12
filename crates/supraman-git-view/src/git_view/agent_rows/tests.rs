@@ -231,7 +231,7 @@ fn a_write_while_a_session_works_here_runs_without_a_question(cx: &mut TestAppCo
     let (view, cx) = open(f.dir.clone(), live.clone(), cx);
     set(&live, vec![session("fm-alpha", f.dir.join("src"), Activity::Working, None)], &view, cx);
     let gate = view.read_with(cx, |v, _| v.gate().clone());
-    let asked = gate.update(cx, |g, cx| g.request(LockSet::new().write(Resource::Index), |s| s.output(&Call::new(&["add"]).paths(["new.txt"])).map(drop), cx));
+    let asked = gate.update(cx, |g, cx| g.request(LockSet::new().write(Resource::Index), "Staging".into(), |s| s.output(&Call::new(&["add"]).paths(["new.txt"])).map(drop), cx));
     assert!(asked.is_some());
     cx.run_until_parked();
     let staged = f.at(&f.dir, &["diff", "--cached", "--name-only"]);

@@ -14,7 +14,7 @@ use super::compose::{self, Act};
 use super::{Section, WipPanel, sections};
 use crate::git_view::details::reword::kept_words;
 use crate::git_view::details::{FileView, PanelEvent};
-use crate::git_view::write_gate::Written;
+use crate::git_view::write_gate::{Verb, Written};
 use supraman_core::text::capitalised;
 
 /// A write the panel asks about first.
@@ -45,6 +45,31 @@ pub(crate) enum Doing {
     Take(Side),
     Resolve { paths: Option<Vec<String>>, anyway: bool },
     Unresolve,
+}
+
+impl Verb for Doing {
+    fn running(&self) -> String {
+        match self {
+            Doing::Stage => "Staging".into(),
+            Doing::Unstage => "Unstaging".into(),
+            Doing::Discard(n) => format!("Discarding the changes to {}", count(*n, "file", "files")),
+            Doing::DiscardAll => "Discarding all changes".into(),
+            Doing::Commit { amend: true, .. } => "Amending".into(),
+            Doing::Commit { .. } => "Committing".into(),
+            Doing::Step(step) => match step {
+                Step::ContinueRebase => "Continuing the rebase".into(),
+                Step::SkipCommit => "Skipping the commit".into(),
+                Step::AbortRebase => "Aborting the rebase".into(),
+                Step::AbortMerge => "Aborting the merge".into(),
+                Step::Continue(seq) => format!("Continuing the {}", noun(*seq)),
+                Step::Skip(seq) => format!("Skipping the {}'s commit", noun(*seq)),
+                Step::Abort(seq) => format!("Aborting the {}", noun(*seq)),
+            },
+            Doing::Take(_) => "Taking a side".into(),
+            Doing::Resolve { .. } => "Marking resolved".into(),
+            Doing::Unresolve => "Marking conflicted".into(),
+        }
+    }
 }
 
 pub(crate) const ANOTHER_CONFLICT: &str = "The rebase stopped on another conflict";

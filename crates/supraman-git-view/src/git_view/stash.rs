@@ -12,7 +12,7 @@ use supraman_ui::hit::HitTargets;
 use supraman_ui::menu::{ContextMenu, MenuItem, item};
 use supraman_ui::text_input::{InputEvent, TextInput};
 
-use super::write_gate::{WriteGate, Writes, Written};
+use super::write_gate::{Verb, WriteGate, Writes, Written};
 use supraman_core::text::capitalised;
 
 /// A stash as its row names it: its commit and its label.
@@ -72,6 +72,20 @@ enum Doing {
     ApplyFiles(usize),
     Delete(Vec<StashRef>),
     Message,
+}
+
+impl Verb for Doing {
+    fn running(&self) -> String {
+        match self {
+            Doing::StashAll => "Stashing".into(),
+            Doing::Files(n) => format!("Stashing {}", count(*n, "file", "files")),
+            Doing::Apply { pop: true, .. } => "Popping the stash".into(),
+            Doing::Apply { .. } => "Applying the stash".into(),
+            Doing::ApplyFiles(n) => format!("Applying {}", count(*n, "file", "files")),
+            Doing::Delete(_) => "Deleting the stash".into(),
+            Doing::Message => "Saving the stash's message".into(),
+        }
+    }
 }
 
 /// A stash write ran, or did not.

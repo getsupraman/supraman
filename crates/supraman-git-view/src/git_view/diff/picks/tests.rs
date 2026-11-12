@@ -191,7 +191,7 @@ fn diff_picks_wait_while_another_write_runs(cx: &mut TestAppContext) {
     let gate = view.read_with(cx, |v, _| v.gate().clone());
     let at = at_line(&d, 1, true, cx);
     let (blocked, dimmed) = d.update_in(cx, |d, window, cx| {
-        gate.update(cx, |g, cx| g.request(supraman_gitman::write::LockSet::refresh(), |_| Ok(()), cx));
+        gate.update(cx, |g, cx| g.request(supraman_gitman::write::LockSet::refresh(), "Working".into(), |_| Ok(()), cx));
         d.open_line_menu(at, window, cx);
         let blocked = d.picks_blocked(cx);
         d.pick(Act::Hunk(supraman_gitman::write::lines::Pick::Stage, 0), cx);
