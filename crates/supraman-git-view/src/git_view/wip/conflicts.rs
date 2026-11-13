@@ -95,7 +95,7 @@ impl WipPanel {
         let palette = Palette::of(cx.theme());
         let status = cx.theme().status();
         let (icon, colour) = match shown.state {
-            OperationState::Rebase { external: true } => (Icon::Resume, status.info),
+            OperationState::Rebase { external: true } => (Icon::Rebase, status.info),
             _ => (Icon::Warning, status.warning),
         };
         let title = div().id("wip-conflict-header").relative().child(headline(shown.state, shown.conflicted.len())).child(hit_target(&self.hits, "wip-conflict-header".into()));

@@ -793,16 +793,8 @@ impl FleetView {
             .child(disclosure(Some(open), colors.text_muted))
             .child(icon_slot(&self.hits, &format!("ws-{w}"), Some(dot.into_any_element())))
             .child(tree_label(&self.hits, &format!("ws-{w}"), div().flex_none().font_weight(FontWeight::BOLD).whitespace_nowrap().child(SharedString::from(w.clone()))))
-            .child(clipped(format!("ws-root-{w}"), home_text(workspace.home.as_deref()), true).flex_1().text_xs().text_color(secondary(cx)))
-            .child(
-                div()
-                    .flex_none()
-                    .whitespace_nowrap()
-                    .text_xs()
-                    .text_color(secondary(cx))
-                    .child(SharedString::from(workspace.session_count().to_string())),
-            )
-            .child(div().flex_none().size(px(16.)).children(relay_glyph))
+            .child(clipped(format!("ws-root-{w}"), home_text(workspace.home.as_deref()), true).flex_1().text_xs().text_color(secondary(cx)).child(hit_target(&self.hits, format!("ws-root-{w}"))))
+            .child(div().relative().flex_none().size(px(16.)).children(relay_glyph).child(hit_target(&self.hits, format!("relay-slot-{w}"))))
             .child(buttons);
         div()
             .id(SharedString::from(pkey.clone()))
@@ -987,13 +979,10 @@ impl FleetView {
             .child(disclosure((!empty).then_some(open), secondary(cx)))
             .child(icon_slot(&self.hits, &tree_key, Some(if git { Icon::GitBranch } else { Icon::Folder }.slotted(grid::ICON, secondary(cx)).into_any_element())))
             .child(tree_label(&self.hits, &tree_key, div().flex_none().whitespace_nowrap().child(SharedString::from(folder_label(&repo.name, &repo.path, workspace.home.as_deref())))))
-            .child(clipped(format!("branch-{w}/{}", repo.name), branch, false).text_xs().text_color(secondary(cx)))
-            .when(!empty, |d| {
-                d.child(div().flex_none().text_xs().text_color(secondary(cx)).child(SharedString::from(repo.sessions.len().to_string())))
-            })
+            .child(clipped(format!("branch-{w}/{}", repo.name), branch, false).text_xs().text_color(secondary(cx)).child(hit_target(&self.hits, format!("branch-{w}/{}", repo.name))))
             .when(parked, |d| d.child(tag("disabled", cx)))
             .children(self.folder_tags(w, repo, cx))
-            .child(div().flex_1())
+            .child(div().relative().flex_1().child(hit_target(&self.hits, format!("repo-room-{w}/{}", repo.name))))
             .child(div().flex().flex_none().items_center().gap(px(2.)).children(history).child(new_claude.map_or_else(slot, IntoElement::into_any_element)).child(terminal))
             .child(hit_target(&self.hits, format!("repo-row-{w}/{}", repo.name)))
             .on_mouse_down(MouseButton::Right, {
