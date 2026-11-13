@@ -28,8 +28,9 @@ fn fixture() -> Fixture {
     fs::write(alpha.join("scripts").join("gate.ps1"), "exit 10\n").unwrap();
     fs::write(alpha.join("scripts").join("gate.py"), "print(1)\n").unwrap();
     let f = Fixture { _tmp: tmp, home, claude, alpha, beta, outside };
-    let out = f.fm_in(&f.outside, &["workspace", "new", "demo", "--folder", s(&f.alpha), "--folder", s(&f.beta)]);
-    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let plain = |name: &str, path: &Path| supraman_core::Folder { kind: supraman_core::FolderKind::Plain, ..supraman_core::Folder::new(name, path) };
+    let demo = supraman_core::Workspace { home: None, ..supraman_core::Workspace::new("demo", &f.alpha, vec![plain("Alpha", &f.alpha), plain("Beta", &f.beta)]) };
+    supraman_core::Registry::at(&f.home).save(&demo, false).unwrap();
     f
 }
 

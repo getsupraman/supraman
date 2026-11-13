@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use gpui::{Context, KeyBinding, Window};
-use supraman_core::{TabKeys, holder_of, paths::within};
+use supraman_core::TabKeys;
 use supraman_ui::tabs;
 
 use super::{Detach, FleetView, KEY_CONTEXT, TabKind};
@@ -128,26 +128,25 @@ impl FleetView {
         }
     }
 
-    /// A Start page in the active tab's workspace and folder, else in the first workspace.
+    /// A Start page in the active tab's entry and folder, else in the first entry.
     fn new_task_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((workspace, folder)) = self.active_workspace(cx).or_else(|| self.workspaces.first().map(|w| (w.name.clone(), None))) else {
-            self.pane_toast.show_why("No workspace to start a task in: add one first.".into(), |v: &mut Self| &mut v.pane_toast, cx);
+        let Some((entry, folder)) = self.active_entry(cx).or_else(|| self.entry_names().into_iter().next().map(|name| (name, None))) else {
+            self.pane_toast.show_why("No folder to start a task in: add one first.".into(), |v: &mut Self| &mut v.pane_toast, cx);
             return;
         };
-        self.open_start(&workspace, folder, false, window, cx);
+        self.open_start(&entry, folder, false, window, cx);
     }
 
-    fn active_workspace(&self, cx: &gpui::App) -> Option<(String, Option<PathBuf>)> {
+    fn active_entry(&self, cx: &gpui::App) -> Option<(String, Option<PathBuf>)> {
         let tab = self.active.and_then(|id| self.tab(id))?;
         let cwd = match &tab.kind {
             TabKind::Work(view) => return Some((view.read(cx).workspace.clone(), None)),
-            TabKind::Start(page) => return Some((page.workspace.clone(), Some(page.folder.clone()))),
+            TabKind::Start(page) => return Some((page.entry.clone(), Some(page.folder.clone()))),
             TabKind::Git(view) => view.read(cx).folder.clone(),
             _ => tab.cwd.clone()?,
         };
-        let ws = holder_of(&cwd, &self.workspaces)?;
-        let folder = ws.folders.iter().filter(|f| within(&cwd, &f.path)).max_by_key(|f| f.path.as_os_str().len()).map(|f| f.path.clone());
-        Some((ws.name.clone(), folder))
+        let folder = supraman_claude::holding(&cwd, &self.listed.entries, |_| None)?.path.clone();
+        Some((self.entry_of(&cwd)?, Some(folder)))
     }
 }
 

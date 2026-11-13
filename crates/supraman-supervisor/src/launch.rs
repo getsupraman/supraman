@@ -112,14 +112,14 @@ pub struct LaunchConfig {
 
 impl LaunchConfig {
     /// The `claude --bg` of `w` before its Workman token; `env` adds to its env.
-    pub fn launch_spec(&self, workspace: &str, w: &BgSession, env: &[(&str, &str)]) -> LaunchSpec {
+    pub fn launch_spec(&self, w: &BgSession, env: &[(&str, &str)]) -> LaunchSpec {
         let mut spec = LaunchSpec::new(&w.name, &w.cwd, &w.prompt);
         spec.permission_mode = w.permission_mode.clone();
         spec.strict_mcp_config = true;
         spec.plugin_dirs = self.plugin_dirs.clone();
         spec.mcp_servers = self.plugin_servers(&w.name);
         spec.add_dirs = w.add_dirs.clone();
-        if let Some(settings) = self.settings_with(workspace, &w.name, &w.role, w.repo.as_deref(), env) {
+        if let Some(settings) = self.settings_with(&w.name, &w.role, w.repo.as_deref(), env) {
             spec.extra_args = vec!["--settings".into(), settings];
         }
         spec.extra_args.extend(self.allowed_tools_args());
@@ -154,13 +154,12 @@ impl LaunchConfig {
     }
 
     /// The session's `SUPRAMAN_HOME` and `SUPRAMAN_*` vars; empty without a home.
-    pub fn session_env(&self, workspace: &str, name: &str, role: &str, repo: Option<&str>, extra: &[(&str, &str)]) -> Vec<(String, String)> {
+    pub fn session_env(&self, name: &str, role: &str, repo: Option<&str>, extra: &[(&str, &str)]) -> Vec<(String, String)> {
         let Some(home) = &self.supraman_home else {
             return Vec::new();
         };
         let session = SessionEnv {
             role: Some(role.to_string()),
-            workspace: Some(workspace.to_string()),
             session: Some(name.to_string()),
             repo: repo.map(str::to_string),
         };
@@ -173,9 +172,9 @@ impl LaunchConfig {
         env
     }
 
-    fn settings_with(&self, workspace: &str, name: &str, role: &str, repo: Option<&str>, extra: &[(&str, &str)]) -> Option<String> {
+    fn settings_with(&self, name: &str, role: &str, repo: Option<&str>, extra: &[(&str, &str)]) -> Option<String> {
         let mut settings = serde_json::Map::new();
-        let mut env = self.session_env(workspace, name, role, repo, extra);
+        let mut env = self.session_env(name, role, repo, extra);
         if !env.is_empty() {
             env.extend(supraman_core::install::sm_first_path().map(|path| ("PATH".to_string(), path)));
             let env: serde_json::Map<String, serde_json::Value> = env.into_iter().map(|(k, v)| (k, v.into())).collect();

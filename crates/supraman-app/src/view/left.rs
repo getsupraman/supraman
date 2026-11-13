@@ -19,7 +19,7 @@ use super::{Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE, MAX_WORKING_LI
 use supraman_ui::clipped::clipped;
 use crate::settings_window::page;
 use crate::updates::Stage;
-use crate::fleet::{self, Open, RepoNode, SessionRow, WorkspaceNode};
+use crate::fleet::{self, EntryNode, FolderNode, Open, SessionRow};
 
 mod action_bar;
 mod work_cards;
@@ -34,7 +34,7 @@ pub(super) enum PendingReveal {
 
 #[derive(Clone, Copy)]
 pub(super) enum LeftRow {
-    Workspace(usize),
+    Group(usize),
     Schedules(usize),
     Folder(usize, usize),
     Session(usize, usize, usize),
@@ -82,7 +82,7 @@ fn tinted_button(hits: &HitTargets, key: &'static str, icon: Icon, tip: impl Int
     button::toolbar(hits, key, icon.svg(16., fg), on, fg, cx).tooltip(Tooltip::text(tip))
 }
 
-const WORKSPACE_ROW: f32 = 30.;
+const GROUP_ROW: f32 = 30.;
 pub(super) const REPO_ROW: f32 = 26.;
 pub(super) const SESSION_LINE: f32 = 24.;
 /// One hover icon's place: always laid out, so a row's icons never shift.
@@ -188,7 +188,7 @@ impl FleetView {
 
     pub fn collapse_all(&mut self, collapse: bool, cx: &mut Context<Self>) {
         if collapse {
-            self.sidebar.collapsed.extend(self.workspaces.iter().map(|w| format!("workspace:{}", w.name)));
+            self.sidebar.collapsed.extend(self.listed.entries.groups().map(|(name, _)| format!("group:{name}")));
         } else {
             self.sidebar.collapsed.clear();
         }
@@ -261,17 +261,11 @@ impl FleetView {
                 banner::tinted(status.error),
             ));
         }
-        if let Some(error) = &self.listing.registry_error {
-            notices.push(notice(
-                format!("Cannot read the workspace registry: {error}"),
-                banner::tinted(status.error),
-            ));
+        if let Some(error) = &self.listed.error {
+            notices.push(notice(format!("Cannot read the folders: {error}"), banner::tinted(status.error)));
         }
-        for skipped in &self.listing.registry_skipped {
-            notices.push(notice(
-                format!("A workspace is left out, the others run: {skipped}"),
-                banner::tinted(status.error),
-            ));
+        for skipped in &self.listed.skipped {
+            notices.push(notice(format!("Some schedules are left out, the others run: {skipped}"), banner::tinted(status.error)));
         }
         if let Some(error) = &self.listing.sessions_error {
             notices.push(notice(
@@ -295,13 +289,9 @@ impl FleetView {
             notices.push(notice(e.clone(), banner::tinted(status.warning)));
         }
         notices.extend(self.render_confirm(cx));
-        notices.extend(self.add_dialog().map(|d| d.clone().into_any_element()));
         notices.extend(self.render_schedule_edit(cx));
-        if self.listing.registry_error.is_none() && self.listing.registry_skipped.is_empty() && self.polls.refreshes > 0 && tree.workspaces.is_empty() && self.dialogs.adding.is_none() {
-            notices.push(notice(
-                "No workspaces registered. Add one with the folder button above, or:  sm workspace add <dir>".into(),
-                banner::plain(cx),
-            ));
+        if self.listed.error.is_none() && self.polls.refreshes > 0 && tree.entries.is_empty() {
+            notices.push(notice("No folders yet. Add one with the folder button above, or:  sm folder add <dir>".into(), banner::plain(cx)));
         }
         notices
     }
@@ -331,24 +321,26 @@ impl FleetView {
     /// The sidebar's rows in order: a key each and the tokens its hit keys contain (supraman_ui::keyed_list).
     fn set_left_rows(&mut self, tree: &Rc<fleet::Tree>) {
         let mut rows = Vec::new();
-        for (w, workspace) in tree.workspaces.iter().enumerate() {
-            let name = &workspace.name;
-            rows.push((LeftRow::Workspace(w), format!("ws:{name}"), vec![name.clone()]));
-            if self.sidebar.collapsed.contains(&format!("workspace:{name}")) {
-                continue;
-            }
-            rows.push((LeftRow::Schedules(w), format!("sched:{name}"), ["schedules-row-", "sched-row-", "sched-state-", "sched-error-"].iter().map(|p| format!("{p}{name}")).collect()));
-            for (r, repo) in workspace.repos.iter().enumerate() {
-                let path = format!("{name}/{}", repo.name);
-                rows.push((LeftRow::Folder(w, r), format!("repo:{path}"), vec![path.clone()]));
-                if self.sidebar.collapsed.contains(&format!("repo:{path}")) {
+        for (e, entry) in tree.entries.iter().enumerate() {
+            let name = &entry.name;
+            if entry.group {
+                rows.push((LeftRow::Group(e), format!("group:{name}"), vec![name.clone()]));
+                if self.sidebar.collapsed.contains(&format!("group:{name}")) {
                     continue;
                 }
-                for (i, row) in repo.sessions.iter().enumerate() {
-                    rows.push((LeftRow::Session(w, r, i), format!("s:{path}/{}", row.session.session_id), vec![row.session.session_id.clone(), row.session.id.clone()]));
+                rows.push((LeftRow::Schedules(e), format!("sched:{name}"), ["schedules-row-", "sched-row-", "sched-state-", "sched-error-"].iter().map(|p| format!("{p}{name}")).collect()));
+            }
+            for (f, folder) in entry.folders.iter().enumerate() {
+                let key = &folder.key;
+                rows.push((LeftRow::Folder(e, f), format!("repo:{key}"), vec![key.clone()]));
+                if self.sidebar.collapsed.contains(&format!("repo:{key}")) {
+                    continue;
                 }
-                if repo.more > 0 {
-                    rows.push((LeftRow::More(w, r), format!("more:{path}"), vec![format!("more-{path}")]));
+                for (i, row) in folder.sessions.iter().enumerate() {
+                    rows.push((LeftRow::Session(e, f, i), format!("s:{key}/{}{}", row.session.session_id, row.scope), vec![row.session.session_id.clone(), row.session.id.clone()]));
+                }
+                if folder.more > 0 {
+                    rows.push((LeftRow::More(e, f), format!("more:{key}"), vec![format!("more-{key}")]));
                 }
             }
         }
@@ -391,11 +383,11 @@ impl FleetView {
         false
     }
 
-    /// How many folder rows of `workspace` the sidebar holds, in view or not.
+    /// How many folder rows of the entry `name` the sidebar holds, in view or not.
     #[cfg(feature = "selftest")]
-    pub fn folder_rows(&self, workspace: &str) -> usize {
+    pub fn folder_rows(&self, name: &str) -> usize {
         let (tree, rows) = &*self.sidebar.left_rows;
-        rows.iter().filter(|r| matches!(r, LeftRow::Folder(w, _) if tree.workspaces[*w].name == workspace)).count()
+        rows.iter().filter(|r| matches!(r, LeftRow::Folder(e, _) if tree.entries[*e].name == name)).count()
     }
 
     #[cfg(feature = "selftest")]
@@ -408,30 +400,29 @@ impl FleetView {
         let (tree, rows) = (&rows.0, &rows.1);
         let Some(row) = rows.get(ix) else { return div().into_any_element() };
         match *row {
-            LeftRow::Workspace(w) => {
-                let workspace = &tree.workspaces[w];
-                let open = !self.sidebar.collapsed.contains(&format!("workspace:{}", workspace.name));
-                self.render_workspace_row(workspace, open, cx)
+            LeftRow::Group(e) => {
+                let entry = &tree.entries[e];
+                let open = !self.sidebar.collapsed.contains(&format!("group:{}", entry.name));
+                self.render_group_row(entry, open, cx)
             }
-            LeftRow::Schedules(w) => div().flex().flex_col().children(self.render_schedules(&tree.workspaces[w], cx)).into_any_element(),
-            LeftRow::Folder(w, r) => {
-                let (workspace, repo) = (&tree.workspaces[w], &tree.workspaces[w].repos[r]);
-                let open = !self.sidebar.collapsed.contains(&format!("repo:{}/{}", workspace.name, repo.name));
-                self.render_folder_row(workspace, repo, open, cx)
+            LeftRow::Schedules(e) => div().flex().flex_col().children(self.render_schedules(&tree.entries[e], cx)).into_any_element(),
+            LeftRow::Folder(e, f) => {
+                let (entry, folder) = (&tree.entries[e], &tree.entries[e].folders[f]);
+                let open = !self.sidebar.collapsed.contains(&format!("repo:{}", folder.key));
+                self.render_folder_row(entry, folder, open, cx)
             }
-            LeftRow::Session(w, r, i) => {
-                let workspace = &tree.workspaces[w];
-                let repo = &workspace.repos[r];
-                self.render_session(&workspace.name, &repo.name, &repo.sessions[i], grid::indent(2), cx)
+            LeftRow::Session(e, f, i) => {
+                let (entry, folder) = (&tree.entries[e], &tree.entries[e].folders[f]);
+                self.render_session(&entry.name, &folder.key, &folder.sessions[i], grid::indent(level(entry) + 1), cx)
             }
-            LeftRow::More(w, r) => self.render_more_closed(&tree.workspaces[w], &tree.workspaces[w].repos[r], cx),
+            LeftRow::More(e, f) => self.render_more_closed(&tree.entries[e], &tree.entries[e].folders[f], cx),
             LeftRow::Others => div().flex().flex_col().children(self.render_unowned_others(cx)).into_any_element(),
         }
     }
 
-    fn render_more_closed(&self, workspace: &WorkspaceNode, repo: &RepoNode, cx: &mut Context<Self>) -> AnyElement {
+    fn render_more_closed(&self, entry: &EntryNode, repo: &FolderNode, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
-        let key = format!("{}/{}", workspace.name, repo.name);
+        let key = repo.key.clone();
         let hit = format!("more-{key}");
         div()
             .id(SharedString::from(hit.clone()))
@@ -440,7 +431,7 @@ impl FleetView {
             .flex_none()
             .items_center()
             .h(px(SESSION_LINE))
-            .pl(grid::indent(2) + px(grid::LABEL))
+            .pl(grid::indent(level(entry) + 1) + px(grid::LABEL))
             .text_xs()
             .text_color(secondary(cx))
             .cursor_pointer()
@@ -639,32 +630,29 @@ impl FleetView {
         button::revealed(&self.hits, key, icon.svg(14., cx.theme().colors().text_muted), px(SLOT), group.clone(), shown, cx).tooltip(Tooltip::text(tip))
     }
 
-    fn workspace_selected(&self, workspace: &WorkspaceNode, cx: &gpui::App) -> bool {
+    fn entry_selected(&self, entry: &EntryNode, cx: &gpui::App) -> bool {
         let Some(tab) = self.active.and_then(|id| self.tab(id)) else { return false };
         match &tab.kind {
-            TabKind::Work(view) => view.read(cx).workspace == workspace.name,
+            TabKind::Work(view) => view.read(cx).workspace == entry.name,
             _ => false,
         }
     }
 
-    fn render_workspace_row(&self, workspace: &WorkspaceNode, open: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn render_group_row(&self, entry: &EntryNode, open: bool, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
-        let w = workspace.name.clone();
-        let pkey = format!("workspace:{w}");
-        let group = SharedString::from(format!("ws-group-{w}"));
-        let shown = self.workspace_selected(workspace, cx);
-
-        let buttons = self.workspace_buttons(workspace, &group, shown, cx);
-
+        let name = entry.name.clone();
+        let pkey = format!("group:{name}");
+        let group = SharedString::from(format!("group-hover-{name}"));
+        let buttons = self.entry_buttons(entry, &group, self.entry_selected(entry, cx), cx);
         let line = div()
             .flex()
             .items_center()
             .gap(grid::gap())
-            .h(px(WORKSPACE_ROW))
+            .h(px(GROUP_ROW))
             .child(disclosure(Some(open), colors.text_muted))
-            .child(icon_slot(&self.hits, &format!("ws-{w}"), None))
-            .child(tree_label(&self.hits, &format!("ws-{w}"), div().flex_none().font_weight(FontWeight::BOLD).whitespace_nowrap().child(SharedString::from(w.clone()))))
-            .child(clipped(format!("ws-root-{w}"), home_text(workspace.home.as_deref()), true).flex_1().text_xs().text_color(secondary(cx)).child(hit_target(&self.hits, format!("ws-root-{w}"))))
+            .child(icon_slot(&self.hits, &format!("group-{name}"), None))
+            .child(tree_label(&self.hits, &format!("group-{name}"), div().flex_none().font_weight(FontWeight::BOLD).whitespace_nowrap().child(SharedString::from(name.clone()))))
+            .child(div().flex_1())
             .child(buttons);
         div()
             .id(SharedString::from(pkey.clone()))
@@ -680,70 +668,61 @@ impl FleetView {
             .hover(|s| s.bg(colors.ghost_element_hover))
             .active(|s| s.bg(colors.ghost_element_active))
             .child(line)
-            .child(hit_target(&self.hits, format!("ws-row-{w}")))
+            .child(hit_target(&self.hits, format!("group-row-{name}")))
             .on_mouse_down(MouseButton::Right, {
-                let w = w.clone();
+                let name = name.clone();
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
-                    this.open_menu(MenuTarget::Workspace(w.clone()), e.position, cx);
+                    this.open_menu(MenuTarget::Group(name.clone()), e.position, cx);
                 })
             })
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(pkey.clone(), cx)))
             .into_any_element()
     }
 
-    fn workspace_buttons(&self, workspace: &WorkspaceNode, group: &SharedString, shown: bool, cx: &mut Context<Self>) -> Div {
-        let w = workspace.name.clone();
+    /// An entry's Work and New task…, on its group's row or its top-level folder's.
+    fn entry_buttons(&self, entry: &EntryNode, group: &SharedString, shown: bool, cx: &mut Context<Self>) -> Div {
+        let name = entry.name.clone();
         let work = {
-            let w = w.clone();
-            self.hover_icon(format!("work-{w}"), Icon::Work, "Work: the workspace's Workman board", group, shown, cx).on_click(cx.listener(
+            let name = name.clone();
+            self.hover_icon(format!("work-{name}"), Icon::Work, "Work: the Workman board of its folders' projects", group, shown, cx).on_click(cx.listener(
                 move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
-                    this.open_work(&w, cx);
+                    this.open_work(&name, cx);
                 },
             ))
         };
-        let task = {
-            let w = w.clone();
-            self.hover_icon(format!("task-{w}"), Icon::Task, "New task…: start a session with a first prompt", group, shown, cx).on_click(cx.listener(
-                move |this, _: &ClickEvent, window, cx| {
-                    cx.stop_propagation();
-                    this.open_start(&w, None, false, window, cx);
-                },
-            ))
-        };
-        div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(2.))
-            .child(work)
-            .child(task)
+        let task = self.hover_icon(format!("task-{name}"), Icon::Task, "New task…: start a session with a first prompt", group, shown, cx).on_click(cx.listener(
+            move |this, _: &ClickEvent, window, cx| {
+                cx.stop_propagation();
+                this.open_start(&name, None, false, window, cx);
+            },
+        ));
+        div().flex().flex_none().items_center().gap(px(2.)).child(work).child(task)
     }
 
-    fn render_folder_row(&self, workspace: &WorkspaceNode, repo: &RepoNode, open: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn render_folder_row(&self, entry: &EntryNode, repo: &FolderNode, open: bool, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
-        let w = &workspace.name;
-        let rkey = format!("repo:{w}/{}", repo.name);
-        let tree_key = format!("repo-{w}/{}", repo.name);
-        let group = SharedString::from(format!("repo-group-{w}/{}", repo.name));
+        let key = &repo.key;
+        let rkey = format!("repo:{key}");
+        let tree_key = format!("repo-{key}");
+        let group = SharedString::from(format!("repo-group-{key}"));
         let empty = repo.sessions.is_empty();
         let git = repo.kind == supraman_core::FolderKind::Git;
         let branch = repo.branch.clone().filter(|_| git).unwrap_or_default();
-        let offers_new = repo.enabled && repo.supervised_in.is_none();
-        let parked = repo.listed && !repo.enabled && repo.supervised_in.is_none();
-        let new_claude = offers_new.then(|| {
-            let (cwd, title) = (repo.path.clone(), format!("{w} · {} · claude", repo.name));
-            self.hover_icon(format!("new-claude-{w}/{}", repo.name), Icon::Plus, "New claude session in this folder", &group, false, cx).on_click(cx.listener(
+        let place = repo.place();
+        let new_claude = {
+            let (cwd, title) = (repo.path.clone(), format!("{place} · claude"));
+            self.hover_icon(format!("new-claude-{key}"), Icon::Plus, "New claude session in this folder", &group, false, cx).on_click(cx.listener(
                 move |this, _: &ClickEvent, window, cx| {
                     cx.stop_propagation();
                     this.new_claude(cwd.clone(), title.clone(), window, cx);
                 },
             ))
-        });
+        };
         let terminal = {
-            let (cwd, title) = (repo.path.clone(), format!("{w} · {} · pwsh", repo.name));
-            self.hover_icon(format!("terminal-{w}/{}", repo.name), Icon::Terminal, "Open a terminal here", &group, false, cx).on_click(cx.listener(
+            let (cwd, title) = (repo.path.clone(), format!("{place} · pwsh"));
+            self.hover_icon(format!("terminal-{key}"), Icon::Terminal, "Open a terminal here", &group, false, cx).on_click(cx.listener(
                 move |this, _: &ClickEvent, window, cx| {
                     cx.stop_propagation();
                     this.open_shell_in(cwd.clone(), title.clone(), window, cx);
@@ -752,13 +731,14 @@ impl FleetView {
         };
         let history = git.then(|| {
             let (folder, title) = (repo.path.clone(), format!("Git · {}", repo.name));
-            self.hover_icon(format!("git-graph-{w}/{}", repo.name), Icon::GitGraph, "Show this folder's commit graph", &group, false, cx).on_click(cx.listener(
+            self.hover_icon(format!("git-graph-{key}"), Icon::GitGraph, "Show this folder's commit graph", &group, false, cx).on_click(cx.listener(
                 move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     this.open_git(folder.clone(), title.clone(), cx);
                 },
             ))
         });
+        let entry_buttons = (!entry.group).then(|| self.entry_buttons(entry, &group, self.entry_selected(entry, cx), cx));
         div()
             .id(SharedString::from(rkey.clone()))
             .group(group)
@@ -767,29 +747,26 @@ impl FleetView {
             .flex_none()
             .items_center()
             .gap(grid::gap())
-            .h(px(REPO_ROW))
-            .pl(grid::indent(1))
+            .h(px(if entry.group { REPO_ROW } else { GROUP_ROW }))
+            .pl(grid::indent(level(entry)))
             .pr_2()
             .text_sm()
             .cursor_pointer()
             .hover(|s| s.bg(colors.ghost_element_hover))
             .active(|s| s.bg(colors.ghost_element_active))
             .when(empty, |d| d.text_color(quiet(cx)))
-            .when(parked, |d| d.opacity(DIMMED))
             .child(disclosure((!empty).then_some(open), secondary(cx)))
             .child(icon_slot(&self.hits, &tree_key, Some(if git { Icon::GitBranch } else { Icon::Folder }.slotted(grid::ICON, secondary(cx)).into_any_element())))
-            .child(tree_label(&self.hits, &tree_key, div().flex_none().whitespace_nowrap().child(SharedString::from(folder_label(&repo.name, &repo.path, workspace.home.as_deref())))))
-            .child(clipped(format!("branch-{w}/{}", repo.name), branch, false).text_xs().text_color(secondary(cx)).child(hit_target(&self.hits, format!("branch-{w}/{}", repo.name))))
-            .when(parked, |d| d.child(tag("disabled", cx)))
-            .children(self.folder_tags(w, repo, cx))
-            .child(div().relative().flex_1().child(hit_target(&self.hits, format!("repo-room-{w}/{}", repo.name))))
-            .child(div().flex().flex_none().items_center().gap(px(2.)).children(history).child(new_claude.map_or_else(slot, IntoElement::into_any_element)).child(terminal))
-            .child(hit_target(&self.hits, format!("repo-row-{w}/{}", repo.name)))
+            .child(tree_label(&self.hits, &tree_key, div().flex_none().whitespace_nowrap().child(SharedString::from(repo.name.clone()))))
+            .child(clipped(format!("branch-{key}"), branch, false).text_xs().text_color(secondary(cx)).child(hit_target(&self.hits, format!("branch-{key}"))))
+            .child(div().relative().flex_1().child(hit_target(&self.hits, format!("repo-room-{key}"))))
+            .child(div().flex().flex_none().items_center().gap(px(2.)).children(history).child(new_claude).child(terminal).children(entry_buttons))
+            .child(hit_target(&self.hits, format!("repo-row-{key}")))
             .on_mouse_down(MouseButton::Right, {
-                let (w, r) = (w.clone(), repo.name.clone());
+                let key = key.clone();
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
-                    this.open_menu(MenuTarget::Repo { workspace: w.clone(), repo: r.clone() }, e.position, cx);
+                    this.open_menu(MenuTarget::Folder(key.clone()), e.position, cx);
                 })
             })
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(rkey.clone(), cx)))
@@ -798,8 +775,8 @@ impl FleetView {
 
     pub(super) fn render_session(
         &self,
-        workspace: &str,
-        repo: &str,
+        entry: &str,
+        place: &str,
         row: &SessionRow,
         indent: Pixels,
         cx: &mut Context<Self>,
@@ -807,7 +784,7 @@ impl FleetView {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let s = &row.session;
-        let at = row.scope(workspace);
+        let at = row.scope.clone();
         let foreign = row.foreign;
         let blocked = !foreign && matches!(row.health, Health::Blocked { .. });
         let dimmed = foreign || matches!(row.health, Health::Orphaned { .. } | Health::Stopped);
@@ -822,10 +799,10 @@ impl FleetView {
             .map(|h| format!("hook: {}", h.label(now_ms())));
         let shown = self.is_marked(s);
         let group = SharedString::from(format!("session-group-{}{at}", s.session_id));
-        let line = self.session_line(workspace, repo, row, cx);
+        let line = self.session_line(place, row, cx);
 
-        let (w, r, clicked) = (workspace.to_string(), repo.to_string(), row.clone());
-        let target = MenuTarget::Session { workspace: workspace.to_string(), repo: repo.to_string(), session_id: s.session_id.clone() };
+        let (title, clicked) = (place.replace('/', " · "), row.clone());
+        let target = MenuTarget::Session { entry: entry.to_string(), place: place.to_string(), session_id: s.session_id.clone() };
         let tint = status.warning.opacity(0.12);
         let keys = button::RowKeys {
             id: format!("session-{}{at}", s.id).into(),
@@ -861,7 +838,7 @@ impl FleetView {
             .when(shown, |d| d.child(hit_target(&self.hits, format!("marked-{}{at}", s.session_id))))
             .on_click(cx.listener(move |this, e: &ClickEvent, _, cx| {
                 if e.click_count() == 2 {
-                    this.open_row(&w, &r, &clicked, cx);
+                    this.open_row(&title, &clicked, cx);
                 }
             }))
             .on_mouse_down(
@@ -874,17 +851,17 @@ impl FleetView {
             .into_any_element()
     }
 
-    fn session_line(&self, workspace: &str, repo: &str, row: &SessionRow, cx: &mut Context<Self>) -> Div {
+    fn session_line(&self, place: &str, row: &SessionRow, cx: &mut Context<Self>) -> Div {
         let colors = cx.theme().colors().clone();
         let s = &row.session;
-        let at = row.scope(workspace);
+        let at = row.scope.clone();
         let state = fleet::State::of_row(row);
         let mark = if row.foreign { state.mark(cx).in_color(colors.text_muted) } else { state.mark(cx) };
         let word_color = if row.foreign || !matches!(state, fleet::State::Live(_)) { secondary(cx) } else { mark.color() };
         let marks = self.sidebar.search_marks.get(&s.session_id);
         let tree_key = format!("session-{}{at}", s.session_id);
         let star = self.session_star(row, &at, cx);
-        let action = self.session_open(workspace, repo, row, cx);
+        let action = self.session_open(place, row, cx);
         div()
             .flex()
             .items_center()
@@ -914,17 +891,6 @@ impl FleetView {
                     .child(SharedString::from(format!("{} · ", s.kind.as_str())))
                     .child(div().text_color(word_color).child(SharedString::from(state.word()))),
             )
-            .when_some(row.also_in.clone(), |d, owner| {
-                d.child(
-                    div()
-                        .id(SharedString::from(format!("also-in-{}{at}", s.session_id)))
-                        .flex_none()
-                        .whitespace_nowrap()
-                        .text_xs()
-                        .text_color(quiet(cx))
-                        .child(SharedString::from(format!("also in {owner}"))),
-                )
-            })
             .child(
                 div()
                     .flex()
@@ -977,9 +943,9 @@ impl FleetView {
             }))
     }
 
-    fn session_open(&self, workspace: &str, repo: &str, row: &SessionRow, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    fn session_open(&self, place: &str, row: &SessionRow, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let s = &row.session;
-        let at = row.scope(workspace);
+        let at = row.scope.clone();
         let group = SharedString::from(format!("session-group-{}{at}", s.session_id));
         let open = self.open_of(row);
         let key = match open {
@@ -990,51 +956,11 @@ impl FleetView {
         };
         // open in a tab not shown now: a state, so it shows without a hover
         let shown = matches!(open, Open::Tab(_)) || self.is_marked(s);
-        let (workspace, repo, row) = (workspace.to_string(), repo.to_string(), row.clone());
+        let (title, row) = (place.replace('/', " · "), row.clone());
         Some(self.hover_icon(format!("{key}-{}{at}", s.id), open.icon(), open.hint(), &group, shown, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
             cx.stop_propagation();
-            this.open_row(&workspace, &repo, &row, cx);
+            this.open_row(&title, &row, cx);
         })))
-    }
-
-    /// `supervised in <ws>` (a click reveals it there), `also in <ws>, …`.
-    fn folder_tags(&self, workspace: &str, repo: &RepoNode, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let mut out = Vec::new();
-        if let Some(owner) = &repo.supervised_in {
-            let key = format!("supervised-in-{workspace}/{}", repo.name);
-            let (owner, path) = (owner.clone(), repo.path.clone());
-            out.push(
-                tag(format!("supervised in {owner}"), cx)
-                    .id(SharedString::from(key.clone()))
-                    .relative()
-                    .cursor_pointer()
-                    .hover(|s| s.text_color(cx.theme().colors().text))
-                    .child(hit_target(&self.hits, key))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        cx.stop_propagation();
-                        this.reveal_folder(&owner, &path, cx);
-                    }))
-                    .into_any_element(),
-            );
-        }
-        let also: Vec<&str> = repo.also_in.iter().map(String::as_str).filter(|w| repo.supervised_in.as_deref() != Some(*w)).collect();
-        if !also.is_empty() {
-            out.push(
-                div()
-                    .flex_none()
-                    .whitespace_nowrap()
-                    .text_xs()
-                    .text_color(secondary(cx))
-                    .child(SharedString::from(format!("also in {}", also.join(", "))))
-                    .into_any_element(),
-            );
-        }
-        out
-    }
-
-    pub(super) fn reveal_folder(&mut self, workspace: &str, path: &std::path::Path, cx: &mut Context<Self>) {
-        let folder = self.workspaces.iter().find(|w| w.name == workspace).and_then(|w| w.folder_at(path)).map(|f| f.name.clone());
-        self.reveal(workspace, folder.as_deref(), cx);
     }
 
     fn render_confirm(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -1043,29 +969,9 @@ impl FleetView {
     }
 }
 
-pub(crate) fn repo_label(name: &str, path: &std::path::Path, home: Option<&std::path::Path>) -> String {
-    if home.is_some_and(|h| supraman_core::same_path(path, h)) { format!("{name} (home)") } else { format!("./{name}") }
-}
-
-fn folder_label(name: &str, path: &std::path::Path, home: Option<&std::path::Path>) -> String {
-    if home.is_some_and(|h| supraman_core::same_path(path, h)) { format!("{name} (home)") } else { name.to_string() }
-}
-
-pub(crate) fn home_text(home: Option<&std::path::Path>) -> String {
-    home.map(|h| h.display().to_string()).unwrap_or_default()
-}
-
-pub(crate) fn tag(text: impl Into<SharedString>, cx: &gpui::App) -> Div {
-    div()
-        .flex_none()
-        .px_1()
-        .rounded_sm()
-        .border_1()
-        .border_color(cx.theme().colors().border_variant)
-        .text_xs()
-        .text_color(secondary(cx))
-        .whitespace_nowrap()
-        .child(text.into())
+/// A row's level under the tree's root: a group's folders are one in.
+pub(super) fn level(entry: &EntryNode) -> usize {
+    usize::from(entry.group)
 }
 
 #[cfg(test)]
@@ -1077,15 +983,5 @@ mod tests {
         for level in 0..3 {
             assert_eq!(grid::indent(level + 1) + px(grid::DISCLOSURE + grid::GAP), grid::indent(level) + px(grid::LABEL));
         }
-    }
-
-    #[test]
-    fn folder_labels_name_the_home() {
-        use std::path::Path;
-        assert_eq!(repo_label("Gaia", Path::new(r"P:\x\Gaia"), Some(Path::new(r"p:/x/gaia/"))), "Gaia (home)");
-        assert_eq!(repo_label("child", Path::new(r"P:\x\Gaia\child"), Some(Path::new(r"P:\x\Gaia"))), "./child");
-        assert_eq!(repo_label("child", Path::new(r"P:\x\Gaia\child"), None), "./child");
-        assert_eq!(folder_label("Gaia", Path::new(r"P:\x\Gaia"), Some(Path::new(r"p:/x/gaia/"))), "Gaia (home)");
-        assert_eq!(folder_label("child", Path::new(r"P:\x\Gaia\child"), Some(Path::new(r"P:\x\Gaia"))), "child");
     }
 }

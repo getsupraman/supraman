@@ -7,7 +7,6 @@ use supraman_claude::{LaunchSpec, mcp_config_path};
 use supraman_core::schedule::{
     self, Action, ActionKind, CatchUp, Clock, Day, Overlap, Profile, Prompt, Schedule, Span, Status, Trigger,
 };
-use supraman_core::home::SessionEnv;
 use supraman_core::{CoreError, Registry, Workspace, find_plugin_dir, sm_allowed_tools, paths, slugify};
 use supraman_supervisor::{BgSession, LaunchConfig};
 
@@ -631,7 +630,7 @@ pub(crate) fn run_spec(home: &Path, w: &Workspace, s: &Schedule, stamp: &str, pl
         allowed_tools: s.permissions.allowed(&always, run_branch.as_deref()),
         claude_dir: supraman_core::paths::claude_dir(),
     };
-    let mut spec = config.launch_spec(&w.name, &session, &[("SUPRAMAN_SCHEDULE", &s.id), ("SUPRAMAN_RUN", &run)]);
+    let mut spec = config.launch_spec(&session, &[("SUPRAMAN_SCHEDULE", &s.id), ("SUPRAMAN_RUN", &run)]);
     spec.mcp_config = Some(mcp_config_path(&config.mcp_dir, &name).map_err(|e| Failure::Refused(format!("error: {e}")))?);
     spec.extra_args.push("--disallowedTools".into());
     spec.extra_args.extend(s.permissions.denied());
@@ -773,10 +772,7 @@ fn report(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
         _ => return Err(usage()),
     };
     let (all, _) = registry.load_all()?;
-    let preferred = SessionEnv::from_env().workspace;
-    let mut order: Vec<&Workspace> = all.iter().filter(|w| Some(&w.name) == preferred.as_ref()).collect();
-    order.extend(all.iter().filter(|w| Some(&w.name) != preferred.as_ref()));
-    for w in order {
+    for w in &all {
         let Ok(dir) = schedule::live_dir(registry.home(), &w.name) else { continue };
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
         for e in entries.flatten() {

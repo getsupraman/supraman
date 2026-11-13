@@ -132,7 +132,7 @@ pub fn plan(saved: &SavedTab, world: &World) -> Result<Reopen, String> {
     match saved {
         SavedTab::Shell { title, cwd, shell } => Ok(Reopen::Shell { title: title.clone(), cwd: cwd.clone(), shell: shell.clone().filter(|s| (world.is_file)(&s.program)) }),
         SavedTab::Work { workspace, .. } if world.workspaces.contains(workspace) => Ok(Reopen::Work { workspace: workspace.clone() }),
-        SavedTab::Work { workspace, .. } => Err(format!("workspace {workspace} is gone")),
+        SavedTab::Work { workspace, .. } => Err(format!("{workspace} is no longer listed")),
         SavedTab::Git { title, folder } => Ok(Reopen::Git { title: title.clone(), folder: folder.clone() }),
         SavedTab::Claude { title, .. } => {
             let session = saved.session().ok_or_else(|| "it has no conversation to resume".to_string())?;

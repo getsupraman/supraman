@@ -42,8 +42,9 @@ impl OnDisk {
 
 pub struct SessionFacts<'a> {
     pub row: &'a SessionRow,
-    pub workspace: &'a str,
-    /// The workspace's folder holding its cwd.
+    /// The group of the folder it shows under.
+    pub group: Option<&'a str>,
+    /// The listed folder it shows under.
     pub folder: Option<(&'a str, &'a Path)>,
     pub started_by: StartedBy,
     /// `None` while the workspace's Work tab is not open, which is where claims are read.
@@ -130,14 +131,14 @@ pub fn session(f: &SessionFacts, now_ms: i64) -> Vec<Section> {
     if !s.session_id.is_empty() && s.session_id != *id {
         session = session.row("UUID", s.session_id.clone());
     }
-    if let Some(w) = &row.also_in {
-        session = session.row("Also in", w.clone());
-    }
 
-    let mut place = Section::new("where", "Where").row("Workspace", f.workspace.to_string());
+    let mut place = Section::new("where", "Where");
+    if let Some(group) = f.group {
+        place = place.row("Group", group.to_string());
+    }
     place = match f.folder {
         Some((_, path)) => place.path("Folder", path),
-        None => place.row("Folder", format!("none of {}'s folders", f.workspace)),
+        None => place.row("Folder", "under no listed folder"),
     };
     place = place.path("Working directory", &s.cwd);
     if let Some(b) = &f.disk.branch {
@@ -151,7 +152,7 @@ pub fn session(f: &SessionFacts, now_ms: i64) -> Vec<Section> {
     workman = match &f.claimed {
         Some(Some(item)) => workman.row("Claimed item", item.clone()).row("Its session", s.name.clone()),
         Some(None) => workman.text("Claims no item on the open Work tab's board."),
-        None => workman.text("Open the workspace's Work tab to see what it claims."),
+        None => workman.text("Open the Work tab to see what it claims."),
     };
     if let Some(sign_in) = &f.sign_in {
         workman = workman.row("Sign-in", sign_in.clone());
@@ -164,50 +165,41 @@ pub fn session(f: &SessionFacts, now_ms: i64) -> Vec<Section> {
     vec![session, place, workman, transcript]
 }
 
+/// A group's or a top-level folder's facts.
 #[derive(Clone, Debug, Default)]
-pub struct WorkspaceFacts {
+pub struct EntryFacts {
     pub name: String,
-    pub home: Option<String>,
-    /// Name, path, enabled.
-    pub folders: Vec<(String, PathBuf, bool)>,
-    /// Path, depth.
-    pub scans: Vec<(PathBuf, usize)>,
+    pub group: bool,
+    /// Name, path.
+    pub folders: Vec<(String, PathBuf)>,
     pub sessions: usize,
     pub project: Option<String>,
 }
 
-pub fn workspace(facts: &WorkspaceFacts) -> Vec<Section> {
-    let mut ws = Section::new("workspace", "Workspace").row("Name", facts.name.clone());
-    if let Some(h) = facts.home.as_ref().filter(|h| !h.is_empty()) {
-        ws = ws.row("Home", h.clone());
+pub fn entry(facts: &EntryFacts) -> Vec<Section> {
+    let (key, title) = if facts.group { ("group", "Group") } else { ("folder", "Folder") };
+    let mut head = Section::new(key, title).row("Name", facts.name.clone());
+    if !facts.group && let Some((_, path)) = facts.folders.first() {
+        head = head.path("Path", path);
     }
-    ws = ws.row("Sessions", match facts.sessions {
+    head = head.row("Sessions", match facts.sessions {
         1 => "1 in the tree".to_string(),
         n => format!("{n} in the tree"),
     });
     if let Some(p) = &facts.project {
-        ws = ws.row("Workman project", p.clone());
+        head = head.row("Workman project", p.clone());
     }
-
+    if !facts.group {
+        return vec![head];
+    }
     let mut folders = Section::new("folders", "Folders");
     if facts.folders.is_empty() {
-        folders = folders.text("None yet: Edit folders… adds one.");
+        folders = folders.text("None yet.");
     }
-    for (name, path, enabled) in &facts.folders {
-        let disabled = if *enabled { "" } else { " (disabled)" };
-        folders = folders.row(name.clone(), format!("{}{disabled}", path.display()));
+    for (name, path) in &facts.folders {
+        folders = folders.row(name.clone(), path.display().to_string());
     }
-
-    let mut parents = Section::new("parents", "Parent folder");
-    if facts.scans.is_empty() {
-        parents = parents.text("None: Rescan has no folder to look in.");
-    }
-    for (path, depth) in &facts.scans {
-        let deep = if *depth > 1 { format!(" (git repos up to {depth} levels down)") } else { String::new() };
-        parents = parents.row("Parent folder", format!("{}{deep}", path.display()));
-    }
-
-    vec![ws, folders, parents]
+    vec![head, folders]
 }
 
 /// `<worktree folder> of <main checkout>` when `cwd` lies in a linked worktree.
@@ -240,7 +232,7 @@ mod tests {
     fn facts<'a>(row: &'a SessionRow, disk: &'a OnDisk) -> SessionFacts<'a> {
         SessionFacts {
             row,
-            workspace: "demo",
+            group: Some("demo"),
             folder: Some(("Alpha", Path::new(r"C:\nowhere\demo"))),
             started_by: StartedBy::Supraman,
             claimed: Some(Some("m5/59".into())),
@@ -254,7 +246,6 @@ mod tests {
     fn a_sessions_page_reads_its_facts_in_words_under_session_where_workman_and_transcript() {
         let mut r = row(Health::Running);
         r.session.started_at = Some(NOW - 120_000);
-        r.also_in = Some("larchsys".into());
         let disk = OnDisk { branch: Some("main".into()), transcript: Some(PathBuf::from(r"C:\claude\projects\x\77aa88bb-x.jsonl")), transcript_ms: Some(NOW - 5_000), ..Default::default() };
         let page = text(&session_title(&r), &session(&facts(&r, &disk), NOW));
         let started = format!("Started  2 min ago ({})", date_words(NOW - 120_000));
@@ -274,10 +265,9 @@ mod tests {
                 "Started by  Supraman",
                 "Id  77aa88bb",
                 "UUID  77aa88bb-x",
-                "Also in  larchsys",
                 "",
                 "Where",
-                "Workspace  demo",
+                "Group  demo",
                 "Folder  C:/nowhere/demo",
                 "Working directory  C:/nowhere/demo",
                 "Branch  main",
@@ -316,7 +306,7 @@ mod tests {
         let page = text("x", &sections);
         assert!(page.contains("\nState  waiting for permission prompt\n"), "{page}");
         assert!(page.contains("\nLast activity  turn ended 12 s ago\n"), "{page}");
-        assert!(page.contains("\nOpen the workspace's Work tab to see what it claims."), "{page}");
+        assert!(page.contains("\nOpen the Work tab to see what it claims."), "{page}");
         assert!(page.ends_with("\nNo transcript found under claude's projects folder."), "{page}");
         assert!(sections[0].lines.contains(&supraman_ui::details::Line::Link { label: "Started by".into(), value: "a run of schedule nightly".into(), target: "nightly".into() }));
         assert_eq!(session_pill(&r, true), "Waiting");
@@ -340,38 +330,21 @@ mod tests {
         assert!(text("x", &session(&facts(&gone, &disk), NOW)).contains("\nState  ended while working\n"));
     }
 
+
     #[test]
-    fn a_workspaces_page_reads_its_home_folders_and_scans() {
-        let facts = WorkspaceFacts {
+    fn a_groups_page_lists_its_folders_and_a_folders_page_its_path() {
+        let facts = EntryFacts {
             name: "demo".into(),
-            home: Some(r"C:\nowhere\demo".into()),
-            folders: vec![("Alpha".into(), PathBuf::from(r"C:\nowhere\demo\Alpha"), true), ("Beta".into(), PathBuf::from(r"C:\nowhere\demo\Beta"), false)],
-            scans: vec![(PathBuf::from(r"C:\nowhere\demo"), 2)],
+            group: true,
+            folders: vec![("Alpha".into(), PathBuf::from("C:/demo/Alpha")), ("Beta".into(), PathBuf::from("C:/demo/Beta"))],
             sessions: 3,
             project: Some("autowork".into()),
         };
-        assert_eq!(
-            text("demo", &workspace(&facts)),
-            [
-                "demo",
-                "",
-                "Workspace",
-                "Name  demo",
-                r"Home  C:\nowhere\demo",
-                "Sessions  3 in the tree",
-                "Workman project  autowork",
-                "",
-                "Folders",
-                r"Alpha  C:\nowhere\demo\Alpha",
-                r"Beta  C:\nowhere\demo\Beta (disabled)",
-                "",
-                "Parent folder",
-                r"Parent folder  C:\nowhere\demo (git repos up to 2 levels down)",
-            ]
-            .join("\n")
-        );
-        let bare = WorkspaceFacts { name: "gaia".into(), ..Default::default() };
-        let page = text("gaia", &workspace(&bare));
-        assert!(page.contains("\nNone yet: Edit folders… adds one.\n") && page.ends_with("\nNone: Rescan has no folder to look in."), "{page}");
+        let want = ["demo", "", "Group", "Name  demo", "Sessions  3 in the tree", "Workman project  autowork", "", "Folders", "Alpha  C:/demo/Alpha", "Beta  C:/demo/Beta"];
+        assert_eq!(text("demo", &entry(&facts)), want.join("\n"));
+        let bare = EntryFacts { name: "gaia".into(), group: true, ..Default::default() };
+        assert!(text("gaia", &entry(&bare)).ends_with("\nNone yet."));
+        let folder = EntryFacts { name: "Alpha".into(), folders: vec![("Alpha".into(), PathBuf::from("C:/a"))], sessions: 1, ..Default::default() };
+        assert_eq!(text("Alpha", &entry(&folder)), ["Alpha", "", "Folder", "Name  Alpha", "Path  C:/a", "Sessions  1 in the tree"].join("\n"));
     }
 }

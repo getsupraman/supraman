@@ -17,63 +17,55 @@ pub struct SessionHit {
 }
 
 #[derive(Debug, Clone)]
-pub struct RepoHit {
+pub struct FolderHit {
+    /// The folder's [`crate::fleet::FolderNode::key`].
+    pub key: String,
     pub name: String,
-    pub path: std::path::PathBuf,
     pub kind: supraman_core::FolderKind,
     pub name_marks: Vec<Range<usize>>,
     pub sessions: Vec<SessionHit>,
-    /// A listed folder of the workspace that is not enabled there, nor supervised elsewhere.
-    pub disabled: bool,
-    /// The workspace that supervises a listed folder not enabled here; the tree leaves the folder out.
-    pub supervised_in: Option<String>,
 }
 
+/// A group with its hits, or a top-level folder alone (`group` false, its one folder in `folders`).
 #[derive(Debug, Clone)]
-pub struct WorkspaceHit {
+pub struct EntryHit {
     pub name: String,
-    pub home: Option<std::path::PathBuf>,
+    pub group: bool,
     pub name_marks: Vec<Range<usize>>,
-    /// Scheduled runs' sessions, under the workspace rather than a folder.
+    /// Scheduled runs' sessions, under the group rather than a folder.
     pub runs: Vec<SessionHit>,
-    pub repos: Vec<RepoHit>,
+    pub folders: Vec<FolderHit>,
 }
 
-impl WorkspaceHit {
+impl EntryHit {
     pub fn count(&self) -> usize {
-        self.runs.len() + self.repos.iter().map(|r| r.sessions.len()).sum::<usize>()
+        self.runs.len() + self.folders.iter().map(|r| r.sessions.len()).sum::<usize>()
     }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct Results {
-    pub workspaces: Vec<WorkspaceHit>,
+    pub entries: Vec<EntryHit>,
 }
 
 impl Results {
     pub fn sessions(&self) -> usize {
-        self.workspaces.iter().map(WorkspaceHit::count).sum()
+        self.entries.iter().map(EntryHit::count).sum()
     }
 
     pub fn places(&self) -> usize {
-        self.workspaces
-            .iter()
-            .map(|w| usize::from(!w.name_marks.is_empty()) + w.repos.iter().filter(|r| !r.name_marks.is_empty()).count())
-            .sum()
+        self.entries.iter().map(|w| usize::from(!w.name_marks.is_empty()) + w.folders.iter().filter(|r| !r.name_marks.is_empty()).count()).sum()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.workspaces.is_empty()
+        self.entries.is_empty()
     }
 
     pub fn summary(&self) -> String {
         let (sessions, places) = (self.sessions(), self.places());
         let mut out = supraman_core::text::count(sessions, "session", "sessions");
-        if sessions > 0 {
-            out.push_str(&format!(" in {}", supraman_core::text::count(self.workspaces.iter().filter(|w| w.count() > 0).count(), "workspace", "workspaces")));
-        }
         if places > 0 {
-            out.push_str(&format!(", {} by name", supraman_core::text::count(places, "workspace or repo", "workspaces or repos")));
+            out.push_str(&format!(", {} by name", supraman_core::text::count(places, "group or folder", "groups or folders")));
         }
         out
     }
@@ -93,34 +85,26 @@ pub fn search(tree: &Tree, query: &str) -> Results {
     if needle.is_empty() {
         return Results::default();
     }
-    let hits = |rows: &[SessionRow]| -> Vec<SessionHit> {
-        rows.iter().filter_map(|row| session_marks(row, needle).map(|marks| SessionHit { row: row.clone(), marks })).collect()
-    };
-    let workspaces = tree
-        .workspaces
+    let hits = |rows: &[SessionRow]| -> Vec<SessionHit> { rows.iter().filter_map(|row| session_marks(row, needle).map(|marks| SessionHit { row: row.clone(), marks })).collect() };
+    let entries = tree
+        .entries
         .iter()
         .filter_map(|w| {
-            let repos: Vec<RepoHit> = w
-                .repos
+            let folders: Vec<FolderHit> = w
+                .folders
                 .iter()
                 .filter_map(|r| {
-                    let repo = RepoHit {
-                        name: r.name.clone(),
-                        path: r.path.clone(),
-                        kind: r.kind,
-                        name_marks: find_all(&r.name, needle),
-                        sessions: hits(&r.sessions),
-                        disabled: r.listed && !r.enabled && r.supervised_in.is_none(),
-                        supervised_in: r.supervised_in.clone().filter(|_| r.listed && !r.enabled),
-                    };
-                    (!repo.name_marks.is_empty() || !repo.sessions.is_empty()).then_some(repo)
+                    let folder = FolderHit { key: r.key.clone(), name: r.name.clone(), kind: r.kind, name_marks: find_all(&r.name, needle), sessions: hits(&r.sessions) };
+                    (!folder.name_marks.is_empty() || !folder.sessions.is_empty()).then_some(folder)
                 })
                 .collect();
-            let hit = WorkspaceHit { name: w.name.clone(), home: w.home.clone(), name_marks: find_all(&w.name, needle), runs: hits(&w.scheduled.values().flatten().cloned().collect::<Vec<_>>()), repos };
-            (!hit.name_marks.is_empty() || !hit.runs.is_empty() || !hit.repos.is_empty()).then_some(hit)
+            let name_marks = if w.group { find_all(&w.name, needle) } else { Vec::new() };
+            let runs = hits(&w.scheduled.values().flatten().cloned().collect::<Vec<_>>());
+            let hit = EntryHit { name: w.name.clone(), group: w.group, name_marks, runs, folders };
+            (!hit.name_marks.is_empty() || !hit.runs.is_empty() || !hit.folders.is_empty()).then_some(hit)
         })
         .collect();
-    Results { workspaces }
+    Results { entries }
 }
 
 #[cfg(test)]
@@ -130,7 +114,7 @@ mod tests {
     use supraman_claude::{Health, Kind, Session};
 
     use super::*;
-    use crate::fleet::{RepoNode, WorkspaceNode};
+    use crate::fleet::{EntryNode, FolderNode};
 
     fn row(name: &str, session_id: &str, closed: bool) -> SessionRow {
         let session = Session {
@@ -148,40 +132,21 @@ mod tests {
         SessionRow { closed, ..SessionRow::new(session, Health::Stopped) }
     }
 
-    fn repo(name: &str, sessions: Vec<SessionRow>) -> RepoNode {
-        RepoNode {
-            name: name.into(),
-            path: PathBuf::from(name),
-            kind: supraman_core::FolderKind::Git,
-            branch: None,
-            enabled: true,
-            listed: true,
-            supervised_in: None,
-            also_in: vec![],
-            sessions,
-            more: 0,
-        }
+    fn folder(key: &str, sessions: Vec<SessionRow>) -> FolderNode {
+        let name = key.rsplit('/').next().unwrap().to_string();
+        FolderNode { key: key.into(), path: PathBuf::from(&name), name, kind: supraman_core::FolderKind::Git, branch: None, sessions, more: 0 }
     }
 
     fn tree() -> Tree {
         Tree {
-            workspaces: vec![
-                WorkspaceNode {
+            entries: vec![
+                EntryNode {
                     name: "gaia".into(),
-                    home: Some(PathBuf::from("G:/gaia")),
+                    group: true,
                     scheduled: [("nightly".to_string(), vec![row("fm-gaia-sched-nightly-20261113-0900", "aaaa1111-0000", false)])].into(),
-                    repos: vec![
-                        repo("Web", vec![row("CI-CD-pipeline", "5e1f7e57-0001", true), row("docs", "01d05e1f-0002", false)]),
-                        repo("api", vec![]),
-                        RepoNode { enabled: false, ..repo("FounderOS-DEMO", vec![]) },
-                    ],
+                    folders: vec![folder("gaia/Web", vec![row("CI-CD-pipeline", "5e1f7e57-0001", true), row("docs", "01d05e1f-0002", false)]), folder("gaia/api", vec![])],
                 },
-                WorkspaceNode {
-                    name: "nomos".into(),
-                    home: Some(PathBuf::from("N:/nomos")),
-                    scheduled: Default::default(),
-                    repos: vec![repo("pipeline-tools", vec![row("Pipeline fix", "bbbb2222-0003", false)])],
-                },
+                EntryNode { name: "pipeline-tools".into(), group: false, scheduled: Default::default(), folders: vec![folder("pipeline-tools", vec![row("Pipeline fix", "bbbb2222-0003", false)])] },
             ],
             hidden_stopped: 0,
         }
@@ -189,12 +154,14 @@ mod tests {
 
     fn names(r: &Results) -> Vec<String> {
         let mut out = Vec::new();
-        for w in &r.workspaces {
-            out.push(format!("{} ({})", w.name, w.count()));
+        for w in &r.entries {
+            if w.group {
+                out.push(format!("{} ({})", w.name, w.count()));
+            }
             out.extend(w.runs.iter().map(|s| format!("  {}", s.row.session.name)));
-            for repo in &w.repos {
-                out.push(format!("  ./{} ({})", repo.name, repo.sessions.len()));
-                out.extend(repo.sessions.iter().map(|s| format!("    {}", s.row.session.name)));
+            for f in &w.folders {
+                out.push(format!("  {} ({})", f.key, f.sessions.len()));
+                out.extend(f.sessions.iter().map(|s| format!("    {}", s.row.session.name)));
             }
         }
         out
@@ -210,33 +177,29 @@ mod tests {
     }
 
     #[test]
-    fn results_are_grouped_by_workspace_then_repo_with_counts() {
+    fn results_are_grouped_by_entry_then_folder_with_counts() {
         let r = search(&tree(), "pipe");
-        assert_eq!(names(&r), ["gaia (1)", "  ./Web (1)", "    CI-CD-pipeline", "nomos (1)", "  ./pipeline-tools (1)", "    Pipeline fix"]);
-        assert_eq!(r.workspaces[1].repos[0].name_marks, [0..4]);
-        assert_eq!(r.summary(), "2 sessions in 2 workspaces, 1 workspace or repo by name");
+        assert_eq!(names(&r), ["gaia (1)", "  gaia/Web (1)", "    CI-CD-pipeline", "  pipeline-tools (1)", "    Pipeline fix"]);
+        assert_eq!(r.entries[1].folders[0].name_marks, [0..4]);
+        assert_eq!(r.summary(), "2 sessions, 1 group or folder by name");
     }
 
     #[test]
-    fn a_closed_session_is_found_by_its_id_prefix_and_a_workspace_by_its_name() {
+    fn a_closed_session_is_found_by_its_id_prefix_and_a_group_by_its_name() {
         let r = search(&tree(), " 5e1f ");
-        assert_eq!(names(&r), ["gaia (1)", "  ./Web (1)", "    CI-CD-pipeline"], "01d05e1f has 5e1f inside, not at its start");
-        assert!(r.workspaces[0].repos[0].sessions[0].row.closed);
+        assert_eq!(names(&r), ["gaia (1)", "  gaia/Web (1)", "    CI-CD-pipeline"], "01d05e1f has 5e1f inside, not at its start");
+        assert!(r.entries[0].folders[0].sessions[0].row.closed);
         let r = search(&tree(), "GAIA");
-        assert_eq!(names(&r), ["gaia (1)", "  fm-gaia-sched-nightly-20261113-0900"], "a scheduled run under the workspace");
-        assert_eq!(r.workspaces[0].name_marks, [0..4]);
-        assert_eq!(r.summary(), "1 session in 1 workspace, 1 workspace or repo by name");
+        assert_eq!(names(&r), ["gaia (1)", "  fm-gaia-sched-nightly-20261113-0900"], "a scheduled run under the group");
+        assert_eq!(r.entries[0].name_marks, [0..4]);
+        assert_eq!(r.summary(), "1 session, 1 group or folder by name");
     }
 
     #[test]
-    fn a_repo_found_by_name_shows_without_sessions_and_nothing_found_is_empty() {
+    fn a_folder_found_by_name_shows_without_sessions_and_nothing_found_is_empty() {
         let r = search(&tree(), "api");
-        assert_eq!(names(&r), ["gaia (0)", "  ./api (0)"]);
-        assert_eq!(r.summary(), "0 sessions, 1 workspace or repo by name");
-        assert!(!r.workspaces[0].repos[0].disabled);
-        let r = search(&tree(), "founder");
-        assert_eq!(names(&r), ["gaia (0)", "  ./FounderOS-DEMO (0)"]);
-        assert!(r.workspaces[0].repos[0].disabled, "labelled disabled");
+        assert_eq!(names(&r), ["gaia (0)", "  gaia/api (0)"]);
+        assert_eq!(r.summary(), "0 sessions, 1 group or folder by name");
         assert!(search(&tree(), "zzqx").is_empty());
         assert!(search(&tree(), "   ").is_empty());
     }

@@ -121,7 +121,7 @@ impl FleetView {
 
     fn transcripts_ask(&self) -> Option<TranscriptsAsk> {
         self.polls.sessions_read.then(|| TranscriptsAsk {
-            roots: self.workspaces.iter().flat_map(|w| w.folders.iter().filter(|r| r.enabled).map(|r| r.path.clone())).collect(),
+            roots: self.listed.entries.folders().map(|f| f.path.clone()).collect(),
             keep: self.stars.ids().iter().cloned().collect(),
             live: self.sessions.iter().map(|s| s.session_id.clone()).collect(),
             asks: self.polls.refresh_asks,
@@ -265,7 +265,7 @@ impl FleetView {
             }
             return None;
         };
-        Some(ExtrasFrom { home: self.home.clone(), plugin_dir, workspaces: self.workspaces.clone() })
+        Some(ExtrasFrom { home: self.home.clone(), plugin_dir, entries: self.listed.entries.clone() })
     }
 
     fn claude_shell(&self, launch: &Launch, claude: &str, extras: &Extras) -> util::shell::Shell {

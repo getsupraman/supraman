@@ -76,7 +76,6 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     let home_line = format!("SUPRAMAN_HOME={}", home.display());
     let env = [
         "SUPRAMAN_ROLE=hand".to_string(),
-        format!("SUPRAMAN_WORKSPACE={WORKSPACE}"),
         format!("SUPRAMAN_SESSION={session}"),
         format!("SUPRAMAN_REPO={repo}"),
         home_line,
@@ -93,8 +92,9 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     }
     let version = lines.iter().find(|l| l.starts_with("sm ")).copied().ok_or_else(|| anyhow!("`sm --version` printed nothing: {text}"))?;
     let tag = lines.iter().find(|l| l.starts_with("SUPRAMAN-ROLE hand v")).copied().ok_or_else(|| anyhow!("SessionStart injected no hand role: {text}"))?;
-    if !text.contains(&format!("Supraman workspace {WORKSPACE}")) || !text.contains("/supraman:supraman-scheduler") {
-        bail!("the hand role is not rendered for {WORKSPACE}: {text}");
+    // the role file comes from the plugins\supraman above the exe, the main checkout's in a unit build; its {repo} is upkeep's unit test
+    if !text.contains("The human opened this session from Supraman") || !text.contains("/supraman:supraman-scheduler") {
+        bail!("the hand role is not rendered: {text}");
     }
     let notices = view.read_with(cx, |v, _| v.hand_notices.clone());
     if notices.iter().any(|n| n.contains("plugins/supraman")) {
@@ -118,10 +118,9 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     view.read_with(cx, |v, _| v.polls.injected.lock().unwrap_or_else(|e| e.into_inner()).extend(rows));
     let label = until(view, cx, WITHIN, "the hand session's row with its hook signal", |v| {
         v.tree()
-            .workspaces
+            .folder(&format!("{WORKSPACE}/{repo}"))?
+            .sessions
             .iter()
-            .filter(|w| w.name == WORKSPACE)
-            .flat_map(|w| w.repos.iter().filter(|r| r.name == repo).flat_map(|r| &r.sessions))
             .find(|r| r.session.session_id == SID)
             .and_then(|r| r.hook.as_ref().map(|h| h.label(supraman_claude::now_ms())))
     })

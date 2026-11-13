@@ -55,9 +55,9 @@ pub(crate) async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
 const FIXTURE: &str = "f1c7";
 
 fn fixture(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<(Vec<Session>, Vec<Session>)> {
-    let folders: Vec<std::path::PathBuf> = view.read_with(cx, |v, _| v.workspaces.iter().flat_map(|w| w.folders.iter().map(|f| f.path.clone())).collect());
+    let folders: Vec<std::path::PathBuf> = view.read_with(cx, |v, _| v.listed.entries.folders().map(|f| f.path.clone()).collect());
     if folders.is_empty() {
-        bail!("the registry has no folders for the fixture sessions");
+        bail!("folders.toml lists no folder for the fixture sessions");
     }
     let now = supraman_claude::now_ms();
     let live: Vec<serde_json::Value> = (0..LIVE)

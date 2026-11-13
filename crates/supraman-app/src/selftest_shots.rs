@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{Context as _, anyhow, bail};
-use supraman_core::{Folder, FolderKind, Registry, Workspace};
+use supraman_core::folders::{Entries, Entry, FolderEntry, Place};
 use supraman_workman::fake::{Answer, FakeWorkman};
 use gpui::{AsyncWindowContext, Entity, MouseButton};
 use serde_json::{Value, json};
@@ -19,7 +19,10 @@ use crate::{
 };
 
 pub const WORKSPACE: &str = "demo";
-const ROOT: &str = r"C:\src\demo";
+/// The fixture's folders, under the shots home: a `.git` each with its branch, no repo.
+fn root() -> PathBuf {
+    home().join("demo")
+}
 const FOLDERS: [(&str, &str); 4] = [("api", "main"), ("web", "feature/login"), ("docs", "main"), ("infra", "main")];
 
 const PROJECT: &str = "de000000-0000-4000-8000-000000000001";
@@ -49,27 +52,30 @@ pub fn prepare() -> anyhow::Result<()> {
     remove_dir_retrying(&home).with_context(|| format!("cannot clear {}", home.display()))?;
     std::fs::create_dir_all(&home)?;
     unsafe { std::env::set_var(supraman_core::HOME_VAR, &home) };
-    let folders = FOLDERS
-        .iter()
-        .map(|(name, branch)| Folder {
-            name: (*name).to_string(),
-            path: Path::new(ROOT).join(name),
-            kind: FolderKind::Git,
-            has_claude_md: true,
-            has_agents_md: false,
-            branch: Some((*branch).to_string()),
-            enabled: true,
-            added: true,
-        })
-        .collect();
-    Registry::from_env()?.save(&Workspace::new(WORKSPACE, ROOT, folders), true)?;
+    let root = root();
+    for (name, branch) in FOLDERS {
+        let git = root.join(name).join(".git");
+        std::fs::create_dir_all(&git)?;
+        std::fs::write(git.join("HEAD"), format!("ref: refs/heads/{branch}\n"))?;
+    }
+    let (grouped, alone) = FOLDERS.split_at(FOLDERS.len() - 1);
+    let group = Entry::Group { name: WORKSPACE.into(), folders: grouped.iter().map(|(name, _)| FolderEntry::new(root.join(name))).collect() };
+    let entries = vec![group, Entry::Folder(FolderEntry::new(root.join(alone[0].0)))];
+    supraman_core::folders::edit(&home, |e| {
+        *e = Entries::new(entries);
+        Ok(())
+    })?;
+    // the schedules' bridge names this home's `fm-demo-…` sessions its own
+    let bridge = FOLDERS.iter().map(|(name, _)| supraman_core::Folder::new(*name, root.join(name))).collect();
+    supraman_core::Registry::at(&home).save(&supraman_core::Workspace::new(WORKSPACE, &root, bridge), true)?;
     let fake = workman();
     OAUTH.set(fake.enable_oauth()).map_err(|_| anyhow!("the fake OAuth server was started twice"))?;
     crate::selftest::set_workman(fake.base())?;
     crate::signin::sign_in(&home, fake.base(), None).map_err(|e| anyhow!("signing in to the fake Workman: {e}"))?;
     println!(
-        "shots: SUPRAMAN_HOME={} ; workspace {WORKSPACE} at {ROOT} (fixture folders, not on disk); fake Workman at {}",
+        "shots: SUPRAMAN_HOME={} ; group {WORKSPACE} and a top-level folder under {}; fake Workman at {}",
         home.display(),
+        root.display(),
         fake.base()
     );
     FAKE.set(fake).map_err(|_| anyhow!("the fake Workman was started twice"))
@@ -80,9 +86,10 @@ fn item(id: &str, qref: &str, kind: &str, title: &str, status: &str) -> Value {
     json!({ "id": id, "ref": ref_, "qualifiedRef": qref, "kind": kind, "title": title, "status": status })
 }
 
-/// A fixture folder's repo, not on disk: every one is the demo shop's checkout.
+/// A fixture folder's repo: every one is the demo shop's checkout.
 fn fixture_repo(dir: &Path) -> Option<supraman_supervisor::MintRepo> {
-    dir.starts_with(ROOT).then(|| supraman_supervisor::MintRepo { root: ROOT.to_string(), remote: Some(REMOTE.to_string()) })
+    let root = root();
+    dir.starts_with(&root).then(|| supraman_supervisor::MintRepo { root: root.display().to_string(), remote: Some(REMOTE.to_string()) })
 }
 
 /// The fixture's "now": its overview's `asOf`.
@@ -162,8 +169,8 @@ fn workman() -> FakeWorkman {
 fn rows() -> anyhow::Result<Vec<supraman_claude::Session>> {
     let now = supraman_claude::now_ms();
     let pid = std::process::id();
-    let row = |id: &str, name: &str, folder: Option<&str>, kind: &str, state: &str, status: &str, waiting: Option<&str>, age_min: i64| {
-        let cwd = folder.map_or_else(|| PathBuf::from(ROOT), |f| Path::new(ROOT).join(f));
+    let row = |id: &str, name: &str, folder: &str, kind: &str, state: &str, status: &str, waiting: Option<&str>, age_min: i64| {
+        let cwd = root().join(folder);
         let mut v = serde_json::json!({
             "id": id,
             "sessionId": format!("{id}-0000-4000-8000-00000000de00"),
@@ -181,12 +188,11 @@ fn rows() -> anyhow::Result<Vec<supraman_claude::Session>> {
         v
     };
     let json = serde_json::Value::Array(vec![
-        row("d0000001", "fm-demo", None, "background", "working", "busy", None, 95),
-        row("d0000002", "fm-demo-api", Some("api"), "background", "working", "busy", None, 42),
-        row("d0000003", "fm-demo-web", Some("web"), "background", "blocked", "waiting", Some("permission prompt"), 17),
-        row("d0000004", "fm-demo-docs", Some("docs"), "background", "working", "idle", None, 63),
-        row("d0000005", "refactor-auth", Some("api"), "interactive", "working", "busy", None, 8),
-        row("d0000006", "fm-demo-infra", Some("infra"), "background", "stopped", "idle", None, 240),
+        row("d0000002", "fm-demo-api", "api", "background", "working", "busy", None, 42),
+        row("d0000003", "fm-demo-web", "web", "background", "blocked", "waiting", Some("permission prompt"), 17),
+        row("d0000004", "fm-demo-docs", "docs", "background", "working", "idle", None, 63),
+        row("d0000005", "refactor-auth", "api", "interactive", "working", "busy", None, 8),
+        row("d0000006", "fm-demo-infra", "infra", "background", "stopped", "idle", None, 240),
     ]);
     Ok(supraman_claude::parse(&json.to_string())?)
 }
@@ -199,8 +205,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     view.read_with(cx, |v, _| v.polls.injected.lock().unwrap_or_else(|e| e.into_inner()).extend(fixtures));
     crate::selftest::until(view, cx, Duration::from_secs(20), "the fixture sessions in the tree", |v| {
         let tree = v.tree();
-        let node = tree.workspaces.iter().find(|n| n.name == WORKSPACE)?;
-        (node.rows().count() >= count).then_some(())
+        (tree.rows().count() >= count).then_some(())
     })
     .await?;
     sleep(cx, Duration::from_millis(1500)).await;
@@ -210,8 +215,8 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     sidebar_shown(view, &out, cx).await?;
 
     let target = MenuTarget::Session {
-        workspace: WORKSPACE.to_string(),
-        repo: "api".to_string(),
+        entry: WORKSPACE.to_string(),
+        place: format!("{WORKSPACE}/api"),
         session_id: "d0000002-0000-4000-8000-00000000de00".to_string(),
     };
     let tab = view.update(cx, |v, cx| v.open_details(target, cx));
@@ -253,7 +258,7 @@ async fn sidebar_shown(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindo
     let session_id = "d0000002-0000-4000-8000-00000000de00";
     let saved = crate::saved_tabs::SavedTab::Attach {
         title: "demo · api · fm-demo-api".into(),
-        cwd: Path::new(ROOT).join("api"),
+        cwd: root().join("api"),
         id: "d0000002".into(),
         session_id: Some(session_id.into()),
         name: "fm-demo-api".into(),
@@ -388,9 +393,9 @@ async fn git_palette(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowC
 async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let folder = dir.to_path_buf();
     cx.background_executor()
-        .spawn(async move { Registry::from_env()?.edit(WORKSPACE, supraman_core::Edit::AddFolder { path: folder, enable: false }) })
+        .spawn(async move { supraman_core::folders::edit(&home(), |e| e.add_folder(&folder, &Place::Group { name: WORKSPACE.into(), index: usize::MAX })) })
         .await
-        .context("adding the Git fixture to the demo workspace")?;
+        .context("adding the Git fixture to the demo group")?;
     let session = json!([{
         "id": "d0000007",
         "sessionId": "d0000007-0000-4000-8000-00000000de00",
@@ -424,7 +429,7 @@ async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path
     }]);
     let sessions = supraman_claude::parse(&session.to_string())?;
     view.read_with(cx, |v, _| v.polls.injected.lock().unwrap_or_else(|e| e.into_inner()).extend(sessions));
-    crate::selftest::until(view, cx, Duration::from_secs(20), "the session's row in the tree", |v| v.tree().workspaces.iter().find(|n| n.name == WORKSPACE)?.rows().any(|r| r.session.name == "fm-demo-shop").then_some(())).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(20), "the session's row in the tree", |v| v.tree().entry(WORKSPACE)?.rows().any(|r| r.session.name == "fm-demo-shop").then_some(())).await?;
     crate::selftest::until(view, cx, Duration::from_secs(20), "the session's agent row", |v| v.hits.borrow().contains_key("git-agent-0").then_some(())).await?;
     crate::selftest::click(view, "git-agent-0", cx).await?;
     crate::selftest::until(view, cx, Duration::from_secs(10), "the agent row's page with its Open", |v| {

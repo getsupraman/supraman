@@ -4,20 +4,22 @@ pub type Result<T> = std::result::Result<T, CoreError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CoreError {
-    #[error("invalid workspace name '{0}': use lowercase letters, digits and '-' only")]
+    #[error("invalid name '{0}': use lowercase letters, digits and '-' only")]
     InvalidName(String),
-    #[error("workspace '{0}' already exists (use --force to replace it)")]
+    #[error("'{0}' already exists")]
     AlreadyExists(String),
+    #[error("no group '{0}'")]
+    NoGroup(String),
+    #[error("no folder or group at {0}")]
+    NoEntry(String),
+    #[error("{} is listed there already", .0.display())]
+    FolderListed(PathBuf),
     #[error("workspace '{0}' not found")]
     NotFound(String),
     #[error("not a directory: {}", .0.display())]
     NotADirectory(PathBuf),
     #[error("workspace '{workspace}' has no folder '{folder}'; known: {known}")]
     NoFolder { workspace: String, folder: String, known: String },
-    #[error("workspace '{workspace}' has no scan of {}", path.display())]
-    NoScan { workspace: String, path: PathBuf },
-    #[error("{folder} is supervised in workspace {owner}; a folder's session belongs to one workspace")]
-    SupervisedElsewhere { folder: String, owner: String },
     #[error("workspace '{workspace}' has no schedule '{id}'")]
     NoSchedule { workspace: String, id: String },
     #[error("schedule '{id}': {why}")]
@@ -60,11 +62,12 @@ impl CoreError {
             self,
             Self::InvalidName(_)
                 | Self::AlreadyExists(_)
+                | Self::NoGroup(_)
+                | Self::NoEntry(_)
+                | Self::FolderListed(_)
                 | Self::NotFound(_)
                 | Self::NotADirectory(_)
                 | Self::NoFolder { .. }
-                | Self::NoScan { .. }
-                | Self::SupervisedElsewhere { .. }
                 | Self::NoSchedule { .. }
                 | Self::InvalidSchedule { .. }
                 | Self::NoPrompt(_)

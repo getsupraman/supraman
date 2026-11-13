@@ -1,6 +1,6 @@
 //! The Work tab of a workspace: opened once per workspace, its folders and the fleet's links handed to it.
 
-use std::path::Path;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use gpui::Context;
@@ -30,9 +30,8 @@ impl FleetView {
                 fleet.update(cx, |fleet, cx| fleet.open_session(sid, cx)).ok();
             }),
         };
-        let found = self.workspaces.iter().find(|w| w.name == workspace);
-        let folders = found.map(|w| w.folders.iter().map(|f| f.path.clone()).collect()).unwrap_or_default();
-        let cwd = found.and_then(|w| w.home()).map(Path::to_path_buf);
+        let folders: Vec<PathBuf> = self.tree().entry(workspace).map(|e| e.folders.iter().map(|f| f.path.clone()).collect()).unwrap_or_default();
+        let cwd = folders.first().cloned();
         let opening = work_view::Opening { workspace: workspace.to_string(), folders, home: self.home.clone(), hits: self.hits.clone(), link, open_link_with: self.open_link_with, repo_of: self.work_inbox.read(cx).repo_of() };
         let view = WorkView::open(opening, cx);
         cx.subscribe(&view, |this, _, event: &work_view::WorkEvent, cx| {

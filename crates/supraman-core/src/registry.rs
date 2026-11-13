@@ -1,3 +1,6 @@
+//! The schedules' bridge until folders/schedules: schedule code (core `schedule`, `sm schedule`/`fire`, the app's
+//! `schedules.rs` and `view/schedules.rs`) and folders.toml's one-time migration read workspaces here, nothing else.
+
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -32,10 +35,6 @@ impl Registry {
         Ok(self.workspaces_dir().join(format!("{name}.toml")))
     }
 
-    pub fn exists(&self, name: &str) -> Result<bool> {
-        Ok(self.path_of(name)?.is_file())
-    }
-
     pub fn load(&self, name: &str) -> Result<Workspace> {
         let path = self.path_of(name)?;
         let text = fs::read_to_string(&path).map_err(|e| match e.kind() {
@@ -45,13 +44,8 @@ impl Registry {
         toml::from_str(&text).map_err(|source| CoreError::Parse { path, source })
     }
 
-    /// Sorted by name; an absent registry directory is an empty list, and is not created. The first
-    /// file that cannot be loaded fails the whole list; [`Self::load_all`] keeps the others.
-    pub fn list(&self) -> Result<Vec<Workspace>> {
-        self.names()?.iter().map(|n| self.load(n)).collect()
-    }
-
-    /// Every workspace that loads, sorted by name, and an error for each file that does not.
+    /// Every workspace that loads, sorted by name, and an error for each file that does not; an absent
+    /// directory is an empty list, and is not created.
     pub fn load_all(&self) -> Result<(Vec<Workspace>, Vec<CoreError>)> {
         let (mut loaded, mut failed) = (Vec::new(), Vec::new());
         for name in self.names()? {
@@ -96,14 +90,6 @@ impl Registry {
         crate::fs::write_atomic(&path, text).map_err(|e| CoreError::io(&path, e))?;
         Ok(path)
     }
-
-    pub fn remove(&self, name: &str) -> Result<()> {
-        let path = self.path_of(name)?;
-        fs::remove_file(&path).map_err(|e| match e.kind() {
-            ErrorKind::NotFound => CoreError::NotFound(name.to_string()),
-            _ => CoreError::io(&path, e),
-        })
-    }
 }
 
 #[cfg(test)]
@@ -116,8 +102,8 @@ mod tests {
             name,
             r"C:\work\demo",
             vec![
-                Folder { has_claude_md: true, branch: Some("main".into()), ..Folder::new("Nomos", r"C:\work\demo\Nomos") },
-                Folder { has_agents_md: true, enabled: false, ..Folder::new("Nomos.Pdf", r"C:\work\demo\Nomos.Pdf") },
+                Folder { branch: Some("main".into()), ..Folder::new("Nomos", r"C:\work\demo\Nomos") },
+                Folder::new("Nomos.Pdf", r"C:\work\demo\Nomos.Pdf"),
             ],
         )
     }
@@ -130,7 +116,7 @@ mod tests {
         let path = reg.save(&p, false).unwrap();
         assert_eq!(path, home.path().join("workspaces").join("nomos.toml"));
         assert_eq!(reg.load("nomos").unwrap(), p);
-        assert_eq!(reg.list().unwrap(), vec![p]);
+        assert_eq!(reg.load_all().unwrap().0, vec![p]);
         assert!(!home.path().join("workspaces").join("nomos.toml.tmp").exists());
     }
 
@@ -151,19 +137,15 @@ mod tests {
     }
 
     #[test]
-    fn list_is_sorted_and_remove_works() {
+    fn load_all_is_sorted() {
         let home = tempfile::tempdir().unwrap();
         let reg = Registry::at(home.path());
-        assert!(reg.list().unwrap().is_empty());
-        assert!(!reg.workspaces_dir().exists(), "list must not create the registry");
+        assert!(reg.load_all().unwrap().0.is_empty());
+        assert!(!reg.workspaces_dir().exists(), "a read must not create the registry");
         reg.save(&sample("zeta"), false).unwrap();
         reg.save(&sample("alpha"), false).unwrap();
-        let names: Vec<_> = reg.list().unwrap().into_iter().map(|p| p.name).collect();
+        let names: Vec<_> = reg.load_all().unwrap().0.into_iter().map(|p| p.name).collect();
         assert_eq!(names, ["alpha", "zeta"]);
-        reg.remove("zeta").unwrap();
-        assert!(matches!(reg.remove("zeta"), Err(CoreError::NotFound(_))));
-        assert!(matches!(reg.load("zeta"), Err(CoreError::NotFound(_))));
-        assert!(reg.exists("alpha").unwrap());
     }
 
     #[test]
@@ -187,14 +169,13 @@ mod tests {
     }
 
     #[test]
-    fn one_corrupt_file_fails_list_but_load_all_keeps_the_others() {
+    fn one_corrupt_file_leaves_load_all_the_others() {
         let home = tempfile::tempdir().unwrap();
         let reg = Registry::at(home.path());
         assert_eq!(reg.load_all().unwrap().0, vec![]);
         reg.save(&sample("alpha"), false).unwrap();
         reg.save(&sample("zeta"), false).unwrap();
         fs::write(reg.workspaces_dir().join("broken.toml"), "name = ").unwrap();
-        assert!(reg.list().is_err());
         let (loaded, failed) = reg.load_all().unwrap();
         assert_eq!(loaded.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), ["alpha", "zeta"]);
         assert_eq!(failed.len(), 1);

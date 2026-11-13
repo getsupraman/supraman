@@ -13,7 +13,7 @@ use crate::{
     view::FleetView,
 };
 
-const ICONS: [&str; 5] = ["add-workspace", "expand-all", "collapse-all", "refresh", "bar-settings"];
+const ICONS: [&str; 5] = ["add-folder", "expand-all", "collapse-all", "refresh", "bar-settings"];
 const WITHIN: Duration = Duration::from_secs(5);
 
 pub(crate) fn bounds(v: &FleetView, key: &str) -> Option<Bounds<Pixels>> {
@@ -39,12 +39,12 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     for (key, b) in &sizes {
         let mid = |b: &Bounds<Pixels>| f32::from(b.center().y);
         if (mid(b) - mid(&first)).abs() > 1.0 {
-            bail!("{key} is centred at y {:.1}, add-workspace at y {:.1}: the bar is not one line", mid(b), mid(&first));
+            bail!("{key} is centred at y {:.1}, add-folder at y {:.1}: the bar is not one line", mid(b), mid(&first));
         }
     }
     for (key, b) in sizes.iter().filter(|(k, _)| ICONS.contains(k)) {
         if b.size != first.size {
-            bail!("{key} is {:?}, add-workspace {:?}: the icons differ in size", b.size, first.size);
+            bail!("{key} is {:?}, add-folder {:?}: the icons differ in size", b.size, first.size);
         }
     }
 
@@ -112,19 +112,15 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     ))
 }
 
-/// Nothing sits between the workspace row's home and its first hover icon, nor between a folder row's branch and its room, where a session count would.
+/// Nothing sits between a folder row's branch and its room, where a session count would.
 async fn no_counts(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let gap = f32::from(crate::view::grid::gap());
     let span = |v: &FleetView, left: &str, right: &str| Some(f32::from(bounds(v, right)?.left()) - f32::from(bounds(v, left)?.right()));
-    let home = until(view, cx, WITHIN, "the workspace row's home and Work icon", |v| span(v, &format!("ws-root-{WORKSPACE}"), &format!("work-{WORKSPACE}"))).await?;
-    if (home - gap).abs() > 0.5 {
-        bail!("{home:.1} px between the workspace row's home and its Work icon, not the {gap} px gap: something is painted there");
-    }
     let folders = view.read_with(cx, |v, _| {
         let tree = v.tree();
-        let node = tree.workspaces.iter().find(|n| n.name == WORKSPACE)?;
-        let plain = node.repos.iter().filter(|r| !r.sessions.is_empty() && r.enabled && r.supervised_in.is_none() && r.also_in.is_empty());
-        Some(plain.map(|r| (r.name.clone(), span(v, &format!("branch-{WORKSPACE}/{}", r.name), &format!("repo-room-{WORKSPACE}/{}", r.name)))).collect::<Vec<_>>())
+        let node = tree.entry(WORKSPACE)?;
+        let held = node.folders.iter().filter(|r| !r.sessions.is_empty());
+        Some(held.map(|r| (r.name.clone(), span(v, &format!("branch-{}", r.key), &format!("repo-room-{}", r.key)))).collect::<Vec<_>>())
     });
     let folders = folders.unwrap_or_default();
     if folders.is_empty() {
@@ -196,7 +192,7 @@ fn painted_part(h: &supraman_ui::hit::Hit) -> Option<Bounds<Pixels>> {
 const SEAM_MIN: f32 = 4.;
 
 fn tree_row(key: &str) -> bool {
-    ["ws-row-", "repo-row-", "session-row-"].iter().any(|p| key.starts_with(p))
+    ["group-row-", "repo-row-", "session-row-"].iter().any(|p| key.starts_with(p))
 }
 
 fn overlaps(a: &Bounds<Pixels>, b: &Bounds<Pixels>) -> bool {
@@ -359,12 +355,12 @@ fn tree_rows(v: &FleetView) -> Vec<(String, usize)> {
     let hits = v.hits.borrow();
     let painted = |key: &str| hits.contains_key(&format!("tree-icon-{key}")).then(|| key.to_string());
     let mut rows = Vec::new();
-    for w in v.tree().workspaces.iter().filter(|w| w.name == WORKSPACE) {
-        rows.extend(painted(&format!("ws-{}", w.name)).map(|k| (k, 0)));
-        for r in &w.repos {
-            rows.extend(painted(&format!("repo-{}/{}", w.name, r.name)).map(|k| (k, 1)));
+    for w in v.tree().entries.iter().filter(|w| w.name == WORKSPACE) {
+        rows.extend(painted(&format!("group-{}", w.name)).map(|k| (k, 0)));
+        for r in &w.folders {
+            rows.extend(painted(&format!("repo-{}", r.key)).map(|k| (k, 1)));
             for s in &r.sessions {
-                rows.extend(painted(&format!("session-{}{}", s.session.session_id, s.scope(&w.name))).map(|k| (k, 2)));
+                rows.extend(painted(&format!("session-{}{}", s.session.session_id, s.scope)).map(|k| (k, 2)));
             }
         }
     }

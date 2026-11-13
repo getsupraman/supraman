@@ -57,7 +57,7 @@ impl SettingsView {
             row(
                 "Busy sessions at most",
                 "How many sessions of this Supraman may be working (mid-turn) at the same time, counted across \
-                 its workspaces. Launches and resumes wait while the limit is reached. 0 pauses them all. \
+                 its folders. Launches and resumes wait while the limit is reached. 0 pauses them all. \
                  Your own sessions and another Supraman's are not counted.",
                 stepper.into_any_element(),
                 None,

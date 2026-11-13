@@ -37,7 +37,6 @@ pub fn home_env(home: &Path) -> [(&'static str, String); 1] {
 }
 
 pub const ROLE_VAR: &str = "SUPRAMAN_ROLE";
-pub const WORKSPACE_VAR: &str = "SUPRAMAN_WORKSPACE";
 pub const SESSION_VAR: &str = "SUPRAMAN_SESSION";
 pub const REPO_VAR: &str = "SUPRAMAN_REPO";
 
@@ -45,7 +44,6 @@ pub const REPO_VAR: &str = "SUPRAMAN_REPO";
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionEnv {
     pub role: Option<String>,
-    pub workspace: Option<String>,
     /// The session's name, what `sm tell` signs with.
     pub session: Option<String>,
     pub repo: Option<String>,
@@ -55,7 +53,7 @@ impl SessionEnv {
     /// This process's; a var unset or not Unicode is `None`, an empty one kept.
     pub fn from_env() -> Self {
         let var = |k| std::env::var(k).ok();
-        Self { role: var(ROLE_VAR), workspace: var(WORKSPACE_VAR), session: var(SESSION_VAR), repo: var(REPO_VAR) }
+        Self { role: var(ROLE_VAR), session: var(SESSION_VAR), repo: var(REPO_VAR) }
     }
 
     /// This process's `SUPRAMAN_ROLE` as the OS holds it, Unicode or not.
@@ -65,7 +63,7 @@ impl SessionEnv {
 
     /// The vars to set for a child, in the order role, workspace, session, repo; a `None` is left out.
     pub fn vars(&self) -> Vec<(&'static str, String)> {
-        [(ROLE_VAR, &self.role), (WORKSPACE_VAR, &self.workspace), (SESSION_VAR, &self.session), (REPO_VAR, &self.repo)]
+        [(ROLE_VAR, &self.role), (SESSION_VAR, &self.session), (REPO_VAR, &self.repo)]
             .into_iter()
             .filter_map(|(k, v)| v.clone().map(|v| (k, v)))
             .collect()
@@ -92,8 +90,8 @@ mod tests {
 
     #[test]
     fn session_env_vars_leave_out_what_is_unset() {
-        let env = SessionEnv { role: Some("repo".into()), workspace: Some("demo".into()), session: None, repo: Some("api".into()) };
-        assert_eq!(env.vars(), [(ROLE_VAR, "repo".to_string()), (WORKSPACE_VAR, "demo".to_string()), (REPO_VAR, "api".to_string())]);
+        let env = SessionEnv { role: Some("repo".into()), session: None, repo: Some("api".into()) };
+        assert_eq!(env.vars(), [(ROLE_VAR, "repo".to_string()), (REPO_VAR, "api".to_string())]);
         assert!(SessionEnv::default().vars().is_empty());
     }
 }

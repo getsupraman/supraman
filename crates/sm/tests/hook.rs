@@ -16,7 +16,7 @@ fn hook_env(home: Option<&Path>, role: Option<&str>, env: &[(&str, &str)], args:
     cmd.arg("hook").args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     cmd.env_remove("SUPRAMAN_HOME")
         .env_remove("SUPRAMAN_ROLE")
-        .env_remove("SUPRAMAN_WORKSPACE");
+        .env_remove("SUPRAMAN_REPO");
     if let Some(home) = home {
         cmd.env("SUPRAMAN_HOME", home);
     }
@@ -77,10 +77,10 @@ fn logs_each_event_and_injects_the_role_on_session_start() {
     );
     assert!(events.iter().all(|e| e.session_id == SID && e.name == "aw-t" && e.cwd == r"C:\w" && e.ts > 0));
 
-    fs::write(home.path().join("roles").join("workspace.md"), "Controller for {workspace}.\n").unwrap();
-    let workspace = hook_env(h, Some("workspace"), &[("SUPRAMAN_WORKSPACE", "nomos")], &["SessionStart"], &payload("SessionStart", r#","source":"resume""#));
-    let tag = role_tag("workspace", "Controller for nomos.");
-    assert_eq!(String::from_utf8_lossy(&workspace.stdout), format!("{tag}\nController for nomos.\n"), "{{workspace}} is filled");
+    fs::write(home.path().join("roles").join("repo.md"), "Working in {repo}.\n").unwrap();
+    let repo = hook_env(h, Some("repo"), &[("SUPRAMAN_REPO", "nomos")], &["SessionStart"], &payload("SessionStart", r#","source":"resume""#));
+    let tag = role_tag("repo", "Working in nomos.");
+    assert_eq!(String::from_utf8_lossy(&repo.stdout), format!("{tag}\nWorking in nomos.\n"), "{{repo}} is filled");
 }
 
 #[test]

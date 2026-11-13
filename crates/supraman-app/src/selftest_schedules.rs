@@ -272,6 +272,11 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     std::fs::write(dir.join("gate.cmd"), "@exit /b 0\r\n")?;
     let registry = Registry::at(home);
     registry.save(&Workspace::new(WS, &dir, vec![Folder { kind: FolderKind::Plain, ..Folder::new("gate", &dir) }]), true)?;
+    supraman_core::folders::edit(&home, |e| {
+        e.list.retain(|x| x.group_name() != Some(WS));
+        e.list.push(supraman_core::folders::Entry::Group { name: WS.into(), folders: vec![supraman_core::folders::FolderEntry::new(&dir)] });
+        Ok(())
+    })?;
     let mut out = Vec::new();
 
     sm(&["schedule", "add", WS, "--id", ID, "--name", "Gate", "--every", "weekly mon 09:00", "--script", "gate.cmd", "--prompt", "Fix what the gate found.", "--profile", "edit"])?;
@@ -422,7 +427,8 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
 
     out.push(others(view, &fake, &dir, cx).await?);
 
-    registry.remove(WS)?;
+    std::fs::remove_file(registry.path_of(WS)?)?;
+    supraman_core::folders::edit(home, |e| e.remove_group(WS, true))?;
     if fake.writes().iter().any(|w| !w.contains(&schedule::task_root(home))) {
         bail!("a write outside this home's task folder: {:?}", fake.writes());
     }

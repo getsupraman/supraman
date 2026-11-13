@@ -1,26 +1,21 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use supraman_claude::{ClaudeError, Health, Session, assign, check_supported, list_sessions, now_ms};
-use supraman_core::{CoreError, DEFAULT_DEPTH, FolderKind, Registry, Workspace, discover, owners};
+use supraman_claude::{ClaudeError, Health, Session, check_supported, list_sessions, now_ms, place};
+use supraman_core::folders::Entries;
+use supraman_core::paths::path_key;
+use supraman_core::{CoreError, Registry};
 
 const USAGE: &str = "\
 usage:
-  sm workspace add <dir> [--name <slug>] [--depth N] [--dry-run] [--force]
-      (a parent folder: depth 1 adds each direct subfolder, git or plain; a deeper scan adds its git repos)
-  sm workspace new <name> [--home <dir>] [--folder <dir>]...   (a workspace of the folders given, or empty)
-  sm workspace add-folder <name> <dir> [--enable]   (git or plain)
-  sm workspace remove-folder <name> <folder>
-  sm workspace enable <name> <folder>   |   sm workspace disable <name> <folder>
-  sm workspace set-home <name> <dir>               (where the workspace's own sessions run)
-  sm workspace add-scan <name> <dir> [--depth N]   (adds the folders below <dir> as add does, now and on every rescan)
-  sm workspace remove-scan <name> <dir>            (the folders only it found go too)
-  sm workspace list
-  sm workspace show <name>                         (home, scans, folders with kind and owner)
-  sm workspace remove <name>                       (its sessions keep running)
-  sm sessions [--workspace <name>] [--all]
+  sm folder add <dir> [--group <name>] [--at N]   (git or plain; at the top level's end, or the group's)
+  sm folder remove <dir> [--group <name>]          (from the top level, else the first group listing it)
+  sm folder list
+  sm group add <name> [--at N]  |  sm group rename <name> <new>
+  sm group remove <name> [--with-folders]          (else its folders move to the top level)
+  sm sessions [--folder <dir>] [--all]   (each under the deepest listed folder holding its cwd)
   sm schedule add [<workspace>] --name <text> --every <when> (--command /<name> | --prompt-file <path> | --prompt <text>)
       [--id <id>] [--folder <folder>] [--script <path> [--script-arg <a>]... [--script-timeout 10m]]
       [--profile read|edit|auto] [--allow-tools <rule>]... [--deny-tools <rule>]... [--add-dir <dir>]...
@@ -64,7 +59,7 @@ fn usage() -> String {
     USAGE.to_string()
 }
 
-mod edit;
+mod folders;
 pub mod fire;
 mod hook;
 #[cfg(feature = "probes")]
@@ -220,17 +215,8 @@ fn run(args: &[String]) -> Result<(), Failure> {
             println!("sm {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        ["workspace", "add", rest @ ..] => add(rest),
-        ["workspace", "new", rest @ ..] => edit::new(&registry()?, rest),
-        ["workspace", "add-folder", rest @ ..] => edit::add_folder(&registry()?, rest),
-        ["workspace", "remove-folder", rest @ ..] => edit::remove_folder(&registry()?, rest),
-        ["workspace", verb @ ("enable" | "disable"), rest @ ..] => edit::set_enabled(&registry()?, *verb == "enable", rest),
-        ["workspace", "set-home", rest @ ..] => edit::set_home(&registry()?, rest),
-        ["workspace", "add-scan", rest @ ..] => edit::add_scan(&registry()?, rest),
-        ["workspace", "remove-scan", rest @ ..] => edit::remove_scan(&registry()?, rest),
-        ["workspace", "list"] => list(),
-        ["workspace", "show", name] => show(name),
-        ["workspace", "remove", name] => remove(name),
+        ["folder", rest @ ..] => folders::folder(rest),
+        ["group", rest @ ..] => folders::group(rest),
         ["sessions", rest @ ..] => sessions(rest),
         ["schedule", "fire", rest @ ..] => match fire::fire_cmd(rest, true) {
             0 => Ok(()),
@@ -315,220 +301,67 @@ fn probe_root(args: &[&str]) -> Result<Option<PathBuf>, Failure> {
     }
 }
 
-struct AddArgs {
-    dir: PathBuf,
-    name: Option<String>,
-    depth: usize,
-    dry_run: bool,
-    force: bool,
-}
-
-fn parse_add(args: &[&str]) -> Result<AddArgs, Failure> {
-    let mut dir = None;
-    let mut name = None;
-    let mut depth = DEFAULT_DEPTH;
-    let mut dry_run = false;
-    let mut force = false;
-    let mut it = args.iter();
-    while let Some(&arg) = it.next() {
-        match arg {
-            "--name" => {
-                name = Some(value(&mut it, "--name")?.to_string());
-            }
-            "--depth" => {
-                depth = parse_depth(value(&mut it, "--depth")?)?;
-            }
-            "--dry-run" => dry_run = true,
-            "--force" => force = true,
-            flag if flag.starts_with("--") => {
-                return Err(Failure::Usage(format!("unknown option {flag}")));
-            }
-            positional if dir.is_none() => dir = Some(PathBuf::from(positional)),
-            extra => return Err(Failure::Usage(format!("unexpected argument '{extra}'"))),
-        }
-    }
-    let dir = dir.ok_or_else(|| Failure::Usage("workspace add needs a <dir>".into()))?;
-    Ok(AddArgs {
-        dir,
-        name,
-        depth,
-        dry_run,
-        force,
-    })
-}
-
-pub(crate) fn parse_depth(raw: &str) -> Result<usize, Failure> {
-    raw.parse()
-        .ok()
-        .filter(|d| *d >= 1)
-        .ok_or_else(|| Failure::Usage(format!("--depth must be a whole number >= 1, got '{raw}'")))
-}
-
 pub(crate) fn value<'a>(it: &mut std::slice::Iter<'_, &'a str>, flag: &str) -> Result<&'a str, Failure> {
     it.next()
         .copied()
         .ok_or_else(|| Failure::Usage(format!("{flag} needs a value")))
 }
 
-fn add(args: &[&str]) -> Result<(), Failure> {
-    let args = parse_add(args)?;
-    let mut workspace = discover(&args.dir, args.name.as_deref(), args.depth)?;
-
-    let registry = registry()?;
-    if !args.force {
-        registry.check_new(&workspace)?;
-    }
-    for (folder, owner) in registry.claim_folders(&mut workspace, |_| true)? {
-        println!("notice: {folder} is supervised in workspace {owner}; disabled here");
-    }
-    if args.dry_run {
-        println!("dry run: would register workspace {} (nothing written)", workspace.name);
-        print_workspace(&workspace, false, &with_owners(&registry, &workspace)?);
-        return Ok(());
-    }
-    let path = registry.save(&workspace, args.force)?;
-    println!("registered workspace {} at {}", workspace.name, path.display());
-    print_workspace(&workspace, true, &with_owners(&registry, &workspace)?);
-    Ok(())
-}
-
 pub(crate) fn registry() -> Result<Registry, Failure> {
     Ok(Registry::from_env()?)
 }
 
-fn list() -> Result<(), Failure> {
-    let workspaces = registry()?.list()?;
-    if workspaces.is_empty() {
-        println!("no workspaces registered");
-    }
-    for p in workspaces {
-        println!("{}\tfolders={}\thome={}", p.name, p.folders.len(), home_text(&p));
-    }
-    Ok(())
+pub(crate) fn home() -> Result<PathBuf, Failure> {
+    Ok(supraman_core::home_from_env().ok_or(CoreError::NoHome)?)
 }
 
-fn show(name: &str) -> Result<(), Failure> {
-    let registry = registry()?;
-    let workspace = registry.load(name)?;
-    print_workspace(&workspace, true, &with_owners(&registry, &workspace)?);
-    Ok(())
-}
-
-fn remove(name: &str) -> Result<(), Failure> {
-    let registry = registry()?;
-    registry.remove(name)?;
-    println!("removed workspace {name}");
-    Ok(())
-}
-
-fn home_text(p: &Workspace) -> String {
-    p.home().map(|h| h.display().to_string()).unwrap_or_else(|| "(none)".into())
-}
-
-/// [`owners`] of the registered workspaces with `workspace` as it is now in place of its file.
-pub(crate) fn with_owners(registry: &Registry, workspace: &Workspace) -> Result<HashMap<String, String>, Failure> {
-    let mut all: Vec<Workspace> = registry.list()?.into_iter().filter(|w| w.name != workspace.name).collect();
-    let at = all.partition_point(|w| w.name < workspace.name);
-    all.insert(at, workspace.clone());
-    Ok(owners(&all))
-}
-
-/// `owner=` names the workspace that owns the folder ([`owners`]), `-` for none.
-pub(crate) fn print_workspace(p: &Workspace, with_created: bool, owned: &HashMap<String, String>) {
-    println!("name: {}", p.name);
-    println!("home: {}", home_text(p));
-    if with_created {
-        println!("created: {}", p.created_at.to_rfc3339());
-    }
-    println!("scans: {}", p.scans.len());
-    for s in &p.scans {
-        let skipped: Vec<String> = s.exclude.iter().map(|x| x.display().to_string()).collect();
-        let skipped = if skipped.is_empty() { String::new() } else { format!("\tskips={}", skipped.join(";")) };
-        println!("  {}\tdepth={}{skipped}", s.path.display(), s.depth);
-    }
-    println!("folders: {}", p.folders.len());
-    let yes = |b: bool| if b { "yes" } else { "no" };
-    for f in &p.folders {
-        let branch = match (f.kind, f.branch.as_deref()) {
-            (FolderKind::Plain, _) => "-",
-            (FolderKind::Git, b) => b.unwrap_or("(detached)"),
-        };
-        let owner = owned.get(&supraman_core::paths::path_key(&f.path)).map(String::as_str).unwrap_or("-");
-        println!(
-            "  {}\tkind={}\tbranch={branch}\tclaude_md={}\tagents_md={}\tenabled={}\towner={owner}\tpath={}",
-            f.name,
-            if f.is_git() { "git" } else { "plain" },
-            yes(f.has_claude_md),
-            yes(f.has_agents_md),
-            yes(f.enabled),
-            f.path.display(),
-        );
-    }
-}
-
-/// `--all` shows stopped sessions and, without `--workspace`, an "unassigned" group of those outside every workspace.
+/// `--all` shows stopped sessions and, without `--folder`, an "unplaced" list of those under no listed folder.
 fn sessions(args: &[&str]) -> Result<(), Failure> {
-    let mut workspace = None;
+    let mut folder = None;
     let mut all = false;
     let mut it = args.iter();
     while let Some(&arg) = it.next() {
         match arg {
-            "--workspace" => workspace = Some(value(&mut it, "--workspace")?),
+            "--folder" => folder = Some(std::path::absolute(value(&mut it, "--folder")?).map_err(|e| Failure::Usage(e.to_string()))?),
             "--all" => all = true,
             other => return Err(Failure::Usage(format!("unexpected argument '{other}'"))),
         }
     }
-    let registry = registry()?;
-    let workspaces = match workspace {
-        Some(name) => vec![registry.load(name)?],
-        None => registry.list()?,
-    };
+    let entries = supraman_core::folders::load(&home()?)?;
     check_claude()?;
     let sessions = list_sessions()?;
-    print!("{}", render(&workspaces, &sessions, all, workspace.is_none() && all, now_ms()));
+    print!("{}", render(&entries, folder.as_deref(), &sessions, all, now_ms()));
     Ok(())
 }
 
-fn render(workspaces: &[Workspace], sessions: &[Session], show_stopped: bool, show_unassigned: bool, now: i64) -> String {
-    let mut visible: Vec<&Session> = sessions
-        .iter()
-        .filter(|s| show_stopped || s.health(now) != Health::Stopped)
-        .collect();
+/// Each listed folder once, in order, with its sessions; `only` keeps that folder alone.
+fn render(entries: &Entries, only: Option<&std::path::Path>, sessions: &[Session], show_stopped: bool, now: i64) -> String {
+    let mut visible: Vec<Session> = sessions.iter().filter(|s| show_stopped || s.health(now) != Health::Stopped).cloned().collect();
     visible.sort_by(|a, b| b.started_at.cmp(&a.started_at).then_with(|| a.id.cmp(&b.id)));
-    let visible: Vec<Session> = visible.into_iter().cloned().collect();
     let none = if show_stopped { "no sessions" } else { "no live sessions" };
-
+    let placed = place(&visible, entries);
     let mut out = String::new();
-    let mut placed = HashSet::new();
-    if workspaces.is_empty() {
-        out.push_str("no workspaces registered\n");
+    if entries.list.is_empty() {
+        out.push_str("no folders listed\n");
     }
-    for p in workspaces {
-        let assignment = assign(&visible, p);
-        let count: usize = assignment.by_repo.values().map(Vec::len).sum::<usize>() + assignment.in_home.len();
-        let _ = writeln!(out, "{}  {}  ({count} sessions)", p.name, home_text(p));
-        if count == 0 {
+    let mut seen = HashSet::new();
+    for f in entries.folders().filter(|f| only.is_none_or(|o| path_key(o) == path_key(&f.path))) {
+        let key = path_key(&f.path);
+        if !seen.insert(key.clone()) {
+            continue;
+        }
+        let held = placed.by_folder.get(&key).map(Vec::as_slice).unwrap_or_default();
+        let _ = writeln!(out, "{}  ({} sessions)", f.path.display(), held.len());
+        if held.is_empty() {
             let _ = writeln!(out, "  {none}");
         }
-        for (repo, group) in &assignment.by_repo {
-            let _ = writeln!(out, "  {repo}");
-            for s in group {
-                placed.insert(s.session_id.clone());
-                write_session(&mut out, s, now);
-            }
-        }
-        if !assignment.in_home.is_empty() {
-            let _ = writeln!(out, "  (home)");
-            for s in &assignment.in_home {
-                placed.insert(s.session_id.clone());
-                write_session(&mut out, s, now);
-            }
+        for s in held {
+            write_session(&mut out, s, now);
         }
     }
-    if show_unassigned {
-        let rest: Vec<&Session> = visible.iter().filter(|s| !placed.contains(&s.session_id)).collect();
-        let _ = writeln!(out, "unassigned  ({} sessions)", rest.len());
-        for s in rest {
+    if only.is_none() && show_stopped {
+        let _ = writeln!(out, "unplaced  ({} sessions)", placed.unplaced.len());
+        for s in &placed.unplaced {
             write_session(&mut out, s, now);
         }
     }
@@ -550,19 +383,17 @@ fn write_session(out: &mut String, s: &Session, now: i64) {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use supraman_claude::parse;
-    use supraman_core::Folder;
+    use supraman_core::folders::{Entry, FolderEntry};
 
     use super::*;
 
     const NOW: i64 = 1_800_000_000_000;
 
-    fn workspace(name: &str, root: &str, repos: &[&str]) -> Workspace {
-        let repos = repos
-            .iter()
-            .map(|r| Folder::new(*r, PathBuf::from(root).join(r)))
-            .collect();
-        Workspace::new(name, root, repos)
+    fn entries(paths: &[&str]) -> Entries {
+        Entries::new(vec![Entry::Group { name: "demo".into(), folders: paths.iter().map(|p| FolderEntry::new(*p)).collect() }])
     }
 
     fn rows() -> Vec<Session> {
@@ -580,32 +411,26 @@ mod tests {
     }
 
     #[test]
-    fn groups_by_repo_and_hides_stopped_by_default() {
-        let p = workspace("demo", r"C:\demo", &["Alpha", "Beta", "Gamma"]);
-        let text = render(&[p], &rows(), false, false, NOW);
+    fn groups_by_folder_and_hides_stopped_by_default() {
+        let text = render(&entries(&[r"C:\demo\Alpha", r"C:\demo\Beta", r"C:\demo\Gamma"]), None, &rows(), false, NOW);
         let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines[0], r"demo  C:\demo  (2 sessions)");
-        assert_eq!(lines[1], "  Alpha");
-        assert!(lines[2].starts_with("    aaaa0001  running "), "{text}");
-        assert!(lines[2].ends_with(r"background   fm-demo-a  C:\demo\Alpha"), "{text}");
-        assert_eq!(lines[3], "  Beta");
-        assert!(lines[4].contains("blocked (permission prompt)"), "{text}");
-        assert_eq!(lines.len(), 5, "{text}");
+        assert_eq!(lines[0], r"C:\demo\Alpha  (1 sessions)");
+        assert!(lines[1].starts_with("    aaaa0001  running "), "{text}");
+        assert!(lines[1].ends_with(r"background   fm-demo-a  C:\demo\Alpha"), "{text}");
+        assert_eq!(lines[2], r"C:\demo\Beta  (1 sessions)");
+        assert!(lines[3].contains("blocked (permission prompt)"), "{text}");
+        assert_eq!(lines[4..], [r"C:\demo\Gamma  (0 sessions)", "  no live sessions"], "{text}");
     }
 
     #[test]
-    fn all_shows_stopped_and_unassigned() {
-        let p = workspace("demo", r"C:\demo", &["Alpha", "Beta"]);
-        let text = render(&[p], &rows(), true, true, NOW);
+    fn all_shows_stopped_and_unplaced_and_folder_keeps_one() {
+        let e = entries(&[r"C:\demo\Alpha", r"C:\demo\Beta"]);
+        let text = render(&e, None, &rows(), true, NOW);
         assert!(text.contains("aaaa0003  stopped"), "{text}");
-        assert!(text.contains("unassigned  (1 sessions)\n    bbbb0004  idle"), "{text}");
+        assert!(text.contains("unplaced  (1 sessions)\n    bbbb0004  idle"), "{text}");
         assert!(text.contains(r"interactive  -  C:\other"), "{text}");
-    }
-
-    #[test]
-    fn empty_workspace_says_so() {
-        let p = workspace("empty", r"C:\nothing", &["X"]);
-        assert_eq!(render(&[p], &rows(), false, false, NOW), "empty  C:\\nothing  (0 sessions)\n  no live sessions\n");
-        assert_eq!(render(&[], &[], false, false, NOW), "no workspaces registered\n");
+        let one = render(&e, Some(Path::new(r"c:/demo/beta")), &rows(), true, NOW);
+        assert!(one.starts_with(r"C:\demo\Beta  (1 sessions)") && !one.contains("Alpha") && !one.contains("unplaced"), "{one}");
+        assert_eq!(render(&Entries::default(), None, &[], false, NOW), "no folders listed\n");
     }
 }

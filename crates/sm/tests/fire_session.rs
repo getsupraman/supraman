@@ -324,7 +324,6 @@ fn fm_report(home: &Path, args: &[&str]) -> std::process::Output {
         .args(args)
         .env("SUPRAMAN_HOME", home)
         .env_remove("APPDATA")
-        .env_remove("SUPRAMAN_WORKSPACE")
         .output()
         .unwrap()
 }

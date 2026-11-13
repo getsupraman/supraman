@@ -308,7 +308,7 @@ mod tests {
     fn the_hand_role_is_written_with_its_paths_and_injected_whole() {
         let home = tempfile::tempdir().unwrap();
         write_role_template(home.path(), &plugin_dir(), HAND_ROLE).unwrap();
-        let injected = supraman_core::role_injection(home.path(), HAND_ROLE, Some("demo")).unwrap();
+        let injected = supraman_core::role_injection(home.path(), HAND_ROLE, Some("Alpha")).unwrap();
         assert!(injected.contains("/supraman:supraman-scheduler"), "{injected}");
         assert!(!injected.contains('{'), "every placeholder filled: {injected}");
     }

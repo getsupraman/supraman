@@ -31,12 +31,13 @@ pub(crate) async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
 async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     close_all(view, cx);
     let (root, first) = view.read_with(cx, |v, _| {
-        let home = |w: &supraman_core::Workspace| w.home().map(Path::to_path_buf);
-        (v.workspaces.iter().find(|w| w.name == WORKSPACE).and_then(home), v.workspaces.first().and_then(home))
+        let first_of = |e: &crate::fleet::EntryNode| e.folders.first().map(|f| f.path.clone());
+        let tree = v.tree();
+        (tree.entry(WORKSPACE).and_then(first_of), tree.entries.first().and_then(first_of))
     });
-    let (root, first) = (root.ok_or_else(|| anyhow!("the registry has no {WORKSPACE}"))?, first.ok_or_else(|| anyhow!("no workspace"))?);
+    let (root, first) = (root.ok_or_else(|| anyhow!("folders.toml has no group {WORKSPACE}"))?, first.ok_or_else(|| anyhow!("no folder listed"))?);
     if same(&root, &first) {
-        bail!("{WORKSPACE} is the first workspace, so this step could not tell the two rules apart");
+        bail!("{WORKSPACE}'s first folder is the first listed, so this step could not tell the two rules apart");
     }
 
     view.update(cx, |v, cx| v.open_work(WORKSPACE, cx));
@@ -63,7 +64,7 @@ async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow:
     let card = hover_card(view, id, &title, cx).await?;
     let lines: Vec<&str> = card.text.lines().collect();
     let want = [
-        format!("workspace  {WORKSPACE}"),
+        format!("group  {WORKSPACE}"),
         format!("folder  {}", root.display()),
         "kind  shell".to_string(),
     ];
@@ -90,7 +91,7 @@ async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow:
     let no_tab_terminal = wait_for_tab_terminal(view, no_tab, WITHIN, cx).await?;
     let in_first = cwd_of(&no_tab_terminal, no_tab, cx).await.context("with no tab")?;
     if !same(Path::new(&in_first), &first) {
-        bail!("with no tab the new shell is in {in_first}, not the first workspace's {}", first.display());
+        bail!("with no tab the new shell is in {in_first}, not the first listed folder {}", first.display());
     }
     let exe_dir = supraman_core::install::exe_dir().ok();
     if exe_dir.is_some_and(|d| same(&d, Path::new(&in_first)) || same(&d, Path::new(&in_work))) {

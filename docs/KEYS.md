@@ -12,7 +12,7 @@ paste on Ctrl+V, find on Ctrl+Shift+F, no copy on select, plain-text copy). Code
 | Ctrl+Shift+Tab, Ctrl+PgUp | previous tab |
 | Ctrl+1 … Ctrl+8, Ctrl+9 | the nth tab, Ctrl+9 the last; in every tab, terminals too |
 | Ctrl+Shift+PgUp / PgDn | move the active tab one place left / right; in a terminal tab they scroll it a page instead unless Settings → Appearance → Tab keys in a terminal is Everywhere (`[window] tab_keys`) |
-| Ctrl+T | a New task tab in the active tab's workspace and folder, else the first workspace; in a terminal tab the program gets it unless Settings → Appearance → Tab keys in a terminal is Everywhere (`[window] tab_keys`) |
+| Ctrl+T | a New task tab in the active tab's group or folder, else the first entry; in a terminal tab the program gets it unless Settings → Appearance → Tab keys in a terminal is Everywhere (`[window] tab_keys`) |
 | Ctrl+W | close the active tab, as its × does; in a terminal tab as Ctrl+T |
 | Ctrl+Shift+T, Ctrl+Shift+W | as Ctrl+T and Ctrl+W, in every tab |
 | Ctrl+Alt+T | reopen the last tab closed in this run (the last 20 are kept; a New task, Schedule or Details tab is not) |
@@ -21,7 +21,7 @@ paste on Ctrl+V, find on Ctrl+Shift+F, no copy on select, plain-text copy). Code
 | Ctrl+Shift+E | the search box over the tree, its text selected; also from a terminal tab (VS Code's Explorer chord; Ctrl+Shift+F is the terminal's find bar, and a Ctrl+letter belongs to the program in the tab) |
 | F5 | refresh: read the running sessions (`claude agents`) and the closed ones' transcripts now, as the action bar's ↻ does, while no terminal tab is active (no tab, or a Work tab). With a terminal tab active, F5 goes to its program; use ↻ there |
 
-## Text inputs (search box, Add workspace name, find bar, task box)
+## Text inputs (search box, find bar, task box)
 
 One input (`crates/supraman-app/src/text_input.rs`), the keys of a Windows edit box. The task box
 is its multi-line kind (New task…'s prompt): lines wrap, it grows to 8 rows and then scrolls (the wheel too). Characters, dead keys
@@ -39,17 +39,15 @@ as anywhere else.
 | Backspace, Delete; Ctrl+Backspace, Ctrl+Delete | delete a character; a word |
 | Ctrl+C / Ctrl+Insert, Ctrl+X / Shift+Delete, Ctrl+V / Shift+Insert | copy, cut, paste (line breaks pasted as spaces; the task box keeps them) |
 | Ctrl+Z; Ctrl+Y, Ctrl+Shift+Z | undo (typing runs to a space are one step); redo |
-| Enter | Add workspace: save. Search: nothing. Find bar: next match up. Task box: send |
+| Enter | Search: nothing. Find bar: next match up. Task box: send |
 | Shift+Enter | find bar: next match down. Task box: a new line |
 | Ctrl+Enter | a commit message's fields: commit |
 | Tab, Shift+Tab | in a form (the commit area: summary, description, Amend previous commit, the graph's WIP row field standing for the summary; the commit panel's summary and description; Add Remote; Create Worktree): the next / previous field or button, wrapping; Space or Enter presses a focused button or ticks a focused box, Esc on it closes the form. Outside a form Tab goes where it went before (a terminal gets it); no field types a tab |
-| Esc | Search: clear the box (the tree is back); on an empty box, give the keys back to the window. Add workspace: cancel. Find bar: close. An open menu closes first |
+| Esc | Search: clear the box (the tree is back); on an empty box, give the keys back to the window. Find bar: close. An open menu closes first |
 | click, drag, Shift+click | place the caret, select, extend the selection |
 | double-click, triple-click | select the word, select all |
 
-The Add workspace name takes lowercase letters, digits and `-`: capitals are lowered, a space or `_` becomes
-`-`, anything else is refused with a hint under the field. A click anywhere outside an input gives the keys
-back to the window (the terminal).
+A click anywhere outside an input gives the keys back to the window (the terminal).
 
 ## Terminal tab
 

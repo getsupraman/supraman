@@ -21,7 +21,7 @@ use super::left::{REPO_ROW, SESSION_LINE, disclosure, grid, icon_slot, secondary
 use super::menu::{Confirm, Confirmed, MenuTarget};
 use supraman_ui::clipped::clipped;
 use supraman_ui::tooltip::Tooltip;
-use crate::fleet::WorkspaceNode;
+use crate::fleet::EntryNode;
 use crate::schedules::{self, Primary, ScheduleRow, Waiting};
 
 const DRY_RUN_WITHIN: Duration = Duration::from_secs(60);
@@ -174,7 +174,7 @@ impl FleetView {
     }
 
     fn registered_workspace(&self, workspace: &str) -> Option<Workspace> {
-        self.workspaces.iter().find(|w| w.name == workspace).cloned()
+        self.listed.schedule_workspaces.iter().find(|w| w.name == workspace).cloned()
     }
 
     /// The row's one action, also its double-click; Approve opens the Details tab on what it approves.
@@ -697,7 +697,7 @@ impl FleetView {
 
 impl FleetView {
     /// A run whose schedule is gone stays under the workspace.
-    pub(super) fn render_schedules(&self, node: &WorkspaceNode, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    pub(super) fn render_schedules(&self, node: &EntryNode, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let rows = self.scheduling.schedules.get(&node.name).cloned().unwrap_or_default();
         let others = self.others();
         let others = others.of_workspace(&node.name);
@@ -786,7 +786,7 @@ impl FleetView {
     }
 
     pub fn others(&self) -> schedules::Others {
-        self.scheduling.other_schedules.as_ref().map(|f| schedules::Others::of(f, &self.workspaces)).unwrap_or_default()
+        self.scheduling.other_schedules.as_ref().map(|f| schedules::Others::of(f, &self.listed.schedule_workspaces)).unwrap_or_default()
     }
 
     /// The top-level Other schedules: tasks that run claude in no workspace's folder.

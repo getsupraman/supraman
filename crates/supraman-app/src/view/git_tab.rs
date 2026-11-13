@@ -65,21 +65,21 @@ impl FleetView {
 
     /// A Git tab's agent or worktree row's right-click: the sidebar's menu of the session.
     fn agent_menu(&mut self, session: &LiveSession, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let Some((workspace, repo, row)) = self.live_row(session) else { return };
-        self.open_menu(MenuTarget::Session { workspace, repo, session_id: row.session.session_id }, position, cx);
+        let Some((entry, place, row)) = self.live_row(session) else { return };
+        self.open_menu(MenuTarget::Session { entry, place, session_id: row.session.session_id }, position, cx);
     }
 
     /// The agent row's panel: the session's one page but its transcript, which a disk read off the UI thread finds.
     fn agent_page(&self, session: &LiveSession, cx: &App) -> Option<SessionPage> {
-        let (workspace, repo, row) = self.live_row(session)?;
-        let view = self.session_view(&workspace, &repo, &row, None, &OnDisk::default(), true, false, cx);
+        let (entry, place, row) = self.live_row(session)?;
+        let view = self.session_view(&entry, &place, &row, None, &OnDisk::default(), true, false, cx);
         let actions = view.actions.into_iter().map(|i| PageAction { key: i.key.to_string(), label: i.label, dimmed: i.dimmed }).collect();
         Some(SessionPage { title: view.title, pill: view.pill, sections: view.sections, open: view.open.opening(), actions })
     }
 
     fn agent_action(&mut self, session: &LiveSession, key: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((workspace, repo, row)) = self.live_row(session) else { return };
-        if let Some(item) = self.session_menu(&workspace, &repo, &row, None, cx).into_iter().find(|i| i.key == key && i.dimmed.is_none()) {
+        let Some((entry, place, row)) = self.live_row(session) else { return };
+        if let Some(item) = self.session_menu(&entry, &place, &row, None, cx).into_iter().find(|i| i.key == key && i.dimmed.is_none()) {
             self.run_action(item.action, window, cx);
         }
     }
