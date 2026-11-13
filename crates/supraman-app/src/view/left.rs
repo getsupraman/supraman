@@ -54,6 +54,21 @@ pub(crate) struct Hold {
     moved: Instant,
 }
 
+impl Hold {
+    fn new(keys: HashSet<String>, now: Instant) -> Self {
+        Self { keys, moved: now }
+    }
+
+    fn shows(&self, key: &str) -> bool {
+        self.keys.contains(key)
+    }
+
+    /// How long the pointer has been still, while short of [`HOLD_STILL`]; `None` releases the hold.
+    fn still_for(&self, now: Instant) -> Option<Duration> {
+        Some(now.duration_since(self.moved)).filter(|still| *still < HOLD_STILL)
+    }
+}
+
 fn work_key(workspace: &str, row: &supraman_workman::InboxRow) -> String {
     format!("work:{workspace}/{}", row.key)
 }
@@ -150,14 +165,14 @@ impl FleetView {
             return;
         }
         let keys: HashSet<String> = self.work_inbox.read(cx).rows().into_iter().map(|(w, r)| work_key(w, r)).collect();
-        self.sidebar.left_hold = Some(Hold { keys, moved: Instant::now() });
+        self.sidebar.left_hold = Some(Hold::new(keys, Instant::now()));
         self.sidebar.left_holds += 1;
         self.sidebar.left_hold_timer = Some(cx.spawn(async move |this, cx| {
             let mut wait = HOLD_STILL;
             loop {
                 cx.background_executor().timer(wait).await;
                 let still_for = this.update(cx, |this, cx| {
-                    let still = this.sidebar.left_hold.as_ref().map(|h| h.moved.elapsed()).filter(|still| *still < HOLD_STILL);
+                    let still = this.sidebar.left_hold.as_ref().and_then(|h| h.still_for(Instant::now()));
                     if still.is_none() {
                         this.release_left(cx);
                     }
@@ -184,7 +199,7 @@ impl FleetView {
     }
 
     fn shown_now(&self, key: &str) -> bool {
-        self.sidebar.left_hold.as_ref().is_none_or(|h| h.keys.contains(key))
+        self.sidebar.left_hold.as_ref().is_none_or(|h| h.shows(key))
     }
 
     pub fn collapse_all(&mut self, collapse: bool, cx: &mut Context<Self>) {
@@ -998,6 +1013,15 @@ pub(super) fn level(entry: &EntryNode) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_hold_shows_only_the_cards_it_began_with_until_the_pointer_is_still() {
+        let start = Instant::now();
+        let hold = Hold::new(HashSet::from(["work:demo/a".to_string()]), start);
+        assert!(hold.shows("work:demo/a") && !hold.shows("work:demo/b"), "a card arriving under the pointer waits");
+        assert_eq!(hold.still_for(start + Duration::from_millis(500)), Some(Duration::from_millis(500)));
+        assert_eq!(hold.still_for(start + HOLD_STILL), None, "still for HOLD_STILL releases it");
+    }
 
     #[test]
     fn a_childs_icon_starts_under_its_parents_label() {

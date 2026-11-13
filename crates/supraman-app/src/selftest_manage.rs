@@ -235,6 +235,49 @@ pub(crate) async fn capture(out: PathBuf, title: Option<&str>, cx: &mut AsyncWin
         .await
 }
 
+/// The action bar's add button, then `item` in its menu.
+async fn add_menu(view: &Entity<FleetView>, item: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    click(view, "add-folder", cx).await?;
+    menu_open(view, "Add", cx).await?;
+    click(view, item, cx).await
+}
+
+/// Add Group typed into its field, Add Folder into it from its row's menu, then Remove Group's second answer. The action bar's menu,
+/// the form in the sidebar, its Enter and the question's second button are FleetView's, which a gpui test cannot build.
+async fn groups(view: &Entity<FleetView>, folder: &Path, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    const GROUP: &str = "selftest-group";
+    let groups = |home: &Path| supraman_core::folders::load(home).map(|e| e.groups().map(|(n, f)| (n.to_string(), f.len())).collect::<Vec<_>>());
+    add_menu(view, "menu-add-group", cx).await?;
+    until(view, cx, WITHIN, "Add Group's field", |v| painted(v, "group-name-field").then_some(())).await?;
+    crate::selftest::keys::type_text(cx, &format!("{GROUP}
+"))?;
+    let row = format!("group-row-{GROUP}");
+    until(view, cx, WITHIN, "the new group's row", |v| (painted(v, &row) && v.dialogs.group_name.is_none()).then_some(())).await?;
+    let made = groups(home)?;
+    if !made.contains(&(GROUP.to_string(), 0)) {
+        bail!("Add Group {GROUP} left folders.toml's groups {made:?}");
+    }
+
+    view.update(cx, |v, _| v.dialogs.pick_folder = Some(folder.to_path_buf()));
+    press_painted(view, &row, MouseButton::Right, cx).await?;
+    menu_open(view, GROUP, cx).await?;
+    click(view, "menu-add-folder", cx).await?;
+    let member = format!("repo-row-{GROUP}/{FOLDER}");
+    until(view, cx, WITHIN, "the folder's row in the group", |v| painted(v, &member).then_some(())).await?;
+
+    press_painted(view, &row, MouseButton::Right, cx).await?;
+    menu_open(view, GROUP, cx).await?;
+    click(view, "menu-remove-group", cx).await?;
+    until(view, cx, WITHIN, "Remove Group's question", |v| painted(v, "confirm-alt").then_some(())).await?;
+    click(view, "confirm-alt", cx).await?;
+    until(view, cx, WITHIN, "the group's rows gone", |v| (!painted(v, &row) && !painted(v, &member)).then_some(())).await?;
+    let left = supraman_core::folders::load(home)?;
+    if left.groups().any(|(n, _)| n == GROUP) || left.folders().filter(|f| f.path == folder).count() != 1 {
+        bail!("Remove Group with its folders left {left:?}");
+    }
+    Ok(format!("Add Group {GROUP} typed and entered, {FOLDER} added into it from its menu, Remove Group's \"Remove its folders too\" left {FOLDER} only at the top level"))
+}
+
 pub(crate) async fn menu_open(view: &Entity<FleetView>, title: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Vec<SharedString>> {
     let keys = until(view, cx, WITHIN, &format!("the menu of {title}"), |v| {
         v.dialogs.menu.as_ref().filter(|m| m.title == title).map(|m| m.items.iter().map(|i| i.key.clone()).collect::<Vec<_>>())
@@ -335,7 +378,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     let home = view.read_with(cx, |v, _| v.home.clone()).ok_or_else(|| anyhow!("no Supraman home"))?;
 
     view.update(cx, |v, _| v.dialogs.pick_folder = Some(root.clone()));
-    click(view, "add-folder", cx).await?;
+    add_menu(view, "menu-add-folder", cx).await?;
     let folder_key = format!("repo-row-{FOLDER}");
     until(view, cx, WITHIN, "the added folder's row at the top level", |v| painted(v, &folder_key).then_some(())).await?;
     let listed = supraman_core::folders::load(&home)?;
@@ -349,13 +392,10 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     let toast = view.read_with(cx, |v, _| v.toast.text().map(str::to_string));
     let mut out = vec![format!("Add Folder put {} at the top level's end, its row painted; toast {toast:?}", root.display())];
     view.update(cx, |v, _| v.dialogs.pick_folder = Some(root.clone()));
-    click(view, "add-folder", cx).await?;
-    let refused = until(view, cx, WITHIN, "the second Add Folder of it refused", |v| v.action_error.clone()).await?;
-    if !refused.contains("listed there already") {
-        bail!("adding {} twice reads {refused:?}", root.display());
-    }
-    view.update(cx, |v, _| v.action_error = None);
-    out.push(format!("the same folder again: {refused:?}"));
+    add_menu(view, "menu-add-folder", cx).await?;
+    let refused = until(view, cx, WITHIN, "the second Add Folder of it refused", |v| v.toast.text().filter(|t| t.contains("listed there already")).map(str::to_string)).await?;
+    out.push(format!("the same folder again: toast {refused:?}"));
+    out.push(groups(view, &root, &home, cx).await?);
 
     out.push(row_details(view, own, &root, cx).await?);
 
