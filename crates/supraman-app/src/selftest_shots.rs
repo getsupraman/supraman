@@ -105,7 +105,7 @@ fn workman() -> FakeWorkman {
                  row("4", "Receipt email", "open", (0, 0)), row("5", "Refunds from the admin view", "open", (0, 0))]
     });
     let claim = json!({ "item": task("3", "Order summary page", "in_progress"), "run": run, "role": "worker", "agent": "fm-demo-web", "tree": r"C:\src\demo\web",
-                        "session": { "id": "s1", "name": "fm-demo-web", "role": "worker", "claudeSessionId": "d0000003-0000-4000-8000-00000000demo", "firstSeenAt": "x", "lastSeenAt": "x" },
+                        "session": { "id": "s1", "name": "fm-demo-web", "role": "worker", "claudeSessionId": "d0000003-0000-4000-8000-00000000de00", "firstSeenAt": "x", "lastSeenAt": "x" },
                         "acquiredAt": "2026-11-02T09:30:00+00:00", "heartbeatAt": "2026-11-02T09:55:00+00:00", "expiresAt": "2026-11-02T10:26:00+00:00", "expired": false });
     let overview = json!({
         "asOf": "2026-11-02T10:00:00+00:00", "seq": 10, "workingNow": [claim],
@@ -166,7 +166,7 @@ fn rows() -> anyhow::Result<Vec<supraman_claude::Session>> {
         let cwd = folder.map_or_else(|| PathBuf::from(ROOT), |f| Path::new(ROOT).join(f));
         let mut v = serde_json::json!({
             "id": id,
-            "sessionId": format!("{id}-0000-4000-8000-00000000demo"),
+            "sessionId": format!("{id}-0000-4000-8000-00000000de00"),
             "name": name,
             "cwd": cwd,
             "kind": kind,
@@ -207,11 +207,12 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let main = capture(out.join("supraman-main.png"), None, cx).await?;
     println!("shot: {}", main.display());
     inbox(view, &out, cx).await?;
+    sidebar_shown(view, &out, cx).await?;
 
     let target = MenuTarget::Session {
         workspace: WORKSPACE.to_string(),
         repo: "api".to_string(),
-        session_id: "d0000002-0000-4000-8000-00000000demo".to_string(),
+        session_id: "d0000002-0000-4000-8000-00000000de00".to_string(),
     };
     let tab = view.update(cx, |v, cx| v.open_details(target, cx));
     if tab.is_none() {
@@ -243,7 +244,44 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     crate::selftest::click(view, "work-tab-overview", cx).await?;
     work_pages(view, &work, &out, cx).await?;
     git_palette(view, &out, cx).await?;
-    tab_overflow(view, &out, cx).await
+    tab_overflow(view, &out, cx).await?;
+    settings_pages(view, &out, cx).await
+}
+
+/// fm-demo-api attached in its tab: its sidebar row in the selected fill with the focus colour's left edge.
+async fn sidebar_shown(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let session_id = "d0000002-0000-4000-8000-00000000de00";
+    let saved = crate::saved_tabs::SavedTab::Attach {
+        title: "demo · api · fm-demo-api".into(),
+        cwd: Path::new(ROOT).join("api"),
+        id: "d0000002".into(),
+        session_id: Some(session_id.into()),
+        name: "fm-demo-api".into(),
+    };
+    let tab = view.update(cx, |v, cx| v.open_placeholder(saved, cx));
+    let marked = format!("marked-{session_id}");
+    crate::selftest::until(view, cx, Duration::from_secs(10), "fm-demo-api's row shown", |v| v.hits.borrow().keys().any(|k| k.starts_with(&marked)).then_some(())).await?;
+    crate::selftest::drawn(cx).await?;
+    let shot = capture(out.join("supraman-sidebar-shown.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    view.update(cx, |v, cx| v.close_tab(tab, cx));
+    Ok(())
+}
+
+/// The settings window on Appearance: its page list row in the selected fill.
+async fn settings_pages(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    use crate::settings_window::page;
+    view.update(cx, |v, cx| v.open_settings_at(Some(page::APPEARANCE), cx));
+    let handle = crate::selftest::until_with(cx, Duration::from_secs(10), "the settings window on Appearance, its settings read", |cx| {
+        let handle = view.read_with(cx, |v, _| v.settings_window)?;
+        handle.read_with(cx, |s, _| s.page() == page::APPEARANCE && s.loaded()).ok().filter(|ready| *ready).map(|_| handle)
+    })
+    .await?;
+    crate::selftest_left::shown_and_painted(handle, cx).await?;
+    let shot = capture(out.join("supraman-settings-pages.png"), Some("Supraman Settings"), cx).await?;
+    println!("shot: {}", shot.display());
+    view.update(cx, |v, cx| v.close_settings(cx));
+    crate::selftest::until_with(cx, Duration::from_secs(10), "the settings window closed", |cx| handle.read_with(cx, |_, _| ()).is_err().then_some(())).await
 }
 
 /// Twenty more tabs than the strip holds: the last one active beside the + ⌄ at the room's right edge, the left edge faded.
@@ -356,6 +394,7 @@ async fn git_palette(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowC
     git_agent(view, &dir, &fixture.worktree, out, cx).await?;
     git_worktree_tab(view, &dir, &fixture.worktree, out, cx).await?;
     git_pills(view, out, cx).await?;
+    git_focus(view, out, cx).await?;
     drop(fixture);
     Ok(())
 }
@@ -370,7 +409,7 @@ async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path
         .context("adding the Git fixture to the demo workspace")?;
     let session = json!([{
         "id": "d0000007",
-        "sessionId": "d0000007-0000-4000-8000-00000000demo",
+        "sessionId": "d0000007-0000-4000-8000-00000000de00",
         "name": "fm-demo-shop",
         "cwd": dir,
         "kind": "background",
@@ -380,7 +419,7 @@ async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path
         "pid": std::process::id(),
     }, {
         "id": "d0000008",
-        "sessionId": "d0000008-0000-4000-8000-00000000demo",
+        "sessionId": "d0000008-0000-4000-8000-00000000de00",
         "name": "fm-demo-side",
         "cwd": side,
         "kind": "background",
@@ -390,7 +429,7 @@ async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path
         "pid": std::process::id(),
     }, {
         "id": "d0000009",
-        "sessionId": "d0000009-0000-4000-8000-00000000demo",
+        "sessionId": "d0000009-0000-4000-8000-00000000de00",
         "name": "fm-demo-review",
         "cwd": side,
         "kind": "background",
@@ -530,6 +569,33 @@ async fn git_band(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowCont
     let shot = capture(out.join("supraman-git-band.png"), None, cx).await?;
     println!("shot: {}", shot.display());
     crate::selftest::click(view, "git-ref-ask-cancel", cx).await
+}
+
+/// A click on a commit row gives the graph the keys: the pane wears its 1 px mark in the focus colour.
+async fn git_focus(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let row = crate::selftest::until(view, cx, Duration::from_secs(10), "the top pill's commit row", |v| {
+        let hits = v.hits.borrow();
+        let pill = hits.iter().filter(|(k, _)| k.starts_with("git-pill-")).map(|(_, h)| h.bounds.center().y).min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))?;
+        let row = |k: &String| k.strip_prefix("git-row-").is_some_and(|n| n.parse::<usize>().is_ok());
+        hits.iter().find(|(k, h)| row(k) && h.fully_visible() && h.bounds.top() <= pill && pill < h.bounds.bottom()).map(|(k, _)| k.clone())
+    })
+    .await?;
+    view.read_with(cx, |v, _| v.hits.borrow_mut().remove("commit-sha"));
+    crate::selftest::click(view, &row, cx).await?;
+    let mark = supraman_ui::focus::mark_key("git-graph");
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the graph's focus mark and the commit read", |v| {
+        let hits = v.hits.borrow();
+        (hits.contains_key(&mark) && hits.contains_key("commit-sha")).then_some(())
+    })
+    .await
+    .map_err(|e| {
+        let active = cx.update(|window, _| window.is_window_active()).unwrap_or_default();
+        e.context(format!("the main window active: {active}"))
+    })?;
+    crate::selftest::drawn(cx).await?;
+    let shot = capture(out.join("supraman-git-focus.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    Ok(())
 }
 
 fn mv(position: gpui::Point<gpui::Pixels>, cx: &mut AsyncWindowContext) -> anyhow::Result<gpui::DispatchEventResult> {
