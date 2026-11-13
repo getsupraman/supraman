@@ -1,4 +1,4 @@
-//! The Activity page, the web's: the newest events of the workspace's projects, grouped by day, newest first.
+//! The Activity page, the web's: the newest events of the bound projects, grouped by day, newest first.
 
 use gpui::{ClickEvent, FontWeight};
 use supraman_core::time::{self, rfc3339_ms};
@@ -121,7 +121,7 @@ impl WorkView {
             .track_scroll(&self.list_scroll)
             .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("Activity"))
             .child(div().text_sm().text_color(colors.text_muted).child(SharedString::from(format!(
-                "The last {SHOWN} events across this workspace's projects. Older events are on each item's Activity tab."
+                "The last {SHOWN} events across these projects. Older events are on each item's Activity tab."
             ))));
         if let Some(why) = &a.error {
             root = root.child(div().text_sm().text_color(cx.theme().status().error).child(SharedString::from(why.clone())));

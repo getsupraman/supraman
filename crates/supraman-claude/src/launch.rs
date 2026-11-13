@@ -119,7 +119,7 @@ pub struct SessionIdentity {
     /// E.g. `supraman/nomos/Nomos.Extract`.
     pub origin: String,
     pub cwd: String,
-    /// Supraman's role (workspace, repo, …), not the token's.
+    /// Supraman's role (`hand`, a scheduled run's, …), not the token's.
     pub supraman_role: String,
 }
 

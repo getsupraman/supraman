@@ -53,7 +53,7 @@ pub enum ItemResolution {
     Unknown,
 }
 
-/// Every item, wherever it appears. `qualified_ref` is `ref` when unique in the workspace, else `run/ref`.
+/// Every item, wherever it appears. `qualified_ref` is `ref` when unique in its project, else `run/ref`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ItemRef {

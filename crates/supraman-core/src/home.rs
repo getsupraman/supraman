@@ -61,7 +61,7 @@ impl SessionEnv {
         std::env::var_os(ROLE_VAR)
     }
 
-    /// The vars to set for a child, in the order role, workspace, session, repo; a `None` is left out.
+    /// The vars to set for a child, in the order role, session, repo; a `None` is left out.
     pub fn vars(&self) -> Vec<(&'static str, String)> {
         [(ROLE_VAR, &self.role), (SESSION_VAR, &self.session), (REPO_VAR, &self.repo)]
             .into_iter()

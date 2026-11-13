@@ -31,7 +31,7 @@ pub enum ClaudeError {
         "claude CLI {found} is too old: Supraman needs {minimum} or newer (`--bg`, `agents --json --all`, `--plugin-dir` and peerProtocol 1 as measured there); update claude"
     )]
     Unsupported { found: String, minimum: String },
-    #[error("workspace {} is not trusted: run `claude` there once and accept the trust prompt", .cwd.display())]
+    #[error("folder {} is not trusted: run `claude` there once and accept the trust prompt", .cwd.display())]
     TrustNeeded { cwd: std::path::PathBuf },
     #[error("a session named {name} already exists")]
     NameTaken { name: String },

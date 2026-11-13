@@ -91,7 +91,7 @@ impl FleetView {
                     scanner = Some(opened);
                     from_cache = cached_first;
                 }
-                // the first scan waits for the first poll's apply, which wakes it with the workspaces and sessions
+                // the first scan waits for the first poll's apply, which wakes it with the folders and sessions
                 nudged.wait(&executor, TRANSCRIPTS_EVERY).await;
                 let Ok(asked) = this.update(cx, |this, _| this.transcripts_ask()) else {
                     return;

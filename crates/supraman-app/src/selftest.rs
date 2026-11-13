@@ -34,7 +34,7 @@ pub(crate) mod win;
 pub(crate) use shell_tab::select_wheel_line;
 pub(crate) use wait::{drawn, drawn_in, frame_if_asked, until, until_app, until_with};
 
-pub const WORKSPACE: &str = "larchsys";
+pub const GROUP: &str = "larchsys";
 const PROMPT: &str = "Reply with the word ready and then wait for input";
 const LISTED_WITHIN: Duration = Duration::from_secs(15);
 const RENDERED_WITHIN: Duration = Duration::from_secs(10);
@@ -87,7 +87,7 @@ static SCRATCH: Mutex<Option<Scratch>> = Mutex::new(None);
 static SESSION_NAME: Mutex<Option<String>> = Mutex::new(None);
 static REPO: OnceLock<String> = OnceLock::new();
 
-fn repo() -> &'static str {
+pub(crate) fn repo() -> &'static str {
     REPO.get().map_or("", String::as_str)
 }
 
@@ -136,7 +136,7 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
         return crate::selftest_shots::prepare();
     }
     let (home, cwd, work, fixture) = clear_scratch(mode)?;
-    let main = register_workspace(&home, &cwd, &fixture)?;
+    let main = register_group(&home, &cwd, &fixture)?;
     // A closed loopback port as the Workman server, never the real one; the gate's step 1w names its fake instead.
     set_workman(&supraman_workman::closed_base())?;
 
@@ -188,8 +188,8 @@ fn clear_scratch(mode: Mode) -> anyhow::Result<(PathBuf, PathBuf, PathBuf, PathB
     Ok((home, cwd, work, fixture))
 }
 
-/// The group `WORKSPACE` in folders.toml.
-fn register_workspace(home: &Path, cwd: &Path, fixture: &Path) -> anyhow::Result<PathBuf> {
+/// The group `GROUP` in folders.toml.
+fn register_group(home: &Path, cwd: &Path, fixture: &Path) -> anyhow::Result<PathBuf> {
     // Still single-threaded apart from the watchdog, which never reads the environment.
     unsafe { std::env::set_var(supraman_core::HOME_VAR, home) };
     std::fs::create_dir_all(cwd)?;
@@ -204,7 +204,7 @@ fn register_workspace(home: &Path, cwd: &Path, fixture: &Path) -> anyhow::Result
         crate::selftest_manage::fake_repo(fixture, name)?;
     }
     let paths = [fixture.join("alpha"), fixture.join("beta"), main.clone()];
-    let group = Entry::Group { name: WORKSPACE.into(), folders: paths.iter().map(FolderEntry::new).collect() };
+    let group = Entry::Group { name: GROUP.into(), folders: paths.iter().map(FolderEntry::new).collect() };
     supraman_core::folders::edit(home, |e| {
         *e = Entries::new(vec![group]);
         Ok(())
@@ -212,7 +212,7 @@ fn register_workspace(home: &Path, cwd: &Path, fixture: &Path) -> anyhow::Result
 
     REPO.set(repo_name).ok();
     println!(
-        "step 1: SUPRAMAN_HOME={} ; group {WORKSPACE} = two fixture repos in {} and {}, in {}",
+        "step 1: SUPRAMAN_HOME={} ; group {GROUP} = two fixture repos in {} and {}, in {}",
         home.display(),
         fixture.display(),
         main.display(),
@@ -636,7 +636,7 @@ async fn page_through(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowC
 }
 
 fn find_row(view: &FleetView, name: &str) -> Option<SessionRow> {
-    view.tree().folder(&format!("{WORKSPACE}/{}", repo()))?.sessions.iter().find(|r| r.session.name == name).cloned()
+    view.tree().folder(&format!("{GROUP}/{}", repo()))?.sessions.iter().find(|r| r.session.name == name).cloned()
 }
 
 /// Non-blank cells in what the painter last laid out (prepaint syncs `last_content`).
@@ -741,7 +741,7 @@ async fn wait_attachable(
             let seen = row.map_or("not listed".to_string(), |r| {
                 format!("listed as {} ({}, attachable {})", r.health, raw(&r.session), r.attachable)
             });
-            bail!("{name} not live under {WORKSPACE}/./{} within {} s: {seen}", repo(), LISTED_WITHIN.as_secs());
+            bail!("{name} not live under {GROUP}/./{} within {} s: {seen}", repo(), LISTED_WITHIN.as_secs());
         }
         sleep(cx, Duration::from_millis(100)).await;
     };
@@ -965,7 +965,7 @@ async fn attach_steps(view: &Entity<FleetView>, name: &str, cx: &mut AsyncWindow
     let (row, listed_after) = step("3", wait_attachable(view, name, cx)).await?;
     let id = row.session.id.clone();
     println!(
-        "step 3: {name} ({id}) listed under {WORKSPACE} / ./{} as {} after {} ms",
+        "step 3: {name} ({id}) listed under {GROUP} / ./{} as {} after {} ms",
         repo(),
         row.health,
         listed_after.as_millis()
@@ -1361,7 +1361,7 @@ mod tests {
         let check = |from: &Path, label: &str| {
             let main = find_main_repo(from).unwrap_or_else(|e| panic!("{label}: {e:#}"));
             assert_eq!(main.file_name().unwrap(), "Repo", "{label}: {}", main.display());
-            assert_eq!(main.parent().unwrap().file_name().unwrap(), "Root", "{label}: workspace root");
+            assert_eq!(main.parent().unwrap().file_name().unwrap(), "Root", "{label}: the group's root");
         };
         check(&repo.join("crates").join("supraman-app"), ".git dir");
         check(&wts.join("abs"), "absolute gitdir");

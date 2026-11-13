@@ -8,7 +8,6 @@ use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
 use supraman_ui::inbox_card::{self as shared, InboxCard};
 use supraman_ui::tooltip::Tooltip;
-use supraman_workman::InboxRow;
 use theme::ActiveTheme as _;
 
 use crate::work_view::cards::{self, Card};
@@ -53,7 +52,7 @@ pub fn render(card: &Card, hits: &HitTargets, now: i64, mark: Mark, on: OnCard, 
     let mut shown = InboxCard::new(work_view::row_key_of(&card.key), card.kind.clone(), card.badge.clone(), card.title.clone())
         .parts(move |part| part_key(part, &item))
         .mark(mark, cx)
-        .context(card.workspace.clone())
+        .context(card.context.clone())
         .when(card.since, now)
         .line("ref", card.ref_.clone(), true)
         .line("detail", card.detail.clone().unwrap_or_default(), false)
@@ -76,7 +75,7 @@ fn caption(text: String, cx: &App) -> Div {
 
 /// Needs you's cards, then the Housekeeping header and, while `inbox` keeps it open, its groups; `live` names the live sessions.
 pub fn render_sections(
-    rows: &[(String, InboxRow)],
+    rows: &[cards::Row],
     live: &[String],
     inbox: &Entity<WorkInbox>,
     hits: &HitTargets,
@@ -84,7 +83,7 @@ pub fn render_sections(
     on_card: &dyn Fn(&Card) -> OnCard,
     cx: &App,
 ) -> (Vec<AnyElement>, Option<AnyElement>) {
-    let refs: Vec<(&str, &InboxRow)> = rows.iter().map(|(w, r)| (w.as_str(), r)).collect();
+    let refs: Vec<&cards::Row> = rows.iter().collect();
     let now = now_ms();
     let sections = cards::sections(&refs, live, now);
     let needs = sections.needs_you.iter().map(|card| render(card, hits, now, mark, on_card(card), cx)).collect();

@@ -56,7 +56,7 @@ impl FleetView {
         let tree = self.tree();
         match target {
             MenuTarget::Group(name) => tree.entry(name).map(|node| (name.clone(), group_items(node, self.has_closed_background(name)))),
-            MenuTarget::Folder(key) => self.folder_menu(key),
+            MenuTarget::Folder(key) => self.folder_menu(key, cx),
             MenuTarget::Session { entry, place, session_id } => tree
                 .rows()
                 .find(|r| &r.session.session_id == session_id)
@@ -70,29 +70,30 @@ impl FleetView {
     }
 
     /// A folder row's title and items, with its place in folders.toml.
-    pub(super) fn folder_menu(&self, key: &str) -> Option<(String, Vec<MenuItem>)> {
+    pub(crate) fn folder_menu(&self, key: &str, cx: &gpui::App) -> Option<(String, Vec<MenuItem>)> {
         let tree = self.tree();
         let (entry, folder) = tree.folders().find(|(_, f)| f.key == key)?;
-        Some((folder.place(), folder_items(entry, folder, self.has_closed_background(&entry.name))))
+        Some((folder.place(), folder_items(entry, folder, self.has_closed_background(&entry.name), self.work_why_not(&folder.path, cx))))
     }
 
     pub(super) fn session_menu(&self, entry: &str, place: &str, row: &SessionRow, send_name: Option<String>, cx: &gpui::App) -> Vec<MenuItem> {
-        let claimed = self.claimed_item(entry, &row.session.name, cx);
+        let claimed = self.claimed_item(&row.session.name, cx);
         session_items(entry, place, row, self.resumable(row), claimed, send_name, self.deletable(row))
     }
 
-    pub(super) fn claimed_item(&self, workspace: &str, name: &str, cx: &gpui::App) -> Option<String> {
+    /// The item an open Work tab shows `name` claiming, with that tab's target.
+    pub(super) fn claimed_item(&self, name: &str, cx: &gpui::App) -> Option<(work_view::Target, String)> {
         if name.is_empty() {
             return None;
         }
         self.tabs.iter().find_map(|t| match &t.kind {
-            super::TabKind::Work(view) if view.read(cx).workspace == workspace => view.read(cx).boards.values().find_map(|b| match b {
+            super::TabKind::Work(view) => view.read(cx).boards.values().find_map(|b| match b {
                 work_view::BoardState::Ready(board) => board
                     .rows
                     .iter()
                     .filter_map(|r| r.claim.as_ref())
                     .find(|c| !c.expired && c.holder() == name)
-                    .map(|c| c.item.id.clone()),
+                    .map(|c| (view.read(cx).target.clone(), c.item.id.clone())),
                 _ => None,
             }),
             _ => None,
@@ -101,8 +102,8 @@ impl FleetView {
 
     pub fn run_action(&mut self, action: MenuAction, window: &mut Window, cx: &mut Context<Self>) {
         match action {
-            MenuAction::Work(w) => {
-                self.open_work(&w, cx);
+            MenuAction::Work(target) => {
+                self.open_work(target, cx);
             }
             MenuAction::NewTask { entry, folder, scheduled } => {
                 self.open_start(&entry, folder, scheduled, window, cx);
@@ -131,8 +132,8 @@ impl FleetView {
                 cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
                 self.show_toast(format!("Copied {text}"), cx);
             }
-            MenuAction::ShowInWork { workspace, item_id } => {
-                self.open_work_item(&workspace, &item_id, cx);
+            MenuAction::ShowInWork { target, item_id } => {
+                self.open_work_item(target, &item_id, cx);
             }
             MenuAction::Delete(session) => self.ask_delete(session),
             MenuAction::DeleteClosed(entry) => self.ask_delete_closed(entry, cx),

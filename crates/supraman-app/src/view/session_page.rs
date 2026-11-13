@@ -42,7 +42,7 @@ impl FleetView {
     /// `listed`: in the last poll's tree, else as last seen, with no actions; `transcript`: whether its section shows.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn session_view(&self, entry: &str, place: &str, row: &SessionRow, folder: Option<(&str, &Path)>, disk: &OnDisk, listed: bool, transcript: bool, cx: &App) -> SessionView {
-        let sections = self.row_sections(entry, row, folder, disk, listed, cx);
+        let sections = self.row_sections(row, folder, disk, listed, cx);
         let items = if listed { self.session_menu(entry, place, row, None, cx) } else { Vec::new() };
         let placed = Placed { tab: self.session_tab(&row.session), active: self.active, resumable: self.resumable(row) };
         let pill = if listed { State::of_row(row).mark(cx).color() } else { cx.theme().colors().text_muted };

@@ -201,7 +201,7 @@ fn folders() -> Vec<std::path::PathBuf> {
     vec!["alpha".into(), "beta".into(), "plain".into()]
 }
 
-/// The tab of workspace `w` (folders alpha and beta bound to pa and pb), with its Inbox and one live Supraman session.
+/// The tab of group `w` (folders alpha and beta bound to pa and pb), with its Inbox and one live Supraman session.
 fn open(cx: &mut TestAppContext) -> Opened<'_> {
     cx.update(|cx| {
         supraman_ui::init_globals(cx, "test");
@@ -214,7 +214,7 @@ fn open(cx: &mut TestAppContext) -> Opened<'_> {
         let inbox = WorkInbox::for_test(hub.clone(), cx);
         inbox.update(cx, |i, cx| {
             i.use_repo_of(repo_of);
-            i.set_workspaces(vec![("w".into(), folders())], cx)
+            i.set_targets(vec![(Target::Group("w".into()), folders())], folders(), cx)
         });
         let live = vec![supraman_ui::session::LiveSession {
             name: "fm-w-ra".into(),
@@ -224,7 +224,7 @@ fn open(cx: &mut TestAppContext) -> Opened<'_> {
             attach: Some("live0001".into()),
         }];
         let opening = Opening {
-            workspace: "w".into(),
+            target: Target::Group("w".into()),
             folders: folders(),
             home: None,
             hits: HitTargets::default(),
@@ -573,7 +573,7 @@ fn c2_the_overview_says_what_needs_you_and_who_works_on_what(cx: &mut TestAppCon
     assert_eq!(shown.get(), 1, "+2 more opens the Inbox");
 
     bounds(&view, "work-working-pa/ra/3", cx);
-    assert!(hit(&view, "work-working-pc/rc/1", cx).is_none(), "a claim in a project of no folder is not this workspace's");
+    assert!(hit(&view, "work-working-pc/rc/1", cx).is_none(), "a claim in a project of no folder is not this tab's");
     let facts = view.read_with(cx, |v, _| v.hits.borrow().iter().find(|(k, _)| k.starts_with("work-working-facts-pa/ra/3=")).map(|(_, h)| h.bounds)).expect("the holder's line");
     let (name, open) = (facts, bounds(&view, "work-working-open-pa/ra/3", cx));
     assert!(open.top() >= name.top() - px(4.) && open.bottom() <= name.bottom() + px(4.), "Open on the holder's line: {open:?} in {name:?}");
@@ -643,7 +643,7 @@ fn c6_ctrl_p_finds_an_item_by_ref_and_enter_shows_it(cx: &mut TestAppContext) {
     settle(&view, cx);
     cx.simulate_input("zebra");
     settle(&view, cx);
-    assert_eq!(palette_refs(&view, cx).0, ["pb/rb/2"], "Workman's hit in a bound project; pc's is not this workspace's");
+    assert_eq!(palette_refs(&view, cx).0, ["pb/rb/2"], "Workman's hit in a bound project; pc's is not this tab's");
     assert!(fake.seen().iter().any(|s| s.target == "/api/v1/search?q=zebra&limit=20"));
     click(&view, &format!("work-find-row-{}", id(41)), cx);
     assert_eq!(view.read_with(cx, |v, _| (v.palette.is_none(), v.selected.clone())), (true, Some(id(41))), "a click opens it");
@@ -652,11 +652,11 @@ fn c6_ctrl_p_finds_an_item_by_ref_and_enter_shows_it(cx: &mut TestAppContext) {
 #[gpui::test]
 fn the_inbox_reads_every_project_its_folders_bind(cx: &mut TestAppContext) {
     let Opened { fake, inbox, cx, .. } = open(cx);
-    let rows: Vec<String> = inbox.read_with(cx, |i, _| i.rows().iter().map(|(w, r)| format!("{w}:{}", r.item.qualified_ref)).collect());
-    assert_eq!(rows, ["w:pa/ra/q6", "w:pa/ra/q5", "w:pa/ra/q4", "w:pa/ra/q3", "w:pa/ra/q2", "w:pa/ra/q1", "w:pb/rb/1"], "pa's and pb's rows, newest first");
+    let rows: Vec<String> = inbox.read_with(cx, |i, _| i.rows().iter().map(|r| format!("{}:{}", r.context, r.row.item.qualified_ref)).collect());
+    assert_eq!(rows, ["Project pa:pa/ra/q6", "Project pa:pa/ra/q5", "Project pa:pa/ra/q4", "Project pa:pa/ra/q3", "Project pa:pa/ra/q2", "Project pa:pa/ra/q1", "Project pb:pb/rb/1"], "pa's and pb's rows, newest first, each with its project's name");
     let mut asked: Vec<String> = fake.seen().into_iter().map(|s| s.target).filter(|t| t.starts_with("/api/v1/inbox") || t.starts_with("/api/v1/resolve")).collect();
     asked.dedup();
-    assert_eq!(asked, [format!("/api/v1/inbox?project={PA}"), format!("/api/v1/inbox?project={PB}")], "never a project found by the workspace's name");
+    assert_eq!(asked, [format!("/api/v1/inbox?project={PA}"), format!("/api/v1/inbox?project={PB}")], "never a project found by a name");
 }
 
 #[gpui::test]
@@ -718,10 +718,10 @@ fn show_project_lands_on_its_first_active_run_else_the_overview(cx: &mut TestApp
     assert_eq!(view.read_with(cx, |v, _| v.page.clone()), Page::Run(RB.into()));
     view.update(cx, |v, cx| v.show_project(PC.into(), cx));
     settle(&view, cx);
-    assert_eq!(view.read_with(cx, |v, _| v.page.clone()), Page::Overview, "a project the workspace does not bind lands on the Overview");
+    assert_eq!(view.read_with(cx, |v, _| v.page.clone()), Page::Overview, "a project the group does not bind lands on the Overview");
     let hub = view.read_with(cx, |v, _| v.hub.clone());
     let opening = Opening {
-        workspace: "w".into(),
+        target: Target::Group("w".into()),
         folders: folders(),
         home: None,
         hits: HitTargets::default(),
@@ -739,4 +739,42 @@ fn show_project_lands_on_its_first_active_run_else_the_overview(cx: &mut TestApp
     });
     cx.run_until_parked();
     assert_eq!(fresh.read_with(cx, |v, _| v.page.clone()), Page::Run(RB.into()), "asked before its projects were bound, it lands once they are");
+}
+
+#[gpui::test]
+fn a_folder_rows_binding_is_known_once_the_inbox_read_its_keys(cx: &mut TestAppContext) {
+    let Opened { inbox, cx, .. } = open(cx);
+    let ids = |folder: &str, cx: &mut VisualTestContext| {
+        cx.update(|_, cx| inbox.read(cx).folder_binding(Path::new(folder), cx)).map(|b| b.map(|ps| ps.into_iter().map(|p| p.id).collect::<Vec<_>>()))
+    };
+    assert_eq!(ids("alpha", cx), Some(Ok(vec![PA.to_string()])));
+    assert_eq!(ids("plain", cx), Some(Ok(vec![])), "no repo, no project");
+    assert_eq!(ids("unread", cx), None, "a folder the Inbox was not given is not known");
+}
+
+#[gpui::test]
+fn a_tab_is_titled_by_its_one_bound_project_else_by_its_folder_or_group(cx: &mut TestAppContext) {
+    let Opened { view, inbox, cx, .. } = open(cx);
+    assert_eq!(view.read_with(cx, |v, _| (v.title(), v.name())), ("Work · w".to_string(), "w".to_string()), "the group binds pa and pb");
+    let hub = view.read_with(cx, |v, _| v.hub.clone());
+    let opening = Opening {
+        target: Target::Folder("alpha".into()),
+        folders: vec!["alpha".into()],
+        home: None,
+        hits: HitTargets::default(),
+        link: FleetLink { live: Rc::new(Vec::new), opening: Rc::new(|_, _| attach_opening()), open: Rc::new(|_, _, _| {}) },
+        open_link_with: record,
+        repo_of,
+    };
+    let folder = cx.update(|_, cx| {
+        cx.new(|cx| {
+            let mut v = WorkView::for_test(opening, hub, cx);
+            v.inbox = Some(inbox.clone());
+            v
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(folder.read_with(cx, |v, _| v.title()), "Work · Project pa", "alpha binds pa alone");
+    let needs = folder.read_with(cx, |v, cx| v.needs_you(cx));
+    assert_eq!(needs, 6, "only pa's rows are this tab's");
 }

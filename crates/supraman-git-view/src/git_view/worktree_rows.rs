@@ -128,7 +128,7 @@ impl GitView {
         Some(WorktreeView { colour, ..WorktreeView::of(&wip) })
     }
 
-    /// Asks the workspace for row `ix`'s worktree's Git tab; a detached worktree's only when `detached_too`.
+    /// Asks the app for row `ix`'s worktree's Git tab; a detached worktree's only when `detached_too`.
     pub(crate) fn open_worktree(&mut self, ix: usize, detached_too: bool, cx: &mut Context<Self>) {
         let Some(path) = self.pages.read(cx).rows.get(ix).and_then(|r| r.row.worktree.clone()) else { return };
         if !detached_too && self.worktree_view(ix, cx).is_none_or(|v| v.detached) {

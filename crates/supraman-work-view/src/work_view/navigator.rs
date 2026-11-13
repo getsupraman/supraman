@@ -44,7 +44,7 @@ impl WorkView {
             .px_3()
             .pt_2()
             .pb_1()
-            .child(clipped("work-nav-workspace", self.workspace.clone(), false).flex_1().text_sm().font_weight(FontWeight::SEMIBOLD))
+            .child(clipped("work-nav-name", self.name(), false).flex_1().text_sm().font_weight(FontWeight::SEMIBOLD))
             .child(
                 button::icon(&self.hits, "work-nav-shut", Icon::ChevronLeft.svg(14., colors.icon_muted), px(20.), cx)
                     .tooltip(supraman_ui::tooltip::Tooltip::text("Hide the navigator"))

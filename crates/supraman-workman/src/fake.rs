@@ -129,7 +129,7 @@ type Log = Arc<(Mutex<Vec<Seen>>, Condvar)>;
 /// Every kind of row Workman's inbox serves.
 pub const INBOX_KINDS: [&str; 7] = ["question", "blocked", "blocker_finding", "done_unverified", "stale_in_progress", "expired_claim", "assumption_due"];
 
-/// One inbox row per [`INBOX_KINDS`] as Workman 3.0.3 serves it, in workspace `ws` and run `r1`, titled `Title of <kind>`.
+/// One inbox row per [`INBOX_KINDS`] as Workman 3.0.3 serves it, in project `ws` and run `r1`, titled `Title of <kind>`.
 pub fn inbox_rows(ws: &str) -> Vec<serde_json::Value> {
     let call = |kind: &str| format!("work_status(ref:\"{ws}/r1/{kind}\", to:\"in_progress\")");
     let task = |id: &str, ref_: &str, title: &str| serde_json::json!({ "id": id, "ref": ref_, "qualifiedRef": format!("r1/{ref_}"), "kind": "task", "title": title, "status": "open" });

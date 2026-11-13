@@ -11,7 +11,7 @@ use supraman_core::time::{ago, date_words};
 /// Who launched a session, as far as this window can tell.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StartedBy {
-    /// An `fm-` session that is no scheduled run of this workspace.
+    /// An `fm-` session that is no scheduled run of this home's folders.
     Supraman,
     /// A run of the schedule with this id.
     Schedule(String),
@@ -47,7 +47,7 @@ pub struct SessionFacts<'a> {
     /// The listed folder it shows under.
     pub folder: Option<(&'a str, &'a Path)>,
     pub started_by: StartedBy,
-    /// `None` while the workspace's Work tab is not open, which is where claims are read.
+    /// `None` while no Work tab is open, which is where claims are read.
     pub claimed: Option<Option<String>>,
     /// The Workman sign-in of the [+] tab running it.
     pub sign_in: Option<String>,

@@ -6,10 +6,12 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct File {
-    workspaces: BTreeMap<String, BTreeSet<String>>,
+    /// Its name before folders goes with folders::migrate in 0.1.19 (backlog/end-controllers-removal).
+    #[serde(alias = "workspaces")]
+    folders: BTreeMap<String, BTreeSet<String>>,
 }
 
-/// Inbox entries dismissed, per workspace, by their key (a failed run's, a waiting schedule's).
+/// Inbox entries dismissed, per folder key, by their key (a failed run's, a waiting schedule's).
 #[derive(Debug, Default)]
 pub struct Dismissed(JsonStore<File>);
 
@@ -20,20 +22,20 @@ impl Dismissed {
         (Self(store), notice)
     }
 
-    pub fn hides(&self, workspace: &str, key: &str) -> bool {
-        self.0.get().workspaces.get(workspace).is_some_and(|f| f.contains(key))
+    pub fn hides(&self, folder: &str, key: &str) -> bool {
+        self.0.get().folders.get(folder).is_some_and(|f| f.contains(key))
     }
 
-    pub fn dismiss(&mut self, workspace: &str, key: &str) -> Option<Save> {
-        self.0.edit(|f| f.workspaces.entry(workspace.to_string()).or_default().insert(key.to_string()))
+    pub fn dismiss(&mut self, folder: &str, key: &str) -> Option<Save> {
+        self.0.edit(|f| f.folders.entry(folder.to_string()).or_default().insert(key.to_string()))
     }
 
     /// The dismissals made before this store was read join the file's.
     pub fn absorb(&mut self, early: &Dismissed) -> Option<Save> {
         self.0.edit(|f| {
             let mut changed = false;
-            for (workspace, keys) in &early.0.get().workspaces {
-                let mine = f.workspaces.entry(workspace.clone()).or_default();
+            for (folder, keys) in &early.0.get().folders {
+                let mine = f.folders.entry(folder.clone()).or_default();
                 for key in keys {
                     changed |= mine.insert(key.clone());
                 }
@@ -42,17 +44,17 @@ impl Dismissed {
         })
     }
 
-    /// Forgets the keys no longer in `current`; a workspace not in `current` keeps its dismissals.
+    /// Forgets the keys no longer in `current`; a folder not in `current` keeps its dismissals.
     pub fn prune_keys(&mut self, current: &BTreeMap<String, Vec<String>>) -> (bool, Option<Save>) {
         let mut changed = false;
         let save = self.0.edit(|f| {
-            for (workspace, listed) in current {
-                let Some(keys) = f.workspaces.get_mut(workspace) else { continue };
+            for (folder, listed) in current {
+                let Some(keys) = f.folders.get_mut(folder) else { continue };
                 let before = keys.len();
                 keys.retain(|k| listed.contains(k));
                 changed |= keys.len() != before;
                 if keys.is_empty() {
-                    f.workspaces.remove(workspace);
+                    f.folders.remove(folder);
                 }
             }
             changed
@@ -71,8 +73,8 @@ mod tests {
         [(w.to_string(), keys.iter().map(|k| k.to_string()).collect())].into()
     }
 
-    fn dismissed(d: &mut Dismissed, workspace: &str, key: &str) {
-        if let Some(save) = d.dismiss(workspace, key) {
+    fn dismissed(d: &mut Dismissed, folder: &str, key: &str) {
+        if let Some(save) = d.dismiss(folder, key) {
             save.write().unwrap();
         }
     }
@@ -93,10 +95,19 @@ mod tests {
         assert!(notice.is_none() && !d.hides("w", "a"));
         dismissed(&mut d, "w", "a");
         assert!(d.hides("w", "a"));
-        assert!(!d.hides("other", "a"), "per workspace");
+        assert!(!d.hides("other", "a"), "per folder");
         let (again, _) = Dismissed::load_at(Some(file), LOST);
         assert!(again.hides("w", "a"), "read back");
         assert!(!home.path().join("dismissed.json.tmp").exists());
+    }
+
+    #[test]
+    fn a_file_written_before_folders_is_read_by_its_folder_keys() {
+        let home = tempfile::tempdir().unwrap();
+        let file = home.path().join("dismissed.json");
+        std::fs::write(&file, r#"{"workspaces":{"gaia-1a2b3c4d":["run-1"]}}"#).unwrap();
+        let (d, notice) = Dismissed::load_at(Some(file), LOST);
+        assert!(notice.is_none() && d.hides("gaia-1a2b3c4d", "run-1"));
     }
 
     #[test]
@@ -107,7 +118,7 @@ mod tests {
     }
 
     #[test]
-    fn prune_forgets_keys_no_longer_listed_and_keeps_unlisted_workspaces() {
+    fn prune_forgets_keys_no_longer_listed_and_keeps_unlisted_folders() {
         let home = tempfile::tempdir().unwrap();
         let file = home.path().join("dismissed.json");
         let (mut d, _) = Dismissed::load_at(Some(file.clone()), LOST);
@@ -117,11 +128,11 @@ mod tests {
         assert!(!pruned(&mut d, &listed("w", &["a", "b", "d"])));
         assert!(pruned(&mut d, &listed("w", &["b", "d"])));
         assert!(!d.hides("w", "a") && d.hides("w", "b"));
-        assert!(d.hides("v", "c"), "a workspace the poll did not list keeps its dismissals");
+        assert!(d.hides("v", "c"), "a folder the poll did not list keeps its dismissals");
         let (again, _) = Dismissed::load_at(Some(file), LOST);
         assert!(!again.hides("w", "a") && again.hides("w", "b") && again.hides("v", "c"), "the prune was written");
         assert!(pruned(&mut d, &listed("w", &["d"])));
-        assert!(!d.0.get().workspaces.contains_key("w"), "an emptied workspace leaves nothing behind");
+        assert!(!d.0.get().folders.contains_key("w"), "an emptied folder leaves nothing behind");
     }
 
     #[test]

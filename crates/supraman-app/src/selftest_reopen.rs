@@ -10,7 +10,7 @@ use gpui::{AsyncWindowContext, Entity};
 use crate::{
     fleet,
     saved_tabs::{self, SavedTab, SavedTabs},
-    selftest::{WORKSPACE, click, hex6, remove_dir_retrying, sleep, until, until_app, wait_for_tab_terminal},
+    selftest::{GROUP, click, hex6, remove_dir_retrying, sleep, until, until_app, wait_for_tab_terminal},
     selftest_closed::{RECENT, fake_claude, seen_file},
     view::{Detach, FleetView, TabKind},
 };
@@ -129,9 +129,9 @@ async fn check(view: &Entity<FleetView>, home: &Path, own: &str, gone: &Path, cx
     let (shell, hand, work, attach, doomed) = cx.update(|window, cx| {
         view.update(cx, |v, cx| {
             let shell = v.open_shell_in(cwd.clone(), "reopen shell".into(), window, cx);
-            let hand = v.resume(&format!("{WORKSPACE} · reopen"), &closed, cx);
-            let work = v.open_work(crate::selftest_work::WORKSPACE, cx);
-            let attach = v.attach(&format!("{WORKSPACE} · reopen"), &live, cx);
+            let hand = v.resume(&format!("{GROUP} · reopen"), &closed, cx);
+            let work = v.open_work(crate::work_view::Target::Group(crate::selftest_work::GROUP.into()), cx);
+            let attach = v.attach(&format!("{GROUP} · reopen"), &live, cx);
             let doomed = v.open_shell_in(gone.to_path_buf(), "reopen gone".into(), window, cx);
             // the order a drag leaves: Work first
             supraman_ui::tabs::reorder(&mut v.tabs, 2, 0);
@@ -160,8 +160,9 @@ async fn check(view: &Entity<FleetView>, home: &Path, own: &str, gone: &Path, cx
     let took = restart(view, home, 4, Some(gone), cx).await?;
     let mut expected = saved.clone();
     expected.tabs.remove(4);
+    let settled = until_app(view, cx, WITHIN, "the reopened tabs saved as before, the Work tab titled by its project once bound", |v, cx| (v.saved_tabs(cx) == expected).then_some(())).await;
     let (now, notices) = view.read_with(cx, |v, cx| (v.saved_tabs(cx), v.saving.tab_notices.clone()));
-    if now != expected {
+    if settled.is_err() {
         bail!("after the restart {now:?}, expected {expected:?}");
     }
     if notices.len() != 1 || !notices[0].contains("reopen gone") || !notices[0].contains("is gone") {

@@ -16,18 +16,18 @@ use serde_json::{Value, json};
 
 use crate::{
     selftest::{click, close_attach, frames, open_attach, scrolled_into_view, sleep},
-    view::{FleetView, TabKind},
-    work_view::{HOUSEKEEPING_KEY, WorkView},
+    view::{FleetView, MenuAction, TabKind},
+    work_view::{HOUSEKEEPING_KEY, Target, WorkView},
 };
 
-pub const WORKSPACE: &str = "selftest-work";
+pub const GROUP: &str = "selftest-work";
 const PROJECT: &str = "5e1f0000-0000-4000-8000-000000000001";
 const LIVE_RUN: &str = "5e1f0000-0000-4000-8000-0000000000a2";
 const DONE_RUN: &str = "5e1f0000-0000-4000-8000-0000000000a1";
 const TASK_1: &str = "5e1f0000-0000-4000-8000-0000000002a1";
 const TASK_2: &str = "5e1f0000-0000-4000-8000-0000000002a2";
 const SHIPPED: &str = "5e1f0000-0000-4000-8000-0000000001a1";
-/// The workspace folder's `origin`; the fake's project is bound to it (Workman's `project_repo`).
+/// The group folder's `origin`; the fake's project is bound to it (Workman's `project_repo`).
 const REMOTE: &str = "https://example.invalid/supraman/selftest-work.git";
 const REMOTE_KEY: &str = "example.invalid/supraman/selftest-work";
 const LOADED_WITHIN: Duration = Duration::from_secs(5);
@@ -56,7 +56,7 @@ fn rollup(total: u32, done: u32, in_progress: u32, open: u32, cancelled: u32) ->
 }
 
 fn project() -> Value {
-    item(PROJECT, WORKSPACE, "project", "Supraman selftest project", "in_progress")
+    item(PROJECT, GROUP, "project", "Supraman selftest project", "in_progress")
 }
 
 fn live_run() -> Value {
@@ -271,8 +271,8 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
         }
     }
     supraman_core::folders::edit(&home, |e| {
-        e.list.retain(|x| x.group_name() != Some(WORKSPACE));
-        e.list.push(supraman_core::folders::Entry::Group { name: WORKSPACE.into(), folders: vec![supraman_core::folders::FolderEntry::new(&repo)] });
+        e.list.retain(|x| x.group_name() != Some(GROUP));
+        e.list.push(supraman_core::folders::Entry::Group { name: GROUP.into(), folders: vec![supraman_core::folders::FolderEntry::new(&repo)] });
         Ok(())
     })?;
     let fake = FakeWorkman::start(vec![
@@ -293,7 +293,7 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
     crate::selftest::set_workman(fake.base())?;
     crate::signin::sign_in(home, fake.base(), None).map_err(|e| anyhow!("signing in to the fake Workman: {e}"))?;
     println!(
-        "step 1w: workspace {WORKSPACE} = {} (folder repo, origin {REMOTE}); fake Workman at {} (project {WORKSPACE} bound to that remote, runs sw2 live, sw1 done), signed in through its fake OAuth server",
+        "step 1w: group {GROUP} = {} (folder repo, origin {REMOTE}); fake Workman at {} (project {GROUP} bound to that remote, runs sw2 live, sw1 done), signed in through its fake OAuth server",
         root.display(),
         fake.base()
     );
@@ -343,7 +343,7 @@ const BOARD: [&str; 5] = ["work-nav-run-sw2", "work-row-sw2/1", "work-row-sw2/2"
 pub async fn board_frames(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let before = frames::baseline(view, cx).await;
     let recording = frames::start(view, cx);
-    click(view, &format!("work-{WORKSPACE}"), cx).await?;
+    click(view, &format!("work-{GROUP}"), cx).await?;
     let loaded = painted(view, &BOARD, LOADED_WITHIN, "the live run's page", cx).await;
     sleep(cx, Duration::from_millis(200)).await;
     let during = recording.stop(view, cx);
@@ -364,6 +364,7 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
 
     let (tab, work, opened) = open_board(view, cx).await?;
     lines.push(opened);
+    lines.push(folder_work(view, tab, cx).await.context("a folder's Open Work")?);
     click(view, "work-filter-all", cx).await?;
 
     lines.push(stream_events(view, &work, fake, cx).await?);
@@ -376,7 +377,7 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
 }
 
 async fn open_board(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<(u64, Entity<WorkView>, String)> {
-    click(view, &format!("work-{WORKSPACE}"), cx).await?;
+    click(view, &format!("work-{GROUP}"), cx).await?;
     let (tab, work) = view
         .read_with(cx, |v, _| {
             v.tabs.iter().find_map(|t| match &t.kind {
@@ -384,7 +385,7 @@ async fn open_board(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> an
                 _ => None,
             })
         })
-        .ok_or_else(|| anyhow!("clicking work-{WORKSPACE} opened no active Work tab"))?;
+        .ok_or_else(|| anyhow!("clicking work-{GROUP} opened no active Work tab"))?;
     let loaded = painted(view, &BOARD, LOADED_WITHIN, "the live run's page", cx).await?;
     crate::selftest_manage::shot("m5-14-work-board", cx).await;
     for absent in ["work-row-13", "work-nav-run-sw1"] {
@@ -398,6 +399,36 @@ async fn open_board(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> an
         loaded.as_millis()
     );
     Ok((tab, work, line))
+}
+
+/// The group's folder row opens a Work tab of its own beside the group's, titled by its project; a gate folder no project
+/// binds offers Open Work dimmed with why. FleetView has no unit-test harness, so the menu and `open_work` are tried here.
+async fn folder_work(view: &Entity<FleetView>, group_tab: u64, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let key = view.read_with(cx, |v, _| v.tree().entry(GROUP).and_then(|e| e.folders.first()).map(|f| f.key.clone())).ok_or_else(|| anyhow!("{GROUP} has no folder row"))?;
+    let item = |v: &FleetView, key: &str, cx: &gpui::App| v.folder_menu(key, cx).and_then(|(_, items)| items.into_iter().find(|i| i.key == "work"));
+    let work = crate::selftest::until_app(view, cx, LOADED_WITHIN, "the folder's Open Work bound", |v, cx| item(v, &key, cx).filter(|i| i.dimmed.is_none())).await?;
+    let MenuAction::Work(target @ Target::Folder(_)) = work.action.clone() else { bail!("{key}'s Open Work is {:?}, not its folder's", work.action) };
+    cx.update(|window, cx| view.update(cx, |v, cx| v.run_action(work.action, window, cx)))?;
+    let title = "Work · Supraman selftest project";
+    let folder_tab = crate::selftest::until_app(view, cx, LOADED_WITHIN, "the folder's Work tab titled by its project", |v, cx| {
+        let tab = v.active.and_then(|id| v.tab(id)).filter(|t| matches!(&t.kind, TabKind::Work(w) if w.read(cx).target == target))?;
+        (tab.title == title).then_some(tab.id)
+    })
+    .await?;
+    if folder_tab == group_tab {
+        bail!("the folder's Open Work activated the group's Work tab {group_tab}");
+    }
+    let again = view.update(cx, |v, cx| v.open_work(target, cx));
+    if again != folder_tab {
+        bail!("opening the folder's Work again opened tab {again}, not {folder_tab}");
+    }
+    view.update(cx, |v, cx| {
+        v.close_tab(folder_tab, cx);
+        v.activate_tab(group_tab, cx);
+    });
+    let gate = format!("{}/{}", crate::selftest::GROUP, crate::selftest::repo());
+    let why = view.read_with(cx, |v, cx| item(v, &gate, cx).and_then(|i| i.dimmed)).ok_or_else(|| anyhow!("{gate}'s Open Work is not dimmed, though no project binds it"))?;
+    Ok(format!("{key}'s Open Work opened \"{title}\" beside the group's tab and again activated it; {gate}'s Open Work dimmed: {why}"))
 }
 
 async fn stream_events(view: &Entity<FleetView>, work: &Entity<WorkView>, fake: &FakeWorkman, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
@@ -553,7 +584,7 @@ async fn inbox_cards(view: &Entity<FleetView>, tab: u64, work: &Entity<WorkView>
     painted(view, &["work-pill-sw2/2=stop", "work-prompt-item-unblock"], LOADED_WITHIN, "sw2/2 in the detail from the Inbox", cx).await?;
     let active = view.read_with(cx, |v, _| v.active);
     if active != Some(tab) {
-        bail!("the Inbox row activated tab {active:?}, not the workspace's Work tab {tab}");
+        bail!("the Inbox row activated tab {active:?}, not the group's Work tab {tab}");
     }
     lines.push("Inbox row blocked sw2/2 → the Work tab, sw2/2 in the detail (Blocked, its Unblock prompt chip)".into());
 

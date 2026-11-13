@@ -15,6 +15,7 @@ mod projects;
 mod prompts;
 mod run_list;
 pub(crate) mod state;
+mod target;
 #[cfg(test)]
 mod tests;
 
@@ -45,6 +46,7 @@ pub use inbox::{Binding, DISMISSED_FILE, HOUSEKEEPING_KEY, WorkInbox, dismiss_ke
 pub use item::FleetLink;
 pub(crate) use item::{ItemState, OpenItem};
 pub use projects::RepoOf;
+pub use target::{Target, title};
 pub(crate) use state::Filter;
 
 pub(crate) const DEBOUNCE: Duration = Duration::from_millis(300);
@@ -236,12 +238,14 @@ pub enum WorkEvent {
     ItemSelected(String),
     /// Needs you was clicked: the Inbox panel is where it is answered.
     ShowInbox,
+    /// The projects are bound: [`WorkView::title`] may have changed.
+    Bound,
 }
 
 impl EventEmitter<WorkEvent> for WorkView {}
 
 pub struct WorkView {
-    pub workspace: String,
+    pub target: Target,
     folders: Vec<PathBuf>,
     repo_of: RepoOf,
     hub: Entity<WorkHub>,
@@ -298,7 +302,7 @@ pub(crate) const FOCUS_MAIN: &str = "work-main";
 pub(crate) const FOCUS_DETAIL: &str = "work-detail";
 
 pub struct Opening {
-    pub workspace: String,
+    pub target: Target,
     pub folders: Vec<PathBuf>,
     pub home: Option<PathBuf>,
     pub hits: HitTargets,
@@ -322,9 +326,9 @@ impl WorkView {
 
     fn new(opening: Opening, hub: Entity<WorkHub>, cx: &mut Context<Self>) -> Self {
         cx.subscribe(&hub, Self::on_hub).detach();
-        let Opening { workspace, folders, home, hits, link, open_link_with, repo_of } = opening;
+        let Opening { target, folders, home, hits, link, open_link_with, repo_of } = opening;
         let mut view = WorkView {
-            workspace,
+            target,
             folders,
             repo_of,
             hub,
@@ -505,7 +509,7 @@ impl WorkView {
     fn bind(&mut self, cx: &mut Context<Self>) {
         let (Some(overview), Some(keys)) = (&self.overview, &self.keys) else { return };
         self.projects = projects::bound(overview, keys);
-        self.shown = if self.projects.is_empty() { Shown::Message(projects::no_project_message(&self.workspace, keys)) } else { Shown::Ready };
+        self.shown = if self.projects.is_empty() { Shown::Message(projects::no_project_message(&self.target, keys)) } else { Shown::Ready };
         match self.wanted.take() {
             Some(project) => self.land_on(&project, cx),
             None => {
@@ -516,6 +520,7 @@ impl WorkView {
             }
         }
         self.read_page(cx);
+        cx.emit(WorkEvent::Bound);
         cx.notify();
     }
 
@@ -717,7 +722,26 @@ impl WorkView {
     }
 
     pub(crate) fn needs_you(&self, cx: &App) -> usize {
-        self.inbox.as_ref().map_or(0, |inbox| inbox.read(cx).rows().iter().filter(|(w, _)| *w == self.workspace).count())
+        self.inbox.as_ref().map_or(0, |inbox| inbox.read(cx).rows().iter().filter(|r| self.binds(&r.project)).count())
+    }
+
+    /// Whether `project` (an id) is one of the projects shown here.
+    pub(crate) fn binds(&self, project: &str) -> bool {
+        self.projects.iter().any(|p| p.item.id == project)
+    }
+
+    /// The bound project's name when there is one, else the target's.
+    pub fn name(&self) -> String {
+        match self.projects.as_slice() {
+            [one] if !one.item.title.is_empty() => one.item.title.clone(),
+            _ => self.target.name(),
+        }
+    }
+
+    /// The tab's title: `Work · <name>`.
+    pub fn title(&self) -> String {
+        let projects: Vec<&str> = self.projects.iter().map(|p| p.item.title.as_str()).collect();
+        title(&self.target, &projects)
     }
 }
 
@@ -753,7 +777,7 @@ impl Render for WorkView {
             )
         });
         div()
-            .id(SharedString::from(format!("work-{}", self.workspace)))
+            .id(SharedString::from(format!("work-{}", self.target.key())))
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key))
             .relative()

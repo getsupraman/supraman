@@ -18,7 +18,7 @@ use crate::{
     view::{FleetView, MenuTarget, TabKind},
 };
 
-pub const WORKSPACE: &str = "demo";
+pub const GROUP: &str = "demo";
 /// The fixture's folders, under the shots home: a `.git` each with its branch, no repo.
 fn root() -> PathBuf {
     home().join("demo")
@@ -59,7 +59,7 @@ pub fn prepare() -> anyhow::Result<()> {
         std::fs::write(git.join("HEAD"), format!("ref: refs/heads/{branch}\n"))?;
     }
     let (grouped, alone) = FOLDERS.split_at(FOLDERS.len() - 1);
-    let group = Entry::Group { name: WORKSPACE.into(), folders: grouped.iter().map(|(name, _)| FolderEntry::new(root.join(name))).collect() };
+    let group = Entry::Group { name: GROUP.into(), folders: grouped.iter().map(|(name, _)| FolderEntry::new(root.join(name))).collect() };
     let entries = vec![group, Entry::Folder(FolderEntry::new(root.join(alone[0].0)))];
     supraman_core::folders::edit(&home, |e| {
         *e = Entries::new(entries);
@@ -70,7 +70,7 @@ pub fn prepare() -> anyhow::Result<()> {
     crate::selftest::set_workman(fake.base())?;
     crate::signin::sign_in(&home, fake.base(), None).map_err(|e| anyhow!("signing in to the fake Workman: {e}"))?;
     println!(
-        "shots: SUPRAMAN_HOME={} ; group {WORKSPACE} and a top-level folder under {}; fake Workman at {}",
+        "shots: SUPRAMAN_HOME={} ; group {GROUP} and a top-level folder under {}; fake Workman at {}",
         home.display(),
         root.display(),
         fake.base()
@@ -95,7 +95,7 @@ fn fixture_now() -> i64 {
 }
 
 fn workman() -> FakeWorkman {
-    let project = item(PROJECT, WORKSPACE, "project", "Demo shop", "in_progress");
+    let project = item(PROJECT, GROUP, "project", "Demo shop", "in_progress");
     let run = item(RUN, "checkout", "run", "Checkout flow", "in_progress");
     let task = |n: &str, title: &str, status: &str| item(&format!("de000000-0000-4000-8000-00000000020{n}"), &format!("checkout/{n}"), "task", title, status);
     let row = |n: &str, title: &str, status: &str, criteria: (u32, u32)| {
@@ -215,8 +215,8 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     subfolders(view, &out, cx).await?;
 
     let target = MenuTarget::Session {
-        entry: WORKSPACE.to_string(),
-        place: format!("{WORKSPACE}/api"),
+        entry: GROUP.to_string(),
+        place: format!("{GROUP}/api"),
         session_id: "d0000002-0000-4000-8000-00000000de00".to_string(),
     };
     let tab = view.update(cx, |v, cx| v.open_details(target, cx));
@@ -228,13 +228,13 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     println!("shot: {}", details.display());
 
     let work = view.update(cx, |v, cx| {
-        let tab = v.open_work(WORKSPACE, cx);
+        let tab = v.open_work(crate::work_view::Target::Group(GROUP.into()), cx);
         match v.tab(tab).map(|t| &t.kind) {
             Some(TabKind::Work(work)) => Some(work.clone()),
             _ => None,
         }
     });
-    let work = work.ok_or_else(|| anyhow!("no Work tab for {WORKSPACE}"))?;
+    let work = work.ok_or_else(|| anyhow!("no Work tab for {GROUP}"))?;
     work.update(cx, |w, _| w.now = fixture_now);
     crate::selftest::until(view, cx, Duration::from_secs(10), "the Work tab's rows", |v| v.hits.borrow().contains_key("work-row-checkout/2").then_some(())).await?;
     work.update(cx, |w, cx| w.select(SELECTED.to_string(), cx));
@@ -282,7 +282,7 @@ async fn group_dialogs(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindo
     let shot = capture(out.join("supraman-add-group.png"), None, cx).await?;
     println!("shot: {}", shot.display());
     crate::selftest::click(view, "group-name-close", cx).await?;
-    run(crate::view::MenuAction::RemoveGroup(WORKSPACE.into()), cx)?;
+    run(crate::view::MenuAction::RemoveGroup(GROUP.into()), cx)?;
     crate::selftest::until(view, cx, Duration::from_secs(10), "Remove Group's question", |v| v.hits.borrow().contains_key("confirm-alt").then_some(())).await?;
     crate::selftest::drawn(cx).await?;
     let shot = capture(out.join("supraman-remove-group.png"), None, cx).await?;
@@ -394,10 +394,10 @@ async fn schedules(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowCon
 /// The Inbox with a schedule's notice beside Workman's cards: the two owners of `supraman_ui::inbox_card`.
 async fn inbox(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     view.update(cx, |v, cx| {
-        v.scheduling.sync_errors.insert(format!("{WORKSPACE}/nightly"), "Task Scheduler refused the task: access is denied".to_string());
+        v.scheduling.sync_errors.insert(format!("{GROUP}/nightly"), "Task Scheduler refused the task: access is denied".to_string());
         cx.notify();
     });
-    let sync = format!("inbox-sync-card-{WORKSPACE}/nightly");
+    let sync = format!("inbox-sync-card-{GROUP}/nightly");
     crate::selftest::until(view, cx, Duration::from_secs(10), "a schedule's Inbox card", |v| v.hits.borrow().contains_key(&sync).then_some(())).await?;
     let shot = capture(out.join("supraman-inbox.png"), None, cx).await?;
     println!("shot: {}", shot.display());
@@ -474,7 +474,7 @@ async fn git_palette(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowC
 async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let folder = dir.to_path_buf();
     cx.background_executor()
-        .spawn(async move { supraman_core::folders::edit(&home(), |e| e.add_folder(&folder, &Place::Group { name: WORKSPACE.into(), index: usize::MAX })) })
+        .spawn(async move { supraman_core::folders::edit(&home(), |e| e.add_folder(&folder, &Place::Group { name: GROUP.into(), index: usize::MAX })) })
         .await
         .context("adding the Git fixture to the demo group")?;
     let session = json!([{
@@ -510,7 +510,7 @@ async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path
     }]);
     let sessions = supraman_claude::parse(&session.to_string())?;
     view.read_with(cx, |v, _| v.polls.injected.lock().unwrap_or_else(|e| e.into_inner()).extend(sessions));
-    crate::selftest::until(view, cx, Duration::from_secs(20), "the session's row in the tree", |v| v.tree().entry(WORKSPACE)?.rows().any(|r| r.session.name == "demo-shop").then_some(())).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(20), "the session's row in the tree", |v| v.tree().entry(GROUP)?.rows().any(|r| r.session.name == "demo-shop").then_some(())).await?;
     crate::selftest::until(view, cx, Duration::from_secs(20), "the session's agent row", |v| v.hits.borrow().contains_key("git-agent-0").then_some(())).await?;
     crate::selftest::click(view, "git-agent-0", cx).await?;
     crate::selftest::until(view, cx, Duration::from_secs(10), "the agent row's page with its Open", |v| {

@@ -1,4 +1,4 @@
-//! The workspace's Workman projects: those bound to the repo of one of its folders (Workman's `project_repo`).
+//! A Work tab's Workman projects: those bound to the repo of one of its folders (Workman's `project_repo`).
 
 use std::path::{Path, PathBuf};
 
@@ -34,11 +34,16 @@ pub(crate) fn closed_runs(project: &OverviewProject) -> impl Iterator<Item = &Ov
     project.runs.iter().filter(|r| closed(r.item.status))
 }
 
-pub(crate) fn no_project_message(workspace: &str, keys: &[(&str, String)]) -> String {
+pub(crate) fn no_project_message(target: &super::Target, keys: &[(&str, String)]) -> String {
+    let name = target.name();
+    let (of, which) = match target {
+        super::Target::Folder(_) => (format!("{name} is not a git repo"), format!("{name}'s repo")),
+        super::Target::Group(_) => (format!("None of {name}'s folders is a git repo"), format!("the repos of {name}'s folders")),
+    };
     if keys.is_empty() {
-        return format!("None of {workspace}'s folders is a git repo, so no Workman project is bound to it.");
+        return format!("{of}, so no Workman project is bound to it.");
     }
-    format!("No Workman project is bound to the repos of {workspace}'s folders. Bind one with work_update(ref:\"<project>\", repo:{{…}}).")
+    format!("No Workman project is bound to {which}. Bind one with work_update(ref:\"<project>\", repo:{{…}}).")
 }
 
 #[cfg(test)]
@@ -76,7 +81,8 @@ mod tests {
         };
         let ids: Vec<String> = bound(&overview, &keys).into_iter().map(|p| p.item.id).collect();
         assert_eq!(ids, ["pa", "pb"]);
-        assert!(no_project_message("w", &[]).contains("git repo"));
+        assert!(no_project_message(&super::super::Target::Group("w".into()), &[]).contains("None of w's folders is a git repo"));
+        assert!(no_project_message(&super::super::Target::Folder("C:/a/shop".into()), &[]).starts_with("shop is not a git repo"));
     }
 
     #[test]

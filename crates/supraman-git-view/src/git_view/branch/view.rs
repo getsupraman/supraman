@@ -13,7 +13,7 @@ use super::{BranchActions, BranchEvent, NameAsk};
 use crate::git_view::GitView;
 use crate::git_view::ref_panel::{Entry, RefPanel};
 
-/// Asks the workspace to open the Git tab of this folder.
+/// Asks the app to open the Git tab of this folder.
 pub struct OpenGit(pub PathBuf);
 
 /// A pill on its way to another: its group and its commit.

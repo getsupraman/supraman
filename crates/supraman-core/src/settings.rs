@@ -28,7 +28,7 @@ pub trait Section: Serialize + DeserializeOwned + Default {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SessionSettings {
-    /// Most of this home's `fm-` sessions mid-turn at once, across its workspaces.
+    /// Most of this home's `fm-` sessions mid-turn at once, across its folders.
     pub max_working: usize,
     /// More `--plugin-dir`s every launch gets after Supraman's own; edited in the file, the app only shows them.
     #[serde(skip_serializing_if = "Vec::is_empty")]

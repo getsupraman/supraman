@@ -10,7 +10,7 @@ use supraman_claude::Session;
 use supraman_term::Terminal;
 use supraman_ui::{percentile, stall};
 
-use crate::selftest::{WORKSPACE, frames, sleep, until, until_with, wait_for_tab_terminal};
+use crate::selftest::{GROUP, frames, sleep, until, until_with, wait_for_tab_terminal};
 use crate::view::FleetView;
 
 const LIVE: usize = 460;
@@ -221,7 +221,7 @@ async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow:
     until(view, cx, WITHIN, "the fixture sessions in the list", |v| (v.sessions.iter().filter(|s| s.session_id.starts_with(FIXTURE)).count() == LIVE).then_some(())).await?;
     stall::take();
 
-    let tab = cx.update(|window, cx| view.update(cx, |v, cx| v.open_start(WORKSPACE, None, false, window, cx)))?.context("New task opened no tab")?;
+    let tab = cx.update(|window, cx| view.update(cx, |v, cx| v.open_start(GROUP, None, false, window, cx)))?.context("New task opened no tab")?;
     let found = crate::selftest_start::start_tab(view, cx).await?;
     println!("step 7+r: New task opened tab {tab}, the focused prompt is tab {found}; {}", cx.update(|window, cx| tabs_now(view, window, cx))?);
     println!("step 7+r: fixture in the list; stalls while it settled: {}", listed(&stall::take()));
@@ -278,7 +278,7 @@ async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow:
 /// René's case: New scheduled task…, a long prompt over several lines at 20 keys a second, a pasted block, more keys after it.
 async fn long_scheduled(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<(Latency, frames::Stretch, f64)> {
     use gpui::EntityInputHandler as _;
-    let tab = cx.update(|window, cx| view.update(cx, |v, cx| v.open_start(WORKSPACE, None, true, window, cx)))?.context("New scheduled task opened no tab")?;
+    let tab = cx.update(|window, cx| view.update(cx, |v, cx| v.open_start(GROUP, None, true, window, cx)))?.context("New scheduled task opened no tab")?;
     crate::selftest_start::start_tab(view, cx).await?;
     let count = |cx: &mut AsyncWindowContext| view.read_with(cx, |v, cx| v.start_page(tab).map_or(0, |p| p.input.read(cx).text().chars().count()));
     let mut typed: Vec<char> = Vec::new();

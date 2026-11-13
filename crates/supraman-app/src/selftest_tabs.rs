@@ -11,7 +11,7 @@ use gpui::{
 
 use crate::{
     selftest::{click, hex6, scrolled_into_view, sleep, wait_for_tab_terminal, until},
-    selftest_work::WORKSPACE,
+    selftest_work::GROUP,
     view::FleetView,
 };
 
@@ -57,7 +57,7 @@ async fn cycle(view: &Entity<FleetView>, script: &std::path::Path, cx: &mut Asyn
             (a, b)
         })
     })?;
-    let work = view.update(cx, |v, cx| v.open_work(WORKSPACE, cx));
+    let work = view.update(cx, |v, cx| v.open_work(crate::work_view::Target::Group(GROUP.into()), cx));
     let order: Vec<u64> = view.read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).collect());
     if order != [a, b, work] {
         bail!("expected tabs [{a}, {b}, {work}], found {order:?}");

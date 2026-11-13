@@ -106,7 +106,7 @@ impl InboxCard {
         self
     }
 
-    /// The muted words before the time: a workspace.
+    /// The muted words before the time: the project or folder the card is of.
     pub fn context(mut self, text: impl Into<SharedString>) -> Self {
         self.context = Some(text.into()).filter(|t| !t.is_empty());
         self
@@ -154,7 +154,7 @@ impl InboxCard {
             .gap_2()
             .text_xs()
             .children(self.mark)
-            .children(self.context.map(|text| clipped(part("workspace"), text, false).flex_shrink(1.).text_color(muted)))
+            .children(self.context.map(|text| clipped(part("context"), text, false).flex_shrink(1.).text_color(muted)))
             .children(self.when.and_then(|(at, now)| when(part("when"), at, now, cx)))
             .child(div().flex_none().px_1().rounded_sm().bg(color.opacity(BADGE_TINT)).text_color(color).font_weight(FontWeight::BOLD).child(self.badge))
             .child(div().flex_1())
