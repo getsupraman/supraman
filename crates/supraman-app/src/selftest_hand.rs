@@ -102,7 +102,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     }
 
     until(view, cx, WITHIN, "the hand session's permission prompt among the hook signals", |v| {
-        v.supervising.hooks.get(SID).filter(|h| h.is_permission_prompt()).map(drop)
+        v.polled.hooks.get(SID).filter(|h| h.is_permission_prompt()).map(drop)
     })
     .await?;
     let row = serde_json::json!([{

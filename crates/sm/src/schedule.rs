@@ -9,11 +9,11 @@ use supraman_core::schedule::{
 };
 use supraman_core::home::SessionEnv;
 use supraman_core::{CoreError, Registry, Workspace, find_plugin_dir, sm_allowed_tools, paths, slugify};
-use supraman_supervisor::{LaunchConfig, WantedSession};
+use supraman_supervisor::{BgSession, LaunchConfig};
 
 use crate::{Failure, value};
 
-/// The `SUPRAMAN_ROLE` a run's session carries: it works in one folder, as a repo session does.
+/// The `SUPRAMAN_ROLE` a run's session carries; [`supraman_supervisor::workman_role`] mints it an orchestrator.
 pub(crate) const RUN_ROLE: &str = "repo";
 
 pub fn schedule(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
@@ -613,7 +613,7 @@ pub(crate) fn run_spec(home: &Path, w: &Workspace, s: &Schedule, stamp: &str, pl
     let run_branch = s.action.worktree.then(|| schedule::run_branch(&s.id, stamp));
     let cwd = if s.action.worktree { schedule::run_worktree(&folder.path, &s.id, stamp) } else { folder.path.clone() };
     let preamble = schedule::preamble(&run, &sm_command(plugin_dir), &cwd, run_branch.as_deref());
-    let wanted = WantedSession {
+    let session = BgSession {
         name: name.clone(),
         role: RUN_ROLE.into(),
         cwd,
@@ -621,8 +621,6 @@ pub(crate) fn run_spec(home: &Path, w: &Workspace, s: &Schedule, stamp: &str, pl
         prompt: format!("{preamble}\n\n{}", schedule::base_prompt(&folder.path, prompt)?),
         permission_mode: s.permissions.profile.permission_mode().into(),
         add_dirs: s.permissions.add_dirs.iter().map(|d| folder.path.join(d)).collect(),
-        resume_prompt: None,
-        fork_from: None,
     };
     let always = plugin_dir.map(sm_allowed_tools).unwrap_or_else(|| vec!["Bash(sm:*)".into()]);
     let config = LaunchConfig {
@@ -633,7 +631,7 @@ pub(crate) fn run_spec(home: &Path, w: &Workspace, s: &Schedule, stamp: &str, pl
         allowed_tools: s.permissions.allowed(&always, run_branch.as_deref()),
         claude_dir: supraman_core::paths::claude_dir(),
     };
-    let mut spec = config.launch_spec(&w.name, &wanted, &[("SUPRAMAN_SCHEDULE", &s.id), ("SUPRAMAN_RUN", &run)]);
+    let mut spec = config.launch_spec(&w.name, &session, &[("SUPRAMAN_SCHEDULE", &s.id), ("SUPRAMAN_RUN", &run)]);
     spec.mcp_config = Some(mcp_config_path(&config.mcp_dir, &name).map_err(|e| Failure::Refused(format!("error: {e}")))?);
     spec.extra_args.push("--disallowedTools".into());
     spec.extra_args.extend(s.permissions.denied());

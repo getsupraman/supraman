@@ -152,7 +152,7 @@ pub fn plan(saved: &SavedTab, world: &World) -> Result<Reopen, String> {
                 return Ok(Reopen::Attach { title: title.clone(), session: live.clone() });
             }
             if name.starts_with(FM_PREFIX) {
-                return Err("it is stopped and Supraman's supervisor starts it".into());
+                return Err("it is stopped and one of Supraman's own sessions".into());
             }
             resumable(saved.session())?;
             Ok(Reopen::Placeholder(saved.clone()))
@@ -316,7 +316,7 @@ mod tests {
         let Reopen::Placeholder(saved) = plan(&attach("worker"), &world(&stopped, &[], false, has)).unwrap() else { unreachable!() };
         let session = saved.session().unwrap();
         assert_eq!((session.id.as_str(), session.session_id.as_str(), session.kind), (&SID[..8], SID, Kind::Background));
-        assert!(plan(&attach("fm-alpha-workspace"), &world(&stopped, &[], false, has)).is_err(), "the supervisor's");
+        assert!(plan(&attach("fm-alpha-tab"), &world(&stopped, &[], false, has)).is_err(), "Supraman's own");
         assert!(plan(&attach("worker"), &world(&[], &[], false, &|_, _| false)).is_err(), "deleted");
     }
 }

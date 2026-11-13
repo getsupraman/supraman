@@ -132,8 +132,8 @@ impl Host for RealHost {
         let (workspaces, _) = Registry::at(home).load_all().map_err(|e| e.to_string())?;
         let names: Vec<&str> = workspaces.iter().map(|w| w.name.as_str()).collect();
         let rows = supraman_claude::list_sessions().map_err(|e| e.to_string())?;
-        let own = rows.iter().filter(|r| !supraman_supervisor::is_foreign(&r.name, names.iter().copied(), std::iter::empty()));
-        Ok(supraman_supervisor::working(own, &names, supraman_claude::now_ms()) >= max)
+        let own = rows.iter().filter(|r| !supraman_supervisor::is_foreign(&r.name, names.iter().copied()));
+        Ok(supraman_supervisor::working(own, supraman_claude::now_ms()) >= max)
     }
 
     fn sleep(&mut self, d: Duration) {

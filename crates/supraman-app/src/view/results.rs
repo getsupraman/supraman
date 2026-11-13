@@ -8,15 +8,14 @@ use theme::ActiveTheme as _;
 use supraman_ui::icon::Icon;
 use super::left::{disclosure, grid, home_text, icon_slot, quiet, repo_label, secondary, tree_label};
 use super::{FleetView, hit_target};
-use crate::fleet::{Open, Supervised, Tree};
+use crate::fleet::{Open, Tree, TreeInputs};
 use crate::search::{self, SessionHit};
 
 impl FleetView {
     pub fn search_tree(&self) -> Tree {
         let all: HashSet<String> = self.workspaces.iter().flat_map(|w| w.folders.iter().map(move |r| format!("{}/{}", w.name, r.name))).collect();
-        let sup = Supervised {
-            desired: Some(&self.supervising.desired),
-            hooks: Some(&self.supervising.hooks),
+        let sup = TreeInputs {
+            hooks: Some(&self.polled.hooks),
             polled_at: self.polls.polled_at,
             main_repos: Some(&self.listing.main_repos),
             closed: &self.listing.closed,
@@ -61,7 +60,7 @@ impl FleetView {
         self.sidebar.search_marks = results
             .workspaces
             .iter()
-            .flat_map(|w| w.supervised.iter().chain(w.repos.iter().flat_map(|r| &r.sessions)))
+            .flat_map(|w| w.runs.iter().chain(w.repos.iter().flat_map(|r| &r.sessions)))
             .map(|h| (h.row.session.session_id.clone(), h.marks.clone()))
             .collect();
         let (key, line) = if results.is_empty() { ("search-none", format!("No results for \u{201c}{query}\u{201d}")) } else { ("search-summary", results.summary()) };
@@ -106,8 +105,8 @@ impl FleetView {
                     .child(count(w.count(), cx))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.reveal(&name, None, cx))),
             );
-            for hit in &w.supervised {
-                body = body.child(self.render_result_session(&w.name, "supervised", hit, 1, cx));
+            for hit in &w.runs {
+                body = body.child(self.render_result_session(&w.name, "scheduled", hit, 1, cx));
             }
             for r in &w.repos {
                 let label = repo_label(&r.name, &r.path, w.home.as_deref());

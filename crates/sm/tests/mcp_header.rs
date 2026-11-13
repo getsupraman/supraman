@@ -101,7 +101,7 @@ fn timed(home: &Path, name: &str) -> (Output, Duration) {
 
 #[test]
 fn a_run_asks_no_server_and_waits_on_no_lock() {
-    const NAME: &str = "fm-demo-workspace";
+    const NAME: &str = "fm-demo-tab";
     let home = tempfile::tempdir().unwrap();
     let fake = supraman_workman::fake::FakeWorkman::start(vec![("POST /mcp".into(), supraman_workman::fake::Answer::silent())]);
     supraman_supervisor::Keeper::open(home.path()).write(NAME, &fake.mcp_url(), TOKEN, None, &[]).unwrap();

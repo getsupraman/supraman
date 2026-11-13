@@ -105,16 +105,10 @@ pub fn with_workman(mut items: Vec<MenuItem>, folder: Option<&Path>, work: &Work
 /// The folder a session row is listed under, as the sidebar names it for its menu.
 pub(in crate::view) fn row_folder<'a>(node: &'a WorkspaceNode, session_id: &str) -> &'a str {
     let is = |row: &crate::fleet::SessionRow| row.session.session_id == session_id;
-    if node.own.as_ref().is_some_and(is) {
-        return "workspace";
-    }
-    if node.relay.as_ref().is_some_and(is) {
-        return "relay";
-    }
     if let Some((id, _)) = node.scheduled.iter().find(|(_, rows)| rows.iter().any(is)) {
         return id;
     }
-    node.repos.iter().find(|r| r.sessions.iter().any(is)).map_or("supervised", |r| &r.name)
+    node.repos.iter().find(|r| r.sessions.iter().any(is)).map_or("", |r| &r.name)
 }
 
 impl FleetView {

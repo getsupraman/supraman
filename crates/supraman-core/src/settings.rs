@@ -24,7 +24,7 @@ pub trait Section: Serialize + DeserializeOwned + Default {
     const FIELDS: &'static [&'static str];
 }
 
-/// `[sessions]`: what the supervisor launches and how many may work at once.
+/// `[sessions]`: what Supraman's sessions launch with and how many may work at once.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SessionSettings {
@@ -36,9 +36,6 @@ pub struct SessionSettings {
     /// Start elevated, to reach a claude background service an elevated `claude --bg` started.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub run_as_admin: bool,
-    /// How long a workspace's relay stays wanted after its last fallback send. Unset: 10 min.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub relay_idle_secs: Option<u64>,
     /// Reopen the tabs open at the last close when Supraman starts.
     #[serde(skip_serializing_if = "is_true")]
     pub reopen_tabs: bool,
@@ -57,7 +54,6 @@ impl Default for SessionSettings {
             max_working: DEFAULT_MAX_WORKING,
             extra_plugin_dirs: Vec::new(),
             run_as_admin: false,
-            relay_idle_secs: None,
             reopen_tabs: true,
             resume_tabs_on_click: false,
         }
@@ -67,13 +63,7 @@ impl Default for SessionSettings {
 impl Section for SessionSettings {
     const KEY: &'static str = "sessions";
     const FIELDS: &'static [&'static str] =
-        &["max_working", "extra_plugin_dirs", "run_as_admin", "relay_idle_secs", "reopen_tabs", "resume_tabs_on_click"];
-}
-
-impl SessionSettings {
-    pub fn relay_idle_ms(&self) -> i64 {
-        self.relay_idle_secs.map_or(crate::DEFAULT_RELAY_IDLE_MS, |s| s.saturating_mul(1000).min(i64::MAX as u64) as i64)
-    }
+        &["max_working", "extra_plugin_dirs", "run_as_admin", "reopen_tabs", "resume_tabs_on_click"];
 }
 
 /// `[appearance]`: the theme.
@@ -228,7 +218,7 @@ impl Section for UpdateSettings {
     const FIELDS: &'static [&'static str] = &["check"];
 }
 
-/// `<SUPRAMAN_HOME>/settings.toml`, one table per [`Section`]; re-read by every supervisor tick.
+/// `<SUPRAMAN_HOME>/settings.toml`, one table per [`Section`]; re-read by every poll.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Settings {
     pub sessions: SessionSettings,
@@ -430,7 +420,6 @@ mod tests {
                 max_working: 1,
                 extra_plugin_dirs: vec![r"C:\x\plugins\rlarch".into()],
                 run_as_admin: true,
-                relay_idle_secs: Some(20),
                 reopen_tabs: false,
                 resume_tabs_on_click: true,
             },
@@ -608,8 +597,6 @@ url = "https://workman.example"
         let (s, _) = load_text(home.path(), "[sessions]\nrun_as_admin = true\n");
         assert_eq!(s.sessions.max_working, DEFAULT_MAX_WORKING);
         assert!(s.sessions.extra_plugin_dirs.is_empty());
-        assert_eq!(s.sessions.relay_idle_ms(), crate::DEFAULT_RELAY_IDLE_MS, "10 min unless set");
-        assert_eq!(load_text(home.path(), "[sessions]\nrelay_idle_secs = 20\n").0.sessions.relay_idle_ms(), 20_000);
         fs::write(Settings::path(home.path()), "[sessions]\nmax_working = = 3").unwrap();
         assert!(matches!(Settings::load(home.path()), Err(CoreError::Parse { .. })), "not TOML at all");
     }

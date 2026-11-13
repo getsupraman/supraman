@@ -1,66 +1,23 @@
 //! The menu and click handlers run inside the tray's own window procedure: they only queue a [`Command`].
 
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use futures::channel::mpsc::UnboundedSender;
-use gpui::{App, Entity, PromptLevel, Window};
+use gpui::{App, Entity, Window};
 
 use crate::view::FleetView;
 #[cfg(windows)]
 use supraman_core::platform::desktop;
-use supraman_core::text::count;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
     Open,
-    StopAll,
     Quit,
 }
 
 pub fn apply(command: Command, fleet: &Entity<FleetView>, window: &mut Window, cx: &mut App) {
     match command {
         Command::Open => show(window, cx),
-        Command::StopAll => {
-            let started = started(fleet, cx);
-            fleet.update(cx, |view, cx| started.iter().for_each(|name| view.stop_workspace(name, cx)));
-        }
-        Command::Quit => quit(fleet, window, cx),
+        Command::Quit => fleet.update(cx, |view, cx| view.quit(window, cx)),
     }
-}
-
-/// gpui allows one prompt at a time.
-static CONFIRMING: AtomicBool = AtomicBool::new(false);
-
-fn quit(fleet: &Entity<FleetView>, window: &mut Window, cx: &mut App) {
-    let started = started(fleet, cx);
-    if started.is_empty() {
-        fleet.update(cx, |view, cx| view.quit(window, cx));
-        return;
-    }
-    show(window, cx);
-    if CONFIRMING.swap(true, Ordering::SeqCst) {
-        return;
-    }
-    let detail = format!(
-        "{} started ({}): nothing restarts or delivers for them until Supraman runs again. Their sessions keep running.",
-        count(started.len(), "workspace is", "workspaces are"),
-        started.join(", ")
-    );
-    let answer = window.prompt(PromptLevel::Warning, "Quit Supraman and stop supervising?", Some(&detail), &["Quit", "Cancel"], cx);
-    let fleet = fleet.clone();
-    window
-        .spawn(cx, async move |cx| {
-            let quit = matches!(answer.await, Ok(0));
-            CONFIRMING.store(false, Ordering::SeqCst);
-            if quit {
-                cx.update(|window, cx| fleet.update(cx, |view, cx| view.quit(window, cx))).ok();
-            }
-        })
-        .detach();
-}
-
-fn started(fleet: &Entity<FleetView>, cx: &App) -> Vec<String> {
-    fleet.read(cx).supervising.desired.iter().filter(|(_, (started, _))| *started).map(|(name, _)| name.clone()).collect()
 }
 
 /// gpui reports no change of the taskbar's mode alone, so the icon looks this often.
@@ -115,15 +72,12 @@ pub fn install(commands: UnboundedSender<Command>) -> anyhow::Result<Tray> {
     menu.append_items(&[
         &MenuItem::with_id("open", "Open Supraman", true, None),
         &PredefinedMenuItem::separator(),
-        &MenuItem::with_id("stop-all", "Stop all workspaces", true, None),
-        &PredefinedMenuItem::separator(),
         &MenuItem::with_id("quit", "Quit Supraman", true, None),
     ])?;
     let menu_commands = commands.clone();
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
         let command = match event.id.0.as_str() {
             "open" => Command::Open,
-            "stop-all" => Command::StopAll,
             "quit" => Command::Quit,
             _ => return,
         };

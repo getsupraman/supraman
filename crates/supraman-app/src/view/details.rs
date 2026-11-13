@@ -167,8 +167,8 @@ impl FleetView {
         if let Some(id) = supraman_core::schedule::schedule_of_session(workspace, name) {
             return StartedBy::Schedule(id.to_string());
         }
-        if self.supervising.desired.get(workspace).is_some_and(|(_, wanted)| wanted.contains(name)) || super::menu::is_foremans(&row.session) {
-            return StartedBy::Supervisor;
+        if super::menu::is_foremans(&row.session) {
+            return StartedBy::Supraman;
         }
         if self.hand_tab(row).is_some() {
             return StartedBy::Hand;
@@ -186,23 +186,18 @@ impl FleetView {
     }
 
     pub fn session_sections(&self, page: &DetailsPage, cx: &gpui::App) -> Option<(String, Vec<Section>)> {
-        let MenuTarget::Session { workspace, repo, .. } = &page.target else { return None };
+        let MenuTarget::Session { workspace, .. } = &page.target else { return None };
         let row = page.seen.as_ref()?;
         let folder = page.folder.as_ref().map(|(n, p)| (n.as_str(), p.as_path()));
-        Some((row_details::session_title(row), self.row_sections(workspace, repo, row, folder, &page.disk, page.listed, cx)))
+        Some((row_details::session_title(row), self.row_sections(workspace, row, folder, &page.disk, page.listed, cx)))
     }
 
     /// `row`'s facts as its Details tab shows them; `folder` the workspace's folder holding it, else found here.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn row_sections(&self, workspace: &str, repo: &str, row: &SessionRow, folder: Option<(&str, &std::path::Path)>, disk: &OnDisk, listed: bool, cx: &gpui::App) -> Vec<Section> {
+    pub(super) fn row_sections(&self, workspace: &str, row: &SessionRow, folder: Option<(&str, &std::path::Path)>, disk: &OnDisk, listed: bool, cx: &gpui::App) -> Vec<Section> {
         let registered = self.workspaces.iter().find(|w| w.name == workspace);
         let folder = folder.or_else(|| {
             registered?.folders.iter().filter(|f| within(&row.session.cwd, &f.path)).max_by_key(|f| path_key(&f.path).len()).map(|f| (f.name.as_str(), f.path.as_path()))
         });
-        let adopt = match self.adoption(workspace, repo, row) {
-            Some(crate::fleet::Adoption::No(why)) => Some(why),
-            _ => None,
-        };
         let claimed = self.work_open(workspace, cx).then(|| self.claimed_item(workspace, &row.session.name, cx));
         let facts = SessionFacts {
             row,
@@ -211,7 +206,6 @@ impl FleetView {
             started_by: self.started_by(workspace, row),
             claimed,
             sign_in: self.hand_tab(row).and_then(|t| t.workman.clone()),
-            adopt,
             disk,
             listed,
         };
@@ -226,10 +220,7 @@ impl FleetView {
             home: node.home.as_ref().map(|h| h.display().to_string()),
             folders: registered.map(|r| r.folders.iter().map(|f| (f.name.clone(), f.path.clone(), f.enabled)).collect()).unwrap_or_default(),
             scans: registered.map(|r| r.scans.iter().map(|s| (s.path.clone(), s.depth)).collect()).unwrap_or_default(),
-            started: node.started,
             sessions: node.session_count(),
-            own: node.own.clone(),
-            relay: self.mail.relays.get(workspace).and_then(|r| r.label(now_ms())).map(|(text, _)| text),
             project: self.tabs.iter().find_map(|t| match &t.kind {
                 TabKind::Work(view) if view.read(cx).workspace == workspace => {
                     let refs: Vec<String> = view.read(cx).projects.iter().map(|p| p.item.qualified_ref.clone()).collect();
@@ -238,7 +229,7 @@ impl FleetView {
                 _ => None,
             }),
         };
-        let sections = row_details::workspace(&facts, now_ms());
+        let sections = row_details::workspace(&facts);
         Some((node, sections))
     }
 
@@ -277,8 +268,6 @@ impl FleetView {
 
     /// `None` once the workspace is gone.
     pub(super) fn render_details_page(&self, page: &DetailsPage, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let colors = cx.theme().colors().clone();
-        let status = cx.theme().status().clone();
         let page_key = page.key();
         let mut opener = None;
         let (title, pill, sections, items) = match &page.target {
@@ -292,15 +281,11 @@ impl FleetView {
                 };
                 let open = session::open(&self.hits, format!("details-{page_key}-open"), &view.open.opening(), button::Fill::Solid, on_open, cx);
                 opener = Some(open.into_any_element());
-                (view.title, view.pill, view.sections, view.actions)
+                (view.title, Some(view.pill), view.sections, view.actions)
             }
             MenuTarget::Workspace(w) => {
                 let (node, sections) = self.workspace_sections(w, cx)?;
-                let color = if node.started == Some(true) { status.success } else { colors.text_muted };
-                let own = node.own.as_ref().map(|r| self.session_menu(w, "workspace", r, None, cx)).unwrap_or_default();
-                let relay = node.relay.as_ref().map(|r| self.session_menu(w, "relay", r, None, cx)).unwrap_or_default();
-                let items = workspace_items(&node, self.has_closed_background(w), own, relay);
-                (w.clone(), (row_details::workspace_pill(node.started).to_string(), color), sections, items)
+                (w.clone(), None, sections, workspace_items(&node, self.has_closed_background(w)))
             }
             MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) | MenuTarget::OtherSchedule(_) => return None,
         };
@@ -313,7 +298,7 @@ impl FleetView {
             this.open_schedule(&workspace, schedule, At::Top, cx);
         });
         let key = format!("details-{page_key}");
-        let page = details::Page { key: &key, title, pill: Some(pill), sections: &sections, actions, scroll: &page.scroll, on_link: Some(on_link), top: None, over: None, bar: None };
+        let page = details::Page { key: &key, title, pill, sections: &sections, actions, scroll: &page.scroll, on_link: Some(on_link), top: None, over: None, bar: None };
         Some(details::render(page, &self.hits, cx))
     }
 }

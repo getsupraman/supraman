@@ -24,7 +24,7 @@ const GONE_POLLS: u32 = 2;
 pub const GATE_CAP: usize = 32 * 1024;
 const WORKMAN_EXTERNAL_ROLE: &str = "schedule";
 
-/// What `claude` the session stage needs: the supervisor's [`Launcher`] and the session list.
+/// What `claude` the session stage needs: a [`Launcher`] and the session list.
 pub trait Agents: Launcher {
     fn list(&self) -> supraman_claude::Result<Vec<Session>>;
 }

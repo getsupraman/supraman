@@ -58,8 +58,8 @@ pub fn is_closed(row: &SessionRow) -> bool {
         }
 }
 
-pub fn offers_delete(row: &SessionRow, wanted: bool, in_tab: bool) -> bool {
-    is_closed(row) && !wanted && !in_tab
+pub fn offers_delete(row: &SessionRow, in_tab: bool) -> bool {
+    is_closed(row) && !in_tab
 }
 
 #[derive(Debug, Clone)]
@@ -67,7 +67,6 @@ pub struct Candidate {
     pub session: Session,
     pub starred: bool,
     pub foreign: bool,
-    pub wanted: bool,
     pub in_tab: bool,
     pub launcher: Option<Launcher>,
     pub transcript_found: bool,
@@ -81,8 +80,6 @@ pub fn bulk_plan(candidates: Vec<Candidate>, live: &HashSet<String>) -> (Vec<Ses
             Some("★ starred".to_string())
         } else if c.foreign {
             Some("another Supraman's session".to_string())
-        } else if c.wanted {
-            Some("this workspace's own session (Start resumes it)".to_string())
         } else if c.in_tab {
             Some("open in a tab".to_string())
         } else if let Some(l) = &c.launcher {
@@ -123,16 +120,12 @@ fn listed(items: &[(String, String)]) -> String {
 }
 
 impl FleetView {
-    fn wanted(&self, name: &str) -> bool {
-        !name.is_empty() && self.supervising.desired.values().any(|(_, wanted)| wanted.iter().any(|w| w == name))
-    }
-
     fn in_tab(&self, s: &Session) -> bool {
         self.tabs.iter().any(|t| Self::tab_runs(t, s))
     }
 
     pub fn deletable(&self, row: &SessionRow) -> bool {
-        offers_delete(row, self.wanted(&row.session.name), self.in_tab(&row.session)) && !self.listing.deleting.contains(&row.session.session_id)
+        offers_delete(row, self.in_tab(&row.session)) && !self.listing.deleting.contains(&row.session.session_id)
     }
 
     fn closed_background(&self, workspace: &str) -> Vec<SessionRow> {
@@ -153,7 +146,7 @@ impl FleetView {
             _ => "Its transcript and its tool files under the claude dir are deleted, so it can no longer be resumed",
         };
         let kind = if session.kind == Kind::Background { "background session" } else { "closed session" };
-        let foreign = if fleet::is_foreign(&session.name, &self.workspaces, Some(&self.supervising.desired), self.own_prefix.as_deref()) { " It is another Supraman's session." } else { "" };
+        let foreign = if fleet::is_foreign(&session.name, &self.workspaces, self.own_prefix.as_deref()) { " It is another Supraman's session." } else { "" };
         self.dialogs.confirm = Some(Confirm::ask(
             format!("Delete {kind} {}? {what}. This cannot be undone.{foreign}", label(&session)),
             "Delete",
@@ -214,7 +207,6 @@ impl FleetView {
             .closed_background(&workspace)
             .into_iter()
             .map(|r| Candidate {
-                wanted: self.wanted(&r.session.name),
                 in_tab: self.in_tab(&r.session),
                 starred: r.starred,
                 foreign: r.foreign,
@@ -364,31 +356,30 @@ mod tests {
     #[test]
     fn delete_is_offered_only_for_a_closed_session_nobody_holds() {
         let stopped = row(bg("aaaa0001", "old", "stopped", None), false);
-        assert!(offers_delete(&stopped, false, false));
-        assert!(!offers_delete(&stopped, true, false), "the supervisor wants it");
-        assert!(!offers_delete(&stopped, false, true), "open in a tab");
-        assert!(offers_delete(&SessionRow { foreign: true, ..stopped.clone() }, false, false), "another Supraman's: the question says so");
+        assert!(offers_delete(&stopped, false));
+        assert!(!offers_delete(&stopped, true), "open in a tab");
+        assert!(offers_delete(&SessionRow { foreign: true, ..stopped.clone() }, false), "another Supraman's: the question says so");
         let done = row(bg("aaaa0002", "x", "done", None), false);
-        assert!(offers_delete(&done, false, false));
+        assert!(offers_delete(&done, false));
         let gone = row(bg("aaaa0003", "x", "working", None), false);
-        assert!(matches!(gone.health, Health::Orphaned { .. }) && offers_delete(&gone, false, false), "interrupted");
-        assert!(!offers_delete(&row(bg("aaaa0004", "x", "done", Some(7)), false), false, false), "a live process");
+        assert!(matches!(gone.health, Health::Orphaned { .. }) && offers_delete(&gone, false), "interrupted");
+        assert!(!offers_delete(&row(bg("aaaa0004", "x", "done", Some(7)), false), false), "a live process");
         let mut no_uuid = bg("aaaa0005", "x", "stopped", None);
         no_uuid.session_id = "aaaa0005-x".into();
-        assert!(!offers_delete(&row(no_uuid, false), false, false));
+        assert!(!offers_delete(&row(no_uuid, false), false));
 
         let interactive = session(r#"{"sessionId":"bbbb0005-0000-4000-8000-000000000005","name":"term","cwd":"C:\\demo","kind":"interactive","startedAt":1,"status":"idle","pid":5}"#);
-        assert!(!offers_delete(&row(interactive.clone(), false), false, false), "running interactive");
+        assert!(!offers_delete(&row(interactive.clone(), false), false), "running interactive");
         let mut closed = interactive;
         closed.pid = None;
         closed.status = None;
         closed.state = Some(supraman_claude::SessionState::Stopped);
-        assert!(offers_delete(&row(closed.clone(), true), false, false), "closed, from its transcript");
-        assert!(!offers_delete(&row(closed, false), false, false), "only a transcript row is closed");
+        assert!(offers_delete(&row(closed.clone(), true), false), "closed, from its transcript");
+        assert!(!offers_delete(&row(closed, false), false), "only a transcript row is closed");
     }
 
     fn candidate(id: &str, name: &str) -> Candidate {
-        Candidate { session: bg(id, name, "stopped", None), starred: false, foreign: false, wanted: false, in_tab: false, launcher: None, transcript_found: true }
+        Candidate { session: bg(id, name, "stopped", None), starred: false, foreign: false, in_tab: false, launcher: None, transcript_found: true }
     }
 
     #[test]
@@ -405,7 +396,6 @@ mod tests {
                 Candidate { launcher: Some(brief_only), ..candidate("aaaa0005", "briefed") },
                 Candidate { transcript_found: false, ..candidate("aaaa0006", "lost") },
                 Candidate { foreign: true, ..candidate("aaaa0007", "fm-selftest-x") },
-                Candidate { wanted: true, ..candidate("aaaa0008", "fm-demo-alpha") },
                 Candidate { in_tab: true, ..candidate("aaaa0009", "tabbed") },
                 candidate("aaaa000a", ""),
             ],
@@ -422,7 +412,6 @@ mod tests {
                 ("briefed (aaaa0005)".into(), r"launched from the brief C:\r\.claude\briefs\brief-x.txt".into()),
                 ("lost (aaaa0006)".into(), "no transcript found, so who launched it is unknown".into()),
                 ("fm-selftest-x (aaaa0007)".into(), "another Supraman's session".into()),
-                ("fm-demo-alpha (aaaa0008)".into(), "this workspace's own session (Start resumes it)".into()),
                 ("tabbed (aaaa0009)".into(), "open in a tab".into()),
             ]
         );

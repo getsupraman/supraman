@@ -68,18 +68,4 @@ impl WorkmanStatus {
     pub fn unreachable(&self) -> bool {
         matches!(self, WorkmanStatus::Unreachable { .. })
     }
-
-    pub fn start_warning(&self, workspace: &str) -> Option<String> {
-        match self {
-            WorkmanStatus::Checking | WorkmanStatus::Ready { .. } => None,
-            WorkmanStatus::Unreachable { url, .. } => {
-                Some(format!("Started {workspace}; Workman at {url} is unreachable, so its sessions cannot start with it."))
-            }
-            WorkmanStatus::SignInAgain { .. } => Some(format!("Started {workspace}; its sessions wait for a Workman sign-in.")),
-            WorkmanStatus::NotSignedIn { .. } => Some(format!("Started {workspace} without Workman: its sessions can talk, not plan.")),
-            WorkmanStatus::NotSetUp { .. } => {
-                Some(format!("Started {workspace} without Workman, which is not set up (run /workman:setup): its sessions can talk, not plan."))
-            }
-        }
-    }
 }

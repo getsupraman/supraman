@@ -8,7 +8,7 @@ use anyhow::{Context as _, anyhow, bail};
 use gpui::{AsyncWindowContext, Entity, Modifiers};
 
 use crate::selftest::{WORKSPACE, click, main_repo_of_gate, sleep, until};
-use crate::selftest_supervise::{keystroke, type_text};
+use crate::selftest::keys::{keystroke, type_text};
 use crate::view::{FleetView, TabKind};
 
 const WITHIN: Duration = Duration::from_secs(20);

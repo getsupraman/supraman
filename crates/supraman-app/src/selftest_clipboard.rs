@@ -11,7 +11,7 @@ const MUTEX: &[&str] = &[r"Local\Supraman-selftest-clipboard"];
 const MACHINE: &[&str] = &[r"Local\Supraman-selftest"];
 const MACHINE_WITHIN: Duration = Duration::from_secs(20 * 60);
 
-/// Held for a whole `--selftest`, `--selftest-supervise` or `--selftest-detach-shutdown`: two runs at once break each other's windows.
+/// Held for a whole `--selftest`, `--selftest-shots` or `--selftest-detach-shutdown`: two runs at once break each other's windows.
 pub(crate) fn hold_machine() -> anyhow::Result<Held> {
     let pid_file = std::env::temp_dir().join("Supraman-selftest.pid");
     let tell = |pid: Option<u32>, waited: Duration| {

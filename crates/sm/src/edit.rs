@@ -1,10 +1,9 @@
 //! `sm workspace new` and the edits of a registered workspace; the change itself is
 //! [`supraman_core::Registry::edit`]'s, shared with the app's Edit folders.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use supraman_core::{CoreError, DEFAULT_DEPTH, Edit, Edited, Registry, Workspace, validate_name};
-use supraman_supervisor::DesiredState;
 
 use crate::{Failure, parse_depth, print_workspace, value, with_owners};
 
@@ -54,36 +53,28 @@ pub fn add_folder(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
     if done.added.is_empty() {
         println!("{dir} is already a folder of {w}");
     }
-    finish(registry, w, done)
+    finish(registry, done)
 }
 
 pub fn remove_folder(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
     let [w, folder] = args else {
         return Err(Failure::Usage("remove-folder needs <name> <folder>".into()));
     };
-    finish(registry, w, registry.edit(w, Edit::RemoveFolder(folder.to_string()))?)
+    finish(registry, registry.edit(w, Edit::RemoveFolder(folder.to_string()))?)
 }
 
 pub fn set_enabled(registry: &Registry, enabled: bool, args: &[&str]) -> Result<(), Failure> {
     let [w, folder] = args else {
         return Err(Failure::Usage(format!("{} needs <name> <folder>", if enabled { "enable" } else { "disable" })));
     };
-    let done = registry.edit(w, Edit::SetEnabled { folder: folder.to_string(), enabled })?;
-    if !enabled
-        && let Some(f) = done.workspace.find_folder(folder)
-    {
-        release(registry.home(), w, &[f.name.as_str()])?;
-    }
-    finish(registry, w, done)
+    finish(registry, registry.edit(w, Edit::SetEnabled { folder: folder.to_string(), enabled })?)
 }
 
 pub fn set_home(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
     let [w, dir] = args else {
         return Err(Failure::Usage("set-home needs <name> <dir>".into()));
     };
-    let done = registry.edit(w, Edit::SetHome(Some(PathBuf::from(dir))))?;
-    println!("notice: a running workspace or relay session keeps its folder until it is launched again");
-    finish(registry, w, done)
+    finish(registry, registry.edit(w, Edit::SetHome(Some(PathBuf::from(dir))))?)
 }
 
 pub fn add_scan(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
@@ -92,14 +83,14 @@ pub fn add_scan(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
         [w, dir, "--depth", n] => (*w, *dir, parse_depth(n)?),
         _ => return Err(Failure::Usage("add-scan needs <name> <dir> [--depth N]".into())),
     };
-    finish(registry, w, registry.edit(w, Edit::AddScan { path: PathBuf::from(dir), depth })?)
+    finish(registry, registry.edit(w, Edit::AddScan { path: PathBuf::from(dir), depth })?)
 }
 
 pub fn remove_scan(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
     let [w, dir] = args else {
         return Err(Failure::Usage("remove-scan needs <name> <dir>".into()));
     };
-    finish(registry, w, registry.edit(w, Edit::RemoveScan(PathBuf::from(dir)))?)
+    finish(registry, registry.edit(w, Edit::RemoveScan(PathBuf::from(dir)))?)
 }
 
 fn print_notices(done: &Edited) {
@@ -108,14 +99,7 @@ fn print_notices(done: &Edited) {
     }
 }
 
-fn release(home: &Path, w: &str, folders: &[&str]) -> Result<(), Failure> {
-    for name in DesiredState::release(home, w, folders)? {
-        println!("{name}: no longer wanted; the supervisor stops it at its next tick (stop, never rm)");
-    }
-    Ok(())
-}
-
-fn finish(registry: &Registry, w: &str, done: Edited) -> Result<(), Failure> {
+fn finish(registry: &Registry, done: Edited) -> Result<(), Failure> {
     print_notices(&done);
     for f in &done.added {
         println!("added folder {f}");
@@ -123,8 +107,6 @@ fn finish(registry: &Registry, w: &str, done: Edited) -> Result<(), Failure> {
     for f in &done.removed {
         println!("removed folder {} ({})", f.name, f.path.display());
     }
-    let removed: Vec<&str> = done.removed.iter().map(|f| f.name.as_str()).collect();
-    release(registry.home(), w, &removed)?;
     print_workspace(&done.workspace, true, &with_owners(registry, &done.workspace)?);
     Ok(())
 }

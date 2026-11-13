@@ -826,7 +826,7 @@ mod tests {
 
     #[test]
     fn a_dismissed_wait_stays_dismissed_across_a_restart_until_its_fingerprint_changes() {
-        use crate::dismissed_messages::DismissedMessages;
+        use crate::dismissed::Dismissed;
         let home = tempfile::tempdir().unwrap();
         let file = home.path().join("schedules").join("waiting-dismissed.json");
         let pending = |fingerprint: &str| {
@@ -834,13 +834,13 @@ mod tests {
             r.approvable = Some(Ok(Covered { json: "{}".into(), fingerprint: fingerprint.into(), command_sha256: None }));
             BTreeMap::from([("demo".to_string(), vec![r])])
         };
-        let shown = |d: &DismissedMessages, rows: &BTreeMap<String, Vec<ScheduleRow>>| waiting(rows).into_iter().filter(|w| !d.hides(&w.workspace, &w.key)).count();
+        let shown = |d: &Dismissed, rows: &BTreeMap<String, Vec<ScheduleRow>>| waiting(rows).into_iter().filter(|w| !d.hides(&w.workspace, &w.key)).count();
         let rows = pending("f1");
-        let (mut d, notice) = DismissedMessages::load_at(Some(file.clone()), "x");
+        let (mut d, notice) = Dismissed::load_at(Some(file.clone()), "x");
         assert!(notice.is_none() && shown(&d, &rows) == 1);
         let w = &waiting(&rows)[0];
         d.dismiss(&w.workspace, &w.key).unwrap().write().unwrap();
-        let (mut restarted, _) = DismissedMessages::load_at(Some(file.clone()), "x");
+        let (mut restarted, _) = Dismissed::load_at(Some(file.clone()), "x");
         assert!(!restarted.prune_keys(&waiting_keys(&rows)).0);
         assert_eq!(shown(&restarted, &rows), 0, "still dismissed after a restart");
         assert!(!restarted.prune_keys(&waiting_keys(&BTreeMap::new())).0, "a workspace the poll did not read keeps it");
@@ -849,7 +849,7 @@ mod tests {
         let (changed, save) = restarted.prune_keys(&waiting_keys(&edited));
         assert!(changed);
         save.unwrap().write().unwrap();
-        let (again, _) = DismissedMessages::load_at(Some(file), "x");
+        let (again, _) = Dismissed::load_at(Some(file), "x");
         assert_eq!(shown(&again, &rows), 1, "the old fingerprint's dismissal is gone from the file");
     }
 

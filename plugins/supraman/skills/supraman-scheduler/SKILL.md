@@ -102,8 +102,7 @@ Name each tool the command file calls (`dotnet`, `docker`, `npm`, `pnpm`, `cargo
 `--allow-tools` rule `dry-run` would hint, and add the rule only when the human says yes to it.
 
 Ask the one who asked you, the way you reach them: in your reply when the request came in your prompt; by
-`SendMessage` to its sender when it came in a message (a repo session asks `fm-<w>-workspace`, which asks the
-human). End the turn with the question and wait; do not add anything meanwhile. An answer like "your call" or
+`SendMessage` to its sender when it came in a message. End the turn with the question and wait; do not add anything meanwhile. An answer like "your call" or
 "defaults" settles the time (`09:00`) and the caps, **never** a profile above `read`.
 
 Nothing is open (time given, the command only reads) → add without asking.

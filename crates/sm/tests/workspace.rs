@@ -159,17 +159,11 @@ fn a_workspace_made_empty_takes_folders_a_home_and_scans_and_shows_kind_and_owne
     let text = ok(&["workspace", "remove-folder", "gaia", "One"]);
     assert!(text.contains("removed folder One") && text.contains(&format!("\tskips={}", p(&parent.join("One")))), "{text}");
 
-    fs::create_dir_all(home.join("roles")).unwrap();
-    fs::write(home.join("roles").join("repo.md"), "You are the repo session.").unwrap();
-    ok(&["want", "gaia", "Two"]);
     let text = ok(&["workspace", "remove-scan", "gaia", &p(&parent)]);
-    assert!(text.contains("removed folder Two") && text.contains("fm-gaia-two: no longer wanted; the supervisor stops it at its next tick (stop, never rm)"), "{text}");
-    assert!(text.contains("scans: 0") && text.contains("folders: 2"), "{text}");
-    ok(&["want", "gaia", "Gaia"]);
+    assert!(text.contains("removed folder Two") && text.contains("scans: 0") && text.contains("folders: 2"), "{text}");
     let text = ok(&["workspace", "remove-folder", "gaia", "gaia"]);
-    assert!(text.contains("fm-gaia-gaia: no longer wanted"), "{text}");
-    let desired = fs::read_to_string(home.join("supervisor").join("gaia.toml")).unwrap();
-    assert!(desired.contains("fm-gaia-gaia") && !desired.contains("[[sessions]]"), "retired, not wanted: {desired}");
+    assert!(text.contains("removed folder Gaia"), "{text}");
+    assert!(!home.join("supervisor").exists(), "no wanted sessions are written");
 
     for args in [
         vec!["workspace", "remove-folder", "gaia", "Nope"],

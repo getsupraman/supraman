@@ -8,7 +8,7 @@ use super::Unlisted;
 use crate::mint::{Keeper, MintRequest, MintedSession, MintedSessions};
 
 const URL: &str = "http://127.0.0.1:1/mcp";
-const SUPERVISED: &str = "fm-demo-workspace";
+const LISTED: &str = "fm-demo-tab";
 const RUN: &str = "fm-demo-sched-nightly-20261113-0900";
 const CLOSED_TAB: &str = "hand-alpha-1";
 const OPEN_TAB: &str = "hand-alpha-2";
@@ -61,7 +61,7 @@ fn recorded(home: &Path, name: &str) {
 fn a_token_less_config_goes_once_two_listings_in_a_row_lack_its_session_and_nothing_holds_it() {
     let home = tempfile::tempdir().unwrap();
     let keeper = Keeper::new(home.path(), &home.path().join("mcp"), Arc::new(supraman_core::secret::MemoryStore::default()));
-    let configs: Vec<(&str, PathBuf)> = [SUPERVISED, RUN, CLOSED_TAB, OPEN_TAB, GAP, RECORDED, KEPT, RELAUNCHED].iter().map(|n| (*n, written_before(&keeper, n))).collect();
+    let configs: Vec<(&str, PathBuf)> = [LISTED, RUN, CLOSED_TAB, OPEN_TAB, GAP, RECORDED, KEPT, RELAUNCHED].iter().map(|n| (*n, written_before(&keeper, n))).collect();
     recorded(home.path(), RECORDED);
     keeper.write(KEPT, URL, "wss_kept", None, &[]).unwrap();
     let left = || configs.iter().filter(|(_, p)| p.exists()).map(|(n, _)| *n).collect::<Vec<_>>();

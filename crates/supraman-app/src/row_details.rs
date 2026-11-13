@@ -11,7 +11,8 @@ use supraman_core::time::{ago, date_words};
 /// Who launched a session, as far as this window can tell.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StartedBy {
-    Supervisor,
+    /// An `fm-` session that is no scheduled run of this workspace.
+    Supraman,
     /// A run of the schedule with this id.
     Schedule(String),
     Hand,
@@ -50,7 +51,6 @@ pub struct SessionFacts<'a> {
     /// The Workman sign-in of the [+] tab running it.
     pub sign_in: Option<String>,
     /// Why its menu has no Adopt ([`fleet::Adoption::No`]).
-    pub adopt: Option<String>,
     pub disk: &'a OnDisk,
     /// In the last poll's tree; else the page shows the session as it was last seen.
     pub listed: bool,
@@ -120,7 +120,7 @@ pub fn session(f: &SessionFacts, now_ms: i64) -> Vec<Section> {
         (None, None) => {}
     }
     session = match &f.started_by {
-        StartedBy::Supervisor => session.row("Started by", "Supraman's supervisor"),
+        StartedBy::Supraman => session.row("Started by", "Supraman"),
         StartedBy::Schedule(id) => session.link("Started by", format!("a run of schedule {id}"), id.clone()),
         StartedBy::Hand => session.row("Started by", "a [+] tab in this window"),
         StartedBy::Outside => session.row("Started by", "outside Supraman"),
@@ -132,9 +132,6 @@ pub fn session(f: &SessionFacts, now_ms: i64) -> Vec<Section> {
     }
     if let Some(w) = &row.also_in {
         session = session.row("Also in", w.clone());
-    }
-    if let Some(why) = &f.adopt {
-        session = session.row("Adopt", why.clone());
     }
 
     let mut place = Section::new("where", "Where").row("Workspace", f.workspace.to_string());
@@ -175,31 +172,12 @@ pub struct WorkspaceFacts {
     pub folders: Vec<(String, PathBuf, bool)>,
     /// Path, depth.
     pub scans: Vec<(PathBuf, usize)>,
-    pub started: Option<bool>,
     pub sessions: usize,
-    pub own: Option<SessionRow>,
-    /// [`crate::supervise::RelayStatus::label`].
-    pub relay: Option<String>,
     pub project: Option<String>,
 }
 
-pub fn workspace_pill(started: Option<bool>) -> &'static str {
-    match started {
-        Some(true) => "Started",
-        Some(false) => "Stopped",
-        None => "Never started",
-    }
-}
-
-pub fn workspace(facts: &WorkspaceFacts, now_ms: i64) -> Vec<Section> {
-    let mut ws = Section::new("workspace", "Workspace").row("Name", facts.name.clone()).row(
-        "State",
-        match facts.started {
-            Some(true) => "started",
-            Some(false) => "stopped",
-            None => "never started",
-        },
-    );
+pub fn workspace(facts: &WorkspaceFacts) -> Vec<Section> {
+    let mut ws = Section::new("workspace", "Workspace").row("Name", facts.name.clone());
     if let Some(h) = facts.home.as_ref().filter(|h| !h.is_empty()) {
         ws = ws.row("Home", h.clone());
     }
@@ -207,7 +185,6 @@ pub fn workspace(facts: &WorkspaceFacts, now_ms: i64) -> Vec<Section> {
         1 => "1 in the tree".to_string(),
         n => format!("{n} in the tree"),
     });
-    ws = ws.row("Relay", facts.relay.clone().unwrap_or_else(|| "stopped".to_string()));
     if let Some(p) = &facts.project {
         ws = ws.row("Workman project", p.clone());
     }
@@ -230,20 +207,7 @@ pub fn workspace(facts: &WorkspaceFacts, now_ms: i64) -> Vec<Section> {
         parents = parents.row("Parent folder", format!("{}{deep}", path.display()));
     }
 
-    let mut own = Section::new("own", "Workspace session");
-    match &facts.own {
-        Some(row) => {
-            own = own.row("Name", row.session.name.clone()).row("State", state_words(row)).row("Id", fleet::short_id(&row.session).to_string());
-            if !row.session.session_id.is_empty() {
-                own = own.row("UUID", row.session.session_id.clone());
-            }
-            if let Some(h) = &row.hook {
-                own = own.row("Last activity", h.label(now_ms));
-            }
-        }
-        None => own = own.text("Not wanted."),
-    }
-    vec![ws, folders, parents, own]
+    vec![ws, folders, parents]
 }
 
 /// `<worktree folder> of <main checkout>` when `cwd` lies in a linked worktree.
@@ -269,7 +233,7 @@ mod tests {
     const NOW: i64 = 1_800_000_000_000;
 
     fn row(health: Health) -> SessionRow {
-        let json = r#"[{"id":"77aa88bb","sessionId":"77aa88bb-x","name":"fm-demo-workspace","cwd":"C:\\nowhere\\demo","kind":"background","startedAt":1,"state":"working","status":"busy","pid":1}]"#;
+        let json = r#"[{"id":"77aa88bb","sessionId":"77aa88bb-x","name":"fm-demo-tab","cwd":"C:\\nowhere\\demo","kind":"background","startedAt":1,"state":"working","status":"busy","pid":1}]"#;
         SessionRow::new(parse(json).unwrap().remove(0), health)
     }
 
@@ -278,10 +242,9 @@ mod tests {
             row,
             workspace: "demo",
             folder: Some(("Alpha", Path::new(r"C:\nowhere\demo"))),
-            started_by: StartedBy::Supervisor,
+            started_by: StartedBy::Supraman,
             claimed: Some(Some("m5/59".into())),
             sign_in: None,
-            adopt: None,
             disk,
             listed: true,
         }
@@ -299,16 +262,16 @@ mod tests {
         assert_eq!(
             page,
             [
-                "fm-demo-workspace",
+                "fm-demo-tab",
                 "",
                 "Session",
-                "Name  fm-demo-workspace",
+                "Name  fm-demo-tab",
                 "Kind  background",
                 "State  working",
                 "claude reports  state working, status busy",
                 &started,
                 &written,
-                "Started by  Supraman's supervisor",
+                "Started by  Supraman",
                 "Id  77aa88bb",
                 "UUID  77aa88bb-x",
                 "Also in  larchsys",
@@ -321,7 +284,7 @@ mod tests {
                 "",
                 "Workman",
                 "Claimed item  m5/59",
-                "Its session  fm-demo-workspace",
+                "Its session  fm-demo-tab",
                 "",
                 "Transcript",
                 r"C:\claude\projects\x\77aa88bb-x.jsonl",
@@ -378,29 +341,24 @@ mod tests {
     }
 
     #[test]
-    fn a_workspaces_page_reads_its_home_folders_scans_and_its_session() {
+    fn a_workspaces_page_reads_its_home_folders_and_scans() {
         let facts = WorkspaceFacts {
             name: "demo".into(),
             home: Some(r"C:\nowhere\demo".into()),
             folders: vec![("Alpha".into(), PathBuf::from(r"C:\nowhere\demo\Alpha"), true), ("Beta".into(), PathBuf::from(r"C:\nowhere\demo\Beta"), false)],
             scans: vec![(PathBuf::from(r"C:\nowhere\demo"), 2)],
-            started: Some(true),
             sessions: 3,
-            own: Some(row(Health::Idle)),
-            relay: Some("relay ready".into()),
             project: Some("autowork".into()),
         };
         assert_eq!(
-            text("demo", &workspace(&facts, NOW)),
+            text("demo", &workspace(&facts)),
             [
                 "demo",
                 "",
                 "Workspace",
                 "Name  demo",
-                "State  started",
                 r"Home  C:\nowhere\demo",
                 "Sessions  3 in the tree",
-                "Relay  relay ready",
                 "Workman project  autowork",
                 "",
                 "Folders",
@@ -409,18 +367,11 @@ mod tests {
                 "",
                 "Parent folder",
                 r"Parent folder  C:\nowhere\demo (git repos up to 2 levels down)",
-                "",
-                "Workspace session",
-                "Name  fm-demo-workspace",
-                "State  idle",
-                "Id  77aa88bb",
-                "UUID  77aa88bb-x",
             ]
             .join("\n")
         );
         let bare = WorkspaceFacts { name: "gaia".into(), ..Default::default() };
-        let page = text("gaia", &workspace(&bare, NOW));
-        assert!(page.contains("\nState  never started\n") && page.contains("\nNone yet: Edit folders… adds one.\n") && page.ends_with("\nWorkspace session\nNot wanted."), "{page}");
-        assert_eq!(workspace_pill(None), "Never started");
+        let page = text("gaia", &workspace(&bare));
+        assert!(page.contains("\nNone yet: Edit folders… adds one.\n") && page.ends_with("\nNone: Rescan has no folder to look in."), "{page}");
     }
 }

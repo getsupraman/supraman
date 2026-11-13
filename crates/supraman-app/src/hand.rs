@@ -127,7 +127,7 @@ impl ExtrasFrom {
             _ => own.map(str::to_string).unwrap_or_else(|| plain_name(cwd)),
         };
         let settings = self.home.as_deref().and_then(|h| supraman_core::Settings::load(h).ok()).unwrap_or_default();
-        let config = crate::supervise::launch_config(self.home.clone(), Some(&self.plugin_dir), &settings);
+        let config = crate::upkeep::launch_config(self.home.clone(), Some(&self.plugin_dir), &settings);
         extras(&config, &self.workspaces, cwd, &name, supraman_core::install::sm_dir().as_deref())
     }
 }
@@ -1062,7 +1062,7 @@ mod tests {
     fn extras_give_a_workspace_folder_the_hand_role_and_the_shared_launch_pieces() {
         let home = PathBuf::from(r"C:\fm\home");
         let plugin = PathBuf::from(r"C:\fm\plugins\supraman");
-        let config = crate::supervise::launch_config(Some(home.clone()), Some(&plugin), &supraman_core::Settings::default());
+        let config = crate::upkeep::launch_config(Some(home.clone()), Some(&plugin), &supraman_core::Settings::default());
         let ws = Workspace::new("demo", r"C:\demo", vec![supraman_core::Folder::new("Alpha", r"C:\demo\Alpha")]);
         let sm = Path::new(r"C:\Tools\supraman");
         let extras = extras(&config, std::slice::from_ref(&ws), Path::new(r"C:\demo\Alpha"), "hand-Alpha-1", Some(sm));
@@ -1085,7 +1085,7 @@ mod tests {
         assert_eq!(
             config.session_env("demo", "hand-Alpha-1", HAND_ROLE, Some("Alpha"), &[]),
             extras.env,
-            "the same env a supervised session gets in its --settings"
+            "the same env a scheduled run gets in its --settings"
         );
 
         let deeper = super::extras(&config, std::slice::from_ref(&ws), Path::new(r"C:\demo\Alpha\src"), "René's review", None);

@@ -11,20 +11,11 @@ use supraman_ui::icon::Icon;
 use supraman_ui::marks::{Activity, Mark};
 use supraman_ui::session::Opening;
 use theme::ActiveTheme as _;
-use supraman_supervisor::{relay_session_name, repo_session_name, workspace_session_name};
 
 #[derive(Debug, Clone)]
 pub struct WorkspaceNode {
     pub name: String,
     pub home: Option<PathBuf>,
-    /// `None`: no desired-state file.
-    pub started: Option<bool>,
-    /// The workspace session, while wanted; the workspace row shows it.
-    pub own: Option<SessionRow>,
-    /// The relay, while wanted; the workspace row's relay glyph stands for it.
-    pub relay: Option<SessionRow>,
-    /// Wanted sessions of no folder here.
-    pub supervised: Vec<SessionRow>,
     /// Scheduled runs' sessions by schedule id ([`supraman_core::schedule::schedule_of_session`]), shown under it.
     pub scheduled: BTreeMap<String, Vec<SessionRow>>,
     pub repos: Vec<RepoNode>,
@@ -39,7 +30,7 @@ pub struct RepoNode {
     pub enabled: bool,
     /// False: a folder of the home that holds sessions without being one of the workspace's folders.
     pub listed: bool,
-    /// Another workspace owns the folder's supervised session ([`supraman_core::owners`]).
+    /// The workspace that owns the folder ([`supraman_core::owners`]), when it is another.
     pub supervised_in: Option<String>,
     /// The other workspaces that enable this folder, while it is enabled here too.
     pub also_in: Vec<String>,
@@ -57,7 +48,7 @@ pub struct SessionRow {
     pub starred: bool,
     /// From its transcript: an interactive session `claude agents` does not list.
     pub closed: bool,
-    /// The supervising (else first) workspace, on every other occurrence of a session; its keys end in `@<that workspace>`.
+    /// The first workspace, on every other occurrence of a session; its keys end in `@<that workspace>`.
     pub also_in: Option<String>,
 }
 
@@ -157,8 +148,7 @@ fn with_hook(health: Health, hook: Option<&HookSignal>, polled_at: i64) -> Healt
 }
 
 #[derive(Default)]
-pub struct Supervised<'a> {
-    pub desired: Option<&'a BTreeMap<String, (bool, Vec<String>)>>,
+pub struct TreeInputs<'a> {
     pub hooks: Option<&'a HashMap<String, HookSignal>>,
     pub polled_at: i64,
     /// `None` walks the filesystem instead.
@@ -189,27 +179,22 @@ pub struct Tree {
 }
 
 impl WorkspaceNode {
-    /// The rows under the workspace row; the workspace session and the relay have none.
+    /// The rows under the workspace row.
     pub fn session_count(&self) -> usize {
-        self.supervised.len() + self.scheduled.values().map(Vec::len).sum::<usize>() + self.repos.iter().map(|r| r.sessions.len()).sum::<usize>()
+        self.scheduled.values().map(Vec::len).sum::<usize>() + self.repos.iter().map(|r| r.sessions.len()).sum::<usize>()
     }
 
-    /// Every session of the workspace, the workspace session and the relay first.
+    /// Every session of the workspace.
     pub fn rows(&self) -> impl Iterator<Item = &SessionRow> {
-        self.own.iter().chain(&self.relay).chain(&self.supervised).chain(self.scheduled.values().flatten()).chain(self.repos.iter().flat_map(|r| &r.sessions))
+        self.scheduled.values().flatten().chain(self.repos.iter().flat_map(|r| &r.sessions))
     }
 
     fn rows_mut(&mut self) -> impl Iterator<Item = &mut SessionRow> {
-        self.own
-            .iter_mut()
-            .chain(&mut self.relay)
-            .chain(&mut self.supervised)
-            .chain(self.scheduled.values_mut().flatten())
-            .chain(self.repos.iter_mut().flat_map(|r| r.sessions.iter_mut()))
+        self.scheduled.values_mut().flatten().chain(self.repos.iter_mut().flat_map(|r| r.sessions.iter_mut()))
     }
 
     pub fn into_rows(self) -> impl Iterator<Item = SessionRow> {
-        self.own.into_iter().chain(self.relay).chain(self.supervised).chain(self.scheduled.into_values().flatten()).chain(self.repos.into_iter().flat_map(|r| r.sessions))
+        self.scheduled.into_values().flatten().chain(self.repos.into_iter().flat_map(|r| r.sessions))
     }
 }
 
@@ -244,12 +229,11 @@ pub fn live_sessions(sessions: &[Session], now_ms: i64, hooks: &HashMap<String, 
         .collect()
 }
 
-pub fn is_foreign(name: &str, workspaces: &[Workspace], desired: Option<&BTreeMap<String, (bool, Vec<String>)>>, own_prefix: Option<&str>) -> bool {
+pub fn is_foreign(name: &str, workspaces: &[Workspace], own_prefix: Option<&str>) -> bool {
     if own_prefix.is_some_and(|p| name.strip_prefix(p).is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))) {
         return false;
     }
-    let wanted = desired.into_iter().flat_map(|d| d.values()).flat_map(|(_, wanted)| wanted.iter().map(String::as_str));
-    supraman_supervisor::is_foreign(name, workspaces.iter().map(|w| w.name.as_str()), wanted)
+    supraman_supervisor::is_foreign(name, workspaces.iter().map(|w| w.name.as_str()))
 }
 
 fn rank(row: &SessionRow) -> u8 {
@@ -294,10 +278,10 @@ pub fn next_change(sessions: &[Session], closed: &[Session], now_ms: i64) -> Opt
     orphaned.chain(aged_out).filter(|t| *t > now_ms).min()
 }
 
-pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_stopped: bool, sup: &Supervised) -> Tree {
+pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_stopped: bool, sup: &TreeInputs) -> Tree {
     let mut b = Build::new(workspaces, sessions, now_ms, show_stopped, sup);
     let mut nodes: Vec<WorkspaceNode> = workspaces.iter().map(|w| b.workspace(w)).collect();
-    mark_second_occurrences(&mut nodes, sup.desired);
+    mark_second_occurrences(&mut nodes);
     Tree {
         workspaces: nodes,
         hidden_stopped: b.hidden.len(),
@@ -310,7 +294,7 @@ struct Build<'a> {
     sessions: &'a [Session],
     now_ms: i64,
     show_stopped: bool,
-    sup: &'a Supervised<'a>,
+    sup: &'a TreeInputs<'a>,
     closed: Vec<Session>,
     owner_of: HashMap<String, String>,
     enabled_in: HashMap<String, Vec<&'a str>>,
@@ -318,17 +302,8 @@ struct Build<'a> {
     hidden: HashSet<String>,
 }
 
-/// A workspace's wanted sessions: its own, the relay, and the rest by the folder they are wanted in.
-#[derive(Default)]
-struct Wanted {
-    own: Option<SessionRow>,
-    relay: Option<SessionRow>,
-    supervised: Vec<SessionRow>,
-    first_in: HashMap<String, Vec<SessionRow>>,
-}
-
 impl<'a> Build<'a> {
-    fn new(workspaces: &'a [Workspace], sessions: &'a [Session], now_ms: i64, show_stopped: bool, sup: &'a Supervised<'a>) -> Self {
+    fn new(workspaces: &'a [Workspace], sessions: &'a [Session], now_ms: i64, show_stopped: bool, sup: &'a TreeInputs<'a>) -> Self {
         let mut b = Build {
             workspaces,
             sessions,
@@ -366,7 +341,7 @@ impl<'a> Build<'a> {
         let hook = self.sup.hooks.and_then(|h| h.get(&session.session_id)).cloned();
         let health = shown_health(&session, self.now_ms, self.sup.hooks, self.sup.polled_at);
         SessionRow {
-            foreign: is_foreign(&session.name, self.workspaces, self.sup.desired, self.sup.own_prefix),
+            foreign: is_foreign(&session.name, self.workspaces, self.sup.own_prefix),
             starred: self.starred(&session.session_id),
             hook,
             ..SessionRow::new(session, health)
@@ -384,7 +359,7 @@ impl<'a> Build<'a> {
 
     fn closed_shown(&self) -> Vec<Session> {
         let listed: HashSet<&str> = self.sessions.iter().map(|s| s.session_id.as_str()).collect();
-        // a Supraman session's transcript (a selftest's, a supervised one removed) is not the user's to resume
+        // a Supraman session's transcript (a selftest's, a scheduled run's) is not the user's to resume
         self.sup
             .closed
             .iter()
@@ -420,32 +395,15 @@ impl<'a> Build<'a> {
     }
 
     fn workspace(&mut self, workspace: &Workspace) -> WorkspaceNode {
-        let (started, wanted) = match self.sup.desired.and_then(|d| d.get(&workspace.name)) {
-            Some((started, wanted)) => (Some(*started), wanted.as_slice()),
-            None => (None, &[][..]),
-        };
-        let (theirs, rest): (Vec<Session>, Vec<Session>) = self.sessions.iter().cloned().partition(|s| wanted.contains(&s.name));
-        let (scheduled, rest) = self.scheduled(&workspace.name, rest);
-        let mut wanted = self.wanted(workspace, theirs);
+        let (scheduled, rest) = self.scheduled(&workspace.name, self.sessions.to_vec());
         let main_of = |p: &Path| self.main_of(p);
         let (assigned, gone) = (assign_with(&rest, workspace, main_of), assign_with(&self.closed, workspace, main_of));
-        let (mut repos, parked) = self.folders(workspace, assigned.by_repo, gone.by_repo, &mut wanted.first_in);
+        let (mut repos, parked) = self.folders(workspace, assigned.by_repo, gone.by_repo);
         if let Some(home) = workspace.home() {
             repos.extend(self.home_groups(workspace, home, assigned.in_home, gone.in_home));
         }
         repos.extend(parked);
-        let mut supervised = wanted.supervised;
-        supervised.extend(wanted.first_in.into_values().flatten());
-        WorkspaceNode {
-            name: workspace.name.clone(),
-            home: workspace.home().map(Path::to_path_buf),
-            started,
-            own: wanted.own,
-            relay: wanted.relay,
-            supervised,
-            scheduled,
-            repos,
-        }
+        WorkspaceNode { name: workspace.name.clone(), home: workspace.home().map(Path::to_path_buf), scheduled, repos }
     }
 
     /// The schedule runs' rows by schedule id, and the sessions that are not runs.
@@ -467,30 +425,8 @@ impl<'a> Build<'a> {
         (scheduled, rest)
     }
 
-    fn wanted(&self, workspace: &Workspace, theirs: Vec<Session>) -> Wanted {
-        let (own, relay) = (workspace_session_name(&workspace.name), relay_session_name(&workspace.name));
-        let folder_of_wanted = |name: &str| {
-            workspace.folders.iter().find(|f| repo_session_name(&workspace.name, &f.name).as_deref() == Some(name)).map(|f| f.name.clone())
-        };
-        let mut out = Wanted::default();
-        for s in theirs {
-            if s.name == own {
-                out.own = Some(self.row(s));
-            } else if s.name == relay {
-                out.relay = Some(self.row(s));
-            } else {
-                match folder_of_wanted(&s.name) {
-                    Some(folder) => out.first_in.entry(folder).or_default().push(self.row(s)),
-                    None => out.supervised.push(self.row(s)),
-                }
-            }
-        }
-        sort(&mut out.supervised);
-        out
-    }
-
-    /// A folder's rows: the wanted ones, the open ones, then the closed ones up to [`CLOSED_CAP`]; and how many that cap left out.
-    fn place(&mut self, workspace: &str, name: &str, open: Vec<Session>, closed: Vec<Session>, wanted: Vec<SessionRow>) -> (Vec<SessionRow>, usize) {
+    /// A folder's rows: the open ones, then the closed ones up to [`CLOSED_CAP`]; and how many that cap left out.
+    fn place(&mut self, workspace: &str, name: &str, open: Vec<Session>, closed: Vec<Session>) -> (Vec<SessionRow>, usize) {
         let mut rows: Vec<SessionRow> = Vec::new();
         for s in open {
             let r = self.row(s);
@@ -515,10 +451,7 @@ impl<'a> Build<'a> {
                 more += 1;
             }
         }
-        let mut sessions = wanted;
-        sort(&mut sessions);
-        sessions.extend(rows);
-        (sessions, more)
+        (rows, more)
     }
 
     /// The workspace's folders: the enabled ones, and the disabled ones still listed (parked).
@@ -527,7 +460,6 @@ impl<'a> Build<'a> {
         workspace: &Workspace,
         mut by_repo: BTreeMap<String, Vec<Session>>,
         mut closed_by_repo: BTreeMap<String, Vec<Session>>,
-        first_in: &mut HashMap<String, Vec<SessionRow>>,
     ) -> (Vec<RepoNode>, Vec<RepoNode>) {
         let (mut repos, mut parked) = (Vec::new(), Vec::new());
         for folder in &workspace.folders {
@@ -550,7 +482,6 @@ impl<'a> Build<'a> {
                 &folder.name,
                 by_repo.remove(&folder.name).unwrap_or_default(),
                 closed_by_repo.remove(&folder.name).unwrap_or_default(),
-                first_in.remove(&folder.name).unwrap_or_default(),
             );
             if folder.enabled {
                 repos.push(node(sessions, more));
@@ -577,7 +508,7 @@ impl<'a> Build<'a> {
         }
         let mut repos = Vec::new();
         for (name, (path, open, gone)) in groups {
-            let (sessions, more) = self.place(&workspace.name, &name, open, gone, Vec::new());
+            let (sessions, more) = self.place(&workspace.name, &name, open, gone);
             if sessions.is_empty() && more == 0 {
                 continue;
             }
@@ -608,13 +539,12 @@ fn home_folder(home: &Path, cwd: &Path) -> (String, PathBuf) {
     }
 }
 
-/// A session under several workspaces: the wanting (else first) occurrence keeps its keys; the others name it.
-fn mark_second_occurrences(nodes: &mut [WorkspaceNode], desired: Option<&BTreeMap<String, (bool, Vec<String>)>>) {
-    let wants = |ws: &str, name: &str| desired.and_then(|d| d.get(ws)).is_some_and(|(_, wanted)| wanted.iter().any(|w| w == name));
-    let mut seen: HashMap<String, Vec<(usize, bool)>> = HashMap::new();
+/// A session under several workspaces: the first occurrence keeps its keys; the others name it.
+fn mark_second_occurrences(nodes: &mut [WorkspaceNode]) {
+    let mut seen: HashMap<String, Vec<usize>> = HashMap::new();
     for (i, n) in nodes.iter().enumerate() {
         for r in n.rows() {
-            seen.entry(r.session.session_id.clone()).or_default().push((i, wants(&n.name, &r.session.name)));
+            seen.entry(r.session.session_id.clone()).or_default().push(i);
         }
     }
     let names: Vec<String> = nodes.iter().map(|n| n.name.clone()).collect();
@@ -622,7 +552,7 @@ fn mark_second_occurrences(nodes: &mut [WorkspaceNode], desired: Option<&BTreeMa
         if places.len() < 2 {
             continue;
         }
-        let owner = places.iter().find(|p| p.1).unwrap_or(&places[0]).0;
+        let owner = places[0];
         for (_, n) in nodes.iter_mut().enumerate().filter(|(i, _)| *i != owner) {
             for r in n.rows_mut() {
                 if r.session.session_id == id {
@@ -688,7 +618,6 @@ pub enum Open {
     Resume,
     Foreign,
     Elsewhere,
-    Supervised,
     /// The page's session is not in the list Supraman reads now.
     Unlisted,
     Nothing,
@@ -705,7 +634,6 @@ impl Open {
             None if row.attachable => Self::Attach,
             None if resumable => Self::Resume,
             None if is_alive(&row.health) && s.kind != Kind::Background => Self::Elsewhere,
-            None if !is_alive(&row.health) && s.name.starts_with(supraman_core::FM_PREFIX) => Self::Supervised,
             None => Self::Nothing,
         }
     }
@@ -719,7 +647,6 @@ impl Open {
             Self::Resume => "Resume in a new tab",
             Self::Foreign => "another Supraman session",
             Self::Elsewhere => "runs in another terminal: resuming here would start a second claude on it",
-            Self::Supervised => "the supervisor runs it while it is wanted: Start the workspace from its menu",
             Self::Unlisted => "not in the sessions Supraman lists now",
             Self::Nothing => "neither running in the background to attach nor resumable",
         }
@@ -740,45 +667,6 @@ impl Open {
     pub fn opening(self) -> Opening {
         Opening { icon: self.icon(), hint: self.hint().into(), runs: self.runs() }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Adoption {
-    /// It continues as `name`, `fm-<workspace>-<folder>`.
-    Offer { name: String },
-    /// Why there is none, for its hover card.
-    No(String),
-}
-
-/// Only a background session Supraman did not start, under `folder` enabled here and supervised by this workspace.
-pub fn adoption(
-    workspaces: &[Workspace],
-    workspace: &str,
-    folder: &str,
-    row: &SessionRow,
-    sessions: &[Session],
-    desired: &BTreeMap<String, (bool, Vec<String>)>,
-) -> Option<Adoption> {
-    let s = &row.session;
-    let unmanaged = s.kind == Kind::Background
-        && !row.foreign
-        && !row.closed
-        && !s.name.starts_with(supraman_core::FM_PREFIX)
-        && !s.id.is_empty()
-        && !s.session_id.is_empty()
-        && matches!(row.health, Health::Running | Health::Idle | Health::Blocked { .. } | Health::Stopped);
-    let f = workspaces.iter().find(|w| w.name == workspace)?.folder(folder)?;
-    if !unmanaged || !f.enabled || owners(workspaces).get(&path_key(&f.path)).map(String::as_str) != Some(workspace) {
-        return None;
-    }
-    let name = repo_session_name(workspace, &f.name)?;
-    if desired.get(workspace).is_some_and(|(_, wanted)| wanted.contains(&name)) {
-        return Some(Adoption::No(format!("none: {name} is wanted already, and a folder has one supervised session")));
-    }
-    if sessions.iter().any(|x| x.name == name) {
-        return Some(Adoption::No(format!("none: {name} exists already; a folder has one supervised session")));
-    }
-    Some(Adoption::Offer { name })
 }
 
 pub fn short_id(session: &Session) -> &str {
@@ -858,16 +746,16 @@ mod tests {
     fn a_polls_main_repos_table_places_worktree_sessions_without_touching_the_disk() {
         // C:\other has no .git, so only the table can say it is a worktree of Beta
         let known = HashMap::from([(PathBuf::from(r"C:\other"), Some(PathBuf::from("C:/demo/Beta")))]);
-        let sup = Supervised { main_repos: Some(&known), ..Supervised::default() };
+        let sup = TreeInputs { main_repos: Some(&known), ..TreeInputs::default() };
         let tree = build(&[workspace()], &sessions(), NOW, false, &sup);
         assert!(names(&tree.workspaces[0].repos[1]).contains(&"elsewhere"));
-        let tree = build(&[workspace()], &sessions(), NOW, false, &Supervised::default());
+        let tree = build(&[workspace()], &sessions(), NOW, false, &TreeInputs::default());
         assert!(!names(&tree.workspaces[0].repos[1]).contains(&"elsewhere"));
     }
 
     #[test]
     fn groups_enabled_repos_blocked_first_and_hides_stopped() {
-        let tree = build(&[workspace()], &sessions(), NOW, false, &Supervised::default());
+        let tree = build(&[workspace()], &sessions(), NOW, false, &TreeInputs::default());
         let p = &tree.workspaces[0];
         let repos: Vec<_> = p.repos.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(repos, ["Alpha", "Beta", "Off"], "disabled repo Off comes last");
@@ -882,23 +770,23 @@ mod tests {
     #[test]
     fn a_disabled_folder_without_sessions_leaves_the_tree_and_stays_for_search() {
         let quiet: Vec<Session> = sessions().into_iter().filter(|s| s.name != "off").collect();
-        let tree = build(&[workspace()], &quiet, NOW, false, &Supervised::default());
+        let tree = build(&[workspace()], &quiet, NOW, false, &TreeInputs::default());
         assert_eq!(tree.workspaces[0].repos.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["Alpha", "Beta"]);
-        let all = build(&[workspace()], &quiet, NOW, false, &Supervised { disabled_folders: true, ..Supervised::default() });
+        let all = build(&[workspace()], &quiet, NOW, false, &TreeInputs { disabled_folders: true, ..TreeInputs::default() });
         let off = all.workspaces[0].repos.last().unwrap();
         assert_eq!((off.name.as_str(), off.enabled, off.sessions.len()), ("Off", false, 0));
     }
 
     #[test]
     fn show_stopped_keeps_them_last() {
-        let tree = build(&[workspace()], &sessions(), NOW, true, &Supervised::default());
+        let tree = build(&[workspace()], &sessions(), NOW, true, &TreeInputs::default());
         assert_eq!(names(&tree.workspaces[0].repos[1]), ["term", "gone", "done"]);
         assert_eq!(tree.hidden_stopped, 0);
     }
 
     #[test]
     fn attach_only_for_live_background_sessions() {
-        let tree = build(&[workspace()], &sessions(), NOW, true, &Supervised::default());
+        let tree = build(&[workspace()], &sessions(), NOW, true, &TreeInputs::default());
         let flags: Vec<(&str, bool)> = tree.workspaces[0]
             .repos
             .iter()
@@ -920,7 +808,7 @@ mod tests {
 
     #[test]
     fn a_rows_one_open_action_follows_tab_then_attach_then_resume_and_refuses_the_rest() {
-        let tree = build(&[workspace()], &sessions(), NOW, true, &Supervised::default());
+        let tree = build(&[workspace()], &sessions(), NOW, true, &TreeInputs::default());
         let row = |name: &str| tree.workspaces[0].rows().find(|r| r.session.name == name).unwrap().clone();
         let (busy, term, done, gone) = (row("busy"), row("term"), row("done"), row("gone"));
         assert_eq!(Open::of(&busy, None, None, false), Open::Attach);
@@ -932,21 +820,18 @@ mod tests {
         assert_eq!(Open::of(&term, None, None, false), Open::Elsewhere, "live interactive outside a tab");
         assert_eq!(Open::of(&term, Some(2), None, false), Open::Tab(2));
 
-        let mut sm = done.clone();
-        sm.session.name = "fm-demo-alpha".into();
-        assert_eq!(Open::of(&sm, None, None, false), Open::Supervised);
         let mut foreign = busy.clone();
         foreign.foreign = true;
         assert_eq!(Open::of(&foreign, None, None, true), Open::Foreign);
         assert_eq!(Open::of(&foreign, Some(3), None, true), Open::Foreign, "nothing for another Supraman's, even in a tab");
         assert_eq!(Open::Foreign.hint(), "another Supraman session");
-        let runs: Vec<bool> = [Open::Tab(1), Open::Attach, Open::Resume, Open::Shown, Open::Foreign, Open::Elsewhere, Open::Supervised, Open::Unlisted, Open::Nothing].map(Open::runs).into();
-        assert_eq!(runs, [true, true, true, false, false, false, false, false, false], "only a tab, an attach or a resume opens");
+        let runs: Vec<bool> = [Open::Tab(1), Open::Attach, Open::Resume, Open::Shown, Open::Foreign, Open::Elsewhere, Open::Unlisted, Open::Nothing].map(Open::runs).into();
+        assert_eq!(runs, [true, true, true, false, false, false, false, false], "only a tab, an attach or a resume opens");
     }
 
     #[test]
     fn labels() {
-        let tree = build(&[workspace()], &sessions(), NOW, true, &Supervised::default());
+        let tree = build(&[workspace()], &sessions(), NOW, true, &TreeInputs::default());
         let beta = &tree.workspaces[0].repos[1];
         assert_eq!(State::of_row(&beta.sessions[1]).word(), "interrupted");
         let alpha = &tree.workspaces[0].repos[0];
@@ -971,7 +856,7 @@ mod tests {
 ]"#
         ))
         .unwrap();
-        let tree = build(&[workspace()], &rows, NOW, false, &Supervised::default());
+        let tree = build(&[workspace()], &rows, NOW, false, &TreeInputs::default());
         let health: Vec<(&str, &Health)> =
             tree.workspaces[0].repos.iter().flat_map(|r| &r.sessions).map(|r| (r.session.name.as_str(), &r.health)).collect();
         let parked = Health::Blocked { waiting_for: Some("permission prompt".into()) };
@@ -982,24 +867,19 @@ mod tests {
         let mut prompt = event("Notification", Some("permission_prompt"), NOW);
         prompt.session_id = "aaaa0011-x".into();
         HookSignal::record(&mut hooks, prompt);
-        let sup = Supervised { hooks: Some(&hooks), polled_at: NOW - 1_000, ..Supervised::default() };
+        let sup = TreeInputs { hooks: Some(&hooks), polled_at: NOW - 1_000, ..TreeInputs::default() };
         let tree = build(&[workspace()], &rows, NOW, false, &sup);
         assert_eq!(tree.workspaces[0].repos[0].sessions[0].health, parked, "the hook's permission prompt still blocks it");
     }
 
     #[test]
     fn another_homes_fm_rows_are_foreign_shown_and_never_ranked_blocked() {
-        let mut desired = BTreeMap::new();
-        desired.insert("demo".to_string(), (true, vec!["fm-demo-workspace".to_string(), "fm-x-workspace".to_string()]));
         let ws = [workspace()];
-        let foreign = |name: &str| is_foreign(name, &ws, Some(&desired), None);
+        let foreign = |name: &str| is_foreign(name, &ws, None);
         assert!(foreign("fm-selftest-abc123-park"), "a selftest's session");
-        assert!(foreign("fm-other-workspace"), "another home's workspace");
-        assert!(!foreign("fm-demo-workspace"), "wanted here");
-        assert!(!foreign("fm-x-workspace"), "wanted here, whatever its name");
-        assert!(!foreign("fm-demo-alpha"), "named after a workspace of this home: retired, or wanted before the first tick");
-        assert!(!is_foreign("fm-demo-alpha", &ws, None, None));
-        let run = |name: &str| is_foreign(name, &ws, Some(&desired), Some("fm-selftest-abc123"));
+        assert!(foreign("fm-other-sched-nightly-20261113-0900"), "another home's run");
+        assert!(!foreign("fm-demo-alpha"), "named after a workspace of this home");
+        let run = |name: &str| is_foreign(name, &ws, Some("fm-selftest-abc123"));
         assert!(!run("fm-selftest-abc123") && !run("fm-selftest-abc123-park"), "this selftest run's own");
         assert!(run("fm-selftest-def456-park"), "another selftest run's");
         assert!(run("fm-selftest-abc1234"), "a longer hex is another run");
@@ -1015,8 +895,7 @@ mod tests {
             NOW - 1_000
         ))
         .unwrap();
-        let sup = Supervised { desired: Some(&desired), ..Supervised::default() };
-        let tree = build(&ws, &rows, NOW, false, &sup);
+        let tree = build(&ws, &rows, NOW, false, &TreeInputs::default());
         let alpha: Vec<(&str, bool)> = tree.workspaces[0].repos[0].sessions.iter().map(|r| (r.session.name.as_str(), r.foreign)).collect();
         assert_eq!(alpha, [("fm-demo-alpha", false), ("mine", false), ("fm-selftest-abc123-park", true)], "own blocked first, the foreign one as running");
         let park = &tree.workspaces[0].repos[0].sessions[2];
@@ -1059,7 +938,7 @@ mod tests {
             closed("cccc0003-x", "fm-selftest-abc123", r"C:\demo\Beta", DAY),
         ];
         gone.extend((0..7).map(|i| closed(&format!("dddd000{i}-x"), &format!("alpha{i}"), r"C:\demo\Alpha", (i + 1) * 3_600_000)));
-        let sup = |starred, expanded| Supervised { closed: &gone, starred, expanded, ..Supervised::default() };
+        let sup = |starred, expanded| TreeInputs { closed: &gone, starred, expanded, ..TreeInputs::default() };
 
         let tree = build(&[workspace()], &sessions(), NOW, true, &sup(None, None));
         let beta = &tree.workspaces[0].repos[1];
@@ -1093,7 +972,7 @@ mod tests {
 
     #[test]
     fn no_workspaces_is_empty() {
-        let tree = build(&[], &sessions(), NOW, false, &Supervised::default());
+        let tree = build(&[], &sessions(), NOW, false, &TreeInputs::default());
         assert!(tree.workspaces.is_empty());
     }
 
@@ -1107,26 +986,6 @@ mod tests {
     }
 
     #[test]
-    fn wanted_sessions_sit_under_the_workspace_stopped_ones_included() {
-        let mut desired = BTreeMap::new();
-        desired.insert("demo".to_string(), (true, vec!["busy".to_string(), "done".to_string()]));
-        let sup = Supervised {
-            desired: Some(&desired),
-            ..Supervised::default()
-        };
-        let tree = build(&[workspace()], &sessions(), NOW, false, &sup);
-        let p = &tree.workspaces[0];
-        assert_eq!(p.started, Some(true));
-        let supervised: Vec<&str> = p.supervised.iter().map(|r| r.session.name.as_str()).collect();
-        assert_eq!(supervised, ["busy", "done"]);
-        assert_eq!(names(&p.repos[0]), ["parked"], "not listed twice");
-        assert!(p.own.is_none() && p.relay.is_none() && p.supervised.iter().all(|r| r.also_in.is_none()));
-        assert_eq!(tree.hidden_stopped, 0, "the stopped wanted row is shown, not hidden");
-        let never = build(&[workspace()], &sessions(), NOW, false, &Supervised::default());
-        assert_eq!(never.workspaces[0].started, None);
-    }
-
-    #[test]
     fn a_scheduled_runs_session_sits_under_its_schedule_not_its_folder() {
         let mut list = rows(&[
             ("eeee0001", "fm-larchsys-sched-nightly-20261102-090000", r"P:\L\Gaia\.claude\worktrees\fm-sched-nightly-20261102-090000"),
@@ -1137,7 +996,7 @@ mod tests {
         list[1].state = Some(supraman_claude::SessionState::Stopped);
         list[1].pid = None;
         let ws = overlapping();
-        let tree = build(&ws[1..], &list, NOW, false, &Supervised::default());
+        let tree = build(&ws[1..], &list, NOW, false, &TreeInputs::default());
         let w = &tree.workspaces[0];
         let ids: Vec<(&str, Vec<&str>)> = w.scheduled.iter().map(|(id, r)| (id.as_str(), r.iter().map(|r| r.session.id.as_str()).collect())).collect();
         assert_eq!(ids, [("nightly", vec!["eeee0001"]), ("weekly-fix", vec!["eeee0003"])], "the stopped run is hidden with stopped rows");
@@ -1145,7 +1004,7 @@ mod tests {
         assert!(w.repos.iter().all(|r| r.sessions.iter().all(|s| !s.session.name.contains("-sched-"))), "not under a folder too");
         assert_eq!(w.session_count(), 3);
         assert!(w.rows().any(|r| r.session.id == "eeee0003"), "menus find it");
-        let shown = build(&ws[1..], &list, NOW, true, &Supervised::default());
+        let shown = build(&ws[1..], &list, NOW, true, &TreeInputs::default());
         assert_eq!(shown.workspaces[0].scheduled["nightly"].len(), 2);
     }
 
@@ -1168,10 +1027,10 @@ mod tests {
         assert_eq!(with_hook(Health::Running, Some(h), NOW + 1), Health::Running, "the poll is newer: trust it");
         assert_eq!(with_hook(Health::Stopped, Some(h), polled_at), Health::Stopped);
 
-        let sup = Supervised {
+        let sup = TreeInputs {
             hooks: Some(&hooks),
             polled_at,
-            ..Supervised::default()
+            ..TreeInputs::default()
         };
         let tree = build(&[workspace()], &sessions(), NOW, false, &sup);
         let busy = tree.workspaces[0].repos[0].sessions.iter().find(|r| r.session.name == "busy").unwrap();
@@ -1186,7 +1045,7 @@ mod tests {
             live_sessions(&list, NOW, hooks, polled_at).into_iter().find(|s| s.name == "busy").unwrap().activity
         };
         let health_of = |hooks: &HashMap<String, HookSignal>, polled_at: i64| {
-            let sup = Supervised { hooks: Some(hooks), polled_at, ..Supervised::default() };
+            let sup = TreeInputs { hooks: Some(hooks), polled_at, ..TreeInputs::default() };
             let tree = build(&[workspace()], &list, NOW, false, &sup);
             tree.workspaces[0].repos[0].sessions.iter().find(|r| r.session.name == "busy").unwrap().health.clone()
         };
@@ -1238,7 +1097,7 @@ mod tests {
     fn a_folder_enabled_in_two_workspaces_shows_in_both_and_later_occurrences_name_the_first() {
         let ws = overlapping();
         let sessions = rows(&[("aaaa0101", "node bindings", r"P:\L\NodeApi\src"), ("aaaa0102", "gaia-ui", r"P:\L\Gaia"), ("aaaa0103", "loose", r"P:\L")]);
-        let tree = build(&ws, &sessions, NOW, false, &Supervised::default());
+        let tree = build(&ws, &sessions, NOW, false, &TreeInputs::default());
         let (gaia, larchsys) = (&tree.workspaces[0], &tree.workspaces[1]);
         assert_eq!(folders(gaia), [f("Gaia", true, 1), f("NodeApi", true, 1)]);
         assert_eq!((gaia.repos[0].supervised_in.as_deref(), gaia.repos[0].also_in.as_slice()), (None, &["larchsys".to_string()][..]));
@@ -1283,7 +1142,7 @@ mod tests {
             ("aaaa0308", "loose", r"P:\L\Other"),
         ]);
         let known = HashMap::from([(PathBuf::from(r"P:\L\AutoWork.worktrees\m5-64"), Some(PathBuf::from(r"P:\L\AutoWork")))]);
-        let sup = Supervised { main_repos: Some(&known), ..Supervised::default() };
+        let sup = TreeInputs { main_repos: Some(&known), ..TreeInputs::default() };
         let tree = build(&ws, &sessions, NOW, false, &sup);
         let (supraman, gaia, larchsys) = (&tree.workspaces[0], &tree.workspaces[1], &tree.workspaces[2]);
         assert_eq!(folders(supraman), [f("AutoWork", true, 2), f("Skills", true, 1)]);
@@ -1298,7 +1157,7 @@ mod tests {
         let old = &larchsys.repos[2];
         assert_eq!((old.enabled, old.supervised_in.as_deref()), (false, None));
 
-        let all = build(&ws, &sessions, NOW, false, &Supervised { disabled_folders: true, ..sup });
+        let all = build(&ws, &sessions, NOW, false, &TreeInputs { disabled_folders: true, ..sup });
         let parked: Vec<(&str, Option<&str>, usize)> =
             all.workspaces[2].repos.iter().filter(|r| !r.enabled && r.listed).map(|r| (r.name.as_str(), r.supervised_in.as_deref(), r.sessions.len())).collect();
         assert_eq!(parked, [("AutoWork", Some("supraman"), 0), ("Gaia", Some("gaia"), 0), ("Old", None, 1), ("Quiet", None, 0), ("Skills", Some("supraman"), 0)]);
@@ -1308,80 +1167,5 @@ mod tests {
         assert_eq!(hit("supraman"), Some((None, false, 0)));
         let quiet = crate::search::search(&all, "quiet");
         assert!(quiet.workspaces[0].repos[0].disabled && quiet.workspaces[0].repos[0].supervised_in.is_none());
-    }
-
-    #[test]
-    fn the_workspace_that_wants_a_session_keeps_its_keys_and_its_rows_sit_by_role_and_folder() {
-        let ws = overlapping();
-        let sessions = rows(&[
-            ("aaaa0201", "fm-larchsys-workspace", r"P:\L"),
-            ("aaaa0202", "fm-larchsys-relay", r"P:\L"),
-            ("aaaa0203", "fm-larchsys-gaia", r"P:\L\Gaia"),
-            ("aaaa0204", "mine", r"P:\L\Gaia"),
-            ("aaaa0205", "fm-larchsys-park", r"P:\L\Skills"),
-        ]);
-        let wanted = ["fm-larchsys-relay", "fm-larchsys-workspace", "fm-larchsys-gaia", "fm-larchsys-park"];
-        let desired = BTreeMap::from([("larchsys".to_string(), (true, wanted.map(String::from).to_vec()))]);
-        let sup = Supervised { desired: Some(&desired), ..Supervised::default() };
-        let tree = build(&ws, &sessions, NOW, false, &sup);
-        let (gaia, larchsys) = (&tree.workspaces[0], &tree.workspaces[1]);
-        let name = |r: Option<&SessionRow>| r.map(|r| r.session.name.clone());
-        assert_eq!(name(larchsys.own.as_ref()).as_deref(), Some("fm-larchsys-workspace"), "the workspace row's own session");
-        assert_eq!(name(larchsys.relay.as_ref()).as_deref(), Some("fm-larchsys-relay"));
-        let block: Vec<&str> = larchsys.supervised.iter().map(|r| r.session.name.as_str()).collect();
-        assert_eq!(block, ["fm-larchsys-park"], "a wanted session of no folder stays in the block; the workspace session and relay have no row");
-        assert!(gaia.own.is_none() && gaia.relay.is_none());
-        assert_eq!(names(&larchsys.repos[0]), ["fm-larchsys-gaia", "mine"], "the folder's supervised session first");
-        assert_eq!(names(&gaia.repos[0]), ["fm-larchsys-gaia", "mine"]);
-        assert_eq!(find(larchsys, "fm-larchsys-gaia").also_in, None, "larchsys wants it");
-        assert_eq!(find(gaia, "fm-larchsys-gaia").also_in.as_deref(), Some("larchsys"));
-        assert_eq!(find(gaia, "mine").also_in, None, "first shown in gaia");
-        assert_eq!(find(larchsys, "mine").also_in.as_deref(), Some("gaia"));
-        assert_eq!(tree.workspaces.iter().map(WorkspaceNode::session_count).collect::<Vec<_>>(), [2, 3], "rows under the workspace row");
-        assert_eq!(tree.workspaces[1].rows().count(), 5);
-    }
-
-    #[test]
-    fn adopt_is_offered_for_an_unmanaged_background_session_of_an_enabled_folder_without_a_supervised_one() {
-        let all = sessions();
-        let ws = [workspace()];
-        let none = BTreeMap::new();
-        let row_of = |name: &str| {
-            let s = all.iter().find(|s| s.name == name).unwrap().clone();
-            let health = s.health(NOW);
-            SessionRow::new(s, health)
-        };
-        let adopt = |folder: &str, row: &SessionRow, sessions: &[Session], desired: &BTreeMap<String, (bool, Vec<String>)>| {
-            adoption(&ws, "demo", folder, row, sessions, desired)
-        };
-        let offer = Some(Adoption::Offer { name: "fm-demo-alpha".into() });
-        assert_eq!(adopt("Alpha", &row_of("busy"), &all, &none), offer);
-        assert_eq!(adopt("Alpha", &row_of("parked"), &all, &none), offer, "blocked: running");
-        assert_eq!(adopt("Beta", &row_of("done"), &all, &none), Some(Adoption::Offer { name: "fm-demo-beta".into() }), "stopped");
-        assert_eq!(adopt("Beta", &row_of("gone"), &all, &none), None, "orphaned: the daemon may still respawn it");
-        assert_eq!(adopt("Beta", &row_of("term"), &all, &none), None, "interactive: it runs in someone's terminal");
-        assert_eq!(adopt("Off", &row_of("off"), &all, &none), None, "disabled folder");
-        assert_eq!(adopt("Nope", &row_of("busy"), &all, &none), None);
-        let mut foreign = row_of("busy");
-        foreign.foreign = true;
-        assert_eq!(adopt("Alpha", &foreign, &all, &none), None, "another Supraman's");
-        let mut closed = row_of("done");
-        closed.closed = true;
-        assert_eq!(adopt("Beta", &closed, &all, &none), None);
-        let mut second = row_of("busy");
-        second.also_in = Some("other".into());
-        assert_eq!(adopt("Alpha", &second, &all, &none), offer, "shown first elsewhere, e.g. under a folder that holds this one");
-        let mut sm = row_of("busy");
-        sm.session.name = "fm-demo-x".into();
-        assert_eq!(adopt("Alpha", &sm, &all, &none), None, "Supraman's own");
-
-        let wanted = BTreeMap::from([("demo".to_string(), (false, vec!["fm-demo-alpha".to_string()]))]);
-        assert!(matches!(adopt("Alpha", &row_of("busy"), &all, &wanted), Some(Adoption::No(why)) if why.contains("fm-demo-alpha is wanted already")));
-        let mut with_row = all.clone();
-        with_row.push(Session { name: "fm-demo-alpha".into(), ..all[3].clone() });
-        assert!(matches!(adopt("Alpha", &row_of("busy"), &with_row, &none), Some(Adoption::No(why)) if why.contains("fm-demo-alpha exists already")));
-
-        let other = Workspace::new("first", r"C:\x", vec![Folder::new("Alpha", r"C:\demo\Alpha")]);
-        assert_eq!(adoption(&[other, workspace()], "demo", "Alpha", &row_of("busy"), &all, &none), None, "another workspace supervises the folder");
     }
 }

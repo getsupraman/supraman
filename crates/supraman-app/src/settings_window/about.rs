@@ -46,14 +46,14 @@ impl SettingsView {
             ),
             row(
                 "Refresh",
-                "How often the session list (`claude agents`) is polled and the supervisor ticks.",
+                "How often the session list (`claude agents`) is polled.",
                 value("about-refresh", refresh),
                 None,
                 cx,
             ),
             row(
                 "Supraman home",
-                "SUPRAMAN_HOME, else %APPDATA%\\Supraman: workspaces, desired state, settings.toml, hook events.",
+                "SUPRAMAN_HOME, else %APPDATA%\\Supraman: workspaces, settings.toml, hook events, session token records.",
                 div().max_w(px(300.)).text_xs().text_color(colors.text_muted).child(SharedString::from(home)).into_any_element(),
                 None,
                 cx,

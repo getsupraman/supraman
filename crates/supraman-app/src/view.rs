@@ -7,11 +7,8 @@ use std::{
 };
 
 use futures::FutureExt as _;
-use supraman_claude::{ClaudeVersion, Sent, Session, now_ms, send_from_human};
-use supraman_core::{
-    Event, FM_PREFIX, Workspace, Registry, Settings, mark_answered,
-};
-use supraman_supervisor::{DesiredState, workspace_session_name};
+use supraman_claude::{ClaudeVersion, Session, now_ms};
+use supraman_core::{Event, FM_PREFIX, Workspace, Registry, Settings};
 use supraman_term::{
     MouseInputMode, Terminal, TerminalBuilder, TerminalMode,
     terminal_settings::{AlternateScroll, CursorShape},
@@ -36,12 +33,11 @@ use gpui::{
 use theme::ActiveTheme as _;
 use util::paths::PathStyle;
 
-use crate::compose::{self, Compose};
-use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
+use crate::fleet::{self, HookSignal, SessionRow, Tree, TreeInputs};
 use crate::hand::Extras;
 use crate::settings_window::{self, SettingsView};
 use crate::stars::Stars;
-use crate::supervise::{self, Report};
+use crate::upkeep::{self, Report};
 use crate::tab_card;
 use crate::transcripts_load::TranscriptsLoad;
 use crate::work_view::{WorkHub, WorkInbox, WorkView};
@@ -61,7 +57,6 @@ mod left_width;
 mod lifecycle;
 mod links;
 mod listing;
-mod mail;
 mod manage;
 mod menu;
 mod session_open;
@@ -83,7 +78,7 @@ mod startup;
 pub(crate) mod start;
 pub(crate) mod tab_keys;
 mod tab_saving;
-mod supervising;
+mod polled;
 mod term;
 mod term_look;
 mod work_tab;
@@ -97,7 +92,6 @@ use {links::{link_target, missing}, supraman_term::MaybeNavigationTarget};
 
 #[cfg(feature = "selftest")]
 pub(crate) use left::grid;
-pub use manage::Removing;
 #[cfg(feature = "selftest")]
 pub use menu::MenuAction;
 pub use menu::{Confirm, Confirmed, MenuTarget};
@@ -127,8 +121,6 @@ fn claude_dir_or(over: Option<&Path>) -> Option<PathBuf> {
 /// Ctrl+Z: `claude attach`'s own detach, which leaves the session running.
 pub const DETACH_INPUT: &[u8] = b"\x1a";
 pub const DETACH_WITHIN: Duration = Duration::from_secs(5);
-const SHELL_SETTLED: Duration = Duration::from_millis(500);
-const SHELL_SETTLE_LIMIT: Duration = Duration::from_secs(15);
 /// Zed's `terminal.scroll_multiplier` default; one Windows wheel notch is already 3 lines.
 const SCROLL_MULTIPLIER: f32 = 1.0;
 const DEFAULT_LEFT_WIDTH: Pixels = px(460.);
@@ -137,12 +129,8 @@ const MIN_RIGHT_WIDTH: Pixels = px(320.);
 /// The daemon may respawn a background session by itself (~12 s after a death mid-turn); a second resume would run a second process.
 const RESUME_GRACE_MS: i64 = 30_000;
 pub const MAX_WORKING_LIMIT: usize = 20;
-/// The Messages section shows this many, newest first; a body shows this many lines until clicked.
-const MESSAGES_LISTED: usize = 10;
-const MESSAGE_LINES: usize = 3;
 
 const INBOX_MAX_SHARE: f32 = 0.25;
-const MESSAGES_MAX_SHARE: f32 = 0.3;
 
 pub enum Cli {
     Checking,
@@ -269,7 +257,6 @@ pub struct FleetView {
     writes: writes::Writes,
     occupancy: occupancy::Live,
     pub work_inbox: Entity<WorkInbox>,
-    pub removing: BTreeMap<String, Removing>,
     pub open_with: fn(&Path) -> Result<(), String>,
     pub open_link_with: fn(&Link, &mut App),
     pub workman: WorkmanStatus,
@@ -291,8 +278,7 @@ pub struct FleetView {
     pub workman_state: workman_state::WorkmanState,
     lifecycle: lifecycle::Lifecycle,
     pub polls: polls::Polls,
-    pub supervising: supervising::Supervising,
-    pub mail: mail::Mail,
+    pub polled: polled::Polled,
     pub listing: listing::Listing,
     pub dialogs: dialogs::Dialogs,
     pub scheduling: schedule_state::ScheduleState,
@@ -301,11 +287,6 @@ pub struct FleetView {
 
 
 const QUIT_RELEASE_WITHIN: Duration = Duration::from_secs(5);
-
-enum DesiredWrite {
-    Start { home: PathBuf, plugin_dir: Option<PathBuf>, workspace: Workspace },
-    Stop { home: PathBuf, name: String },
-}
 
 type RegistryRead = Result<(Vec<Workspace>, Vec<String>), String>;
 
@@ -336,8 +317,6 @@ struct Refresh {
     main_repos: StdHashMap<PathBuf, Option<PathBuf>>,
     polled_at: i64,
     events: Vec<Event>,
-    /// The first poll's desired states, so the tree shows started workspaces before the first tick lands.
-    desired: Option<BTreeMap<String, (bool, Vec<String>)>>,
     /// Each workspace's schedules and the errors reading them; `None` without a home or a registry.
     schedules: Option<(BTreeMap<String, Vec<crate::schedules::ScheduleRow>>, Vec<String>)>,
     took: Duration,
@@ -362,7 +341,6 @@ impl FleetView {
         let scheduling = schedule_state::ScheduleState::new();
         let claude_dir = claude_dir_or(CLAUDE_DIR_OVERRIDE.get().map(PathBuf::as_path));
         Self::watch_transcripts(claude_dir.clone(), home.as_deref().map(|h| h.join(TRANSCRIPTS_CACHE)), transcripts_nudged, cx);
-        let desired_writes = Self::desired_writer(cx);
         let updates = crate::updates::Updates::start(home.clone(), |v: &mut Self| &mut v.updates, cx);
         let tabs_writes = Self::tabs_writer(home.clone(), cx);
         Self::detect_shells(cx);
@@ -390,7 +368,6 @@ impl FleetView {
             writes: writes::Writes::default(),
             occupancy: occupancy::Live::default(),
             work_inbox,
-            removing: BTreeMap::new(),
             open_with: |path| open::open(path.as_os_str()),
             open_link_with: startup::open_link,
             workman: WorkmanStatus::Checking,
@@ -412,8 +389,7 @@ impl FleetView {
             workman_state: workman_state::WorkmanState::new(workman_recheck),
             lifecycle: lifecycle::Lifecycle::new(hands),
             polls,
-            supervising: supervising::Supervising::new(desired_writes),
-            mail: mail::Mail::default(),
+            polled: polled::Polled::new(),
             listing: listing::Listing::default(),
             dialogs: dialogs::Dialogs::default(),
             scheduling,
@@ -483,13 +459,6 @@ impl FleetView {
         cx.notify();
     }
 
-    pub fn dismiss_message(&mut self, workspace: &str, file: &str, cx: &mut Context<Self>) {
-        let save = self.mail.dismissed_messages.dismiss(workspace, file);
-        self.save_off_thread(save, "Cannot save the dismissed message", cx);
-        self.sidebar.expanded.remove(&format!("{workspace}/{file}"));
-        cx.notify();
-    }
-
     fn watch_workman(home: Option<PathBuf>, mut recheck: Nudged, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let executor = cx.background_executor().clone();
@@ -507,9 +476,6 @@ impl FleetView {
                 }
                 let alive = this.update(cx, |this, cx| {
                     if this.workman != status {
-                        if matches!(status, WorkmanStatus::Ready { .. }) {
-                            this.workman_state.start_warning = None;
-                        }
                         this.workman = status;
                         cx.notify();
                     }
@@ -588,7 +554,7 @@ impl FleetView {
             return;
         };
         let (auth, hands) = (crate::signin::auth(&home), self.lifecycle.hands.clone());
-        let task = cx.background_executor().spawn(async move { supervise::sign_out(&auth, hands) });
+        let task = cx.background_executor().spawn(async move { upkeep::sign_out(&auth, hands) });
         cx.spawn(async move |this, cx| {
             let notices = task.await;
             this.update(cx, |this, cx| {
@@ -614,7 +580,7 @@ impl FleetView {
 
     fn apply(&mut self, refresh: Refresh, cx: &mut Context<Self>) {
         let _stall = supraman_ui::stall::section("poll: apply");
-        let before = (self.workspaces.clone(), self.sessions.clone(), self.listing.main_repos.clone(), self.supervising.hooks.clone(), self.supervising.desired.clone(), self.polls.polled_at);
+        let before = (self.workspaces.clone(), self.sessions.clone(), self.listing.main_repos.clone(), self.polled.hooks.clone(), self.polls.polled_at);
         match fresh_registry(refresh.workspaces, refresh.registry_writes, self.polls.registry_writes.load(Ordering::SeqCst)) {
             None => {}
             Some(Ok((workspaces, skipped))) => {
@@ -639,7 +605,7 @@ impl FleetView {
                 }
                 for s in &sessions {
                     if fleet::is_alive(&s.health(now)) {
-                        self.supervising.last_alive.insert(s.session_id.clone(), now);
+                        self.polled.last_alive.insert(s.session_id.clone(), now);
                     }
                 }
                 self.sessions = sessions;
@@ -657,12 +623,9 @@ impl FleetView {
         }
         self.polls.sessions_read = true;
         for event in refresh.events {
-            HookSignal::record(&mut self.supervising.hooks, event);
+            HookSignal::record(&mut self.polled.hooks, event);
         }
-        self.occupancy.set_sessions(fleet::live_sessions(&self.sessions, now_ms(), &self.supervising.hooks, self.polls.polled_at));
-        if let Some(desired) = refresh.desired {
-            self.supervising.desired = desired;
-        }
+        self.occupancy.set_sessions(fleet::live_sessions(&self.sessions, now_ms(), &self.polled.hooks, self.polls.polled_at));
         if let Some((schedules, errors)) = refresh.schedules {
             self.scheduling.schedules = schedules;
             self.scheduling.schedule_errors = errors;
@@ -671,40 +634,23 @@ impl FleetView {
             self.save_pruned(save, "Cannot save the dismissed approvals", cx);
             self.find_asked_schedules();
         }
-        let (workspaces, sessions, main_repos, hooks, desired, polled_at) = &before;
+        let (workspaces, sessions, main_repos, hooks, polled_at) = &before;
         // a permission prompt newer than the last poll makes its row Blocked (fleet::with_hook)
-        let prompted = self.polls.polled_at != *polled_at && self.supervising.hooks.values().any(|h| h.is_permission_prompt() && h.last.ts > (*polled_at).min(self.polls.polled_at));
-        if prompted || self.workspaces != *workspaces || self.sessions != *sessions || self.listing.main_repos != *main_repos || self.supervising.hooks != *hooks || self.supervising.desired != *desired {
+        let prompted = self.polls.polled_at != *polled_at && self.polled.hooks.values().any(|h| h.is_permission_prompt() && h.last.ts > (*polled_at).min(self.polls.polled_at));
+        if prompted || self.workspaces != *workspaces || self.sessions != *sessions || self.listing.main_repos != *main_repos || self.polled.hooks != *hooks {
             self.invalidate_tree();
         }
         self.polls.last_refresh_took = Some(refresh.took);
     }
 
-    fn apply_report(&mut self, report: Report, cx: &mut Context<Self>) {
-        self.supervising.desired = report.desired;
-        self.invalidate_tree();
-        self.supervising.needs = report.needs;
-        let (workspaces, desired, own) = (&self.workspaces, &self.supervising.desired, self.own_prefix.as_deref());
-        self.supervising.needs.retain(|n| !fleet::is_foreign(&n.name, workspaces, Some(desired), own));
+    fn apply_report(&mut self, report: Report) {
         if self.writes.max.report_counts() {
-            self.supervising.max_working = report.max_working;
+            self.polled.max_working = report.max_working;
         }
         self.term_look.shell_default.ticked(report.terminal);
-        self.supervising.supervise_errors = report.errors;
-        supraman_ui::notices::keep_dismissed(&mut self.supervising.supervise_dismissed, &self.supervising.supervise_errors);
-        self.supervising.daemon_hold = report.daemon_hold;
-        self.workman_state.left_pending.extend(report.left_servers);
-        self.supervising.last_attempt = report.last_attempt.into_iter().collect();
-        self.mail.relays = report.relays;
-        self.mail.messages = report.messages;
-        let (_, save) = self.mail.dismissed_messages.prune(&self.mail.messages);
-        self.save_pruned(save, "Cannot save the dismissed messages", cx);
-        for (workspace, on_disk) in report.answered {
-            let answered = self.mail.answered.entry(workspace).or_default();
-            for (file, line) in on_disk {
-                answered.entry(file).or_insert(line);
-            }
-        }
+        self.polled.upkeep_errors = report.errors;
+        supraman_ui::notices::keep_dismissed(&mut self.polled.upkeep_dismissed, &self.polled.upkeep_errors);
+        self.polled.daemon_hold = report.daemon_hold;
         self.polls.ticks += 1;
     }
 
@@ -734,9 +680,8 @@ impl FleetView {
 
     fn build_tree(&self, now: i64) -> Tree {
         let _stall = supraman_ui::stall::section("tree");
-        let sup = Supervised {
-            desired: Some(&self.supervising.desired),
-            hooks: Some(&self.supervising.hooks),
+        let sup = TreeInputs {
+            hooks: Some(&self.polled.hooks),
             polled_at: self.polls.polled_at,
             main_repos: Some(&self.listing.main_repos),
             closed: &self.listing.closed,
@@ -748,201 +693,6 @@ impl FleetView {
         fleet::build(&self.workspaces, &self.sessions, now, self.show_stopped, &sup)
     }
 
-    pub fn start_workspace(&mut self, name: &str, cx: &mut Context<Self>) {
-        let write = match (&self.home, self.workspaces.iter().find(|p| p.name == name)) {
-            (Some(home), Some(workspace)) => {
-                DesiredWrite::Start { home: home.clone(), plugin_dir: self.plugin_dir.clone(), workspace: workspace.clone() }
-            }
-            (None, _) => return self.desired_failed(format!("Cannot start {name}: no Supraman home"), cx),
-            (_, None) => return self.desired_failed(format!("Cannot start {name}: not registered"), cx),
-        };
-        self.supervising.desired_writes.unbounded_send(write).ok();
-    }
-
-    pub fn stop_workspace(&mut self, name: &str, cx: &mut Context<Self>) {
-        let Some(home) = self.home.clone() else {
-            return self.desired_failed(format!("Cannot stop {name}: no Supraman home"), cx);
-        };
-        self.supervising.desired_writes.unbounded_send(DesiredWrite::Stop { home, name: name.to_string() }).ok();
-    }
-
-    fn desired_failed(&mut self, error: String, cx: &mut Context<Self>) {
-        self.action_error = Some(error);
-        cx.notify();
-    }
-
-    fn desired_writer(cx: &mut Context<Self>) -> futures::channel::mpsc::UnboundedSender<DesiredWrite> {
-        let (tx, mut rx) = futures::channel::mpsc::unbounded::<DesiredWrite>();
-        cx.spawn(async move |this, cx| {
-            use futures::StreamExt as _;
-            while let Some(write) = rx.next().await {
-                let done = cx.background_executor().spawn(async move {
-                    match write {
-                        DesiredWrite::Start { home, plugin_dir, workspace } => {
-                            let result = supervise::start_workspace(&home, plugin_dir.as_deref(), &workspace);
-                            (workspace.name, "start", result.map(Some))
-                        }
-                        DesiredWrite::Stop { home, name } => {
-                            let result = supervise::stop_workspace(&home, &name);
-                            (name, "stop", result.map(|()| None))
-                        }
-                    }
-                });
-                let (name, verb, result) = done.await;
-                let alive = this.update(cx, |this, cx| {
-                    match result {
-                        Ok(Some(desired)) => {
-                            let names = desired.sessions.iter().map(|w| w.name.clone()).collect();
-                            this.supervising.desired.insert(name.clone(), (true, names));
-                            this.invalidate_tree();
-                            this.action_error = None;
-                            this.workman_state.start_warning = this.workman.start_warning(&name);
-                        }
-                        Ok(None) => {
-                            if let Some(entry) = this.supervising.desired.get_mut(&name) {
-                                entry.0 = false;
-                            }
-                            this.invalidate_tree();
-                            this.action_error = None;
-                            this.workman_state.start_warning = None;
-                        }
-                        Err(e) => this.action_error = Some(format!("Cannot {verb} {name}: {e:#}")),
-                    }
-                    cx.notify();
-                });
-                if alive.is_err() {
-                    return;
-                }
-            }
-        })
-        .detach();
-        tx
-    }
-
-    pub fn relay_refusal(&self, workspace: &str) -> Option<String> {
-        if self.home.is_none() {
-            return Some("no Supraman home".into());
-        }
-        match self.mail.relays.get(workspace) {
-            Some(r) if r.started => None,
-            _ => Some(format!("{workspace} is stopped")),
-        }
-    }
-
-    pub fn open_compose(&mut self, workspace: &str, reply_to: String, window: &mut Window, cx: &mut Context<Self>) {
-        let input = match &self.mail.compose {
-            Some(c) if c.workspace == workspace && c.reply_to == reply_to => c.input.clone(),
-            _ => {
-                let input = cx.new(|cx| TextInput::new("Type here; Enter adds a line.", None, window, cx).multi_line());
-                let events = cx.subscribe_in(&input, window, |this: &mut Self, _, event: &InputEvent, window, cx| this.on_compose_event(event, window, cx));
-                self.mail.compose = Some(Compose::new(workspace, reply_to, input.clone(), events));
-                input
-            }
-        };
-        input.update(cx, |input, cx| input.focus(window, cx));
-        cx.notify();
-    }
-
-    fn on_compose_event(&mut self, event: &InputEvent, window: &mut Window, cx: &mut Context<Self>) {
-        match event {
-            InputEvent::Confirm => self.send_compose(cx),
-            InputEvent::Cancel => {
-                self.mail.compose = None;
-                self.focus.focus(window, cx);
-            }
-            InputEvent::Edited => {
-                if let Some(c) = &mut self.mail.compose {
-                    c.error = None;
-                }
-            }
-            InputEvent::ConfirmBack | InputEvent::Refused(_) | InputEvent::Submit => {}
-        }
-        cx.notify();
-    }
-
-    pub fn send_compose(&mut self, cx: &mut Context<Self>) {
-        let _stall = supraman_ui::stall::section(SEND_SECTION);
-        let Some(c) = &self.mail.compose else { return };
-        let (workspace, reply_to, text) = (c.workspace.clone(), c.reply_to.clone(), c.text(cx).trim().to_string());
-        if c.sending {
-            return;
-        }
-        if text.is_empty() {
-            if let Some(c) = &mut self.mail.compose {
-                c.error = Some("Nothing to send.".into());
-            }
-            cx.notify();
-            return;
-        }
-        if let Some(c) = &mut self.mail.compose {
-            c.sending = true;
-        }
-        let sending = (workspace.clone(), reply_to.clone());
-        self.answer(&workspace, &reply_to, &text, cx, move |this, result| {
-            let still = this.mail.compose.as_ref().is_some_and(|c| (c.workspace.clone(), c.reply_to.clone()) == sending);
-            match result {
-                Ok(_) if still => this.mail.compose = None,
-                Err(e) if still => this.mail.compose.as_mut().into_iter().for_each(|c| {
-                    c.sending = false;
-                    c.error = Some(e.clone());
-                }),
-                Err(e) => this.action_error = Some(e),
-                Ok(_) => {}
-            }
-        });
-    }
-
-    /// Off the UI thread: a stalled pipe holds a direct write for up to `DELIVER_TIMEOUT`.
-    pub fn answer(&mut self, workspace: &str, file: &str, text: &str, cx: &mut Context<Self>, done: impl FnOnce(&mut Self, Result<Sent, String>) + 'static) {
-        let Some(home) = self.home.clone() else {
-            done(self, Err("Not sent: no Supraman home.".into()));
-            cx.notify();
-            return;
-        };
-        let (workspace, file, text) = (workspace.to_string(), file.to_string(), text.to_string());
-        let no_relay = self.relay_refusal(&workspace);
-        let line = compose::first_line(&text);
-        let previous = self.writes.sends.previous();
-        let task = cx.spawn(async move |this, cx| {
-            if let Some(previous) = previous {
-                previous.await;
-            }
-            let (w, f, l) = (workspace.clone(), file.clone(), line.clone());
-            let (sent, saved) = cx
-                .background_executor()
-                .spawn(async move {
-                    let to = workspace_session_name(&w);
-                    let mode = DesiredState::launch_mode(&home, &w, &to);
-                    let sent = send_from_human(&home, &w, &to, mode.as_deref(), &text, no_relay).map_err(|e| not_sent(&to, &e));
-                    let saved = sent.as_ref().ok().map(|_| mark_answered(&home, &w, &f, &l));
-                    (sent, saved)
-                })
-                .await;
-            this.update(cx, |this, cx| {
-                if let Ok(sent) = &sent {
-                    this.mail.answered_route.insert(format!("{workspace}/{file}"), sent.label());
-                    this.mail.answered.entry(workspace.clone()).or_default().insert(file.clone(), line);
-                }
-                if let Some(Err(e)) = saved {
-                    this.action_error = Some(format!("Answered {file}, but cannot save that: {e}"));
-                }
-                done(this, sent);
-                cx.notify();
-            })
-            .ok();
-        });
-        self.writes.sends.push(task);
-    }
-
-    pub fn approve(&mut self, workspace: &str, file: &str, cx: &mut Context<Self>) {
-        let _stall = supraman_ui::stall::section(APPROVE_SECTION);
-        let w = workspace.to_string();
-        self.answer(workspace, file, "approve", cx, move |this, result| match result {
-            Ok(_) => this.action_error = None,
-            Err(e) => this.action_error = Some(format!("Approve {w}: {e}")),
-        });
-    }
-
     /// Shown at once; written to `settings.toml` behind it, each write after the one set before it.
     pub fn set_max_working(&mut self, max_working: usize, cx: &mut Context<Self>) {
         let max_working = max_working.min(MAX_WORKING_LIMIT);
@@ -951,14 +701,14 @@ impl FleetView {
             cx.notify();
             return;
         };
-        self.supervising.max_working = max_working;
+        self.polled.max_working = max_working;
         let generation = self.writes.max.set();
         let previous = self.writes.max.serial.previous();
         let task = cx.spawn(async move |this, cx| {
             if let Some(previous) = previous {
                 previous.await;
             }
-            let saved = cx.background_executor().spawn(async move { supervise::set_max_working(&home, max_working) }).await;
+            let saved = cx.background_executor().spawn(async move { upkeep::set_max_working(&home, max_working) }).await;
             this.update(cx, |this, cx| {
                 this.writes.max.landed(generation);
                 this.action_error = saved.err().map(|e| format!("Cannot save the busy-session limit: {e:#}"));
@@ -968,89 +718,6 @@ impl FleetView {
         });
         self.writes.max.serial.push(task);
         cx.notify();
-    }
-
-    pub fn retry(&mut self, workspace: &str, name: &str, cx: &mut Context<Self>) {
-        self.polls.retries
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push((workspace.to_string(), name.to_string()));
-        self.supervising.needs.retain(|n| !(n.workspace == workspace && n.name == name));
-        cx.notify();
-    }
-
-    /// After a failed Adopt: `name` drops the conversation it forks from and launches as a new session.
-    pub fn start_fresh(&mut self, workspace: &str, name: &str, cx: &mut Context<Self>) {
-        let Some(home) = self.home.clone() else {
-            self.action_error = Some(format!("Cannot start {name} fresh: no Supraman home"));
-            cx.notify();
-            return;
-        };
-        let (workspace, name) = (workspace.to_string(), name.to_string());
-        let task = {
-            let (workspace, name) = (workspace.clone(), name.clone());
-            cx.background_executor().spawn(async move { DesiredState::update(&home, &workspace, |d| d.start_fresh(&name)).map(drop).map_err(|e| e.to_string()) })
-        };
-        cx.spawn(async move |this, cx| {
-            let result = task.await;
-            this.update(cx, |this, cx| {
-                match result {
-                    Ok(()) => this.retry(&workspace, &name, cx),
-                    Err(e) => this.action_error = Some(format!("Cannot start {name} fresh: {e}")),
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    /// Typed, not run: the human answers the trust prompt, never Supraman; a PowerShell tab (see C113).
-    pub fn run_in_terminal(&mut self, cwd: PathBuf, command: String, window: &mut Window, cx: &mut Context<Self>) -> u64 {
-        let title = format!("trust · {}", cwd.display());
-        self.type_in_shell_when(cwd, title, gpui::Task::ready(entered(&command)), window, cx)
-    }
-
-    fn type_in_shell_when(&mut self, cwd: PathBuf, title: String, command: gpui::Task<String>, window: &mut Window, cx: &mut Context<Self>) -> u64 {
-        let id = self.open_tab(title, TabKind::Shell, shells::powershell(self.shell_args.clone()), Some(cwd), window, cx);
-        let (watch, mut output) = nudge::nudge();
-        if let Some(tab) = self.tab_mut(id) {
-            tab.watchers.push(watch);
-        }
-        cx.spawn(async move |this, cx| {
-            let command = command.await;
-            let executor = cx.background_executor().clone();
-            let deadline = Instant::now() + SHELL_SETTLE_LIMIT;
-            let mut spoke = false;
-            loop {
-                let left = deadline.saturating_duration_since(Instant::now());
-                let woken = output.wait(&executor, if spoke { SHELL_SETTLED.min(left) } else { left }).await;
-                let Ok(Some((terminal, failed))) = this.read_with(cx, |this, _| this.tab(id).map(|t| (t.terminal.clone(), t.error.is_some()))) else {
-                    return;
-                };
-                let Some(terminal) = terminal else {
-                    if failed {
-                        return;
-                    }
-                    output.wait(&executor, SHELL_SETTLE_LIMIT).await;
-                    continue;
-                };
-                if Instant::now() < deadline {
-                    if woken {
-                        spoke = true;
-                        continue;
-                    }
-                    if !spoke || terminal.read_with(cx, |t, _| t.get_content()).trim().is_empty() {
-                        spoke = false;
-                        continue;
-                    }
-                }
-                terminal.update(cx, |t, _| t.input(command.into_bytes()));
-                return;
-            }
-        })
-        .detach();
-        id
     }
 
     pub fn open_settings(&mut self, cx: &mut Context<Self>) {
@@ -1085,7 +752,7 @@ impl FleetView {
     }
 
     pub fn resumable(&self, row: &SessionRow) -> bool {
-        offers_resume(&row.session, &row.health, self.supervising.last_alive.get(&row.session.session_id).copied(), now_ms())
+        offers_resume(&row.session, &row.health, self.polled.last_alive.get(&row.session.session_id).copied(), now_ms())
     }
 
     /// `claude --bg --resume` with no other flag keeps the session id.
@@ -1096,7 +763,7 @@ impl FleetView {
     fn resume_titled(&mut self, title: String, session: &Session, cx: &mut Context<Self>) -> u64 {
         let sid = &session.session_id;
         if session.kind == supraman_claude::Kind::Background {
-            let script = match &self.supervising.daemon_hold {
+            let script = match &self.polled.daemon_hold {
                 Some(why) => held_line(why),
                 None => format!(
                     "Write-Host 'resuming {} in the background, then attaching…'; claude --bg --resume {sid}; if ($LASTEXITCODE -eq 0) {{ claude attach {} }}",
@@ -1296,20 +963,6 @@ impl FleetView {
     pub fn new_shell_cwd(&self) -> Option<PathBuf> {
         let active = self.active.and_then(|id| self.tab(id)).and_then(|t| t.cwd.as_deref());
         fleet::shell_cwd(active, &self.workspaces, supraman_core::paths::user_home())
-    }
-
-    fn open_tab(
-        &mut self,
-        title: String,
-        kind: TabKind,
-        shell: util::shell::Shell,
-        cwd: Option<PathBuf>,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> u64 {
-        let id = self.push_tab(title, kind, cwd.clone(), cx);
-        self.start_terminal(id, shell, cwd, cx);
-        id
     }
 
     fn push_tab(&mut self, title: String, kind: TabKind, cwd: Option<PathBuf>, cx: &mut Context<Self>) -> u64 {
@@ -1513,24 +1166,6 @@ impl FleetView {
         self.tabs.iter().filter(|t| t.hand && !t.exited && t.terminal.is_some()).count()
     }
 
-    pub fn restart_elevated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(home) = self.home.clone() else {
-            return;
-        };
-        if let Err(e) = Settings::update(&home, |settings| settings.sessions.run_as_admin = true) {
-            self.action_error = Some(format!("Cannot save Run Supraman as administrator: {e}"));
-            cx.notify();
-            return;
-        }
-        match crate::elevate::relaunch(&home, Some(std::process::id())) {
-            Ok(()) => self.quit(window, cx),
-            Err(e) => {
-                self.action_error = Some(format!("Supraman stays unelevated: {e:#}"));
-                cx.notify();
-            }
-        }
-    }
-
     pub fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.lifecycle.quit_asked = true;
         if self.should_close(window, cx) {
@@ -1572,7 +1207,6 @@ impl FleetView {
     pub fn input_focused(&self, window: &Window, cx: &gpui::App) -> bool {
         self.search.read(cx).is_focused(window)
             || self.add_dialog().is_some_and(|d| d.read(cx).focused(window, cx))
-            || self.mail.compose.as_ref().is_some_and(|c| c.input.read(cx).is_focused(window))
             || self.tabs.iter().filter_map(|t| t.find.as_ref()).any(|f| f.input.read(cx).is_focused(window))
     }
 
@@ -1676,10 +1310,6 @@ fn stale_tabs(tabs: &[Tab], elsewhere: &[(String, Option<String>)]) -> Vec<u64> 
         .filter(|t| t.hand_key.as_ref().is_some_and(|k| elsewhere.iter().any(|(n, _)| n == k)))
         .map(|t| t.id)
         .collect()
-}
-
-fn entered(command: &str) -> String {
-    format!("{command}\r")
 }
 
 fn held_line(why: &str) -> String {
@@ -1828,24 +1458,13 @@ pub mod tree_check {
     }
 }
 
-pub const SEND_SECTION: &str = "compose send";
-pub const APPROVE_SECTION: &str = "approve";
-
-fn not_sent(to: &str, e: &supraman_claude::SendError) -> String {
-    if e.may_arrive {
-        format!("Not confirmed: the direct write to {to} timed out ({}) and may still arrive; it was not sent again through the relay.", e.direct)
-    } else {
-        format!("Not sent: direct delivery failed ({}), and the relay cannot take it: {}.", e.direct, e.relay)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, atomic::AtomicU64};
 
     use supraman_term::PathLikeTarget;
 
-    use crate::supervise::Supervision;
+    use crate::upkeep::Upkeep;
 
     use super::*;
 
@@ -1855,17 +1474,6 @@ mod tests {
         assert_eq!(claude_dir_or(None), supraman_core::paths::claude_dir());
         let fake = Path::new(r"C:\scratch\fake-claude");
         assert_eq!(claude_dir_or(Some(fake)), Some(fake.to_path_buf()));
-    }
-
-    #[test]
-    fn a_timed_out_send_says_it_may_still_arrive_and_a_failed_one_says_not_sent() {
-        let late = supraman_claude::SendError { direct: "the pipe write timed out".into(), relay: "not tried".into(), may_arrive: true };
-        assert_eq!(
-            not_sent("fm-demo-workspace", &late),
-            "Not confirmed: the direct write to fm-demo-workspace timed out (the pipe write timed out) and may still arrive; it was not sent again through the relay."
-        );
-        let failed = supraman_claude::SendError { direct: "no pipe".into(), relay: "demo is stopped".into(), may_arrive: false };
-        assert_eq!(not_sent("fm-demo-workspace", &failed), "Not sent: direct delivery failed (no pipe), and the relay cannot take it: demo is stopped.");
     }
 
     #[test]
@@ -1912,11 +1520,6 @@ mod tests {
         let gone = at("gone.rs:1");
         assert_eq!(missing(&gone), Some(format!("Not opened: there is no file or folder {}.", gone.display())));
         assert!(missing(Path::new("relative.rs")).is_some(), "a path never resolved against a folder");
-    }
-
-    #[test]
-    fn run_in_terminal_enters_its_command_at_the_prompt() {
-        assert_eq!(entered("claude"), "claude\r");
     }
 
     #[test]
@@ -2026,15 +1629,14 @@ mod tests {
         assert!(!offers_resume(&bg, &gone, Some(now - RESUME_GRACE_MS), now), "the grace's last millisecond");
         assert!(offers_resume(&bg, &gone, Some(now - RESUME_GRACE_MS - 1), now), "past the grace");
         assert!(offers_resume(&bg, &gone, None, now), "never seen alive here");
-        assert!(!offers_resume(&session(supraman_claude::Kind::Interactive, "fm-alpha-workspace"), &gone, None, now), "the supervisor's");
+        assert!(!offers_resume(&session(supraman_claude::Kind::Interactive, "fm-alpha-sched-nightly-20261113-0900"), &gone, None, now), "Supraman's own");
     }
 
     fn poller(home: &Path, writes: Arc<AtomicU64>) -> Poller {
         Poller {
             home: Some(home.to_path_buf()),
             events: None,
-            supervision: Some(Supervision::new(home.to_path_buf(), None)),
-            retries: Arc::default(),
+            upkeep: Some(Upkeep::new(home.to_path_buf())),
             injected: Arc::default(),
             registry_writes: writes,
             snapshot: None,
@@ -2045,21 +1647,13 @@ mod tests {
     }
 
     #[test]
-    fn a_registry_write_after_the_read_skips_that_tick() {
+    fn the_upkeep_ticks_once_per_session_list_read() {
         let home = tempfile::tempdir().unwrap();
-        let writes: Arc<AtomicU64> = Arc::default();
-        let mut poller = poller(home.path(), writes.clone());
-        poller.snapshot = Some((0, Vec::new(), Vec::new()));
-        assert!(poller.tick().is_some(), "an unchanged registry ticks");
-
-        poller.snapshot = Some((0, Vec::new(), Vec::new()));
-        writes.fetch_add(1, Ordering::SeqCst);
-        assert!(poller.tick().is_none(), "a write between read and tick: the supervisor does not run on the old list");
-        assert!(poller.snapshot.is_none(), "the stale snapshot is gone");
+        let mut poller = poller(home.path(), Arc::default());
+        poller.snapshot = Some(Vec::new());
+        assert!(poller.tick().is_some(), "a list read without error ticks");
+        assert!(poller.snapshot.is_none(), "the list is taken");
         assert!(poller.tick().is_none(), "nothing to tick until the next read");
-
-        poller.snapshot = Some((1, Vec::new(), Vec::new()));
-        assert!(poller.tick().is_some(), "the next read's snapshot ticks");
     }
 
     #[test]

@@ -220,10 +220,6 @@ async fn unreachable(view: &Entity<FleetView>, closed: &str, cx: &mut AsyncWindo
     if !down.contains(closed) {
         bail!("the unreachable notice does not name {closed}: {down:?}");
     }
-    let warning = view.read_with(cx, |v, _| v.workman.start_warning("w"));
-    if !warning.as_deref().is_some_and(|w| w.contains("unreachable")) {
-        bail!("Start would not warn while unreachable: {warning:?}");
-    }
     shot("m5-3-unreachable", cx).await;
     click(view, "ws-setup-dismiss", cx).await?;
     until(view, cx, "× hides the notice", |v| (!painted(v, "ws-setup-notice") && v.workman.unreachable()).then_some(())).await?;
