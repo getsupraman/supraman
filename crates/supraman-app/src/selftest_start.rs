@@ -1,4 +1,4 @@
-//! New task… from the workspace's Task icon: a typed prompt with quotes, `$`, a non-ASCII letter and a new line,
+//! New task… from the group's Task icon: a typed prompt with quotes, `$`, a non-ASCII letter and a new line,
 //! Send, and the argv a stand-in claude got (`supraman.exe --selftest-argv`, a native exe as claude.exe is).
 
 use std::path::{Path, PathBuf};
@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{Context as _, anyhow, bail};
 use gpui::{AsyncWindowContext, Entity, Modifiers};
 
-use crate::selftest::{WORKSPACE, click, main_repo_of_gate, sleep, until};
+use crate::selftest::{GROUP, click, main_repo_of_gate, sleep, until};
 use crate::selftest::keys::{keystroke, type_text};
 use crate::view::{FleetView, TabKind};
 
@@ -90,13 +90,13 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     let folder = main_repo_of_gate()?;
     let plugin = view.read_with(cx, |v, _| v.plugin_dir.clone()).context("this build found no plugins/supraman")?;
 
-    click(view, &format!("task-{WORKSPACE}"), cx).await?;
+    click(view, &format!("task-{GROUP}"), cx).await?;
     let tab = start_tab(view, cx).await?;
-    let choices = view.read_with(cx, |v, _| v.tree().entry(WORKSPACE).map(|e| crate::view::start::folders(e, None))).unwrap_or_default();
+    let choices = view.read_with(cx, |v, _| v.tree().entry(GROUP).map(|e| crate::view::start::folders(e, None))).unwrap_or_default();
     let index = choices
         .iter()
         .position(|(_, p)| supraman_core::paths::path_key(p) == supraman_core::paths::path_key(&folder))
-        .ok_or_else(|| anyhow!("{} is not among {WORKSPACE}'s folders {choices:?}", folder.display()))?;
+        .ok_or_else(|| anyhow!("{} is not among {GROUP}'s folders {choices:?}", folder.display()))?;
     click(view, &format!("start-folder-{index}"), cx).await?;
     click(view, "start-mode-plan", cx).await?;
     crate::selftest_schedules::themed_shots(home, "sched2-6-start", cx).await;
@@ -124,7 +124,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
         bail!("the claude argv lacks the mode or the [+] flags: {argv:?}");
     }
     Ok(format!(
-        "New task in {WORKSPACE} at {} mode plan: the session tab `{}` got the typed two-line prompt byte for byte after `--`, with the mode and the [+] flags",
+        "New task in {GROUP} at {} mode plan: the session tab `{}` got the typed two-line prompt byte for byte after `--`, with the mode and the [+] flags",
         folder.display(),
         lines[0]
     ))

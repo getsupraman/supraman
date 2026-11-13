@@ -8,6 +8,7 @@ use theme::ActiveTheme as _;
 
 use super::{FleetView, Tab, TabKind};
 use crate::saved_tabs::{self, Reopen, SavedTab, SavedTabs, World};
+use crate::work_view::Target;
 use crate::{fleet, tab_card};
 
 const SAVE_FAILED: &str = "Cannot save the open tabs";
@@ -65,7 +66,7 @@ impl FleetView {
         Some(match &tab.kind {
             TabKind::Saved(saved) => saved.clone(),
             TabKind::Schedule(_) | TabKind::Details(_) | TabKind::Start(_) => return None,
-            TabKind::Work(view) => SavedTab::Work { title, workspace: view.read(cx).workspace.clone() },
+            TabKind::Work(view) => SavedTab::Work { title, target: view.read(cx).target.clone() },
             TabKind::Git(view) => SavedTab::Git { title, folder: view.read(cx).folder.clone() },
             TabKind::Shell if tab.hand => {
                 let session_id = tab.claude.clone().or_else(|| tab.launched_session.clone()).map(|sid| self.transcripts.continued.get(&sid).cloned().unwrap_or(sid));
@@ -110,7 +111,7 @@ impl FleetView {
         };
         self.saving.tabs_reopening = true;
         let sessions = self.sessions.clone();
-        let workspaces = self.entry_names();
+        let targets = self.work_targets();
         let claude_dir = self.claude_dir.clone();
         let planned = cx.background_executor().spawn(async move {
             let settings = Settings::load(&home).unwrap_or_default().sessions;
@@ -118,7 +119,7 @@ impl FleetView {
                 return None;
             }
             let (saved, notice) = saved_tabs::load(&home);
-            let plans = plan_tabs(saved.tabs, &sessions, &workspaces, claude_dir.as_deref(), settings.resume_tabs_on_click);
+            let plans = plan_tabs(saved.tabs, &sessions, &targets, claude_dir.as_deref(), settings.resume_tabs_on_click);
             Some((plans, saved.active, notice))
         });
         cx.spawn(async move |this, cx| {
@@ -171,11 +172,11 @@ impl FleetView {
         };
         let home = self.home.clone();
         let sessions = self.sessions.clone();
-        let workspaces = self.entry_names();
+        let targets = self.work_targets();
         let claude_dir = self.claude_dir.clone();
         let planned = cx.background_executor().spawn(async move {
             let resume_on_click = home.as_deref().and_then(|h| Settings::load(h).ok()).unwrap_or_default().sessions.resume_tabs_on_click;
-            plan_tabs(vec![saved], &sessions, &workspaces, claude_dir.as_deref(), resume_on_click).pop()
+            plan_tabs(vec![saved], &sessions, &targets, claude_dir.as_deref(), resume_on_click).pop()
         });
         cx.spawn(async move |this, cx| {
             let Some((title, plan)) = planned.await else { return };
@@ -199,7 +200,7 @@ impl FleetView {
             }
             Reopen::Attach { title, session } => self.attach_titled(title, &session, cx),
             Reopen::Resume { title, session } => self.resume_titled(title, &session, cx),
-            Reopen::Work { workspace } => self.open_work(&workspace, cx),
+            Reopen::Work { target } => self.open_work(target, cx),
             Reopen::Git { title, folder } => self.open_git(folder, title, cx),
             Reopen::Placeholder(saved) => {
                 let session = saved.session();
@@ -289,7 +290,7 @@ impl FleetView {
 fn plan_tabs(
     tabs: Vec<SavedTab>,
     sessions: &[supraman_claude::Session],
-    workspaces: &[String],
+    targets: &[Target],
     claude_dir: Option<&Path>,
     resume_on_click: bool,
 ) -> Vec<(String, Result<Reopen, String>)> {
@@ -301,7 +302,7 @@ fn plan_tabs(
     let world = World {
         sessions,
         now: now_ms(),
-        workspaces,
+        targets,
         resume_on_click,
         is_dir: &|p| p.is_dir(),
         is_file: &|p| p.is_file(),

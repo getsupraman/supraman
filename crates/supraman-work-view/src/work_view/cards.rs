@@ -4,12 +4,26 @@ use supraman_core::text::count;
 use supraman_core::time;
 use supraman_workman::{InboxRow, ItemRef};
 
+use super::Target;
+
 pub const NOTE: &str = "unconsumed_note";
 const STALE: [&str; 2] = ["stale_in_progress", "expired_claim"];
 
+/// An Inbox row as the Inbox keeps it: the target whose Work tab opens it, the project it is of and that
+/// project's name (else the target's) as its context.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Row {
+    pub target: Target,
+    pub project: String,
+    pub context: String,
+    pub row: InboxRow,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Card {
-    pub workspace: String,
+    pub target: Target,
+    pub project: String,
+    pub context: String,
     /// The row's key, `kind:item`.
     pub key: String,
     pub kind: String,
@@ -31,7 +45,7 @@ impl Card {
 
     /// Every text the card paints, top to bottom; the render paints these and nothing else.
     pub fn texts(&self, now: i64) -> Vec<String> {
-        let mut texts = vec![self.workspace.clone(), self.when(now), self.badge.clone(), self.title.clone(), self.ref_.clone()];
+        let mut texts = vec![self.context.clone(), self.when(now), self.badge.clone(), self.title.clone(), self.ref_.clone()];
         texts.extend(self.detail.clone());
         texts.retain(|t| !t.is_empty());
         texts
@@ -99,12 +113,15 @@ fn detail(row: &InboxRow, held: bool, now: i64) -> Option<String> {
 }
 
 /// `None` for a row the Inbox does not show.
-pub fn card(workspace: &str, row: &InboxRow, held: bool, now: i64) -> Option<Card> {
+pub fn card(shown: &Row, held: bool, now: i64) -> Option<Card> {
+    let row = &shown.row;
     if row.kind == NOTE {
         return None;
     }
     Some(Card {
-        workspace: workspace.to_string(),
+        target: shown.target.clone(),
+        project: shown.project.clone(),
+        context: shown.context.clone(),
         key: row.key.clone(),
         kind: row.kind.clone(),
         badge: badge(&row.kind),
@@ -119,15 +136,15 @@ pub fn card(workspace: &str, row: &InboxRow, held: bool, now: i64) -> Option<Car
     })
 }
 
-fn run_key(workspace: &str, row: &InboxRow) -> String {
-    format!("{workspace}/{}", row.run.as_ref().map_or("", |r| r.id.as_str()))
+fn run_key(shown: &Row) -> String {
+    format!("{}/{}", shown.project, shown.row.run.as_ref().map_or("", |r| r.id.as_str()))
 }
 
 /// A stale or expired row whose run some live Supraman session holds: its `actor` names one, or another such row's in the run does.
-fn held_runs(rows: &[(&str, &InboxRow)], live: &[String]) -> Vec<String> {
+fn held_runs(rows: &[&Row], live: &[String]) -> Vec<String> {
     rows.iter()
-        .filter(|(_, r)| STALE.contains(&r.kind.as_str()) && r.actor.as_ref().is_some_and(|a| live.contains(a)))
-        .map(|(w, r)| run_key(w, r))
+        .filter(|s| STALE.contains(&s.row.kind.as_str()) && s.row.actor.as_ref().is_some_and(|a| live.contains(a)))
+        .map(|s| run_key(s))
         .collect()
 }
 
@@ -151,17 +168,17 @@ fn caption(kind: &str, n: usize, run: Option<&ItemRef>) -> String {
 }
 
 /// Needs you: questions, blocked items, and stalled or expired work no live Supraman session holds; the rest grouped by kind and run.
-pub fn sections(rows: &[(&str, &InboxRow)], live: &[String], now: i64) -> Sections {
+pub fn sections(rows: &[&Row], live: &[String], now: i64) -> Sections {
     let held = held_runs(rows, live);
     let mut sections = Sections::default();
-    for (workspace, row) in rows {
-        let run_held = held.contains(&run_key(workspace, row));
-        let Some(card) = card(workspace, row, run_held, now) else { continue };
-        if needs_you(row, run_held) {
+    for shown in rows {
+        let run_held = held.contains(&run_key(shown));
+        let Some(card) = card(shown, run_held, now) else { continue };
+        if needs_you(&shown.row, run_held) {
             sections.needs_you.push(card);
             continue;
         }
-        let key = format!("{}:{}", row.kind, run_key(workspace, row));
+        let key = format!("{}:{}", shown.row.kind, run_key(shown));
         match sections.housekeeping.iter_mut().find(|g| g.key == key) {
             Some(group) => group.cards.push(card),
             None => sections.housekeeping.push(Group { key, caption: String::new(), cards: vec![card] }),
@@ -186,6 +203,10 @@ mod tests {
 
     fn item(id: &str, title: &str) -> ItemRef {
         ItemRef { id: id.into(), ref_: id.into(), qualified_ref: format!("r1/{id}"), title: title.into(), ..Default::default() }
+    }
+
+    fn shown(row: &InboxRow) -> Row {
+        Row { target: Target::Group("g".into()), project: "p".into(), context: "Project".into(), row: row.clone() }
     }
 
     fn row(kind: &str, id: &str) -> InboxRow {
@@ -233,11 +254,12 @@ mod tests {
             let mut r = row(kind, "7");
             r.what = r.call.clone();
             r.detail = None;
-            let card = card("ws", &r, false, now()).unwrap();
+            let card = card(&shown(&r), false, now()).unwrap();
+            assert_eq!(card.texts(now())[0], "Project", "{kind}: its project's name first");
             assert_eq!(card.texts(now())[3..5], [card.title.clone(), card.ref_.clone()], "{kind}: title, then ref");
             assert!(card.texts(now()).iter().all(|t| !t.contains(&r.call)), "{kind}: {:?}", card.texts(now()));
         }
-        assert_eq!(card("ws", &row(NOTE, "8"), false, now()), None, "a note is not shown");
+        assert_eq!(card(&shown(&row(NOTE, "8")), false, now()), None, "a note is not shown");
     }
 
     #[test]
@@ -259,7 +281,8 @@ mod tests {
             expired_other_run,
             row("blocker_finding", "f"),
         ];
-        let refs: Vec<(&str, &InboxRow)> = rows.iter().map(|r| ("ws", r)).collect();
+        let rows: Vec<Row> = rows.iter().map(shown).collect();
+        let refs: Vec<&Row> = rows.iter().collect();
         let s = sections(&refs, &["fm-live".to_string()], now());
         let keys = |cards: &[Card]| cards.iter().map(|c| c.key.clone()).collect::<Vec<_>>();
         assert_eq!(keys(&s.needs_you), ["question:q", "blocked:b", "expired_claim:e1"]);
@@ -268,6 +291,6 @@ mod tests {
         assert_eq!(s.housekeeping_count(), 5);
         let mut asked = row("assumption_due", "a");
         asked.audience = Some("human".into());
-        assert_eq!(keys(&sections(&[("ws", &asked)], &[], now()).needs_you), ["assumption_due:a"], "a human row the server adds later");
+        assert_eq!(keys(&sections(&[&shown(&asked)], &[], now()).needs_you), ["assumption_due:a"], "a human row the server adds later");
     }
 }

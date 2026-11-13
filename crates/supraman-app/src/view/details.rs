@@ -180,24 +180,24 @@ impl FleetView {
         self.tabs.iter().find(|t| t.hand && (Self::tab_runs(t, &row.session) || t.launched_session.as_ref() == Some(sid)))
     }
 
-    fn work_open(&self, entry: &str, cx: &gpui::App) -> bool {
-        self.tabs.iter().any(|t| matches!(&t.kind, TabKind::Work(v) if v.read(cx).workspace == entry))
+    fn work_open(&self) -> bool {
+        self.tabs.iter().any(|t| matches!(&t.kind, TabKind::Work(_)))
     }
 
     pub fn session_sections(&self, page: &DetailsPage, cx: &gpui::App) -> Option<(String, Vec<Section>)> {
-        let MenuTarget::Session { entry, .. } = &page.target else { return None };
+        let MenuTarget::Session { .. } = &page.target else { return None };
         let row = page.seen.as_ref()?;
         let folder = page.folder.as_ref().map(|(n, p)| (n.as_str(), p.as_path()));
-        Some((row_details::session_title(row), self.row_sections(entry, row, folder, &page.disk, page.listed, cx)))
+        Some((row_details::session_title(row), self.row_sections(row, folder, &page.disk, page.listed, cx)))
     }
 
     /// `row`'s facts as its Details tab shows them; `folder` the folder holding it, else found here.
-    pub(super) fn row_sections(&self, entry: &str, row: &SessionRow, folder: Option<(&str, &std::path::Path)>, disk: &OnDisk, listed: bool, cx: &gpui::App) -> Vec<Section> {
+    pub(super) fn row_sections(&self, row: &SessionRow, folder: Option<(&str, &std::path::Path)>, disk: &OnDisk, listed: bool, cx: &gpui::App) -> Vec<Section> {
         let shown = &self.listed.disk.shown;
         let (group, found) = crate::tab_card::place(&row.session.cwd, &self.listed.entries, shown);
         let holding = supraman_claude::holding(&row.session.cwd, &self.listed.entries, shown, |_| None).map(|at| at.folder);
         let folder = folder.or_else(|| Some((found.as_deref()?, holding.as_deref()?)));
-        let claimed = self.work_open(entry, cx).then(|| self.claimed_item(entry, &row.session.name, cx));
+        let claimed = self.work_open().then(|| self.claimed_item(&row.session.name, cx).map(|(_, item)| item));
         let facts = SessionFacts {
             row,
             group: group.as_deref(),
@@ -223,13 +223,14 @@ impl FleetView {
     /// A group's or a folder's page.
     pub fn entry_sections(&self, name: &str, cx: &gpui::App) -> Option<(EntryNode, Vec<Section>)> {
         let node = self.details_node(name)?;
+        let target = super::work_tab::entry_target(&node);
         let facts = EntryFacts {
             name: name.to_string(),
             group: node.group,
             folders: node.folders.iter().filter(|f| f.listed() || node.folders.len() == 1).map(|f| (f.name.clone(), f.path.clone())).collect(),
             sessions: node.session_count(),
             project: self.tabs.iter().find_map(|t| match &t.kind {
-                TabKind::Work(view) if view.read(cx).workspace == name => {
+                TabKind::Work(view) if Some(&view.read(cx).target) == target.as_ref() => {
                     let refs: Vec<String> = view.read(cx).projects.iter().map(|p| p.item.qualified_ref.clone()).collect();
                     (!refs.is_empty()).then(|| refs.join(", "))
                 }
@@ -292,7 +293,7 @@ impl FleetView {
             }
             MenuTarget::Group(name) | MenuTarget::Folder(name) => {
                 let (node, sections) = self.entry_sections(name, cx)?;
-                let items = if node.group { group_items(&node, self.has_closed_background(name)) } else { self.folder_menu(name).map(|(_, items)| items).unwrap_or_default() };
+                let items = if node.group { group_items(&node, self.has_closed_background(name)) } else { self.folder_menu(name, cx).map(|(_, items)| items).unwrap_or_default() };
                 (name.clone(), None, sections, items)
             }
             MenuTarget::Schedule { .. } | MenuTarget::Schedules { .. } | MenuTarget::OtherSchedule(_) => return None,

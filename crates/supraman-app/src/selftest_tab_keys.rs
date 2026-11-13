@@ -9,7 +9,7 @@ use supraman_core::{Settings, TabKeys};
 use crate::{
     selftest::{click, hex6, home, until, until_app},
     selftest_tabs::{READER, keys, press, reader},
-    selftest_work::WORKSPACE,
+    selftest_work::GROUP,
     settings_window::{SettingsView, page},
     view::{FleetView, TabKind},
 };
@@ -71,7 +71,7 @@ async fn open(view: &Entity<FleetView>, script: &std::path::Path, cx: &mut Async
             id
         })
     })?;
-    let work = view.update(cx, |v, cx| v.open_work(WORKSPACE, cx));
+    let work = view.update(cx, |v, cx| v.open_work(crate::work_view::Target::Group(GROUP.into()), cx));
     let git = view.update(cx, |v, cx| v.open_git(home(), "Git · tab keys".into(), cx));
     if order(view, cx).0 != [shell, work, git] {
         bail!("expected tabs [{shell}, {work}, {git}], found {:?}", order(view, cx).0);

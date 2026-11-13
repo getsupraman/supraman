@@ -2,7 +2,7 @@ use std::cell::RefCell;
 
 use gpui::{Bounds, Context, Modifiers, Pixels, Render, TestAppContext, VisualTestContext, px, rems};
 use serde_json::json;
-use supraman_workman::Client;
+use supraman_workman::{Client, InboxRow};
 use supraman_workman::fake::{Answer, FakeWorkman, INBOX_KINDS, inbox_rows};
 
 use super::*;
@@ -43,7 +43,8 @@ impl Render for Holder {
 fn open(cx: &mut TestAppContext) -> (Entity<Holder>, &mut VisualTestContext) {
     cx.update(|cx| supraman_ui::init_globals(cx, "test"));
     let now = supraman_core::time::rfc3339_ms("2026-11-06T12:00:00+00:00").unwrap();
-    let cards: Vec<Card> = served().iter().filter_map(|row| cards::card("ws", row, false, now)).collect();
+    let rows = served().into_iter().map(|row| cards::Row { target: work_view::Target::Group("g".into()), project: "p".into(), context: "Shop".into(), row });
+    let cards: Vec<Card> = rows.filter_map(|row| cards::card(&row, false, now)).collect();
     assert_eq!(cards.len(), INBOX_KINDS.len());
     let (view, cx) = cx.add_window_view(|_, _| Holder { cards, hits: HitTargets::default(), done: Rc::default() });
     redraw(&view, cx);
@@ -79,8 +80,9 @@ fn every_kinds_card_leads_with_the_items_title_then_its_ref_and_never_paints_the
             assert!(bounds(&view, &part_key("detail", card), cx).top() >= ref_.bottom() - px(1.), "{}: the detail {detail:?} under the ref", card.kind);
         }
         let texts = card.texts(now);
-        assert_eq!(texts.iter().position(|t| t == &card.title), Some(3), "{}: workspace, time and badge on the head line, then the title: {texts:?}", card.kind);
+        assert_eq!(texts.iter().position(|t| t == &card.title), Some(3), "{}: project, time and badge on the head line, then the title: {texts:?}", card.kind);
         assert!(texts.iter().all(|t| !t.contains("work_status")), "{}: {texts:?}", card.kind);
+        assert_eq!(texts[0], "Shop", "{}: the project's name is the card's context", card.kind);
     }
     let blocked = cards.iter().find(|c| c.kind == "blocked").unwrap();
     let one = bounds(&view, &part_key("title", &cards[0]), cx).size.height;

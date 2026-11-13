@@ -6,6 +6,7 @@ use supraman_core::fs::{load_json_or_notice, write_atomic};
 use serde::{Deserialize, Serialize};
 
 use crate::fleet;
+use crate::work_view::Target;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -20,7 +21,12 @@ pub enum SavedTab {
     /// A hand tab; `session_id` is the full uuid of the claude it runs.
     Claude { title: String, cwd: PathBuf, session_id: Option<String>, name: String },
     Attach { title: String, cwd: PathBuf, id: String, session_id: Option<String>, name: String },
-    Work { title: String, workspace: String },
+    /// `workspace` is a tab saved before folders: the group of that name (`saved_target`).
+    Work {
+        title: String,
+        #[serde(alias = "workspace", deserialize_with = "saved_target")]
+        target: Target,
+    },
     Git { title: String, folder: PathBuf },
 }
 
@@ -70,6 +76,21 @@ impl SavedTab {
     }
 }
 
+/// A saved Work tab's target, or a workspace's name from before folders as the group of that name; the name's read
+/// goes with folders::migrate in 0.1.19 (backlog/end-controllers-removal).
+fn saved_target<'de, D: serde::Deserializer<'de>>(de: D) -> Result<Target, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Saved {
+        Target(Target),
+        Workspace(String),
+    }
+    Ok(match Saved::deserialize(de)? {
+        Saved::Target(target) => target,
+        Saved::Workspace(name) => Target::Group(name),
+    })
+}
+
 /// A plain tab's program and the arguments it was started with.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedShell {
@@ -105,14 +126,15 @@ pub enum Reopen {
     Resume { title: String, session: Session },
     /// A tab with a Resume button; nothing runs until it is clicked.
     Placeholder(SavedTab),
-    Work { workspace: String },
+    Work { target: Target },
     Git { title: String, folder: PathBuf },
 }
 
 pub struct World<'a> {
     pub sessions: &'a [Session],
     pub now: i64,
-    pub workspaces: &'a [String],
+    /// Every group and folder row a Work tab may be on.
+    pub targets: &'a [Target],
     pub resume_on_click: bool,
     pub is_dir: &'a dyn Fn(&Path) -> bool,
     pub is_file: &'a dyn Fn(&Path) -> bool,
@@ -131,8 +153,8 @@ pub fn plan(saved: &SavedTab, world: &World) -> Result<Reopen, String> {
     };
     match saved {
         SavedTab::Shell { title, cwd, shell } => Ok(Reopen::Shell { title: title.clone(), cwd: cwd.clone(), shell: shell.clone().filter(|s| (world.is_file)(&s.program)) }),
-        SavedTab::Work { workspace, .. } if world.workspaces.contains(workspace) => Ok(Reopen::Work { workspace: workspace.clone() }),
-        SavedTab::Work { workspace, .. } => Err(format!("{workspace} is no longer listed")),
+        SavedTab::Work { target, .. } if world.targets.contains(target) => Ok(Reopen::Work { target: target.clone() }),
+        SavedTab::Work { target, .. } => Err(format!("{} is no longer listed", target.name())),
         SavedTab::Git { title, folder } => Ok(Reopen::Git { title: title.clone(), folder: folder.clone() }),
         SavedTab::Claude { title, .. } => {
             let session = saved.session().ok_or_else(|| "it has no conversation to resume".to_string())?;
@@ -168,8 +190,8 @@ mod tests {
 
     const SID: &str = "0a0b0c0d-0000-4000-8000-000000000001";
 
-    fn world<'a>(sessions: &'a [Session], workspaces: &'a [String], on_click: bool, has: &'a dyn Fn(&str, &Path) -> bool) -> World<'a> {
-        World { sessions, now: 1_000_000, workspaces, resume_on_click: on_click, is_dir: &|p| !p.ends_with("gone"), is_file: &|p| !p.ends_with("gone.exe"), has_transcript: has }
+    fn world<'a>(sessions: &'a [Session], targets: &'a [Target], on_click: bool, has: &'a dyn Fn(&str, &Path) -> bool) -> World<'a> {
+        World { sessions, now: 1_000_000, targets, resume_on_click: on_click, is_dir: &|p| !p.ends_with("gone"), is_file: &|p| !p.ends_with("gone.exe"), has_transcript: has }
     }
 
     fn attach(name: &str) -> SavedTab {
@@ -200,7 +222,8 @@ mod tests {
                 SavedTab::Shell { title: "pwsh 1".into(), cwd: "C:/a".into(), shell: None },
                 SavedTab::Claude { title: "c".into(), cwd: "C:/b".into(), session_id: Some(SID.into()), name: "hand".into() },
                 attach("worker"),
-                SavedTab::Work { title: "Work · w".into(), workspace: "w".into() },
+                SavedTab::Work { title: "Work · w".into(), target: Target::Group("w".into()) },
+                SavedTab::Work { title: "Work · shop".into(), target: Target::Folder("C:/code/shop".into()) },
             ],
             active: Some(2),
         };
@@ -210,6 +233,25 @@ mod tests {
         let (bad, notice) = load(home.path());
         assert_eq!(bad, SavedTabs::default());
         assert!(notice.is_some_and(|n| n.contains("tabs.json") && n.ends_with("no tabs are reopened")));
+    }
+
+    #[test]
+    fn a_work_tab_comes_back_on_its_folder_or_group_and_one_saved_by_workspace_as_that_group() {
+        let has = |_: &str, _: &Path| false;
+        let (folder, group) = (Target::Folder("C:/code/shop".into()), Target::Group("shop".into()));
+        let listed = [folder.clone(), group.clone()];
+        let world = world(&[], &listed, false, &has);
+        for target in [&folder, &group] {
+            let saved = SavedTab::Work { title: "Work · shop".into(), target: target.clone() };
+            let back: SavedTab = serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
+            assert_eq!(plan(&back, &world), Ok(Reopen::Work { target: target.clone() }), "{target:?}");
+        }
+        let gone = SavedTab::Work { title: "Work · old".into(), target: Target::Folder("C:/code/old".into()) };
+        assert_eq!(plan(&gone, &world), Err("old is no longer listed".into()));
+        let earlier: SavedTab = serde_json::from_value(serde_json::json!({ "kind": "work", "title": "Work · shop", "workspace": "shop" })).unwrap();
+        assert_eq!(plan(&earlier, &world), Ok(Reopen::Work { target: group }), "a workspace's tab is its group's");
+        let earlier: SavedTab = serde_json::from_value(serde_json::json!({ "kind": "work", "title": "Work · x", "workspace": "x" })).unwrap();
+        assert_eq!(plan(&earlier, &world), Err("x is no longer listed".into()), "no group of that name: dropped with why");
     }
 
     #[test]
@@ -234,15 +276,15 @@ mod tests {
     fn each_kind_comes_back_as_its_setting_and_its_session_say() {
         let has: &dyn Fn(&str, &Path) -> bool = &|sid, _| sid == SID;
         let none: &dyn Fn(&str, &Path) -> bool = &|_, _| false;
-        let ws = ["w".to_string()];
+        let ws = [Target::Group("w".into())];
         let shell = SavedTab::Shell { title: "s".into(), cwd: "C:/a".into(), shell: None };
         assert_eq!(plan(&shell, &world(&[], &ws, false, has)), Ok(Reopen::Shell { title: "s".into(), cwd: "C:/a".into(), shell: None }));
         let gone = SavedTab::Shell { title: "s".into(), cwd: "C:/gone".into(), shell: None };
         assert!(plan(&gone, &world(&[], &ws, false, has)).unwrap_err().contains("folder"));
 
-        let work = SavedTab::Work { title: "t".into(), workspace: "w".into() };
-        assert_eq!(plan(&work, &world(&[], &ws, false, has)), Ok(Reopen::Work { workspace: "w".into() }));
-        assert!(plan(&work, &world(&[], &[], false, has)).is_err(), "an unregistered workspace");
+        let work = SavedTab::Work { title: "t".into(), target: Target::Group("w".into()) };
+        assert_eq!(plan(&work, &world(&[], &ws, false, has)), Ok(Reopen::Work { target: Target::Group("w".into()) }));
+        assert_eq!(plan(&work, &world(&[], &[], false, has)), Err("w is no longer listed".into()), "a group gone");
 
         let claude = SavedTab::Claude { title: "c".into(), cwd: "C:/b".into(), session_id: Some(SID.into()), name: "hand".into() };
         let Ok(Reopen::Resume { session, .. }) = plan(&claude, &world(&[], &ws, false, has)) else { panic!("resumes at once by default") };
@@ -260,7 +302,7 @@ mod tests {
     #[test]
     fn a_hand_tab_follows_its_sessions_chain_and_attaches_to_a_running_continuation() {
         const NEXT: &str = "0a0b0c0d-0000-4000-8000-000000000002";
-        let ws = ["w".to_string()];
+        let ws = [Target::Group("w".into())];
         let saved = SavedTab::Claude { title: "c".into(), cwd: "C:/b".into(), session_id: Some(SID.into()), name: "workman".into() };
         let newest = |sid: &str| if sid == SID { NEXT.to_string() } else { sid.to_string() };
         let followed = saved.clone().followed(newest);
@@ -287,7 +329,7 @@ mod tests {
         std::fs::write(path(home.path()), r#"{"tabs":[{"kind":"shell","title":"pwsh 1","cwd":"C:/a"}],"active":0}"#).unwrap();
         let (old, notice) = load(home.path());
         assert_eq!((old.tabs.as_slice(), notice), (&[SavedTab::Shell { title: "pwsh 1".into(), cwd: "C:/a".into(), shell: None }][..], None), "a file without the shell loads");
-        let ws = ["w".to_string()];
+        let ws = [Target::Group("w".into())];
         let has: &dyn Fn(&str, &Path) -> bool = &|_, _| false;
         assert_eq!(plan(&old.tabs[0], &world(&[], &ws, false, has)), Ok(Reopen::Shell { title: "pwsh 1".into(), cwd: "C:/a".into(), shell: None }));
 

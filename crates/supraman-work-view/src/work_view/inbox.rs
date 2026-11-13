@@ -5,18 +5,19 @@ use std::path::Path;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use supraman_core::paths::path_key;
 use supraman_core::store::{JsonStore, Save};
 use gpui::Task;
 use supraman_workman::{Inbox, InboxRow, Overview};
 
 use super::*;
-use super::cards;
+use super::cards::{self, Row};
 
 pub const DISMISSED_FILE: &str = "workstate-dismissed.json";
 /// The Inbox's Housekeeping header; painted as `<key>=open` or `<key>=closed`.
 pub const HOUSEKEEPING_KEY: &str = "inbox-housekeeping";
 
-/// Per workspace: row key (`kind:item`) → the row's `since` when dismissed; see [`Dismissed::prune`].
+/// Per project id: row key (`kind:item`) → the row's `since` when dismissed; see [`Dismissed::prune`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub(crate) struct Dismissed(BTreeMap<String, BTreeMap<String, String>>);
@@ -26,30 +27,30 @@ impl Dismissed {
         JsonStore::load(home.map(|h| h.join(DISMISSED_FILE)), "every Workman inbox row shows")
     }
 
-    pub(crate) fn hides(&self, workspace: &str, row: &InboxRow) -> bool {
-        self.0.get(workspace).and_then(|keys| keys.get(&row.key)) == Some(&row.since)
+    pub(crate) fn hides(&self, project: &str, row: &InboxRow) -> bool {
+        self.0.get(project).and_then(|keys| keys.get(&row.key)) == Some(&row.since)
     }
 
-    pub(crate) fn dismiss(&mut self, workspace: &str, row: &InboxRow) {
-        self.0.entry(workspace.to_string()).or_default().insert(row.key.clone(), row.since.clone());
+    pub(crate) fn dismiss(&mut self, project: &str, row: &InboxRow) {
+        self.0.entry(project.to_string()).or_default().insert(row.key.clone(), row.since.clone());
     }
 
-    /// Only after a successful read of `workspace`'s inbox.
-    pub(crate) fn prune(&mut self, workspace: &str, rows: &[InboxRow]) -> bool {
-        let Some(keys) = self.0.get_mut(workspace) else { return false };
+    /// Only after a successful read of `project`'s inbox.
+    pub(crate) fn prune(&mut self, project: &str, rows: &[&InboxRow]) -> bool {
+        let Some(keys) = self.0.get_mut(project) else { return false };
         let before = keys.len();
         keys.retain(|key, since| rows.iter().any(|r| &r.key == key && &r.since == since));
         let changed = keys.len() != before;
         if keys.is_empty() {
-            self.0.remove(workspace);
+            self.0.remove(project);
         }
         changed
     }
 
     fn absorb(&mut self, other: Dismissed) -> bool {
         let mut changed = false;
-        for (workspace, keys) in other.0 {
-            let mine = self.0.entry(workspace).or_default();
+        for (project, keys) in other.0 {
+            let mine = self.0.entry(project).or_default();
             for (key, since) in keys {
                 changed |= mine.insert(key, since.clone()).as_ref() != Some(&since);
             }
@@ -57,29 +58,30 @@ impl Dismissed {
         changed
     }
 
-    pub(crate) fn retain_workspaces(&mut self, workspaces: &[String]) -> bool {
+    /// Keeps only the projects some target binds; an earlier file's other keys go too.
+    pub(crate) fn retain_projects(&mut self, projects: &HashSet<&str>) -> bool {
         let before = self.0.len();
-        self.0.retain(|w, _| workspaces.contains(w));
+        self.0.retain(|p, _| projects.contains(p.as_str()));
         self.0.len() != before
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Touched {
-    Workspaces(Vec<String>),
+    Targets(Vec<Target>),
     /// No run, or a run the last overview did not list: every inbox, and the overview again.
     All { overview: bool },
 }
 
-pub(crate) fn touched(event: &StreamEvent, run_project: &HashMap<String, String>, projects: &HashMap<String, Vec<ItemRef>>) -> Touched {
+pub(crate) fn touched(event: &StreamEvent, run_project: &HashMap<String, String>, projects: &HashMap<Target, Vec<ItemRef>>) -> Touched {
     match event.run_id.as_deref() {
         None => Touched::All { overview: false },
         Some(run) => match run_project.get(run) {
             None => Touched::All { overview: true },
             Some(project) => {
-                let mut hit: Vec<String> = projects.iter().filter(|(_, ps)| ps.iter().any(|p| &p.id == project)).map(|(w, _)| w.clone()).collect();
-                hit.sort();
-                Touched::Workspaces(hit)
+                let mut hit: Vec<Target> = projects.iter().filter(|(_, ps)| ps.iter().any(|p| &p.id == project)).map(|(t, _)| t.clone()).collect();
+                hit.sort_by_key(Target::key);
+                Touched::Targets(hit)
             }
         },
     }
@@ -89,40 +91,63 @@ pub(crate) fn touched(event: &StreamEvent, run_project: &HashMap<String, String>
 struct Plan {
     all: bool,
     overview: bool,
-    workspaces: HashSet<String>,
+    targets: HashSet<Target>,
 }
 
 type Keys = Vec<(&'static str, String)>;
 
 struct Ask {
-    workspace: String,
+    target: Target,
     folders: Vec<PathBuf>,
-    keys: Option<Keys>,
     projects: Option<Vec<ItemRef>>,
 }
 
+/// One project's inbox rows, the project with each.
+#[derive(Debug, Clone, Default)]
+struct Merged {
+    seq: i64,
+    rows: Vec<(ItemRef, InboxRow)>,
+}
+
 enum Outcome {
-    Read(Vec<ItemRef>, Inbox),
+    Read(Vec<ItemRef>, Merged),
     NoProject,
     Failed(String),
 }
 
 struct Answer {
-    workspace: String,
-    keys: Option<Keys>,
+    target: Target,
     outcome: Outcome,
 }
 
-/// One inbox of every project bound to the workspace's repos (`projects::bound`), newest first; a fresh overview binds again.
-fn read(client: &Client, asks: Vec<Ask>, overview: bool, repo_of: RepoOf) -> (Option<Overview>, Vec<Answer>) {
+/// Each folder's repo keys by `path_key`: the ones kept, and those of `missing` read now (git, so off the UI thread).
+fn keys_of(kept: &HashMap<String, Keys>, missing: &[PathBuf], repo_of: RepoOf) -> HashMap<String, Keys> {
+    let mut all = kept.clone();
+    for folder in missing {
+        all.insert(path_key(folder), projects::folder_keys(std::slice::from_ref(folder), repo_of));
+    }
+    all
+}
+
+fn union(folders: &[PathBuf], keys: &HashMap<String, Keys>) -> Keys {
+    let mut out = Keys::new();
+    for key in folders.iter().filter_map(|f| keys.get(&path_key(f))).flatten() {
+        if !out.contains(key) {
+            out.push(key.clone());
+        }
+    }
+    out
+}
+
+/// One inbox of every project bound to the target's repos (`projects::bound`), newest first; a fresh overview binds again.
+fn read(client: &Client, asks: Vec<Ask>, overview: bool, keys: &HashMap<String, Keys>) -> (Option<Overview>, Vec<Answer>) {
     let needs_overview = overview || asks.iter().any(|a| a.projects.is_none());
     let overview = if needs_overview { client.overview().map_err(|e| e.to_string()) } else { Err(String::new()) };
     let answers = asks
         .into_iter()
         .map(|ask| {
-            let keys = ask.keys.unwrap_or_else(|| projects::folder_keys(&ask.folders, repo_of));
             let projects = match (&overview, ask.projects) {
-                (Ok(overview), _) => Ok(projects::bound(overview, &keys).into_iter().map(|p| p.item).collect::<Vec<_>>()),
+                (Ok(overview), _) => Ok(projects::bound(overview, &union(&ask.folders, keys)).into_iter().map(|p| p.item).collect::<Vec<_>>()),
                 (Err(_), Some(projects)) => Ok(projects),
                 (Err(why), None) => Err(why.clone()),
             };
@@ -131,27 +156,27 @@ fn read(client: &Client, asks: Vec<Ask>, overview: bool, repo_of: RepoOf) -> (Op
                 Ok(projects) => merged(client, projects),
                 Err(why) => Outcome::Failed(why),
             };
-            Answer { workspace: ask.workspace, keys: Some(keys), outcome }
+            Answer { target: ask.target, outcome }
         })
         .collect();
     (overview.ok(), answers)
 }
 
 fn merged(client: &Client, projects: Vec<ItemRef>) -> Outcome {
-    let mut all = Inbox::default();
+    let mut all = Merged::default();
     for project in &projects {
         match client.inbox(Some(&project.id)) {
             Ok(inbox) => {
                 all.seq = all.seq.max(inbox.seq);
-                all.as_of = inbox.as_of;
-                let fresh: Vec<InboxRow> = inbox.rows.into_iter().filter(|r| !all.rows.iter().any(|seen| seen.key == r.key)).collect();
-                all.rows.extend(fresh);
+                let inbox = absolute_urls(inbox, client.base());
+                let fresh: Vec<InboxRow> = inbox.rows.into_iter().filter(|r| !all.rows.iter().any(|(_, seen)| seen.key == r.key)).collect();
+                all.rows.extend(fresh.into_iter().map(|r| (project.clone(), r)));
             }
             Err(e) => return Outcome::Failed(e.to_string()),
         }
     }
-    all.rows.sort_by_key(|r| std::cmp::Reverse(supraman_core::time::rfc3339_ms(&r.since)));
-    Outcome::Read(projects, absolute_urls(all, client.base()))
+    all.rows.sort_by_key(|(_, r)| std::cmp::Reverse(supraman_core::time::rfc3339_ms(&r.since)));
+    Outcome::Read(projects, all)
 }
 
 /// A row's `url` as the page to open: a path is on the Workman server.
@@ -166,20 +191,21 @@ fn absolute_urls(mut inbox: Inbox, base: &str) -> Inbox {
 
 pub struct WorkInbox {
     hub: Entity<WorkHub>,
-    workspaces: Vec<String>,
-    folders: HashMap<String, Vec<PathBuf>>,
+    targets: Vec<Target>,
+    folders: HashMap<Target, Vec<PathBuf>>,
+    /// Every folder row a Work tab may open: their repo keys are read for [`WorkInbox::folder_binding`].
+    rows: Vec<PathBuf>,
     keys: HashMap<String, Keys>,
     repo_of: RepoOf,
     rebind: bool,
-    projects: HashMap<String, Vec<ItemRef>>,
-    inboxes: HashMap<String, Inbox>,
+    projects: HashMap<Target, Vec<ItemRef>>,
+    inboxes: HashMap<Target, Merged>,
     /// Run id → project id, from the last overview.
     run_project: HashMap<String, String>,
     overview: Option<Arc<Overview>>,
     pub(crate) dismissed: JsonStore<Dismissed>,
-    workspaces_set: bool,
     pending: Option<Plan>,
-    pub(crate) failures: HashMap<String, String>,
+    pub(crate) failures: HashMap<Target, String>,
     pub notice: Option<String>,
     pub reads: u64,
     pub applied: u64,
@@ -212,7 +238,7 @@ impl WorkInbox {
         cx.new(|cx| Self::new(hub, None, cx))
     }
 
-    /// An inbox of no workspace finding repos with `repo_of`: a test's.
+    /// An inbox of no target finding repos with `repo_of`: a test's.
     #[cfg(test)]
     pub(crate) fn of_repos(hub: Entity<WorkHub>, repo_of: RepoOf, cx: &mut App) -> Entity<WorkInbox> {
         cx.new(|cx| WorkInbox { repo_of, ..Self::new(hub, None, cx) })
@@ -229,8 +255,9 @@ impl WorkInbox {
         }
         WorkInbox {
             hub,
-            workspaces: Vec::new(),
+            targets: Vec::new(),
             folders: HashMap::new(),
+            rows: Vec::new(),
             keys: HashMap::new(),
             repo_of: supraman_supervisor::git_repo,
             rebind: false,
@@ -239,7 +266,6 @@ impl WorkInbox {
             run_project: HashMap::new(),
             overview: None,
             dismissed: JsonStore::default(),
-            workspaces_set: false,
             pending: None,
             failures: HashMap::new(),
             notice: None,
@@ -260,49 +286,46 @@ impl WorkInbox {
         self.repo_of
     }
 
-    /// Each workspace with its folders; a workspace whose folders changed is bound again.
-    pub fn set_workspaces(&mut self, workspaces: Vec<(String, Vec<PathBuf>)>, cx: &mut Context<Self>) {
-        let names: Vec<String> = workspaces.iter().map(|(w, _)| w.clone()).collect();
+    /// Each target with its folders, and every folder row; a target whose folders changed is bound again.
+    pub fn set_targets(&mut self, targets: Vec<(Target, Vec<PathBuf>)>, rows: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let listed: Vec<Target> = targets.iter().map(|(t, _)| t.clone()).collect();
         let rebind = self.rebind;
-        let changed: Vec<String> = workspaces.iter().filter(|(w, f)| rebind || self.folders.get(w) != Some(f)).map(|(w, _)| w.clone()).collect();
-        if changed.is_empty() && names == self.workspaces {
+        let changed: Vec<Target> = targets.iter().filter(|(t, f)| rebind || self.folders.get(t) != Some(f)).map(|(t, _)| t.clone()).collect();
+        if changed.is_empty() && listed == self.targets && rows == self.rows {
             return;
         }
-        self.rebind = false;
-        self.folders = workspaces.into_iter().collect();
-        for w in &changed {
-            self.keys.remove(w);
-            self.projects.remove(w);
+        if rebind {
+            self.keys.clear();
         }
-        self.projects.retain(|w, _| names.contains(w));
-        self.keys.retain(|w, _| names.contains(w));
-        self.inboxes.retain(|w, _| names.contains(w));
-        self.failures.retain(|w, _| names.contains(w));
-        self.workspaces = names;
-        self.workspaces_set = true;
-        let save = self.dismissed.edit(|d| d.retain_workspaces(&self.workspaces));
-        Self::save_pruned(save, cx);
-        let asks = changed.into_iter().map(|w| self.ask(w)).collect();
+        self.rebind = false;
+        for t in &changed {
+            for folder in self.folders.get(t).into_iter().flatten() {
+                self.keys.remove(&path_key(folder));
+            }
+            self.projects.remove(t);
+        }
+        self.folders = targets.into_iter().collect();
+        self.rows = rows;
+        self.projects.retain(|t, _| listed.contains(t));
+        self.inboxes.retain(|t, _| listed.contains(t));
+        self.failures.retain(|t, _| listed.contains(t));
+        self.targets = listed;
+        let asks = changed.into_iter().map(|t| self.ask(t)).collect();
         self.read(asks, true, cx);
         cx.notify();
     }
 
     fn dismissed_loaded(&mut self, (store, notice): (JsonStore<Dismissed>, Option<String>), cx: &mut Context<Self>) {
         let early = std::mem::replace(&mut self.dismissed, store).get().clone();
-        let workspaces = self.workspaces_set.then_some(&self.workspaces);
-        let save = self.dismissed.edit(|d| d.absorb(early) | workspaces.is_some_and(|w| d.retain_workspaces(w)));
+        let save = self.dismissed.edit(|d| d.absorb(early));
         Self::save(save, cx);
         self.notice = notice.or(self.notice.take());
         cx.notify();
     }
 
-    fn ask(&self, workspace: String) -> Ask {
-        Ask {
-            folders: self.folders.get(&workspace).cloned().unwrap_or_default(),
-            keys: self.keys.get(&workspace).cloned(),
-            projects: self.projects.get(&workspace).cloned(),
-            workspace,
-        }
+    fn ask(&self, target: Target) -> Ask {
+        let projects = self.projects.get(&target).filter(|p| !p.is_empty()).cloned();
+        Ask { folders: self.folders.get(&target).cloned().unwrap_or_default(), projects, target }
     }
 
     /// Needs you: the list back at its top and highlighted for [`FLASH`].
@@ -323,22 +346,51 @@ impl WorkInbox {
         self.flash.is_some()
     }
 
-    pub fn rows(&self) -> Vec<(&str, &InboxRow)> {
-        self.workspaces
-            .iter()
-            .filter_map(|w| self.inboxes.get(w).map(|inbox| (w, inbox)))
-            .flat_map(|(w, inbox)| inbox.rows.iter().filter(|r| r.kind != cards::NOTE && !self.dismissed.get().hides(w, r)).map(move |r| (w.as_str(), r)))
-            .collect()
+    /// Every row shown, once per project, with the target first binding it; its context the project's name, else the target's.
+    pub fn rows(&self) -> Vec<Row> {
+        let mut out: Vec<Row> = Vec::new();
+        for target in &self.targets {
+            let Some(inbox) = self.inboxes.get(target) else { continue };
+            for (project, row) in &inbox.rows {
+                if row.kind == cards::NOTE || self.dismissed.get().hides(&project.id, row) {
+                    continue;
+                }
+                if out.iter().any(|r| r.project == project.id && r.row.key == row.key) {
+                    continue;
+                }
+                let context = if project.title.is_empty() { target.name() } else { project.title.clone() };
+                out.push(Row { target: target.clone(), project: project.id.clone(), context, row: row.clone() });
+            }
+        }
+        out
     }
 
-    pub fn dismiss(&mut self, workspace: &str, key: &str, cx: &mut Context<Self>) {
-        let Some(row) = self.inboxes.get(workspace).and_then(|i| i.rows.iter().find(|r| r.key == key)) else { return };
+    pub fn dismiss(&mut self, project: &str, key: &str, cx: &mut Context<Self>) {
+        let found = self.inboxes.values().flat_map(|i| &i.rows).find(|(p, r)| p.id == project && r.key == key);
+        let Some((_, row)) = found else { return };
+        let row = row.clone();
         let save = self.dismissed.edit(|d| {
-            d.dismiss(workspace, row);
+            d.dismiss(project, &row);
             true
         });
         Self::save(save, cx);
         cx.notify();
+    }
+
+    /// The projects a folder row's repo binds, from the kept overview and the keys read for it; `None` until both are,
+    /// `Err` with Workman's words.
+    pub fn folder_binding(&self, folder: &Path, cx: &App) -> Option<Result<Vec<ItemRef>, String>> {
+        match self.hub.read(cx).access() {
+            Access::Ready(_) => {}
+            Access::Starting => return None,
+            Access::Unconfigured(why) => return Some(Err(why.to_string())),
+        }
+        if let Some(why) = self.overview.is_none().then(|| self.failures.values().next()).flatten() {
+            return Some(Err(why.clone()));
+        }
+        let keys = self.keys.get(&path_key(folder))?;
+        let overview = self.overview.as_ref()?;
+        Some(Ok(projects::bound(overview, keys).into_iter().map(|p| p.item).collect()))
     }
 
     /// The first project `folder`'s repo binds (`projects::bound`); git, and Workman when no overview is kept, run off the UI thread.
@@ -405,7 +457,7 @@ impl WorkInbox {
                 let touched = touched(event, &self.run_project, &self.projects);
                 let plan = self.pending.get_or_insert_default();
                 match touched {
-                    Touched::Workspaces(workspaces) => plan.workspaces.extend(workspaces),
+                    Touched::Targets(targets) => plan.targets.extend(targets),
                     Touched::All { overview } => {
                         plan.all = true;
                         plan.overview |= overview;
@@ -425,17 +477,12 @@ impl WorkInbox {
             self.read_all(plan.overview, cx);
             return;
         }
-        let asks = self
-            .workspaces
-            .iter()
-            .filter(|w| plan.workspaces.contains(*w))
-            .map(|w| self.ask(w.clone()))
-            .collect();
+        let asks = self.targets.iter().filter(|t| plan.targets.contains(*t)).map(|t| self.ask(t.clone())).collect();
         self.read(asks, false, cx);
     }
 
     fn read_all(&mut self, overview: bool, cx: &mut Context<Self>) {
-        let asks = self.workspaces.iter().map(|w| self.ask(w.clone())).collect();
+        let asks = self.targets.iter().map(|t| self.ask(t.clone())).collect();
         self.read(asks, overview, cx);
     }
 
@@ -444,16 +491,28 @@ impl WorkInbox {
         if asks.is_empty() && !overview {
             return;
         }
-        let (client, repo_of) = (client.clone(), self.repo_of);
+        let missing: Vec<PathBuf> = {
+            let mut seen = HashSet::new();
+            asks.iter().flat_map(|a| a.folders.iter()).chain(&self.rows).filter(|f| !self.keys.contains_key(&path_key(f)) && seen.insert(path_key(f))).cloned().collect()
+        };
+        let (client, repo_of, kept) = (client.clone(), self.repo_of, self.keys.clone());
         self.reads += 1;
         let began = std::time::Instant::now();
         cx.spawn(async move |this, cx| {
-            let (overview, answers) = cx.background_executor().spawn(async move { read(&client, asks, overview, repo_of) }).await;
+            let (overview, answers, keys) = cx
+                .background_executor()
+                .spawn(async move {
+                    let keys = keys_of(&kept, &missing, repo_of);
+                    let (overview, answers) = read(&client, asks, overview, &keys);
+                    (overview, answers, keys)
+                })
+                .await;
             this.update(cx, |this, cx| {
                 if this.applied == 0 {
                     supraman_ui::timeline("workman inbox done", began.elapsed());
                 }
                 this.applied += 1;
+                this.keys.extend(keys);
                 this.apply(overview, answers, cx);
             })
             .ok();
@@ -471,32 +530,37 @@ impl WorkInbox {
             self.overview = Some(Arc::new(overview));
         }
         let mut save = None;
-        for Answer { workspace, keys, outcome } in answers {
-            if !self.workspaces.contains(&workspace) {
+        for Answer { target, outcome } in answers {
+            if !self.targets.contains(&target) {
                 continue;
-            }
-            if let Some(keys) = keys {
-                self.keys.insert(workspace.clone(), keys);
             }
             match outcome {
                 Outcome::Read(projects, inbox) => {
-                    self.failures.remove(&workspace);
-                    self.projects.insert(workspace.clone(), projects);
-                    if self.inboxes.get(&workspace).is_some_and(|shown| inbox.seq < shown.seq) {
+                    self.failures.remove(&target);
+                    if self.inboxes.get(&target).is_some_and(|shown| inbox.seq < shown.seq) {
+                        self.projects.insert(target, projects);
                         continue;
                     }
-                    save = self.dismissed.edit(|d| d.prune(&workspace, &inbox.rows)).or(save);
-                    self.inboxes.insert(workspace, inbox);
+                    for project in &projects {
+                        let rows: Vec<&InboxRow> = inbox.rows.iter().filter(|(p, _)| p.id == project.id).map(|(_, r)| r).collect();
+                        save = self.dismissed.edit(|d| d.prune(&project.id, &rows)).or(save);
+                    }
+                    self.projects.insert(target.clone(), projects);
+                    self.inboxes.insert(target, inbox);
                 }
                 Outcome::NoProject => {
-                    self.failures.remove(&workspace);
-                    self.projects.remove(&workspace);
-                    self.inboxes.remove(&workspace);
+                    self.failures.remove(&target);
+                    self.projects.insert(target.clone(), Vec::new());
+                    self.inboxes.remove(&target);
                 }
                 Outcome::Failed(why) => {
-                    self.failures.insert(workspace, why);
+                    self.failures.insert(target, why);
                 }
             }
+        }
+        if self.targets.iter().all(|t| self.projects.contains_key(t)) {
+            let bound: HashSet<&str> = self.projects.values().flatten().map(|p| p.id.as_str()).collect();
+            save = self.dismissed.edit(|d| d.retain_projects(&bound)).or(save);
         }
         Self::save_pruned(save, cx);
         cx.notify();
@@ -552,44 +616,44 @@ mod tests {
     fn a_dismissal_holds_while_the_row_is_unchanged() {
         let mut d = Dismissed::default();
         let blocked = row("blocked:t1", "2026-10-26T10:00:00+00:00");
-        d.dismiss("w", &blocked);
-        assert!(d.hides("w", &blocked));
-        assert!(!d.hides("other", &blocked), "dismissals are per workspace");
-        assert!(!d.hides("w", &row("done_unverified:t1", "2026-10-26T10:00:00+00:00")));
-        assert!(!d.hides("w", &row("blocked:t1", "2026-10-26T11:00:00+00:00")));
-        assert!(!d.prune("w", std::slice::from_ref(&blocked)));
-        assert!(d.hides("w", &blocked));
+        d.dismiss("p", &blocked);
+        assert!(d.hides("p", &blocked));
+        assert!(!d.hides("other", &blocked), "dismissals are per project");
+        assert!(!d.hides("p", &row("done_unverified:t1", "2026-10-26T10:00:00+00:00")));
+        assert!(!d.hides("p", &row("blocked:t1", "2026-10-26T11:00:00+00:00")));
+        assert!(!d.prune("p", &[&blocked]));
+        assert!(d.hides("p", &blocked));
     }
 
     #[test]
     fn a_row_seen_gone_is_new_when_it_comes_back() {
         let mut d = Dismissed::default();
         let blocked = row("blocked:t1", "s1");
-        d.dismiss("w", &blocked);
-        assert!(d.prune("w", &[row("question:t2", "s2")]));
-        assert!(!d.hides("w", &blocked));
-        assert_eq!(d, Dismissed::default(), "an emptied workspace leaves nothing behind");
-        d.dismiss("w", &blocked);
-        assert!(d.prune("w", &[row("blocked:t1", "s9")]), "started over");
+        d.dismiss("p", &blocked);
+        assert!(d.prune("p", &[&row("question:t2", "s2")]));
+        assert!(!d.hides("p", &blocked));
+        assert_eq!(d, Dismissed::default(), "an emptied project leaves nothing behind");
+        d.dismiss("p", &blocked);
+        assert!(d.prune("p", &[&row("blocked:t1", "s9")]), "started over");
     }
 
     #[test]
     fn a_dismissal_made_before_the_file_is_read_is_kept_with_the_files() {
         let mut read = Dismissed::default();
-        read.dismiss("w", &row("blocked:t1", "s1"));
+        read.dismiss("p", &row("blocked:t1", "s1"));
         let mut early = Dismissed::default();
-        early.dismiss("w", &row("question:t2", "s2"));
+        early.dismiss("p", &row("question:t2", "s2"));
         assert!(read.absorb(early.clone()));
-        assert!(read.hides("w", &row("blocked:t1", "s1")) && read.hides("w", &row("question:t2", "s2")));
+        assert!(read.hides("p", &row("blocked:t1", "s1")) && read.hides("p", &row("question:t2", "s2")));
         assert!(!read.absorb(early), "nothing new the second time");
     }
 
     #[test]
-    fn dismissals_round_trip_through_the_file() {
+    fn dismissals_round_trip_through_the_file_and_keep_only_bound_projects() {
         let home = tempfile::tempdir().unwrap();
         let mut d = Dismissed::default();
-        d.dismiss("w", &row("blocked:t1", "s1"));
-        d.dismiss("v", &row("question:t2", "s2"));
+        d.dismiss("p", &row("blocked:t1", "s1"));
+        d.dismiss("q", &row("question:t2", "s2"));
         std::fs::write(home.path().join(DISMISSED_FILE), serde_json::to_string_pretty(&d).unwrap()).unwrap();
         let (read, notice) = Dismissed::load(Some(home.path()));
         assert_eq!((read.get(), notice), (&d, None));
@@ -599,8 +663,9 @@ mod tests {
         assert!(notice.is_some_and(|n| n.contains(DISMISSED_FILE)), "an unreadable file says so");
         let (none, notice) = Dismissed::load(None);
         assert_eq!((none.get(), notice), (&Dismissed::default(), None));
-        assert!(d.retain_workspaces(&["w".to_string()]));
-        assert!(!d.hides("v", &row("question:t2", "s2")));
+        assert!(d.retain_projects(&["p"].into()));
+        assert!(!d.hides("q", &row("question:t2", "s2")));
+        assert!(d.hides("p", &row("blocked:t1", "s1")));
     }
 
     #[test]
@@ -608,9 +673,10 @@ mod tests {
         let event = |run: Option<&str>| StreamEvent { seq: 1, run_id: run.map(str::to_string), item_id: None, kind: "transition".into() };
         let runs: HashMap<String, String> = [("r1".to_string(), "p1".to_string()), ("r9".to_string(), "p9".to_string())].into();
         let project = |id: &str| ItemRef { id: id.into(), ..Default::default() };
-        let projects: HashMap<String, Vec<ItemRef>> = [("w1".to_string(), vec![project("p0"), project("p1")]), ("w2".to_string(), vec![project("p2")])].into();
-        assert_eq!(touched(&event(Some("r1")), &runs, &projects), Touched::Workspaces(vec!["w1".into()]));
-        assert_eq!(touched(&event(Some("r9")), &runs, &projects), Touched::Workspaces(vec![]), "an unregistered project's run");
+        let (group, folder) = (Target::Group("g".into()), Target::Folder("C:/f".into()));
+        let projects: HashMap<Target, Vec<ItemRef>> = [(group.clone(), vec![project("p0"), project("p1")]), (folder, vec![project("p2")])].into();
+        assert_eq!(touched(&event(Some("r1")), &runs, &projects), Touched::Targets(vec![group]));
+        assert_eq!(touched(&event(Some("r9")), &runs, &projects), Touched::Targets(vec![]), "an unregistered project's run");
         assert_eq!(touched(&event(Some("new")), &runs, &projects), Touched::All { overview: true });
         assert_eq!(touched(&event(None), &runs, &projects), Touched::All { overview: false });
     }

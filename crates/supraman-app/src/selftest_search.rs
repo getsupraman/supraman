@@ -6,7 +6,7 @@ use anyhow::bail;
 use gpui::{AsyncWindowContext, Entity, KeyDownEvent, Keystroke, Modifiers, PlatformInput};
 
 use crate::{
-    selftest::{WORKSPACE, sleep, until_app},
+    selftest::{GROUP, sleep, until_app},
     selftest_closed::RECENT,
     selftest_manage::post_keys,
     view::FleetView,
@@ -43,7 +43,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         v.show_stopped = false;
         v.clear_search(cx);
     });
-    let tree_row = format!("group-row-{WORKSPACE}");
+    let tree_row = format!("group-row-{GROUP}");
     until_app(view, cx, WITHIN, "the tree before the search", |v, _| v.shown(&tree_row).then_some(())).await?;
 
     // dispatched: a posted Ctrl is not in the keyboard state Windows reads

@@ -7,7 +7,7 @@ use anyhow::{anyhow, bail};
 use gpui::{AsyncWindowContext, Bounds, Entity, Modifiers, MouseMoveEvent, PlatformInput, Pixels, WindowHandle};
 
 use crate::{
-    selftest::{WORKSPACE, click, drawn, drawn_in, log_offset, teardown_errors_since, until, until_with, win},
+    selftest::{GROUP, click, drawn, drawn_in, log_offset, teardown_errors_since, until, until_with, win},
     selftest_manage::{shot, shot_window},
     settings_window::{SettingsView, page},
     view::FleetView,
@@ -21,11 +21,11 @@ pub(crate) fn bounds(v: &FleetView, key: &str) -> Option<Bounds<Pixels>> {
 }
 
 fn repo_rows(v: &FleetView) -> usize {
-    v.folder_rows(WORKSPACE)
+    v.folder_rows(GROUP)
 }
 
 fn painted_repo_rows(v: &FleetView) -> usize {
-    let prefix = format!("repo-row-{WORKSPACE}/");
+    let prefix = format!("repo-row-{GROUP}/");
     v.hits.borrow().keys().filter(|k| k.starts_with(&prefix)).count()
 }
 
@@ -48,7 +48,7 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
         }
     }
 
-    let open_rows = until(view, cx, WITHIN, "repo rows of the gate workspace", |v| Some(repo_rows(v)).filter(|n| *n > 0)).await?;
+    let open_rows = until(view, cx, WITHIN, "repo rows of the gate group", |v| Some(repo_rows(v)).filter(|n| *n > 0)).await?;
     click(view, "collapse-all", cx).await?;
     until(view, cx, WITHIN, "Collapse all hides the repo rows", |v| (repo_rows(v) == 0).then_some(())).await?;
     click(view, "expand-all", cx).await?;
@@ -118,13 +118,13 @@ async fn no_counts(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> any
     let span = |v: &FleetView, left: &str, right: &str| Some(f32::from(bounds(v, right)?.left()) - f32::from(bounds(v, left)?.right()));
     let folders = view.read_with(cx, |v, _| {
         let tree = v.tree();
-        let node = tree.entry(WORKSPACE)?;
+        let node = tree.entry(GROUP)?;
         let held = node.folders.iter().filter(|r| !r.sessions.is_empty());
         Some(held.map(|r| (r.name.clone(), span(v, &format!("branch-{}", r.key), &format!("repo-room-{}", r.key)))).collect::<Vec<_>>())
     });
     let folders = folders.unwrap_or_default();
     if folders.is_empty() {
-        bail!("no folder row of {WORKSPACE} with sessions and no tags to look for a count on");
+        bail!("no folder row of {GROUP} with sessions and no tags to look for a count on");
     }
     for (name, room) in &folders {
         let room = room.ok_or_else(|| anyhow!("folder row {name}'s branch or room not painted"))?;
@@ -132,7 +132,7 @@ async fn no_counts(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> any
             bail!("{room:.1} px between folder row {name}'s branch and its room, not the {gap} px gap: something is painted there");
         }
     }
-    Ok(format!("no session count on the workspace row or {} folder row(s)", folders.len()))
+    Ok(format!("no session count on the group row or {} folder row(s)", folders.len()))
 }
 
 /// Closing a window before Windows has shown, activated and painted it races those messages.
@@ -334,11 +334,11 @@ pub fn on_grid(v: &FleetView, rows: &[(String, usize)]) -> anyhow::Result<String
     Ok(format!("{} rows on the grid ({})", rows.len(), xs.join(", ")))
 }
 
-/// Every painted row of the gate workspace sits on the one grid, levels 0 to 2, with `own` scrolled into view.
+/// Every painted row of the gate group sits on the one grid, levels 0 to 2, with `own` scrolled into view.
 pub async fn tree_grid(view: &Entity<FleetView>, own: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     view.update(cx, |v, cx| v.collapse_all(false, cx));
     let own = format!("session-row-{own}");
-    let rows = until(view, cx, WITHIN, "the gate workspace's rows at three levels", |v| {
+    let rows = until(view, cx, WITHIN, "the gate group's rows at three levels", |v| {
         v.shown(&own);
         let rows = tree_rows(v);
         let levels: std::collections::HashSet<usize> = rows.iter().map(|(_, l)| *l).collect();
@@ -355,7 +355,7 @@ fn tree_rows(v: &FleetView) -> Vec<(String, usize)> {
     let hits = v.hits.borrow();
     let painted = |key: &str| hits.contains_key(&format!("tree-icon-{key}")).then(|| key.to_string());
     let mut rows = Vec::new();
-    for w in v.tree().entries.iter().filter(|w| w.name == WORKSPACE) {
+    for w in v.tree().entries.iter().filter(|w| w.name == GROUP) {
         rows.extend(painted(&format!("group-{}", w.name)).map(|k| (k, 0)));
         for r in &w.folders {
             rows.extend(painted(&format!("repo-{}", r.key)).map(|k| (k, 1)));

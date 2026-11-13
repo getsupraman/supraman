@@ -1,4 +1,4 @@
-//! A [+] session in a workspace folder, run by a fake claude that records its env and plays its hooks
+//! A [+] session in a group's folder, run by a fake claude that records its env and plays its hooks
 //! with the `sm` it finds on PATH; a real claude's skill listing is not read here.
 
 use std::path::{Path, PathBuf};
@@ -8,7 +8,7 @@ use anyhow::{Context as _, anyhow, bail};
 use gpui::{AsyncWindowContext, Entity};
 
 use crate::{
-    selftest::{WORKSPACE, main_repo_of_gate, sleep, until, wait_for_tab_terminal},
+    selftest::{GROUP, main_repo_of_gate, sleep, until, wait_for_tab_terminal},
     selftest_closed::claude_dir,
     view::FleetView,
 };
@@ -118,7 +118,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     view.read_with(cx, |v, _| v.polls.injected.lock().unwrap_or_else(|e| e.into_inner()).extend(rows));
     let label = until(view, cx, WITHIN, "the hand session's row with its hook signal", |v| {
         v.tree()
-            .folder(&format!("{WORKSPACE}/{repo}"))?
+            .folder(&format!("{GROUP}/{repo}"))?
             .sessions
             .iter()
             .find(|r| r.session.session_id == SID)
@@ -129,8 +129,8 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
         bail!("the hand session's row shows `{label}`, not its permission prompt");
     }
     Ok(format!(
-        "[+] in {WORKSPACE}/{repo}: SUPRAMAN_ROLE=hand SUPRAMAN_SESSION={session} and the home in its env, no missing-plugin notice, \
-         {} first on PATH ({version}), SessionStart injected `{tag}`, its row under {WORKSPACE}/{repo} shows `{label}`",
+        "[+] in {GROUP}/{repo}: SUPRAMAN_ROLE=hand SUPRAMAN_SESSION={session} and the home in its env, no missing-plugin notice, \
+         {} first on PATH ({version}), SessionStart injected `{tag}`, its row under {GROUP}/{repo} shows `{label}`",
         sm.display()
     ))
 }

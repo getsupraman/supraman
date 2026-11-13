@@ -72,8 +72,8 @@ impl Hold {
     }
 }
 
-fn work_key(workspace: &str, row: &supraman_workman::InboxRow) -> String {
-    format!("work:{workspace}/{}", row.key)
+fn work_key(row: &crate::work_view::cards::Row) -> String {
+    format!("work:{}/{}", row.project, row.row.key)
 }
 
 const SEAM_GAP: f32 = 6.;
@@ -167,7 +167,7 @@ impl FleetView {
             hold.moved = Instant::now();
             return;
         }
-        let keys: HashSet<String> = self.work_inbox.read(cx).rows().into_iter().map(|(w, r)| work_key(w, r)).collect();
+        let keys: HashSet<String> = self.work_inbox.read(cx).rows().iter().map(work_key).collect();
         self.sidebar.left_hold = Some(Hold::new(keys, Instant::now()));
         self.sidebar.left_holds += 1;
         self.sidebar.left_hold_timer = Some(cx.spawn(async move |this, cx| {
@@ -502,10 +502,9 @@ impl FleetView {
     }
 
     fn render_inbox(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let all_work: Vec<(String, supraman_workman::InboxRow)> =
-            self.work_inbox.read(cx).rows().into_iter().map(|(w, r)| (w.to_string(), r.clone())).collect();
+        let all_work = self.work_inbox.read(cx).rows();
         let total = all_work.len();
-        let work_rows: Vec<_> = all_work.into_iter().filter(|(w, r)| self.shown_now(&work_key(w, r))).collect();
+        let work_rows: Vec<_> = all_work.into_iter().filter(|r| self.shown_now(&work_key(r))).collect();
         let scheduled = self.render_schedule_inbox(cx);
         if work_rows.is_empty() && scheduled.is_empty() {
             return None;
@@ -667,7 +666,7 @@ impl FleetView {
     fn entry_selected(&self, entry: &EntryNode, cx: &gpui::App) -> bool {
         let Some(tab) = self.active.and_then(|id| self.tab(id)) else { return false };
         match &tab.kind {
-            TabKind::Work(view) => view.read(cx).workspace == entry.name,
+            TabKind::Work(view) => super::work_tab::entry_target(entry).as_ref() == Some(&view.read(cx).target),
             _ => false,
         }
     }
@@ -687,7 +686,7 @@ impl FleetView {
                 },
             ))
         };
-        let buttons = div().flex().flex_none().items_center().gap(px(2.)).child(add).child(self.work_button(entry, &group, shown, cx)).child(self.task_button(entry, &group, shown, cx));
+        let buttons = div().flex().flex_none().items_center().gap(px(2.)).child(add).children(self.work_button(entry, &group, shown, cx)).child(self.task_button(entry, &group, shown, cx));
         let line = div()
             .flex()
             .items_center()
@@ -725,15 +724,20 @@ impl FleetView {
             .into_any_element()
     }
 
-    /// An entry's Work, on its group's row or its top-level folder's.
-    fn work_button(&self, entry: &EntryNode, group: &SharedString, shown: bool, cx: &mut Context<Self>) -> Stateful<Div> {
-        let name = entry.name.clone();
-        self.hover_icon(format!("work-{name}"), Icon::Work, "Work: the Workman board of its folders' projects", group, shown, cx).on_click(cx.listener(
-            move |this, _: &ClickEvent, _, cx| {
+    /// An entry's Work, on its group's row or its top-level folder's; a folder's dimmed with why while it binds no project.
+    fn work_button(&self, entry: &EntryNode, group: &SharedString, shown: bool, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let target = super::work_tab::entry_target(entry)?;
+        let why = target.folder().and_then(|f| self.work_why_not(f, cx));
+        let key = format!("work-{}", entry.name);
+        let Some(why) = why else {
+            let tip = if entry.group { "Work: the Workman board of its folders' projects" } else { "Work: the Workman board of its project" };
+            return Some(self.hover_icon(key, Icon::Work, tip, group, shown, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();
-                this.open_work(&name, cx);
-            },
-        ))
+                this.open_work(target.clone(), cx);
+            })));
+        };
+        let icon = Icon::Work.svg(14., cx.theme().colors().text_disabled);
+        Some(button::revealed(&self.hits, key, icon, px(SLOT), group.clone(), shown, cx).cursor_default().tooltip(Tooltip::text(why)).on_click(|_: &ClickEvent, _, cx| cx.stop_propagation()))
     }
 
     /// A group's New task…, its folder picked on the Start page.
@@ -785,7 +789,7 @@ impl FleetView {
                 },
             ))
         });
-        let work = (!entry.group && repo.listed()).then(|| self.work_button(entry, &group, self.entry_selected(entry, cx), cx));
+        let work = (!entry.group && repo.listed()).then(|| self.work_button(entry, &group, self.entry_selected(entry, cx), cx)).flatten();
         let row = div()
             .id(SharedString::from(rkey.clone()))
             .group(group)

@@ -20,14 +20,14 @@ use crate::{
     work_view::{HOUSEKEEPING_KEY, WorkView},
 };
 
-pub const WORKSPACE: &str = "selftest-work";
+pub const GROUP: &str = "selftest-work";
 const PROJECT: &str = "5e1f0000-0000-4000-8000-000000000001";
 const LIVE_RUN: &str = "5e1f0000-0000-4000-8000-0000000000a2";
 const DONE_RUN: &str = "5e1f0000-0000-4000-8000-0000000000a1";
 const TASK_1: &str = "5e1f0000-0000-4000-8000-0000000002a1";
 const TASK_2: &str = "5e1f0000-0000-4000-8000-0000000002a2";
 const SHIPPED: &str = "5e1f0000-0000-4000-8000-0000000001a1";
-/// The workspace folder's `origin`; the fake's project is bound to it (Workman's `project_repo`).
+/// The group folder's `origin`; the fake's project is bound to it (Workman's `project_repo`).
 const REMOTE: &str = "https://example.invalid/supraman/selftest-work.git";
 const REMOTE_KEY: &str = "example.invalid/supraman/selftest-work";
 const LOADED_WITHIN: Duration = Duration::from_secs(5);
@@ -56,7 +56,7 @@ fn rollup(total: u32, done: u32, in_progress: u32, open: u32, cancelled: u32) ->
 }
 
 fn project() -> Value {
-    item(PROJECT, WORKSPACE, "project", "Supraman selftest project", "in_progress")
+    item(PROJECT, GROUP, "project", "Supraman selftest project", "in_progress")
 }
 
 fn live_run() -> Value {
@@ -271,8 +271,8 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
         }
     }
     supraman_core::folders::edit(&home, |e| {
-        e.list.retain(|x| x.group_name() != Some(WORKSPACE));
-        e.list.push(supraman_core::folders::Entry::Group { name: WORKSPACE.into(), folders: vec![supraman_core::folders::FolderEntry::new(&repo)] });
+        e.list.retain(|x| x.group_name() != Some(GROUP));
+        e.list.push(supraman_core::folders::Entry::Group { name: GROUP.into(), folders: vec![supraman_core::folders::FolderEntry::new(&repo)] });
         Ok(())
     })?;
     let fake = FakeWorkman::start(vec![
@@ -293,7 +293,7 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
     crate::selftest::set_workman(fake.base())?;
     crate::signin::sign_in(home, fake.base(), None).map_err(|e| anyhow!("signing in to the fake Workman: {e}"))?;
     println!(
-        "step 1w: workspace {WORKSPACE} = {} (folder repo, origin {REMOTE}); fake Workman at {} (project {WORKSPACE} bound to that remote, runs sw2 live, sw1 done), signed in through its fake OAuth server",
+        "step 1w: group {GROUP} = {} (folder repo, origin {REMOTE}); fake Workman at {} (project {GROUP} bound to that remote, runs sw2 live, sw1 done), signed in through its fake OAuth server",
         root.display(),
         fake.base()
     );
@@ -343,7 +343,7 @@ const BOARD: [&str; 5] = ["work-nav-run-sw2", "work-row-sw2/1", "work-row-sw2/2"
 pub async fn board_frames(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let before = frames::baseline(view, cx).await;
     let recording = frames::start(view, cx);
-    click(view, &format!("work-{WORKSPACE}"), cx).await?;
+    click(view, &format!("work-{GROUP}"), cx).await?;
     let loaded = painted(view, &BOARD, LOADED_WITHIN, "the live run's page", cx).await;
     sleep(cx, Duration::from_millis(200)).await;
     let during = recording.stop(view, cx);
@@ -376,7 +376,7 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
 }
 
 async fn open_board(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<(u64, Entity<WorkView>, String)> {
-    click(view, &format!("work-{WORKSPACE}"), cx).await?;
+    click(view, &format!("work-{GROUP}"), cx).await?;
     let (tab, work) = view
         .read_with(cx, |v, _| {
             v.tabs.iter().find_map(|t| match &t.kind {
@@ -384,7 +384,7 @@ async fn open_board(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> an
                 _ => None,
             })
         })
-        .ok_or_else(|| anyhow!("clicking work-{WORKSPACE} opened no active Work tab"))?;
+        .ok_or_else(|| anyhow!("clicking work-{GROUP} opened no active Work tab"))?;
     let loaded = painted(view, &BOARD, LOADED_WITHIN, "the live run's page", cx).await?;
     crate::selftest_manage::shot("m5-14-work-board", cx).await;
     for absent in ["work-row-13", "work-nav-run-sw1"] {
@@ -553,7 +553,7 @@ async fn inbox_cards(view: &Entity<FleetView>, tab: u64, work: &Entity<WorkView>
     painted(view, &["work-pill-sw2/2=stop", "work-prompt-item-unblock"], LOADED_WITHIN, "sw2/2 in the detail from the Inbox", cx).await?;
     let active = view.read_with(cx, |v, _| v.active);
     if active != Some(tab) {
-        bail!("the Inbox row activated tab {active:?}, not the workspace's Work tab {tab}");
+        bail!("the Inbox row activated tab {active:?}, not the group's Work tab {tab}");
     }
     lines.push("Inbox row blocked sw2/2 → the Work tab, sw2/2 in the detail (Blocked, its Unblock prompt chip)".into());
 

@@ -95,7 +95,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, process: &mut std::process
 
     let button = refreshed(view, home, &main, FRESH, cx, |view, cx| Box::pin(click(view, "refresh", cx))).await?;
     let turned = turns_until_applied(view, cx).await?;
-    let work = view.update(cx, |v, cx| v.open_work(crate::selftest_work::WORKSPACE, cx));
+    let work = view.update(cx, |v, cx| v.open_work(crate::work_view::Target::Group(crate::selftest_work::GROUP.into()), cx));
     click(view, &format!("tab-{work}"), cx).await?;
     let key = refreshed(view, home, &main, FRESH_KEY, cx, |_, cx| Box::pin(async move { crate::selftest_tabs::press(cx, "f5", Modifiers::default()) })).await?;
     let in_terminal = f5_in_a_terminal(view, cx).await?;

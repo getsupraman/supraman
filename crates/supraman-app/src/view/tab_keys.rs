@@ -140,7 +140,10 @@ impl FleetView {
     fn active_entry(&self, cx: &gpui::App) -> Option<(String, Option<PathBuf>)> {
         let tab = self.active.and_then(|id| self.tab(id))?;
         let cwd = match &tab.kind {
-            TabKind::Work(view) => return Some((view.read(cx).workspace.clone(), None)),
+            TabKind::Work(view) => match &view.read(cx).target {
+                crate::work_view::Target::Group(name) => return Some((name.clone(), None)),
+                crate::work_view::Target::Folder(path) => path.clone(),
+            },
             TabKind::Start(page) => return Some((page.entry.clone(), Some(page.folder.clone()))),
             TabKind::Git(view) => view.read(cx).folder.clone(),
             _ => tab.cwd.clone()?,
@@ -194,7 +197,7 @@ mod tests {
     fn the_closed_tabs_keep_the_last_twenty() {
         let mut state = TabKeyState::new(TabKeys::default());
         for i in 0..25 {
-            state.push(SavedTab::Work { title: format!("w{i}"), workspace: "ws".into() });
+            state.push(SavedTab::Work { title: format!("w{i}"), target: crate::work_view::Target::Group("g".into()) });
         }
         assert_eq!(state.closed.len(), CLOSED_KEPT);
         assert!(matches!(state.closed.pop(), Some(SavedTab::Work { title, .. }) if title == "w24"));

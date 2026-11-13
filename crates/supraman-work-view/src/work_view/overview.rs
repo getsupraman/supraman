@@ -8,7 +8,7 @@ use supraman_ui::hit::hit_target;
 use supraman_ui::marks::{Mark, dot};
 use supraman_ui::clipped::clipped;
 use supraman_ui::{button, fonts};
-use supraman_workman::{Claim, Honesty, InboxRow, OverviewRun, Rollup};
+use supraman_workman::{Claim, Honesty, OverviewRun, Rollup};
 
 use super::cards::{self, Card};
 use super::item::holder_session;
@@ -83,10 +83,11 @@ pub(crate) const LEGEND: [(StateKey, &str); 6] =
     [(StateKey::Proven, "Verified"), (StateKey::Claimed, "Done, not verified"), (StateKey::Doing, "In progress"), (StateKey::Stop, "Blocked"), (StateKey::Wait, "Waiting"), (StateKey::Idle, "Open")];
 
 impl WorkView {
-    /// The Needs you cards of this workspace's Inbox rows, as the sidebar sorts them.
+    /// The Needs you cards of the bound projects' Inbox rows, as the sidebar sorts them.
     pub(crate) fn needs_cards(&self, cx: &App) -> Vec<Card> {
         let Some(inbox) = &self.inbox else { return Vec::new() };
-        let rows: Vec<(&str, &InboxRow)> = inbox.read(cx).rows().into_iter().filter(|(w, _)| *w == self.workspace).collect();
+        let rows: Vec<cards::Row> = inbox.read(cx).rows().into_iter().filter(|r| self.binds(&r.project)).collect();
+        let rows: Vec<&cards::Row> = rows.iter().collect();
         let live: Vec<String> = (self.link.live)().into_iter().filter(|s| s.attach.is_some()).map(|s| s.name).collect();
         cards::sections(&rows, &live, (self.now)()).needs_you
     }

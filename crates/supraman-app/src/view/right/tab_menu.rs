@@ -9,7 +9,7 @@ use supraman_ui::menu::item;
 use crate::fleet::EntryNode;
 use crate::view::menu::{ContextMenu, MenuAction, MenuItem};
 use crate::view::{FleetView, Tab, TabKind};
-use crate::work_view::Binding;
+use crate::work_view::{Binding, Target};
 
 /// Where a tab's folder stands in git.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -25,9 +25,10 @@ pub enum Repo {
 pub enum Work {
     /// `WorkInbox::bind_folder` runs off the UI thread.
     Reading,
-    Bound { workspace: String, project: String },
+    /// The Work tab of the folder row holding the tab's folder.
+    Bound { target: Target, project: String },
     Unbound,
-    NoWorkspace,
+    NotListed,
     /// Workman's own words: not set up, not signed in, unreachable.
     Unavailable(String),
 }
@@ -84,14 +85,15 @@ fn open_git_item(folder: Option<&Path>, repo: &Repo) -> MenuItem {
 }
 
 pub fn workman_item(folder: Option<&Path>, work: &Work) -> MenuItem {
-    let open = |workspace: &str, project: &str| item("tab-open-workman", "Open Workman", MenuAction::OpenWorkman { workspace: workspace.into(), project: project.into() });
+    let open = |target: Target, project: &str| item("tab-open-workman", "Open Workman", MenuAction::OpenWorkman { target, project: project.into() });
+    let none = || open(Target::Group(String::new()), "");
     match (folder, work) {
-        (None, _) => open("", "").dimmed(NO_FOLDER),
-        (Some(_), Work::Bound { workspace, project }) => open(workspace, project),
-        (Some(_), Work::Reading) => open("", "").dimmed("Looking for its Workman project…"),
-        (Some(_), Work::Unbound) => open("", "").dimmed("Not bound to a Workman project"),
-        (Some(_), Work::NoWorkspace) => open("", "").dimmed("Not in a listed folder"),
-        (Some(_), Work::Unavailable(why)) => open("", "").dimmed(why),
+        (None, _) => none().dimmed(NO_FOLDER),
+        (Some(_), Work::Bound { target, project }) => open(target.clone(), project),
+        (Some(_), Work::Reading) => none().dimmed("Looking for its Workman project…"),
+        (Some(_), Work::Unbound) => none().dimmed("Not bound to a Workman project"),
+        (Some(_), Work::NotListed) => none().dimmed("Not in a listed folder"),
+        (Some(_), Work::Unavailable(why)) => none().dimmed(why),
     }
 }
 
@@ -119,8 +121,8 @@ impl FleetView {
             (TabKind::Git(_), Some(own)) => Repo::Top(own.clone()),
             (_, Some(_)) => Repo::Reading,
         };
-        let workspace = folder.as_deref().and_then(|f| self.entry_of(f));
-        let work = if workspace.is_some() { Work::Reading } else { Work::NoWorkspace };
+        let holding = folder.as_deref().and_then(|f| self.entry_and_folder(f)).map(|(_, row)| row);
+        let work = if holding.is_some() { Work::Reading } else { Work::NotListed };
         let title = tab.label();
         let items = with_workman(self.tab_menu_items(id, folder.as_deref(), &repo, cx), folder.as_deref(), &work);
         self.dialogs.menu = Some(ContextMenu::new(title, position, items));
@@ -135,16 +137,16 @@ impl FleetView {
             })
             .detach();
         }
-        if let Some(workspace) = workspace {
-            self.read_tab_work(id, position, folder, workspace, cx);
+        if let Some(row) = holding {
+            self.read_tab_work(id, position, folder, Target::Folder(row), cx);
         }
     }
 
-    fn read_tab_work(&mut self, id: u64, position: Point<Pixels>, folder: PathBuf, workspace: String, cx: &mut Context<Self>) {
+    fn read_tab_work(&mut self, id: u64, position: Point<Pixels>, folder: PathBuf, target: Target, cx: &mut Context<Self>) {
         let bind = self.work_inbox.update(cx, |inbox, cx| inbox.bind_folder(folder.clone(), cx));
         cx.spawn(async move |this, cx| {
             let work = match bind.await {
-                Binding::Project(project) => Work::Bound { workspace, project: project.id },
+                Binding::Project(project) => Work::Bound { target, project: project.id },
                 Binding::Unbound => Work::Unbound,
                 Binding::Unavailable(why) => Work::Unavailable(why),
             };
@@ -169,11 +171,14 @@ impl FleetView {
         tab_items(facts, self.tab(id).and_then(|tab| self.tab_session_items(tab, cx)))
     }
 
-    /// A Git tab's own folder, a Work tab's workspace home, a Start page's folder, else the tab's `cwd`.
+    /// A Git tab's own folder, a Work tab's folder or its group's first, a Start page's folder, else the tab's `cwd`.
     fn tab_folder(&self, tab: &Tab, cx: &App) -> Option<PathBuf> {
         match &tab.kind {
             TabKind::Git(view) => Some(view.read(cx).folder.clone()),
-            TabKind::Work(view) => self.tree().entry(&view.read(cx).workspace)?.folders.first().map(|f| f.path.clone()),
+            TabKind::Work(view) => match &view.read(cx).target {
+                Target::Folder(path) => Some(path.clone()),
+                Target::Group(name) => self.tree().entry(name)?.folders.first().map(|f| f.path.clone()),
+            },
             TabKind::Start(page) => Some(page.folder.clone()),
             _ => tab.cwd.clone(),
         }
@@ -196,8 +201,8 @@ impl FleetView {
                 let title = crate::view::git_tab::title(&top);
                 self.open_git(top, title, cx);
             }
-            MenuAction::OpenWorkman { workspace, project } => {
-                let id = self.open_work(&workspace, cx);
+            MenuAction::OpenWorkman { target, project } => {
+                let id = self.open_work(target, cx);
                 if let Some(Tab { kind: TabKind::Work(view), .. }) = self.tab(id) {
                     view.clone().update(cx, |view, cx| view.show_project(project, cx));
                 }
@@ -304,12 +309,12 @@ mod tests {
     #[test]
     fn open_workman_follows_open_git_and_opens_the_bound_projects_work_tab() {
         let (folder, top) = (Path::new(r"C:\shop\src"), Repo::Top(r"C:\shop".into()));
-        let bound = Work::Bound { workspace: "shop".into(), project: "p-1".into() };
+        let bound = Work::Bound { target: Target::Folder(r"C:\shop".into()), project: "p-1".into() };
         let items = with_workman(tab_items(facts(Some(folder), &top), None), Some(folder), &bound);
         assert_eq!(keys(&items)[..3], ["tab-open-git", "tab-open-workman", "tab-copy-path"]);
         assert_eq!(items.len(), ALL.len() + 1);
         assert_eq!(dimmed(&items, "tab-open-workman"), None);
-        assert_eq!(items[1].action, MenuAction::OpenWorkman { workspace: "shop".into(), project: "p-1".into() });
+        assert_eq!(items[1].action, MenuAction::OpenWorkman { target: Target::Folder(r"C:\shop".into()), project: "p-1".into() });
     }
 
     #[test]
@@ -319,7 +324,7 @@ otes"));
         let why = |folder, work: Work| workman_item(folder, &work).dimmed;
         assert_eq!(why(folder, Work::Unbound).as_deref(), Some("Not bound to a Workman project"));
         assert_eq!(why(folder, Work::Reading).as_deref(), Some("Looking for its Workman project…"));
-        assert_eq!(why(folder, Work::NoWorkspace).as_deref(), Some("Not in a listed folder"));
+        assert_eq!(why(folder, Work::NotListed).as_deref(), Some("Not in a listed folder"));
         assert_eq!(why(folder, Work::Unavailable("Workman is not signed in.".into())).as_deref(), Some("Workman is not signed in."));
         assert_eq!(why(None, Work::Reading).as_deref(), Some("This tab has no folder"));
     }

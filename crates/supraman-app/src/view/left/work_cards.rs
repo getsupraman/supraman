@@ -1,10 +1,9 @@
 //! The Inbox's Workman cards in the sidebar: `work_view::inbox_card` paints them, the fleet acts on them.
 
 use gpui::{App, Context, Window};
-use supraman_workman::InboxRow;
 
 use super::*;
-use crate::work_view::cards::Card;
+use crate::work_view::cards::{Card, Row};
 use crate::work_view::inbox_card::{self, CardAction, OnCard};
 
 impl FleetView {
@@ -18,7 +17,7 @@ impl FleetView {
     fn card_action(&mut self, card: &Card, action: CardAction, _: &mut Window, cx: &mut Context<Self>) {
         match action {
             CardAction::Open => {
-                self.open_work_item(&card.workspace, &card.item_id, cx);
+                self.open_work_item(card.target.clone(), &card.item_id, cx);
             }
             CardAction::Web => match card.url.as_deref().map(|url| supraman_ui::open::allowed(url, &supraman_ui::open::WEB_SCHEMES).map(|()| url)) {
                 Some(Ok(url)) => supraman_ui::open::open_off_thread(url.to_string(), cx).detach(),
@@ -27,13 +26,13 @@ impl FleetView {
             },
             CardAction::Copied => self.toast.show("Copied".into(), |this: &mut Self| &mut this.toast, cx),
             CardAction::Dismiss => {
-                let (workspace, key) = (card.workspace.clone(), card.key.clone());
-                self.work_inbox.update(cx, |inbox, cx| inbox.dismiss(&workspace, &key, cx));
+                let (project, key) = (card.project.clone(), card.key.clone());
+                self.work_inbox.update(cx, |inbox, cx| inbox.dismiss(&project, &key, cx));
             }
         }
     }
 
-    pub(super) fn render_work_cards(&self, rows: &[(String, InboxRow)], cx: &mut Context<Self>) -> (Vec<AnyElement>, Option<AnyElement>) {
+    pub(super) fn render_work_cards(&self, rows: &[Row], cx: &mut Context<Self>) -> (Vec<AnyElement>, Option<AnyElement>) {
         let live: Vec<String> = crate::view::work_tab::attachable(&self.occupancy);
         let this = cx.weak_entity();
         let mark: inbox_card::Mark = |color| crate::brand::workman(rems(0.875), color).into_any_element();

@@ -10,7 +10,7 @@ use gpui::{AsyncWindowContext, Entity, Modifiers, MouseMoveEvent, PlatformInput,
 use crate::{
     selftest::{hex6, sleep, wait_for_tab_terminal},
     selftest_manage::shot,
-    selftest_work::WORKSPACE,
+    selftest_work::GROUP,
     view::FleetView,
 };
 
@@ -26,21 +26,21 @@ pub(crate) async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     result
 }
 
-/// A new shell opened with a Work tab active starts in that tab's workspace, and with no tab in the first workspace;
+/// A new shell opened with a Work tab active starts in that tab's group, and with no tab in the first entry;
 /// on the first one, an OSC 2 title becomes its label, its hover card names where it runs, and an empty one restores it.
 async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     close_all(view, cx);
     let (root, first) = view.read_with(cx, |v, _| {
         let first_of = |e: &crate::fleet::EntryNode| e.folders.first().map(|f| f.path.clone());
         let tree = v.tree();
-        (tree.entry(WORKSPACE).and_then(first_of), tree.entries.first().and_then(first_of))
+        (tree.entry(GROUP).and_then(first_of), tree.entries.first().and_then(first_of))
     });
-    let (root, first) = (root.ok_or_else(|| anyhow!("folders.toml has no group {WORKSPACE}"))?, first.ok_or_else(|| anyhow!("no folder listed"))?);
+    let (root, first) = (root.ok_or_else(|| anyhow!("folders.toml has no group {GROUP}"))?, first.ok_or_else(|| anyhow!("no folder listed"))?);
     if same(&root, &first) {
-        bail!("{WORKSPACE}'s first folder is the first listed, so this step could not tell the two rules apart");
+        bail!("{GROUP}'s first folder is the first listed, so this step could not tell the two rules apart");
     }
 
-    view.update(cx, |v, cx| v.open_work(WORKSPACE, cx));
+    view.update(cx, |v, cx| v.open_work(crate::work_view::Target::Group(GROUP.into()), cx));
     let id = cx.update(|window, cx| view.update(cx, |v, cx| v.new_shell(window, cx)))?;
     let terminal = wait_for_tab_terminal(view, id, WITHIN, cx).await?;
     // ConPTY's own title (pwsh's path) is no title: the label stays the tab's own
@@ -48,7 +48,7 @@ async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow:
     let fallback = label(view, id, cx).ok_or_else(|| anyhow!("tab {id} has no label"))?;
     let in_work = cwd_of(&terminal, id, cx).await.context("with the Work tab active")?;
     if !same(Path::new(&in_work), &root) {
-        bail!("with Work · {WORKSPACE} active the new shell is in {in_work}, not {}", root.display());
+        bail!("with Work · {GROUP} active the new shell is in {in_work}, not {}", root.display());
     }
     if label(view, id, cx).as_deref() != Some(fallback.as_str()) {
         bail!("before any OSC title the tab reads {:?}, not its own {fallback:?}", label(view, id, cx));
@@ -64,7 +64,7 @@ async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow:
     let card = hover_card(view, id, &title, cx).await?;
     let lines: Vec<&str> = card.text.lines().collect();
     let want = [
-        format!("group  {WORKSPACE}"),
+        format!("group  {GROUP}"),
         format!("folder  {}", root.display()),
         "kind  shell".to_string(),
     ];
@@ -99,7 +99,7 @@ async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow:
     }
 
     Ok(format!(
-        "a new shell with Work · {WORKSPACE} active in {in_work}, with no tab in the first workspace's {in_first}; OSC 2 {title:?} became the label; \
+        "a new shell with Work · {GROUP} active in {in_work}, with no tab in the first entry's {in_first}; OSC 2 {title:?} became the label; \
          hovered, the card showed after {} ms with {} lines; an empty title restored {fallback:?}",
         card.after.as_millis(),
         lines.len()
