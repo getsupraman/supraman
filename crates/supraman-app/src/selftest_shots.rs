@@ -169,8 +169,8 @@ fn workman() -> FakeWorkman {
 fn rows() -> anyhow::Result<Vec<supraman_claude::Session>> {
     let now = supraman_claude::now_ms();
     let pid = std::process::id();
-    let row = |id: &str, name: &str, folder: Option<&str>, kind: &str, state: &str, status: &str, waiting: Option<&str>, age_min: i64| {
-        let cwd = folder.map_or_else(root, |f| root().join(f));
+    let row = |id: &str, name: &str, folder: &str, kind: &str, state: &str, status: &str, waiting: Option<&str>, age_min: i64| {
+        let cwd = root().join(folder);
         let mut v = serde_json::json!({
             "id": id,
             "sessionId": format!("{id}-0000-4000-8000-00000000de00"),
@@ -188,12 +188,11 @@ fn rows() -> anyhow::Result<Vec<supraman_claude::Session>> {
         v
     };
     let json = serde_json::Value::Array(vec![
-        row("d0000001", "fm-demo", None, "background", "working", "busy", None, 95),
-        row("d0000002", "fm-demo-api", Some("api"), "background", "working", "busy", None, 42),
-        row("d0000003", "fm-demo-web", Some("web"), "background", "blocked", "waiting", Some("permission prompt"), 17),
-        row("d0000004", "fm-demo-docs", Some("docs"), "background", "working", "idle", None, 63),
-        row("d0000005", "refactor-auth", Some("api"), "interactive", "working", "busy", None, 8),
-        row("d0000006", "fm-demo-infra", Some("infra"), "background", "stopped", "idle", None, 240),
+        row("d0000002", "fm-demo-api", "api", "background", "working", "busy", None, 42),
+        row("d0000003", "fm-demo-web", "web", "background", "blocked", "waiting", Some("permission prompt"), 17),
+        row("d0000004", "fm-demo-docs", "docs", "background", "working", "idle", None, 63),
+        row("d0000005", "refactor-auth", "api", "interactive", "working", "busy", None, 8),
+        row("d0000006", "fm-demo-infra", "infra", "background", "stopped", "idle", None, 240),
     ]);
     Ok(supraman_claude::parse(&json.to_string())?)
 }
