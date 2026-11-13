@@ -13,6 +13,7 @@ use crate::selftest::{click, scrolled_into_view, until};
 use crate::selftest_manage::{menu_open, press_painted, shot};
 use crate::selftest_tabs::drag_from;
 use crate::view::FleetView;
+use crate::view::folder_edits::FolderEdit;
 
 const GROUP: &str = "selftest-drag";
 const WITHIN: Duration = Duration::from_secs(10);
@@ -27,16 +28,12 @@ fn places(entries: &Entries) -> (Vec<PathBuf>, Option<Vec<PathBuf>>) {
     (top.collect(), group)
 }
 
-async fn edit(home: &Path, change: impl FnOnce(&mut Entries) -> supraman_core::Result<()> + Send + 'static, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
-    let home = home.to_path_buf();
-    cx.background_executor().spawn(async move { folders::edit(&home, change) }).await?;
-    Ok(())
-}
 
 /// `root`'s row (a top-level folder named `name`) dragged onto a new group's row, then from there below the tree.
 pub(crate) async fn drags(view: &Entity<FleetView>, root: &Path, name: &str, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    edit(home, |e| e.add_group(GROUP, usize::MAX), cx).await?;
+    view.update(cx, |v, cx| v.edit_folders(FolderEdit::AddGroup(GROUP.into()), cx));
     let group_row = format!("group-row-{GROUP}");
+    until(view, cx, WITHIN, "the new group's row", |v| v.shown(&group_row).then_some(())).await?;
     let onto = scrolled_into_view(view, &group_row, cx).await?.center();
     drag_from(view, &format!("repo-row-{name}"), onto, Some("folder-drag"), cx).await?;
     let member = format!("repo-row-{GROUP}/{name}");
@@ -54,7 +51,8 @@ pub(crate) async fn drags(view: &Entity<FleetView>, root: &Path, name: &str, hom
     if top.last().map(PathBuf::as_path) != Some(root) || group.as_ref().is_none_or(|g| !g.is_empty()) {
         bail!("dropped below the tree: folders.toml's top level {top:?}, {GROUP} {group:?}; expected {} last at the top level", root.display());
     }
-    edit(home, |e| e.remove_group(GROUP, true), cx).await?;
+    view.update(cx, |v, cx| v.edit_folders(FolderEdit::RemoveGroup { name: GROUP.into(), with_folders: true }, cx));
+    until(view, cx, WITHIN, "the group gone from the tree, so the rows' positions are folders.toml's", |v| v.tree().entry(GROUP).is_none().then_some(())).await?;
     Ok(format!("{name} dragged onto {GROUP}'s row: into {GROUP}; then below the tree: the top level's end; folders.toml checked after each"))
 }
 
@@ -72,7 +70,14 @@ pub(crate) async fn subfolders(view: &Entity<FleetView>, root: &Path, name: &str
         bail!("{name}'s menu offers {label:?}, expected Show sub folders");
     }
     click(view, "menu-subfolders", cx).await?;
-    until(view, cx, WITHIN, "sub-a's row under its parent", |v| v.shown(&child("sub-a")).then_some(())).await?;
+    until(view, cx, WITHIN, "sub-a's row under its parent", |v| v.shown(&child("sub-a")).then_some(())).await.map_err(|e| {
+        let state = view.read_with(cx, |v, _| {
+            let flag = v.listed.entries.folders().filter(|f| f.path == root).map(|f| f.show_subfolders).collect::<Vec<_>>();
+            let rows: Vec<String> = v.tree().folders().map(|(_, f)| f.key.clone()).collect();
+            format!("toast {:?}; {name} show_subfolders {flag:?}; shown {:?}; rows {rows:?}", v.toast.text(), v.listed.disk.shown)
+        });
+        e.context(state)
+    })?;
     std::fs::create_dir_all(&b)?;
     until(view, cx, WITHIN, "sub-b's row after it was made", |v| v.shown(&child("sub-b")).then_some(())).await?;
     shot("folder-subfolders", cx).await;
