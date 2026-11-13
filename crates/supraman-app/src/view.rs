@@ -642,7 +642,6 @@ impl FleetView {
                         self.supervising.last_alive.insert(s.session_id.clone(), now);
                     }
                 }
-                self.occupancy.set_sessions(fleet::live_sessions(&sessions, now));
                 self.sessions = sessions;
                 self.drop_deleted();
                 self.listing.main_repos = refresh.main_repos;
@@ -660,6 +659,7 @@ impl FleetView {
         for event in refresh.events {
             HookSignal::record(&mut self.supervising.hooks, event);
         }
+        self.occupancy.set_sessions(fleet::live_sessions(&self.sessions, now_ms(), &self.supervising.hooks, self.polls.polled_at));
         if let Some(desired) = refresh.desired {
             self.supervising.desired = desired;
         }
