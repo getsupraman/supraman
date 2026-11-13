@@ -29,6 +29,9 @@ pub(super) struct Kept {
     /// The `launchedBy` a re-mint moved its row to; `None`: its record's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launched_by: Option<String>,
+    /// Epoch ms since its claude session left the listings with its transcript kept ([`super::gone`]): never renewed, it lapses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unlisted_since: Option<Millis>,
 }
 
 pub(super) type Table = BTreeMap<String, Kept>;
@@ -109,6 +112,9 @@ impl Keeping {
                 continue;
             }
             let kept = table.get(name).cloned().unwrap_or_default();
+            if kept.unlisted_since.is_some() {
+                continue;
+            }
             let why = if self.signed_in || kept.signed_out {
                 "after a sign-in"
             } else if kept.expires_at.is_some_and(|at| now >= at - self.margin) {

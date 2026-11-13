@@ -43,7 +43,7 @@ pub use desired::{
 pub use error::{Result, SupervisorError};
 pub use executor::{LaunchConfig, Launcher, RoleToken, STOP_FAILURES_SHOWN, Supervisor, TokenProvider, session_identity};
 pub use mint::{
-    Absent, Bearer, HttpMinter, Keeper, MintError, MintRepo, MintRequest, Minted, MintedSession, MintedSessions, Minter, Revoked, Unlisted, git_repo, runs_signed_out, CHECK_EVERY, Checked, Keeping, PING_TIMEOUT, RENEW_MARGIN,
+    Absent, Bearer, Gone, HttpMinter, Keeper, MintError, MintRepo, MintRequest, Minted, MintedSession, MintedSessions, Minter, Revoked, Unlisted, git_repo, runs_signed_out, CHECK_EVERY, Checked, Keeping, PING_TIMEOUT, RENEW_MARGIN, UNLISTED_LAPSE,
     former_holder, header, launched_by, mint_as, remove_mcp_config, revoke, revoke_deleted_runs,
 };
 pub use memory::{Attempts, Failure, Millis, Policy, SECOND, SupervisorMemory};

@@ -11,6 +11,9 @@ use supraman_core::platform::shell::quote;
 use supraman_core::paths::{path_key, within};
 use supraman_core::{Workspace, owners};
 use supraman_supervisor::{Bearer, HAND_ROLE, HttpMinter, Keeper, LaunchConfig, MintError, MintRepo, MintRequest, Minted, MintedSession, MintedSessions, Minter, former_holder, git_repo, launched_by, mint_as};
+
+/// [`supraman_supervisor::bearer`]: the sign-in's MCP URL and access token, `None` while signed out.
+type SignIn = Result<Option<(String, String)>, String>;
 use supraman_workman::Auth;
 
 pub const EXTERNAL_ROLE: &str = "hand";
@@ -156,6 +159,8 @@ pub struct Hands {
     claude_dir: Option<PathBuf>,
     /// Names whose token a continuation of their claude session holds: never revoked here, they lapse unused.
     carried: std::collections::HashSet<String>,
+    /// Names whose revoke runs outside the lock ([`Taken`]): their record stays until it ends, and no launch or release takes them.
+    ending: std::collections::HashSet<String>,
     /// `sm.exe` and the store a hand's token is kept in: its config's `headersHelper` prints it at each connect.
     helper: (PathBuf, Arc<dyn supraman_core::secret::SecretStore>),
 }
@@ -170,17 +175,23 @@ pub fn restart_notice(n: usize, to: &str) -> Option<String> {
 /// It goes on revoking after `within` until the process ends; what it does not reach stays in `hands.json`.
 pub fn release_all_within(hands: Arc<Mutex<Hands>>, within: Duration) -> Option<Vec<String>> {
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || tx.send(hands.lock().unwrap_or_else(|e| e.into_inner()).release_all()));
+    std::thread::spawn(move || tx.send(release_with(|| locked(&hands), Hands::released_all)));
     rx.recv_timeout(within).ok()
 }
 
-/// A launch with the lock held only to pick the name and to record the mint, never across a mint; `claude_session` is its full uuid, anything else is not sent.
+fn locked(hands: &Mutex<Hands>) -> std::sync::MutexGuard<'_, Hands> {
+    hands.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// No Workman call runs under the lock: the sign-in's bearer is read before it, the mint and any revoke after it; `claude_session` is its full uuid, anything else is not sent.
 pub fn launch_locked(hands: &Mutex<Hands>, cwd: &Path, own: Option<&str>, claude_session: Option<&str>) -> Launch {
-    launch_with(|| hands.lock().unwrap_or_else(|e| e.into_inner()), cwd, own, claude_session)
+    launch_with(|| locked(hands), cwd, own, claude_session)
 }
 
 fn launch_with<G: std::ops::DerefMut<Target = Hands>>(lock: impl Fn() -> G, cwd: &Path, own: Option<&str>, claude_session: Option<&str>) -> Launch {
-    let picked = lock().pick(cwd, own, claude_session);
+    let auth = lock().auth.clone();
+    let signed_in = supraman_supervisor::bearer(&auth);
+    let picked = lock().pick(cwd, own, claude_session, signed_in);
     match picked {
         Ok(pending) => mint_picked(&lock, pending),
         Err(launch) => launch,
@@ -191,7 +202,96 @@ fn launch_with<G: std::ops::DerefMut<Target = Hands>>(lock: impl Fn() -> G, cwd:
 fn mint_picked<G: std::ops::DerefMut<Target = Hands>>(lock: &impl Fn() -> G, mut pending: Pending) -> Launch {
     let (cwd, keep) = (PathBuf::from(&pending.request.cwd), pending.keep_name);
     let minted = pending.mint(|wanted, tried, held| lock().next_fresh(&cwd, wanted, tried, held, keep));
-    lock().finish(pending, minted)
+    let (launch, released) = lock().finish(pending, minted);
+    let unsaved = revoke_released(lock, released.taken);
+    match launch {
+        Launch::Unminted(why) if !unsaved.is_empty() => Launch::Unminted(std::iter::once(why).filter(|w| !w.is_empty()).chain(unsaved).collect::<Vec<_>>().join("; ")),
+        launch => launch,
+    }
+}
+
+/// `name`'s release ([`Hands::released`]), its revoke run once the lock is released.
+pub fn release(hands: &Mutex<Hands>, name: &str) -> Option<String> {
+    let notices = release_with(|| locked(hands), |h| h.released(name));
+    (!notices.is_empty()).then(|| notices.join("; "))
+}
+
+pub fn release_session(hands: &Mutex<Hands>, claude_session_id: &str) -> Vec<String> {
+    release_with(|| locked(hands), |h| h.released_session(claude_session_id))
+}
+
+pub fn release_last_run(hands: &Mutex<Hands>) -> Vec<String> {
+    release_with(|| locked(hands), Hands::released_last_run)
+}
+
+fn release_with<G: std::ops::DerefMut<Target = Hands>>(lock: impl Fn() -> G, take: impl FnOnce(&mut Hands) -> Released) -> Vec<String> {
+    let Released { mut notices, taken } = take(&mut lock());
+    notices.extend(revoke_released(&lock, taken));
+    notices
+}
+
+/// [`supraman_supervisor::revoke`] of each record taken under the lock, with a bearer read outside it; then the record goes from `hands.json`,
+/// so one a Quit does not reach is revoked at the next start. What failed to save.
+fn revoke_released<G: std::ops::DerefMut<Target = Hands>>(lock: &impl Fn() -> G, taken: Vec<Taken>) -> Vec<String> {
+    let mut unsaved = Vec::new();
+    for t in taken {
+        let bearer = Bearer::of(supraman_supervisor::bearer(&t.auth));
+        let done = supraman_supervisor::revoke(&t.keeper, &*t.minter, &bearer, &t.name, &t.m);
+        for notice in done.notices {
+            log::warn!("{notice}");
+        }
+        let mut hands = lock();
+        hands.ending.remove(&t.name);
+        hands.minted.remove(&t.name);
+        if let Some(other) = done.left
+            && !hands.left.contains(&other)
+        {
+            hands.left.push(other);
+        }
+        unsaved.extend(hands.save());
+    }
+    unsaved
+}
+
+/// [`Keeper::gone`] of the [+] tabs' records, read and taken out under the lock, judged and forgotten outside it; what failed.
+pub fn end_lapsed(hands: &Mutex<Hands>, absent: &mut supraman_supervisor::Absent, observed: &[supraman_claude::Session], now: supraman_supervisor::Millis) -> Vec<String> {
+    let (keeper, bound) = locked(hands).bound();
+    let gone = keeper.gone(absent, &bound, observed, now);
+    let mut failed = gone.notices;
+    if gone.lapsed.is_empty() {
+        return failed;
+    }
+    let (taken, unsaved) = locked(hands).take_lapsed(&gone.lapsed);
+    failed.extend(unsaved);
+    for name in &taken {
+        failed.extend(keeper.forget(name));
+    }
+    locked(hands).forgotten(&taken);
+    failed
+}
+
+/// What a release did under the lock: its notices, and the records taken out for [`revoke_released`].
+#[derive(Default)]
+struct Released {
+    notices: Vec<String>,
+    taken: Vec<Taken>,
+}
+
+impl Released {
+    fn and(mut self, other: Released) -> Self {
+        self.notices.extend(other.notices);
+        self.taken.extend(other.taken);
+        self
+    }
+}
+
+/// A record whose revoke runs outside the lock; it stays in `hands.json`, its name in [`Hands::ending`], until that revoke ends.
+struct Taken {
+    name: String,
+    m: MintedSession,
+    keeper: Keeper,
+    minter: Arc<dyn Minter + Send + Sync>,
+    auth: Arc<Auth>,
 }
 
 /// What [`mint_helped`] did: each tab now minted, by its key with its Workman session's name, and what failed.
@@ -203,14 +303,19 @@ pub struct HelpedMinted {
 
 /// After a sign-in, each [`Launch::Helped`] tab whose claude runs is minted in place: its helper hands claude the token at its next connect.
 pub fn mint_helped(hands: &Mutex<Hands>) -> HelpedMinted {
-    mint_helped_with(|| hands.lock().unwrap_or_else(|e| e.into_inner()))
+    mint_helped_with(|| locked(hands))
 }
 
 fn mint_helped_with<G: std::ops::DerefMut<Target = Hands>>(lock: impl Fn() -> G) -> HelpedMinted {
     let mut done = HelpedMinted::default();
     let due = lock().helped_running();
+    if due.is_empty() {
+        return done;
+    }
+    let auth = lock().auth.clone();
+    let signed_in = supraman_supervisor::bearer(&auth);
     for (name, tab) in due {
-        let picked = lock().pick_helped(name, tab);
+        let picked = lock().pick_helped(name, tab, signed_in.clone());
         let pending = match picked {
             Ok(pending) => pending,
             Err(notice) => {
@@ -350,6 +455,7 @@ impl Hands {
             left: Vec::new(),
             claude_dir: None,
             carried: Default::default(),
+            ending: Default::default(),
             helper: (supraman_core::hook_exe().into(), store),
         };
         (hands, notice)
@@ -368,10 +474,6 @@ impl Hands {
         self.minted.save().err().map(|e| format!("Cannot save {} ({e}): a hand token minted here is not revoked if Supraman ends without Quit", path.display()))
     }
 
-    fn bearer(&self) -> Result<Option<(String, String)>, String> {
-        supraman_supervisor::bearer(&self.auth)
-    }
-
     fn next_name(&self, cwd: &Path) -> String {
         self.free_names(cwd, "").next().unwrap()
     }
@@ -382,7 +484,11 @@ impl Hands {
         (1..)
             .map(move |n| format!("hand-{folder}-{n}"))
             .filter(move |n| {
-                self.minted.get(n).is_none() && !self.helped.contains_key(n) && !self.sessions.values().any(|s| s == n) && (n == held || !self.picked.contains_key(n))
+                self.minted.get(n).is_none()
+                    && !self.helped.contains_key(n)
+                    && !self.ending.contains(n)
+                    && !self.sessions.values().any(|s| s == n)
+                    && (n == held || !self.picked.contains_key(n))
             })
     }
 
@@ -458,8 +564,8 @@ impl Hands {
         moved.then(|| self.save()).flatten()
     }
 
-    /// The name of a launch, held for it until [`Self::finish`], and the mint to make.
-    fn pick(&mut self, cwd: &Path, own: Option<&str>, claude_session: Option<&str>) -> Result<Pending, Launch> {
+    /// The name of a launch, held for it until [`Self::finish`], and the mint to make with `signed_in`'s bearer.
+    fn pick(&mut self, cwd: &Path, own: Option<&str>, claude_session: Option<&str>, signed_in: SignIn) -> Result<Pending, Launch> {
         let dir = self.mcp_dir();
         self.helped.retain(|n, _| supraman_claude::mcp_config_path(&dir, n).is_ok_and(|p| p.exists()));
         let new_session = claude_session.is_none().then(supraman_claude::new_session_id);
@@ -468,7 +574,7 @@ impl Hands {
             .map(str::to_string)
             .or_else(|| new_session.clone());
         let tab = HelpedTab { cwd: cwd.to_path_buf(), own: own.map(str::to_string), claude_session };
-        let (url, bearer) = match self.bearer() {
+        let (url, bearer) = match signed_in {
             Ok(Some(b)) => b,
             Ok(None) => return Err(self.helped(self.next_name(cwd), tab, new_session, None)),
             Err(e) => return Err(self.helped(self.next_name(cwd), tab, new_session, Some(format!("This claude session runs without its own Workman token: {e}")))),
@@ -494,11 +600,11 @@ impl Hands {
     }
 
     /// The mint of helped tab `name`, its name held as a launch's; `Err` while it is gone or there is no sign-in.
-    fn pick_helped(&mut self, name: String, tab: HelpedTab) -> Result<Pending, Option<String>> {
+    fn pick_helped(&mut self, name: String, tab: HelpedTab, signed_in: SignIn) -> Result<Pending, Option<String>> {
         if !self.helped.contains_key(&name) {
             return Err(None);
         }
-        let (url, bearer) = match self.bearer() {
+        let (url, bearer) = match signed_in {
             Ok(Some(b)) => b,
             Ok(None) => return Err(None),
             Err(e) => return Err(Some(format!("{name} runs without its own Workman token after the sign-in: {e}"))),
@@ -528,7 +634,7 @@ impl Hands {
         // the exited holder's own name: its config and kept token are rewritten in place
         if !keep_name
             && request.replace
-            && let Some(held) = self.minted.names().find(|n| self.minted.get(n).is_some_and(|m| m.claude_session_id == claude_session) && self.ended(n))
+            && let Some(held) = self.minted.names().find(|n| !self.ending.contains(*n) && self.minted.get(n).is_some_and(|m| m.claude_session_id == claude_session) && self.ended(n))
         {
             name = held.clone();
         }
@@ -554,7 +660,7 @@ impl Hands {
         Some(next)
     }
 
-    fn finish(&mut self, pending: Pending, minted: Result<Minted, MintError>) -> Launch {
+    fn finish(&mut self, pending: Pending, minted: Result<Minted, MintError>) -> (Launch, Released) {
         let Pending { url, base, request, name, mut notice, new_session, claude_session, own, keep_name, .. } = pending;
         self.picked.remove(&name);
         let minted = match minted {
@@ -562,7 +668,8 @@ impl Hands {
             Err(e) => {
                 let name = if !keep_name && self.minted.get(&name).is_some() { self.next_name(Path::new(&request.cwd)) } else { name };
                 let tab = HelpedTab { cwd: PathBuf::from(&request.cwd), own, claude_session };
-                return self.helped(name, tab, new_session, Some(format!("This claude session runs without its own Workman token: cannot mint an {ROLE} one ({e})")));
+                let why = format!("This claude session runs without its own Workman token: cannot mint an {ROLE} one ({e})");
+                return (self.helped(name, tab, new_session, Some(why)), Released::default());
             }
         };
         let session = MintedSession { session_id: minted.session_id.clone(), role: EXTERNAL_ROLE.into(), claude_session_id: claude_session, origin: Some(base) };
@@ -573,17 +680,12 @@ impl Hands {
         self.sessions.insert(name.clone(), request.name.clone());
         if keep_name && self.helped.remove(&name).is_none() {
             log::info!("hand {name}: its tab closed while its token was minted, so the token is revoked");
-            return Launch::Unminted(self.end(&name).unwrap_or_default());
+            let released = self.take(&name);
+            return (Launch::Unminted(String::new()), released);
         }
         match self.write_config(&name, &url, &minted.token, minted.expires_at.as_deref()) {
-            Ok(config) => Launch::Minted { name, session: request.name, config, notice, new_session },
-            Err(e) => {
-                let revoked = self.release(&name);
-                Launch::Unminted(format!(
-                    "This claude session runs without its own Workman token: cannot write its mcp config ({e}){}",
-                    revoked.map(|r| format!("; {r}")).unwrap_or_default()
-                ))
-            }
+            Ok(config) => (Launch::Minted { name, session: request.name, config, notice, new_session }, Released::default()),
+            Err(e) => (Launch::Unminted(format!("This claude session runs without its own Workman token: cannot write its mcp config ({e})")), self.released(&name)),
         }
     }
 
@@ -591,34 +693,31 @@ impl Hands {
         (self.minted.get(name).is_some() || self.helped.contains_key(name)) && self.config_path(name).is_ok_and(|p| !p.exists())
     }
 
-    /// Revokes `name`'s token unless its claude session or a continuation of it still holds it ([`Self::follow`]); a helped tab's config goes.
-    pub fn release(&mut self, name: &str) -> Option<String> {
+    /// Takes `name`'s record out for its revoke unless its claude session or a continuation of it still holds it ([`Self::follow`]); a helped tab's config goes.
+    fn released(&mut self, name: &str) -> Released {
+        if self.ending.contains(name) {
+            return Released::default();
+        }
         if self.helped.remove(name).is_some() {
-            return self.keeper().forget_unminted(name);
+            return Released { notices: self.keeper().forget_unminted(name).into_iter().collect(), taken: Vec::new() };
         }
         if self.minted.get(name).is_some() && (self.follow(name) || self.carried.contains(name) || self.holder_runs(name)) {
             log::info!("hand {name} kept: the claude session holding its token runs");
             self.sessions.remove(name);
-            return self.save();
+            return Released { notices: self.save().into_iter().collect(), taken: Vec::new() };
         }
-        self.end(name)
+        self.take(name)
     }
 
-    /// [`supraman_supervisor::revoke`] of `name` with the sign-in's bearer; forgotten here.
-    fn end(&mut self, name: &str) -> Option<String> {
-        let m = self.minted.remove(name)?;
+    /// `name`'s record for [`revoke_released`], its name held meanwhile.
+    fn take(&mut self, name: &str) -> Released {
+        let Some(m) = self.minted.get(name).cloned() else { return Released::default() };
+        if !self.ending.insert(name.to_string()) {
+            return Released::default();
+        }
         self.sessions.remove(name);
-        let bearer = Bearer::of(self.bearer());
-        let done = supraman_supervisor::revoke(&self.keeper(), &*self.minter, &bearer, name, &m);
-        if let Some(other) = done.left
-            && !self.left.contains(&other)
-        {
-            self.left.push(other);
-        }
-        for notice in done.notices {
-            log::warn!("{notice}");
-        }
-        self.save()
+        let taken = Taken { name: name.to_string(), m, keeper: self.keeper(), minter: self.minter.clone(), auth: self.auth.clone() };
+        Released { notices: Vec::new(), taken: vec![taken] }
     }
 
     /// The sign-out of `origin`: each hand minted there is [`Keeper::signed_out`].
@@ -628,23 +727,23 @@ impl Hands {
         self.keeper().signed_out(&names)
     }
 
-    pub fn release_session(&mut self, claude_session_id: &str) -> Vec<String> {
+    fn released_session(&mut self, claude_session_id: &str) -> Released {
         let names: Vec<String> = self
             .minted
             .names()
             .filter(|n| self.minted.get(n).is_some_and(|m| m.claude_session_id.as_deref() == Some(claude_session_id)))
             .cloned()
             .collect();
-        names.iter().filter_map(|n| self.release(n)).collect()
+        names.iter().fold(Released::default(), |done, n| done.and(self.released(n)))
     }
 
-    pub fn release_all(&mut self) -> Vec<String> {
+    fn released_all(&mut self) -> Released {
         let names: Vec<String> = self.minted.names().cloned().collect();
-        names.iter().filter_map(|n| self.release(n)).collect()
+        names.iter().fold(Released::default(), |done, n| done.and(self.released(n)))
     }
 
     /// At start, the last run's tokens: one a running claude (the newest of its chain) holds is kept, the rest revoked.
-    pub fn release_last_run(&mut self) -> Vec<String> {
+    fn released_last_run(&mut self) -> Released {
         let names: Vec<String> = self.minted.names().cloned().collect();
         for name in &names {
             self.follow(name);
@@ -655,7 +754,7 @@ impl Hands {
                 self.carried.remove(name);
             }
         }
-        self.release_all()
+        self.released_all()
     }
 
     pub fn elsewhere(&self, origin: &str) -> Vec<(String, Option<String>)> {
@@ -669,6 +768,37 @@ impl Hands {
     /// The helped tabs' names, whose token-less configs only their tab ends ([`Keeper::sweep_unminted`]).
     pub fn held(&self) -> Vec<String> {
         self.helped.keys().cloned().collect()
+    }
+
+    /// Each record's (name, claude session id), with the keeper that reads their transcripts, for [`Keeper::gone`] outside the lock.
+    fn bound(&self) -> (Keeper, Vec<(String, String)>) {
+        (self.keeper().with_claude_dir(self.claude_dir.clone()), self.minted.bound())
+    }
+
+    /// Takes out each lapsed record still bound to the same claude session ([`supraman_supervisor::Gone::lapsed`]), its name held
+    /// until [`Self::forgotten`]; no revoke. The names taken, and what failed.
+    fn take_lapsed(&mut self, lapsed: &[(String, String)]) -> (Vec<String>, Vec<String>) {
+        let mut taken = Vec::new();
+        for (name, sid) in lapsed {
+            if self.ending.contains(name) || self.minted.get(name).and_then(|m| m.claude_session_id.as_deref()) != Some(sid.as_str()) {
+                continue;
+            }
+            log::info!("hand {name}: its claude session {sid} stayed unlisted until its Workman token lapsed, so its record goes");
+            self.minted.remove(name);
+            self.sessions.remove(name);
+            self.carried.remove(name);
+            self.ending.insert(name.clone());
+            taken.push(name.clone());
+        }
+        let failed = if taken.is_empty() { Vec::new() } else { self.save().into_iter().collect() };
+        (taken, failed)
+    }
+
+    /// `names`' configs and kept tokens are gone: they are free again.
+    fn forgotten(&mut self, names: &[String]) {
+        for name in names {
+            self.ending.remove(name);
+        }
     }
 
     #[cfg(test)]
@@ -693,6 +823,28 @@ mod tests {
         fn launch_for(&mut self, cwd: &Path, own: Option<&str>, claude_session: Option<&str>) -> Launch {
             let hands = std::cell::RefCell::new(self);
             launch_with(|| std::cell::RefMut::map(hands.borrow_mut(), |h| &mut **h), cwd, own, claude_session)
+        }
+
+        fn released_here(&mut self, take: impl FnOnce(&mut Hands) -> Released) -> Vec<String> {
+            let hands = std::cell::RefCell::new(self);
+            release_with(|| std::cell::RefMut::map(hands.borrow_mut(), |h| &mut **h), take)
+        }
+
+        fn release(&mut self, name: &str) -> Option<String> {
+            let notices = self.released_here(|h| h.released(name));
+            (!notices.is_empty()).then(|| notices.join("; "))
+        }
+
+        fn release_session(&mut self, claude_session_id: &str) -> Vec<String> {
+            self.released_here(|h| h.released_session(claude_session_id))
+        }
+
+        fn release_all(&mut self) -> Vec<String> {
+            self.released_here(Hands::released_all)
+        }
+
+        fn release_last_run(&mut self) -> Vec<String> {
+            self.released_here(Hands::released_last_run)
         }
     }
 
@@ -1457,7 +1609,7 @@ mod tests {
 
     /// `hand-alpha-1` minted under `launcher` with the hands' own bearer, the row a [+] tab's first mint meets.
     fn held_by(hands: &Hands, base: &str, launcher: &str) -> Minted {
-        let (_, bearer) = hands.bearer().unwrap().unwrap();
+        let (_, bearer) = supraman_supervisor::bearer(&hands.auth).unwrap().unwrap();
         let request = MintRequest {
             name: "hand-alpha-1".into(),
             role: ROLE.into(),
@@ -1949,5 +2101,173 @@ mod tests {
             .collect();
         assert_eq!(names, ["hand-alpha-1", "hand-alpha-2", "hand-alpha-3", "hand-alpha-4"]);
         assert!(seen.try_recv().is_err(), "no fifth mint");
+    }
+
+    /// Mints at once; each revoke says so on `entered`, then waits while `held` is set.
+    struct HeldRevokes {
+        held: Arc<(Mutex<bool>, std::sync::Condvar)>,
+        entered: Mutex<std::sync::mpsc::Sender<()>>,
+        minted: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Minter for HeldRevokes {
+        fn mint(&self, _: &str, _: &str, _: &MintRequest) -> Result<supraman_supervisor::Minted, MintError> {
+            let n = self.minted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(supraman_supervisor::Minted { session_id: format!("s{n}"), token: format!("wss_held{n}"), expires_at: None })
+        }
+
+        fn bind(&self, _: &str, _: &str, _: &str, _: &str) -> Result<(), MintError> {
+            Ok(())
+        }
+
+        fn revoke(&self, _: &str, _: &str, _: &str) -> Result<(), MintError> {
+            self.entered.lock().unwrap().send(()).unwrap();
+            let (held, turned) = &*self.held;
+            drop(turned.wait_while(held.lock().unwrap(), |h| *h).unwrap());
+            Ok(())
+        }
+    }
+
+    /// Whether another thread takes the hands' lock within [`WAIT`].
+    fn lock_free(hands: &Arc<Mutex<Hands>>) -> bool {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let hands = hands.clone();
+        std::thread::spawn(move || tx.send(hands.lock().unwrap_or_else(|e| e.into_inner()).held()));
+        rx.recv_timeout(WAIT).is_ok()
+    }
+
+    #[test]
+    fn a_bearer_refresh_or_a_revoke_that_waits_holds_no_hands_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = FakeWorkman::start(Vec::new());
+        let oauth = fake.enable_oauth();
+        oauth.set_access_ttl(1);
+        let (home, auth) = home_with(dir.path(), Some(fake.base()));
+        let held = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let (entered, revokes) = std::sync::mpsc::channel();
+        let minter = HeldRevokes { held: held.clone(), entered: Mutex::new(entered), minted: Default::default() };
+        let (hands, _) = Hands::with(&home, auth, minter, a_repo, memory());
+        let hands = Arc::new(Mutex::new(hands));
+        let alpha = Path::new(r"C:\demo\alpha");
+
+        oauth.stall_tokens(true);
+        let launch = {
+            let hands = hands.clone();
+            std::thread::spawn(move || launch_locked(&hands, alpha, None, None))
+        };
+        supraman_core::testing::eventually(WAIT, "the launch's bearer refresh waits", supraman_core::testing::polled(std::time::Duration::from_millis(10)), || {
+            (oauth.stalled() == 1).then_some(())
+        });
+        let free = lock_free(&hands);
+        oauth.stall_tokens(false);
+        assert!(free, "a launch waiting on its bearer's refresh holds no lock");
+        let Launch::Minted { name, .. } = launch.join().unwrap() else { panic!() };
+
+        *held.0.lock().unwrap() = true;
+        let release = {
+            let (hands, name) = (hands.clone(), name.clone());
+            std::thread::spawn(move || release(&hands, &name))
+        };
+        revokes.recv_timeout(WAIT).expect("the release revokes");
+        let free = lock_free(&hands);
+        let next = free.then(|| launch_locked(&hands, alpha, None, None));
+        *held.0.lock().unwrap() = false;
+        held.1.notify_all();
+        assert!(free, "a release waiting on its revoke holds no lock");
+        assert!(matches!(&next, Some(Launch::Minted { name: other, .. }) if *other != name), "a revoke's name is held until it ends: {next:?}");
+        assert_eq!(release.join().unwrap(), None);
+        let Some(Launch::Minted { name: other, .. }) = next else { unreachable!() };
+        assert_eq!(hands.lock().unwrap().names(), [other]);
+    }
+
+    /// A row of `claude agents --json --all` for `sid`.
+    fn listing(sid: &str) -> supraman_claude::Session {
+        supraman_claude::Session {
+            id: sid[..8].into(),
+            session_id: sid.into(),
+            name: "x".into(),
+            cwd: PathBuf::new(),
+            kind: supraman_claude::Kind::Interactive,
+            state: Some(supraman_claude::SessionState::Stopped),
+            status: None,
+            waiting_for: None,
+            pid: None,
+            started_at: None,
+        }
+    }
+
+    /// A claude dir holding `sid`'s transcript and no running session.
+    fn transcript_of(dir: &Path, sid: &str) -> PathBuf {
+        let claude = dir.join("claude");
+        let project = claude.join("projects").join("C--demo-alpha");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join(format!("{sid}.jsonl")), "{}
+").unwrap();
+        claude
+    }
+
+    #[test]
+    fn a_hand_whose_session_two_listings_lack_while_its_transcript_remains_is_left_to_lapse() {
+        const T0: supraman_supervisor::Millis = 1_800_000_000_000;
+        const MINUTE: supraman_supervisor::Millis = 60_000;
+        let dir = tempfile::tempdir().unwrap();
+        let (fake, sessions) = session_workman();
+        sessions.set_idle_window(10 * MINUTE, T0);
+        let (home, auth) = home_with(dir.path(), Some(fake.base()));
+        let (hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
+        let hands = Mutex::new(hands);
+        locked(&hands).claude_dir = Some(transcript_of(dir.path(), SID));
+        let Launch::Minted { name, config, .. } = launch_locked(&hands, Path::new(r"C:\demo\alpha"), Some("rm-only"), Some(SID)) else { panic!() };
+        let keeper = Keeper::new(&home, &home.join("mcp"), locked(&hands).helper.1.clone());
+        let signed = || Bearer::of(supraman_supervisor::bearer(&auth));
+        let refused = |_: &str, _: &str| true;
+        let mints = || fake.seen().iter().filter(|s| s.method == "POST" && s.target == "/api/agent-sessions").count();
+        let mut keeping = supraman_supervisor::Keeping::default();
+        let mut absent = supraman_supervisor::Absent::default();
+        let mut gone = |observed: &[supraman_claude::Session], at| end_lapsed(&hands, &mut absent, observed, at);
+        let other = listing("bbbb0002-0000-4000-8000-000000000002");
+
+        assert!(gone(std::slice::from_ref(&other), T0).is_empty());
+        assert!(gone(&[listing(SID)], T0 + MINUTE).is_empty());
+        assert!(gone(std::slice::from_ref(&other), T0 + 2 * MINUTE).is_empty());
+        keeping.signed_in();
+        assert_eq!(keeping.check(&keeper, &HttpMinter::default(), signed, T0 + 2 * MINUTE, refused).renewed.get(&name), Some(&Ok(())), "a single gap changes nothing");
+        assert_eq!(mints(), 2);
+
+        assert!(gone(std::slice::from_ref(&other), T0 + 3 * MINUTE).is_empty());
+        keeping.signed_in();
+        assert!(keeping.check(&keeper, &HttpMinter::default(), signed, T0 + 3 * MINUTE, refused).renewed.is_empty(), "unlisted: not renewed");
+        assert_eq!(mints(), 2);
+        assert!(gone(std::slice::from_ref(&other), T0 + 9 * MINUTE).is_empty());
+        assert!(locked(&hands).minted.get(&name).is_some() && config.exists(), "kept until its token lapses");
+
+        assert!(gone(std::slice::from_ref(&other), T0 + 10 * MINUTE).is_empty(), "no notice");
+        assert!(locked(&hands).names().is_empty() && !config.exists() && keeper.kept(&name).is_none(), "its record, config and kept token go");
+        let saved = Hands::with(&home, Arc::new(Auth::with_store(&home, memory())), HttpMinter::default(), a_repo, memory()).0;
+        assert!(saved.names().is_empty(), "saved");
+        let deletes = fake.seen_when(std::time::Duration::from_millis(300), |seen| seen.iter().any(|s| s.method == "DELETE"));
+        assert!(deletes.iter().all(|s| s.method != "DELETE"), "never revoked: it lapsed");
+    }
+
+    #[test]
+    fn a_hand_listed_again_after_its_gap_is_renewed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (fake, _) = session_workman();
+        let (home, auth) = home_with(dir.path(), Some(fake.base()));
+        let (hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
+        let hands = Mutex::new(hands);
+        locked(&hands).claude_dir = Some(transcript_of(dir.path(), SID));
+        let Launch::Minted { name, .. } = launch_locked(&hands, Path::new(r"C:\demo\alpha"), Some("resumed"), Some(SID)) else { panic!() };
+        let keeper = Keeper::new(&home, &home.join("mcp"), locked(&hands).helper.1.clone());
+        let mut absent = supraman_supervisor::Absent::default();
+        let other = listing("bbbb0002-0000-4000-8000-000000000002");
+        for at in [1, 2] {
+            assert!(end_lapsed(&hands, &mut absent, std::slice::from_ref(&other), at).is_empty());
+        }
+        assert!(end_lapsed(&hands, &mut absent, &[listing(SID)], 3).is_empty());
+        let mut keeping = supraman_supervisor::Keeping::default();
+        keeping.signed_in();
+        let checked = keeping.check(&keeper, &HttpMinter::default(), || Bearer::of(supraman_supervisor::bearer(&auth)), 3, |_, _| true);
+        assert_eq!(checked.renewed.get(&name), Some(&Ok(())), "a resume shows it again: renewed as usual");
     }
 }

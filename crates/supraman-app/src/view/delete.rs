@@ -303,8 +303,7 @@ impl FleetView {
         if let Some(hands) = self.lifecycle.hands.clone() {
             let ids = session_ids.to_vec();
             let task = cx.background_executor().spawn(async move {
-                let mut hands = hands.lock().unwrap_or_else(|e| e.into_inner());
-                ids.iter().flat_map(|sid| hands.release_session(sid)).collect::<Vec<String>>()
+                ids.iter().flat_map(|sid| crate::hand::release_session(&hands, sid)).collect::<Vec<String>>()
             });
             cx.spawn(async move |this, cx| {
                 let notices = task.await;

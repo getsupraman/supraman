@@ -446,7 +446,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         self.mint_unminted(observed, now);
         self.settle_forks(observed);
         self.bind_claude_sessions(observed, now);
-        self.revoke_deleted(observed);
+        self.end_gone(observed, now);
         self.end_unwanted_unbound(observed);
     }
 
@@ -647,14 +647,22 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         }
     }
 
-    /// Ends each minted session whose claude session and transcript are deleted ([`Absent`]); nothing else ends one.
-    fn revoke_deleted(&mut self, observed: &[Session]) {
-        let bound = self.minted.bound();
-        let mut deleted = self.absent.deleted(&bound, observed);
-        deleted.retain(|sid| !crate::mint::still_has_transcript(self.config.claude_dir.as_deref(), sid));
-        for (name, sid) in bound.into_iter().filter(|(_, sid)| deleted.contains(sid)) {
+    /// Ends each minted session whose claude session and transcript are deleted, and forgets an unlisted one whose token lapsed ([`Keeper::gone`]).
+    fn end_gone(&mut self, observed: &[Session], now: Millis) {
+        let keeper = self.keeper.clone().with_claude_dir(self.config.claude_dir.clone());
+        let gone = keeper.gone(&mut self.absent, &self.minted.bound(), observed, now);
+        self.notices.extend(gone.notices);
+        for (name, sid) in gone.deleted {
             log::info!("{name}: its claude session {sid} is deleted, so its Workman token is revoked");
             self.end(&name);
+        }
+        for (name, sid) in gone.lapsed {
+            log::info!("{name}: its claude session {sid} stayed unlisted until its Workman token lapsed, so its record goes");
+            if self.minted.remove(&name).is_some() {
+                self.generations.remove(&name);
+                self.notices.extend(self.keeper.forget(&name));
+                self.save_minted();
+            }
         }
     }
 

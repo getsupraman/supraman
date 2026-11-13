@@ -22,12 +22,12 @@ use supraman_supervisor::{Absent, AppTokens, Bearer, HttpMinter, Keeper, Unliste
 pub static ENABLED: AtomicBool = AtomicBool::new(true);
 pub static TICK: Mutex<()> = Mutex::new(());
 
-/// Origins signed out of since the last tick, each with its sign-in generation: the sessions minted there before it
-/// end at the next.
-static SIGNED_OUT: Mutex<Vec<(String, u64)>> = Mutex::new(Vec::new());
+/// Origins signed out of since the last tick, each with its home and sign-in generation: the sessions minted there before it
+/// are marked at the home's next.
+static SIGNED_OUT: Mutex<Vec<(PathBuf, String, u64)>> = Mutex::new(Vec::new());
 
-pub fn signed_out(origin: &str) {
-    SIGNED_OUT.lock().unwrap_or_else(|e| e.into_inner()).push((origin.to_string(), supraman_supervisor::sign_in_generation()));
+pub fn signed_out(home: &Path, origin: &str) {
+    SIGNED_OUT.lock().unwrap_or_else(|e| e.into_inner()).push((home.to_path_buf(), origin.to_string(), supraman_supervisor::sign_in_generation()));
 }
 
 /// Signs out of `auth`'s configured server, whose grant revoke takes every session token minted there; the hands,
@@ -38,7 +38,7 @@ pub fn sign_out(auth: &supraman_workman::Auth, hands: Option<std::sync::Arc<Mute
         Err(e) => return vec![e.to_string()],
     };
     let mut notices: Vec<String> = auth.sign_out(&origin).err().into_iter().collect();
-    signed_out(&origin);
+    signed_out(auth.home(), &origin);
     if let Some(hands) = hands {
         notices.extend(hands.lock().unwrap_or_else(|e| e.into_inner()).signed_out(&origin));
     }
@@ -270,9 +270,13 @@ pub struct Supervision {
     pruned_at: Option<Millis>,
     /// The scheduled runs' claude sessions missing from the snapshots.
     runs_absent: Absent,
+    /// The [+] tabs' claude sessions missing from the snapshots.
+    hands_absent: Absent,
     unlisted: Unlisted,
     hands: Option<Arc<Mutex<crate::hand::Hands>>>,
+    auth: Arc<supraman_workman::Auth>,
 }
+
 
 pub const NOTICES_KEPT: usize = 5;
 pub const PRUNE_EVERY: Millis = 60 * 60 * 1000;
@@ -299,7 +303,13 @@ impl Supervision {
     fn end_signed_out(&mut self) -> Vec<String> {
         let keeper = Keeper::open(&self.home);
         let mut notices = Vec::new();
-        for (origin, generation) in std::mem::take(&mut *SIGNED_OUT.lock().unwrap_or_else(|e| e.into_inner())) {
+        let queued: Vec<(PathBuf, String, u64)> = {
+            let mut all = SIGNED_OUT.lock().unwrap_or_else(|e| e.into_inner());
+            let (here, elsewhere) = std::mem::take(&mut *all).into_iter().partition(|(home, _, _)| *home == self.home);
+            *all = elsewhere;
+            here
+        };
+        for (_, origin, generation) in queued {
             for s in self.supervisors.values_mut() {
                 s.signed_out_as_of(&origin, generation);
             }
@@ -310,16 +320,23 @@ impl Supervision {
         notices
     }
 
-    /// Revokes deleted scheduled runs and deletes token-less configs whose session is gone, none without the hands; `observed` was read without error.
+    /// Revokes deleted scheduled runs, drops the runs and hands left unlisted until their tokens lapsed, and deletes token-less configs
+    /// whose session is gone, none without the hands; `observed` was read without error.
     fn end_deleted(&mut self, observed: &[Session], now: Millis) -> Vec<String> {
         let keeper = Keeper::open(&self.home).with_claude_dir(supraman_core::paths::claude_dir());
-        let auth = crate::signin::auth(&self.home);
-        let mut failed = revoke_deleted_runs(&keeper, &HttpMinter::default(), || Bearer::of(bearer(&auth)), &mut self.runs_absent, observed);
+        let auth = self.auth.clone();
+        let mut failed = revoke_deleted_runs(&keeper, &HttpMinter::default(), || Bearer::of(bearer(&auth)), &mut self.runs_absent, observed, now);
         if let Some(hands) = &self.hands {
+            failed.extend(crate::hand::end_lapsed(hands, &mut self.hands_absent, observed, now));
             let held = hands.lock().unwrap_or_else(|e| e.into_inner()).held();
             failed.extend(keeper.sweep_unminted(&mut self.unlisted, observed, &held, now));
         }
         failed
+    }
+
+    #[cfg(test)]
+    fn with_auth(self, auth: Arc<supraman_workman::Auth>) -> Self {
+        Self { auth, ..self }
     }
 
     /// The [+] tabs whose token-less configs [`Self::end_deleted`] leaves alone.
@@ -329,6 +346,7 @@ impl Supervision {
 
     pub fn new(home: PathBuf, plugin_dir: Option<PathBuf>) -> Self {
         let config = launch_config(Some(home.clone()), plugin_dir.as_deref(), &Settings::default());
+        let auth = crate::signin::auth(&home);
         Self {
             home,
             plugin_dir,
@@ -339,8 +357,10 @@ impl Supervision {
             daemon_logged: None,
             pruned_at: None,
             runs_absent: Absent::default(),
+            hands_absent: Absent::default(),
             unlisted: Unlisted::default(),
             hands: None,
+            auth,
         }
     }
 
@@ -390,7 +410,7 @@ impl Supervision {
                         s.config.plugin_dirs = self.config.plugin_dirs.clone();
                     }
                     None => {
-                        let tokens = AppTokens { auth: crate::signin::auth(&self.home) };
+                        let tokens = AppTokens { auth: self.auth.clone() };
                         let s = Supervisor::new(desired, &self.home, self.config.clone(), Claude::default(), tokens);
                         self.supervisors.insert(p.name.clone(), s);
                     }
@@ -417,7 +437,7 @@ impl Supervision {
         for signed_out in self.end_signed_out() {
             log::warn!("{signed_out}");
         }
-        let server = signed_in_server(&crate::signin::auth(&self.home));
+        let server = signed_in_server(&self.auth);
         for (name, s) in &mut self.supervisors {
             let stale = s.server_changed(server.as_deref());
             if !stale.is_empty() {
