@@ -72,6 +72,7 @@ mod session_page;
 pub(crate) use supraman_git_view::occupancy;
 pub(crate) mod notices;
 mod polls;
+use polls::Poller;
 mod reopen;
 mod results;
 mod store_saves;
@@ -345,119 +346,6 @@ struct Refresh {
     took: Duration,
 }
 
-/// Runs on a background thread: the registry read, `claude agents` and the supervisor's `claude` writes all block.
-struct Poller {
-    home: Option<PathBuf>,
-    events: Option<EventReader>,
-    supervision: Option<Supervision>,
-    retries: Arc<Mutex<Vec<(String, String)>>>,
-    injected: Arc<Mutex<Vec<Session>>>,
-    registry_writes: Arc<AtomicU64>,
-    snapshot: Option<(u64, Vec<Workspace>, Vec<Session>)>,
-    first: bool,
-    store: Option<Arc<dyn supraman_core::secret::SecretStore>>,
-}
-
-impl Poller {
-    fn setup(&mut self) -> supervise::Setup {
-        let Some(home) = self.home.clone() else {
-            return supervise::Setup {
-                plugin_dir: None,
-                notices: vec!["No Supraman home (set SUPRAMAN_HOME or APPDATA): nothing can be started.".into()],
-            };
-        };
-        let setup = supervise::setup(&home);
-        self.events = Some(EventReader::new(&home));
-        self.supervision = Some(Supervision::new(home, setup.plugin_dir.clone()));
-        setup
-    }
-
-    fn read(&mut self, with_sessions: bool) -> Refresh {
-        let started = Instant::now();
-        let registry_writes = self.registry_writes.load(Ordering::SeqCst);
-        let workspaces = load_registry(Registry::from_env().map_err(|e| e.to_string()));
-        let registry_took = started.elapsed();
-        let polled_at = now_ms();
-        let listing = Instant::now();
-        let sessions = with_sessions.then(|| {
-            let listed = if crate::selftest_seams::fixtures_only() { Ok(Vec::new()) } else { list_sessions() };
-            listed.map_err(|e| e.to_string()).map(|mut rows| {
-                rows.extend(self.injected.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned());
-                rows
-            })
-        });
-        let list_took = listing.elapsed();
-        let main_repos = match &sessions {
-            Some(Ok(sessions)) => fleet::main_repos(sessions),
-            _ => StdHashMap::new(),
-        };
-        let events = self.events.as_mut().map(EventReader::poll).unwrap_or_default();
-        let took = started.elapsed();
-        self.snapshot = match (&workspaces, &sessions) {
-            (Ok((workspaces, _)), Some(Ok(sessions))) => Some((registry_writes, workspaces.clone(), sessions.clone())),
-            _ => None,
-        };
-        let loading_desired = Instant::now();
-        let desired = match (&self.home, &workspaces) {
-            (Some(home), Ok((workspaces, _))) if self.first => Some(
-                workspaces
-                    .iter()
-                    .filter_map(|w| {
-                        let d = DesiredState::load(home, &w.name).ok()??;
-                        Some((w.name.clone(), (d.started, d.sessions.iter().map(|s| s.name.clone()).collect())))
-                    })
-                    .collect(),
-            ),
-            _ => None,
-        };
-        let schedules = match (&self.home, &workspaces) {
-            (Some(home), Ok((workspaces, _))) => {
-                for run in crate::schedules::recover(home, workspaces) {
-                    log::info!("recovered the dead scheduled run {run} as interrupted");
-                }
-                let store = self.store.get_or_insert_with(|| supraman_core::secret::default_store(home));
-                Some(crate::schedules::read(home, workspaces, &**store, now_ms()))
-            }
-            _ => None,
-        };
-        if self.first {
-            timeline("registry done", registry_took);
-            timeline(&format!("list_sessions done ({} rows)", sessions.as_ref().and_then(|s| s.as_ref().ok()).map_or(0, Vec::len)), list_took);
-            timeline("main repos and events done", took - registry_took - list_took);
-            timeline("desired state done", loading_desired.elapsed());
-        }
-        Refresh {
-            registry_writes,
-            workspaces,
-            sessions,
-            main_repos,
-            polled_at,
-            events,
-            desired,
-            schedules,
-            took,
-        }
-    }
-
-    /// Ticks only on this poll's snapshot, and only while no registry write came after it: a stale list never drives a launch.
-    fn tick(&mut self) -> Option<Report> {
-        let ticking = Instant::now();
-        let first = std::mem::take(&mut self.first);
-        let (writes, workspaces, sessions) = self.snapshot.take()?;
-        if writes != self.registry_writes.load(Ordering::SeqCst) {
-            log::info!("supervisor tick skipped: the workspaces changed after this poll read them");
-            return None;
-        }
-        let supervision = self.supervision.as_mut()?;
-        let retries = std::mem::take(&mut *self.retries.lock().unwrap_or_else(|e| e.into_inner()));
-        let report = supervision.tick(&workspaces, &sessions, retries, now_ms());
-        if first {
-            timeline("supervisor tick done (relays, messages)", ticking.elapsed());
-        }
-        Some(report)
-    }
-}
-
 impl FleetView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
@@ -465,7 +353,8 @@ impl FleetView {
         Self::ask_before_close(window, cx);
         let home = Registry::from_env().ok().map(|r| r.home().to_path_buf());
         let defaults = Settings::default();
-        let (polls, transcripts_nudged) = polls::Polls::start(home.clone(), cx);
+        let hands = home.as_deref().map(|home| Self::open_hands(home, cx));
+        let (polls, transcripts_nudged) = polls::Polls::start(home.clone(), hands.clone(), cx);
         Self::load_settings(home.clone(), cx);
         Self::load_stores(home.clone(), cx);
         let term_look = term_look::TermLook::new(&defaults.terminal, cx);
@@ -473,7 +362,6 @@ impl FleetView {
         Self::watch_workman(home.clone(), recheck, cx);
         let work_inbox = WorkInbox::shared(home.clone(), cx);
         Self::observe_inbox(&work_inbox, cx);
-        let hands = home.as_deref().map(|home| Self::open_hands(home, cx));
         let scheduling = schedule_state::ScheduleState::new();
         let claude_dir = claude_dir_or(CLAUDE_DIR_OVERRIDE.get().map(PathBuf::as_path));
         Self::watch_transcripts(claude_dir.clone(), home.as_deref().map(|h| h.join(TRANSCRIPTS_CACHE)), transcripts_nudged, cx);
@@ -665,16 +553,15 @@ impl FleetView {
         }
         self.workman_state.signing_in = Some(origin.clone());
         self.workman_state.sign_in_error = None;
-        let task = {
-            let (home, origin) = (home.clone(), origin.clone());
-            cx.background_executor().spawn(async move { crate::signin::sign_in(&home, &origin) })
-        };
+        let (at, to, hands) = (home.clone(), origin.clone(), self.lifecycle.hands.clone());
+        let task = cx.background_executor().spawn(async move { crate::signin::sign_in(&at, &to, hands.as_deref()) });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
                 this.workman_state.signing_in = None;
                 match result {
-                    Ok(_) => {
+                    Ok(minted) => {
+                        this.helped_minted(minted);
                         this.workman_state.left_servers.remove(&origin);
                         if let Some(from) = from {
                             this.save_workman_url(home.clone(), origin.clone(), Some(from), cx);
@@ -2152,6 +2039,7 @@ mod tests {
             snapshot: None,
             first: false,
             store: None,
+            hands: None,
         }
     }
 

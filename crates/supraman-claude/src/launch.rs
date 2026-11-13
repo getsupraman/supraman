@@ -200,6 +200,18 @@ pub fn mcp_config_path(dir: &Path, agent: &str) -> std::io::Result<PathBuf> {
     Ok(dir.join(format!("workstate-{agent}.json")))
 }
 
+/// The session names of the configs [`mcp_config_path`] names under `dir`, sorted; none when `dir` cannot be read.
+pub fn mcp_config_names(dir: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| Some(e.file_name().to_str()?.strip_prefix("workstate-")?.strip_suffix(".json")?.to_string()))
+        .filter(|n| supraman_core::is_session_name(n))
+        .collect();
+    names.sort();
+    names
+}
+
 /// The Workman URL in the config [`write_mcp_config_helped`] wrote for `agent`; `None` when it is gone or unreadable.
 pub fn mcp_config_url(dir: &Path, agent: &str) -> Option<String> {
     let text = std::fs::read_to_string(mcp_config_path(dir, agent).ok()?).ok()?;

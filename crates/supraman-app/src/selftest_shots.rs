@@ -66,7 +66,7 @@ pub fn prepare() -> anyhow::Result<()> {
     let fake = workman();
     OAUTH.set(fake.enable_oauth()).map_err(|_| anyhow!("the fake OAuth server was started twice"))?;
     crate::selftest::set_workman(fake.base())?;
-    crate::signin::sign_in(&home, fake.base()).map_err(|e| anyhow!("signing in to the fake Workman: {e}"))?;
+    crate::signin::sign_in(&home, fake.base(), None).map_err(|e| anyhow!("signing in to the fake Workman: {e}"))?;
     println!(
         "shots: SUPRAMAN_HOME={} ; workspace {WORKSPACE} at {ROOT} (fixture folders, not on disk); fake Workman at {}",
         home.display(),
