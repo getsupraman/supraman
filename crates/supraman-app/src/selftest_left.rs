@@ -54,6 +54,8 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     click(view, "expand-all", cx).await?;
     until(view, cx, WITHIN, "Expand all shows the repo rows again", |v| (repo_rows(v) == open_rows && painted_repo_rows(v) > 0).then_some(())).await?;
 
+    let counted = no_counts(view, cx).await?;
+
     let shown = view.read_with(cx, |v, _| v.show_stopped);
     click(view, "toggle-stopped", cx).await?;
     until(view, cx, WITHIN, "the stopped toggle flips", |v| (v.show_stopped != shown).then_some(())).await?;
@@ -103,11 +105,38 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
 
     Ok(format!(
         "action bar: {} icons {:.0}×{:.0} px on one line; collapse all hid {open_rows} repo row(s), expand all restored them; \
-         stopped toggle and busy ±1 (from {busy}) round-tripped; Settings opened, About shown; {closed}",
+         {counted}; stopped toggle and busy ±1 (from {busy}) round-tripped; Settings opened, About shown; {closed}",
         ICONS.len(),
         f32::from(first.size.width),
         f32::from(first.size.height),
     ))
+}
+
+/// Nothing sits between the workspace row's home and its relay slot, nor between a folder row's branch and its room, where a session count would.
+async fn no_counts(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let gap = f32::from(crate::view::grid::gap());
+    let span = |v: &FleetView, left: &str, right: &str| Some(f32::from(bounds(v, right)?.left()) - f32::from(bounds(v, left)?.right()));
+    let home = until(view, cx, WITHIN, "the workspace row's home and relay slot", |v| span(v, &format!("ws-root-{WORKSPACE}"), &format!("relay-slot-{WORKSPACE}"))).await?;
+    if (home - gap).abs() > 0.5 {
+        bail!("{home:.1} px between the workspace row's home and its relay slot, not the {gap} px gap: something is painted there");
+    }
+    let folders = view.read_with(cx, |v, _| {
+        let tree = v.tree();
+        let node = tree.workspaces.iter().find(|n| n.name == WORKSPACE)?;
+        let plain = node.repos.iter().filter(|r| !r.sessions.is_empty() && r.enabled && r.supervised_in.is_none() && r.also_in.is_empty());
+        Some(plain.map(|r| (r.name.clone(), span(v, &format!("branch-{WORKSPACE}/{}", r.name), &format!("repo-room-{WORKSPACE}/{}", r.name)))).collect::<Vec<_>>())
+    });
+    let folders = folders.unwrap_or_default();
+    if folders.is_empty() {
+        bail!("no folder row of {WORKSPACE} with sessions and no tags to look for a count on");
+    }
+    for (name, room) in &folders {
+        let room = room.ok_or_else(|| anyhow!("folder row {name}'s branch or room not painted"))?;
+        if (room - gap).abs() > 0.5 {
+            bail!("{room:.1} px between folder row {name}'s branch and its room, not the {gap} px gap: something is painted there");
+        }
+    }
+    Ok(format!("no session count on the workspace row or {} folder row(s)", folders.len()))
 }
 
 /// Closing a window before Windows has shown, activated and painted it races those messages.

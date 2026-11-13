@@ -29,6 +29,7 @@ pub enum Icon {
     RelayReady,
     RelayStarting,
     Resume,
+    Rebase,
     Square,
     Tab,
     Task,
@@ -72,7 +73,7 @@ pub enum Icon {
 
 impl Icon {
     #[cfg(test)]
-    const ALL: [Icon; 62] = [
+    const ALL: [Icon; 63] = [
         Icon::ChevronDown,
         Icon::ChevronRight,
         Icon::Close,
@@ -96,6 +97,7 @@ impl Icon {
         Icon::RelayReady,
         Icon::RelayStarting,
         Icon::Resume,
+        Icon::Rebase,
         Icon::Square,
         Icon::Tab,
         Icon::Task,
@@ -154,14 +156,15 @@ impl Icon {
             Icon::Star => include_bytes!("../assets/icons/star.svg"),
             Icon::StarFilled => include_bytes!("../assets/icons/star_filled.svg"),
             Icon::Warning => include_bytes!("../assets/icons/warning.svg"),
-            Icon::Attach => include_bytes!("../assets/icons/maximize.svg"),
+            Icon::Attach => include_bytes!("../assets/icons/tab_attach.svg"),
             Icon::Claude => include_bytes!("../assets/icons/claude.svg"),
             Icon::Folder => include_bytes!("../assets/icons/folder.svg"),
             Icon::GitBranch => include_bytes!("../assets/icons/git_branch.svg"),
             Icon::Play => include_bytes!("../assets/icons/play_outlined.svg"),
             Icon::RelayReady => include_bytes!("../assets/icons/signal_high.svg"),
             Icon::RelayStarting => include_bytes!("../assets/icons/load_circle.svg"),
-            Icon::Resume => include_bytes!("../assets/icons/rotate_ccw.svg"),
+            Icon::Resume => include_bytes!("../assets/icons/tab_resume.svg"),
+            Icon::Rebase => include_bytes!("../assets/icons/rotate_ccw.svg"),
             Icon::Square => include_bytes!("../assets/icons/stop.svg"),
             Icon::Tab => include_bytes!("../assets/icons/screen.svg"),
             Icon::Task => include_bytes!("../assets/icons/pencil.svg"),
@@ -238,5 +241,12 @@ mod tests {
             assert!(text.starts_with("<svg") && text.contains(r#"width="16""#), "{icon:?}: {text}");
             assert!(text.trim_end().ends_with("</svg>"), "{icon:?} is cut short");
         }
+    }
+
+    #[test]
+    fn a_new_tabs_resume_and_attach_are_tabs_apart_from_each_other_and_from_its_tab() {
+        let [resume, attach, tab] = [Icon::Resume, Icon::Attach, Icon::Tab].map(Icon::bytes);
+        assert!(resume != attach && resume != tab && attach != tab);
+        assert_eq!(resume.split(|b| *b == b'\n').nth(1), attach.split(|b| *b == b'\n').nth(1), "one tab outline");
     }
 }
