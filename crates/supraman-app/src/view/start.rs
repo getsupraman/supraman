@@ -65,7 +65,7 @@ pub fn first_prompt(text: &str, scheduled: bool) -> String {
 /// The entry's folders, each once.
 pub fn folders(entry: &EntryNode) -> Vec<(String, PathBuf)> {
     let mut out: Vec<(String, PathBuf)> = Vec::new();
-    for f in &entry.folders {
+    for f in entry.folders.iter().filter(|f| f.listed()) {
         if !out.iter().any(|(_, p)| path_key(p) == path_key(&f.path)) {
             out.push((f.name.clone(), f.path.clone()));
         }
@@ -361,10 +361,11 @@ because"), "use postgres");
 
     #[test]
     fn the_folders_are_the_entrys_each_once() {
-        let folder = |key: &str, path: &str| crate::fleet::FolderNode { key: key.into(), name: key.rsplit('/').next().unwrap().into(), path: path.into(), kind: supraman_core::FolderKind::Git, branch: None, sessions: vec![], more: 0, scheduled: Default::default() };
-        let entry = EntryNode { name: "demo".into(), group: true, folders: vec![folder("demo/Alpha", "C:/demo/Alpha"), folder("demo/Same", "c:/DEMO/alpha")] };
+        let folder = |key: &str, path: &str| crate::fleet::FolderNode { key: key.into(), name: key.rsplit('/').next().unwrap().into(), path: path.into(), kind: supraman_core::FolderKind::Git, branch: None, sessions: vec![], more: 0, scheduled: Default::default(), pos: Some(supraman_core::folders::Pos::member(0, 0)), parent: None, shows_subfolders: false };
+        let child = crate::fleet::FolderNode { pos: None, parent: Some("demo/Alpha".into()), ..folder("demo/Alpha/web", "C:/demo/Alpha/web") };
+        let entry = EntryNode { name: "demo".into(), group: true, folders: vec![folder("demo/Alpha", "C:/demo/Alpha"), child, folder("demo/Same", "c:/DEMO/alpha")] };
         let names: Vec<String> = folders(&entry).into_iter().map(|(n, _)| n).collect();
-        assert_eq!(names, ["Alpha"]);
+        assert_eq!(names, ["Alpha"], "a shown child is no folder of the entry");
         assert!(!MODES.contains(&"bypassPermissions"));
     }
 

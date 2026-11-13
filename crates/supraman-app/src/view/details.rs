@@ -225,7 +225,7 @@ impl FleetView {
         let facts = EntryFacts {
             name: name.to_string(),
             group: node.group,
-            folders: node.folders.iter().map(|f| (f.name.clone(), f.path.clone())).collect(),
+            folders: node.folders.iter().filter(|f| f.listed() || node.folders.len() == 1).map(|f| (f.name.clone(), f.path.clone())).collect(),
             sessions: node.session_count(),
             project: self.tabs.iter().find_map(|t| match &t.kind {
                 TabKind::Work(view) if view.read(cx).workspace == name => {

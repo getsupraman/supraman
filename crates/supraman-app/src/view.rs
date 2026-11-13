@@ -567,7 +567,7 @@ impl FleetView {
         let before = (self.sessions.clone(), self.listing.main_repos.clone(), self.polled.hooks.clone(), self.polls.polled_at);
         let listed_changed = self.listed.apply(refresh.listed, refresh.folder_writes, self.polls.folder_writes.load(Ordering::SeqCst));
         if listed_changed {
-            self.polls.transcripts_nudge.wake();
+            self.listed_changed(cx);
         }
         match refresh.sessions {
             Some(Ok(sessions)) => {

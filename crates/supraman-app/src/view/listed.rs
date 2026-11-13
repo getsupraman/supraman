@@ -1,22 +1,27 @@
-use std::collections::HashMap;
 use std::path::Path;
 
-use supraman_core::folders::{self, Entries, OnDisk};
+use supraman_core::folders::{self, Entries};
+
+use gpui::Context;
 
 use super::FleetView;
 use crate::fleet;
+
+mod subfolders;
+
+pub use subfolders::SubfolderWatch;
 
 /// The sidebar's entries with what the disk says of their folders.
 #[derive(Default)]
 pub struct Listed {
     pub entries: Entries,
-    pub disk: HashMap<String, OnDisk>,
+    pub disk: fleet::Disk,
     pub error: Option<String>,
 }
 
-/// One read off the UI thread: folders.toml with its folders' kinds.
+/// One read off the UI thread: folders.toml with its folders' kinds and shown children.
 pub struct Read {
-    entries: Result<(Entries, HashMap<String, OnDisk>), String>,
+    entries: Result<(Entries, fleet::Disk), String>,
 }
 
 pub fn read(home: Option<&Path>) -> Read {
@@ -69,9 +74,30 @@ impl FleetView {
         out
     }
 
-    pub(super) fn listed_changed(&mut self) {
+    pub(super) fn listed_changed(&mut self, cx: &mut Context<Self>) {
         self.polls.transcripts_nudge.wake();
         self.invalidate_tree();
+        let (showing, fleet) = (self.listed.entries.showing(), cx.entity().downgrade());
+        self.sidebar.subfolders.update(cx, |w, cx| w.sync(showing, fleet, cx));
+    }
+
+    /// folders.toml and its folders read again off the UI thread: a shown folder's children changed.
+    pub(super) fn read_listed(&mut self, cx: &mut Context<Self>) {
+        let home = self.home.clone();
+        let generation = self.polls.folder_writes.load(std::sync::atomic::Ordering::SeqCst);
+        let read = cx.background_executor().spawn(async move { read(home.as_deref()) });
+        cx.spawn(async move |this, cx| {
+            let read = read.await;
+            this.update(cx, |this, cx| {
+                let writes = this.polls.folder_writes.load(std::sync::atomic::Ordering::SeqCst);
+                if this.listed.apply(read, generation, writes) {
+                    this.listed_changed(cx);
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 }
 
@@ -82,7 +108,7 @@ mod tests {
     #[test]
     fn a_read_from_before_this_windows_write_keeps_the_written_list() {
         let entries = Entries::new(vec![folders::Entry::Folder(folders::FolderEntry::new(r"C:\a"))]);
-        let read = |e: Entries| Read { entries: Ok((e, HashMap::new())) };
+        let read = |e: Entries| Read { entries: Ok((e, fleet::Disk::default())) };
         let mut listed = Listed { entries: entries.clone(), ..Listed::default() };
         assert!(!listed.apply(read(Entries::default()), 1, 2), "read before the write");
         assert_eq!(listed.entries, entries);

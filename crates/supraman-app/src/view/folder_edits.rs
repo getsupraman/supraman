@@ -1,4 +1,5 @@
-//! The sidebar's edits of folders.toml: Add Folder, Add Group, Rename, Remove Folder and Remove Group, each written off the UI thread.
+//! The sidebar's edits of folders.toml: Add Folder, Add Group, Rename, Remove Folder, Remove Group, a folder dropped
+//! elsewhere and Show/Hide sub folders, each written off the UI thread.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -13,8 +14,10 @@ use super::left::PendingReveal;
 use super::listed;
 use super::menu::{Confirm, Confirmed, MenuAction};
 
+mod drop;
 mod group_name;
 
+pub use drop::{DraggedFolder, Target, landing};
 pub use group_name::{GroupName, GroupNameEvent};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +29,10 @@ pub enum FolderEdit {
     /// The folder at `pos`, while it is still `path` there.
     RemoveFolder { pos: Pos, path: PathBuf },
     RemoveGroup { name: String, with_folders: bool },
+    /// The folder at `from`, while it is still `path` there, moved to `to` ([`landing`]).
+    MoveFolder { from: Pos, path: PathBuf, to: Place },
+    /// The folder at `pos`, while it is still `path` there, showing its direct child folders or not.
+    ShowSubfolders { pos: Pos, path: PathBuf, show: bool },
 }
 
 impl FolderEdit {
@@ -54,9 +61,7 @@ impl FolderEdit {
                 Ok(format!("Renamed group {from} to {to}."))
             }
             FolderEdit::RemoveFolder { pos, path } => {
-                if listed_at(entries, *pos).is_none_or(|p| path_key(p) != path_key(path)) {
-                    return Err(CoreError::NoEntry(path.display().to_string()));
-                }
+                still_at(entries, *pos, path)?;
                 entries.remove_folder(*pos)?;
                 Ok(format!("Removed {} from the list; its files and sessions stay.", folder_name(path)))
             }
@@ -66,6 +71,22 @@ impl FolderEdit {
                 Ok(match with_folders {
                     true => format!("Removed group {name} and its {}.", text::count(held, "folder", "folders")),
                     false => format!("Removed group {name}; its folders are at the top level."),
+                })
+            }
+            FolderEdit::MoveFolder { from, path, to } => {
+                still_at(entries, *from, path)?;
+                entries.move_folder(*from, to)?;
+                Ok(match to {
+                    Place::Group { name, .. } => format!("Moved {} into {name}.", folder_name(path)),
+                    Place::Top(_) => format!("Moved {} to the top level.", folder_name(path)),
+                })
+            }
+            FolderEdit::ShowSubfolders { pos, path, show } => {
+                still_at(entries, *pos, path)?;
+                entries.set_show_subfolders(*pos, *show)?;
+                Ok(match show {
+                    true => format!("Showing the sub folders of {}.", folder_name(path)),
+                    false => format!("Hid the sub folders of {}.", folder_name(path)),
                 })
             }
         }
@@ -79,6 +100,8 @@ impl FolderEdit {
             FolderEdit::RenameGroup { from, .. } => format!("Cannot rename group {from}"),
             FolderEdit::RemoveFolder { path, .. } => format!("Cannot remove {}", folder_name(path)),
             FolderEdit::RemoveGroup { name, .. } => format!("Cannot remove group {name}"),
+            FolderEdit::MoveFolder { path, .. } => format!("Cannot move {}", folder_name(path)),
+            FolderEdit::ShowSubfolders { path, show, .. } => format!("Cannot {} the sub folders of {}", if *show { "show" } else { "hide" }, folder_name(path)),
         }
     }
 
@@ -88,17 +111,18 @@ impl FolderEdit {
             FolderEdit::AddFolder { path, group: None } => Some(format!("repo:{}", folder_name(path))),
             FolderEdit::AddFolder { path, group: Some(g) } => Some(format!("repo:{g}/{}", folder_name(path))),
             FolderEdit::AddGroup(name) | FolderEdit::RenameGroup { to: name, .. } => Some(format!("group:{name}")),
-            FolderEdit::RemoveFolder { .. } | FolderEdit::RemoveGroup { .. } => None,
+            FolderEdit::MoveFolder { path, to: Place::Top(_), .. } => Some(format!("repo:{}", folder_name(path))),
+            FolderEdit::MoveFolder { path, to: Place::Group { name, .. }, .. } => Some(format!("repo:{name}/{}", folder_name(path))),
+            FolderEdit::RemoveFolder { .. } | FolderEdit::RemoveGroup { .. } | FolderEdit::ShowSubfolders { .. } => None,
         }
     }
 }
 
-fn listed_at(entries: &Entries, pos: Pos) -> Option<&Path> {
-    let entry = entries.list.get(pos.entry)?;
-    match (entry, pos.folder) {
-        (folders::Entry::Folder(f), None) => Some(&f.path),
-        (folders::Entry::Group { folders, .. }, Some(i)) => folders.get(i).map(|f| f.path.as_path()),
-        _ => None,
+/// Refused unless the folder at `pos` is still `path`: the list changed since the row was shown.
+fn still_at(entries: &Entries, pos: Pos, path: &Path) -> supraman_core::Result<()> {
+    match entries.folder_at(pos) {
+        Some(f) if path_key(&f.path) == path_key(path) => Ok(()),
+        _ => Err(CoreError::NoEntry(path.display().to_string())),
     }
 }
 
@@ -138,7 +162,7 @@ impl FleetView {
                     Ok((said, read)) => {
                         let writes = this.polls.folder_writes.load(Ordering::SeqCst);
                         if this.listed.apply(read, generation, writes) {
-                            this.listed_changed();
+                            this.listed_changed(cx);
                         }
                         if let Some(row) = row {
                             this.reveal_new(PendingReveal::Row(row));
@@ -152,6 +176,13 @@ impl FleetView {
             .ok();
         })
         .detach();
+    }
+
+    /// A dragged folder let go on `target`; nothing is written when it would stay where it is.
+    pub(super) fn drop_folder(&mut self, dragged: &DraggedFolder, target: &Target, cx: &mut Context<Self>) {
+        if let Some(to) = landing(&self.listed.entries, dragged.pos, target) {
+            self.edit_folders(FolderEdit::MoveFolder { from: dragged.pos, path: dragged.path.clone(), to }, cx);
+        }
     }
 
     /// A folder picked, added at the end of the top level or of `group`.
@@ -199,6 +230,7 @@ impl FleetView {
             MenuAction::RenameGroup(name) => self.open_group_name(Some(name), window, cx),
             MenuAction::RemoveFolder { pos, path } => self.edit_folders(FolderEdit::RemoveFolder { pos, path }, cx),
             MenuAction::RemoveGroup(name) => self.ask_remove_group(name),
+            MenuAction::ShowSubfolders { pos, path, show } => self.edit_folders(FolderEdit::ShowSubfolders { pos, path, show }, cx),
             _ => {}
         }
     }

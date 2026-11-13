@@ -7,7 +7,6 @@ use super::FleetView;
 use super::menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuItem, MenuTarget, folder_items, group_items, is_foremans, other_schedule_items, schedule_items, schedules_items, session_items};
 use crate::fleet::{self, SessionRow};
 use crate::work_view;
-use supraman_core::folders::Pos;
 use supraman_ui::confirm::Answer;
 
 pub(super) fn send_name_of(session_id: &str) -> Option<String> {
@@ -73,12 +72,8 @@ impl FleetView {
     /// A folder row's title and items, with its place in folders.toml.
     pub(super) fn folder_menu(&self, key: &str) -> Option<(String, Vec<MenuItem>)> {
         let tree = self.tree();
-        tree.entries.iter().enumerate().find_map(|(e, entry)| {
-            let f = entry.folders.iter().position(|f| f.key == key)?;
-            let pos = if entry.group { Pos::member(e, f) } else { Pos::top(e) };
-            let folder = &entry.folders[f];
-            Some((folder.place(), folder_items(entry, folder, pos, self.has_closed_background(&entry.name))))
-        })
+        let (entry, folder) = tree.folders().find(|(_, f)| f.key == key)?;
+        Some((folder.place(), folder_items(entry, folder, self.has_closed_background(&entry.name))))
     }
 
     pub(super) fn session_menu(&self, entry: &str, place: &str, row: &SessionRow, send_name: Option<String>, cx: &gpui::App) -> Vec<MenuItem> {
@@ -157,7 +152,7 @@ impl FleetView {
             tab @ (MenuAction::OpenGit(_) | MenuAction::OpenWorkman { .. } | MenuAction::CloseTab(_) | MenuAction::CloseOtherTabs(_) | MenuAction::CloseTabsRight(_) | MenuAction::ReopenClosed) => {
                 self.run_tab_action(tab, cx);
             }
-            folders @ (MenuAction::AddFolder(_) | MenuAction::AddGroup | MenuAction::RenameGroup(_) | MenuAction::RemoveFolder { .. } | MenuAction::RemoveGroup(_)) => {
+            folders @ (MenuAction::AddFolder(_) | MenuAction::AddGroup | MenuAction::RenameGroup(_) | MenuAction::RemoveFolder { .. } | MenuAction::RemoveGroup(_) | MenuAction::ShowSubfolders { .. }) => {
                 self.run_folder_action(folders, window, cx);
             }
         }

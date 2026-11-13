@@ -22,6 +22,7 @@ use crate::updates::Stage;
 use crate::fleet::{self, EntryNode, FolderNode, Open, SessionRow};
 
 mod action_bar;
+mod drag;
 mod work_cards;
 
 const REVEAL_WITHIN: Duration = Duration::from_secs(60);
@@ -41,6 +42,8 @@ pub(super) enum LeftRow {
     Session(usize, usize, usize),
     More(usize, usize),
     Others,
+    /// Below the tree: a dragged folder dropped here goes to the top level's end.
+    DropEnd,
 }
 
 const TREE_MIN_SHARE: f32 = 0.3;
@@ -319,7 +322,8 @@ impl FleetView {
         if query.is_empty() {
             self.set_left_rows(tree);
             let list = gpui::list(self.sidebar.left_list.state(), cx.processor(|this: &mut Self, ix: usize, _, cx| div().w_full().child(this.render_left_row(ix, cx)).into_any_element())).size_full().pb_4();
-            div().id("fleet").relative().child(hit_target(&self.hits, "tree-area".into())).flex().flex_col().flex_1().min_h(relative(TREE_MIN_SHARE)).child(list)
+            let area = div().id("fleet").relative().child(hit_target(&self.hits, "tree-area".into())).flex().flex_col().flex_1().min_h(relative(TREE_MIN_SHARE)).child(list);
+            self.tree_drop(area, cx)
         } else {
             let body = div()
                 .id("search-results")
@@ -349,12 +353,15 @@ impl FleetView {
             }
             for (f, folder) in entry.folders.iter().enumerate() {
                 let key = &folder.key;
+                if folder.parent.as_ref().is_some_and(|p| self.sidebar.collapsed.contains(&format!("repo:{p}"))) {
+                    continue;
+                }
                 rows.push((LeftRow::Folder(e, f), format!("repo:{key}"), vec![key.clone()]));
                 if self.sidebar.collapsed.contains(&format!("repo:{key}")) {
                     continue;
                 }
                 let fkey = supraman_core::schedule::folder_key(&folder.path);
-                if scheduled.insert(fkey.clone()) {
+                if folder.listed() && scheduled.insert(fkey.clone()) {
                     let tokens = ["schedules-row-", "sched-row-", "sched-state-", "sched-error-", "others-row-"].iter().map(|p| format!("{p}{fkey}")).collect();
                     rows.push((LeftRow::Schedules(e, f), format!("sched:{fkey}"), tokens));
                 }
@@ -367,6 +374,7 @@ impl FleetView {
             }
         }
         rows.push((LeftRow::Others, "others".into(), ["others-row", "other-row-", "other-name-", "other-summary-"].iter().map(|p| p.to_string()).collect()));
+        rows.push((LeftRow::DropEnd, "drop-end".into(), vec![drag::END.to_string()]));
         self.sidebar.left_list.set_rows(rows.iter().map(|(_, key, tokens)| (SharedString::from(key.clone()), tokens.clone())).collect());
         self.sidebar.left_rows = Rc::new((tree.clone(), rows.into_iter().map(|(row, ..)| row).collect()));
         if let Some((pending, since)) = &self.sidebar.reveal_pending {
@@ -438,10 +446,11 @@ impl FleetView {
             }
             LeftRow::Session(e, f, i) => {
                 let (entry, folder) = (&tree.entries[e], &tree.entries[e].folders[f]);
-                self.render_session(&entry.name, &folder.key, &folder.sessions[i], grid::indent(level(entry) + 1), cx)
+                self.render_session(&entry.name, &folder.key, &folder.sessions[i], grid::indent(folder_level(entry, folder) + 1), cx)
             }
             LeftRow::More(e, f) => self.render_more_closed(&tree.entries[e], &tree.entries[e].folders[f], cx),
             LeftRow::Others => div().flex().flex_col().children(self.render_unowned_others(cx)).into_any_element(),
+            LeftRow::DropEnd => self.render_drop_end(cx),
         }
     }
 
@@ -456,7 +465,7 @@ impl FleetView {
             .flex_none()
             .items_center()
             .h(px(SESSION_LINE))
-            .pl(grid::indent(level(entry) + 1) + px(grid::LABEL))
+            .pl(grid::indent(folder_level(entry, repo) + 1) + px(grid::LABEL))
             .text_xs()
             .text_color(secondary(cx))
             .cursor_pointer()
@@ -689,7 +698,7 @@ impl FleetView {
             .child(tree_label(&self.hits, &format!("group-{name}"), div().flex_none().font_weight(FontWeight::BOLD).whitespace_nowrap().child(SharedString::from(name.clone()))))
             .child(div().flex_1())
             .child(buttons);
-        div()
+        let row = div()
             .id(SharedString::from(pkey.clone()))
             .group(group)
             .relative()
@@ -701,7 +710,8 @@ impl FleetView {
             .mt_2()
             .cursor_pointer()
             .hover(|s| s.bg(colors.ghost_element_hover))
-            .active(|s| s.bg(colors.ghost_element_active))
+            .active(|s| s.bg(colors.ghost_element_active));
+        self.group_drop(row, &name, cx)
             .child(line)
             .child(hit_target(&self.hits, format!("group-row-{name}")))
             .on_mouse_down(MouseButton::Right, {
@@ -743,7 +753,8 @@ impl FleetView {
         let rkey = format!("repo:{key}");
         let tree_key = format!("repo-{key}");
         let group = SharedString::from(format!("repo-group-{key}"));
-        let empty = repo.sessions.is_empty();
+        let children = entry.folders.iter().any(|f| f.parent.as_ref() == Some(key));
+        let empty = repo.sessions.is_empty() && !children;
         let git = repo.kind == supraman_core::FolderKind::Git;
         let branch = repo.branch.clone().filter(|_| git).unwrap_or_default();
         let place = repo.place();
@@ -774,8 +785,8 @@ impl FleetView {
                 },
             ))
         });
-        let work = (!entry.group).then(|| self.work_button(entry, &group, self.entry_selected(entry, cx), cx));
-        div()
+        let work = (!entry.group && repo.listed()).then(|| self.work_button(entry, &group, self.entry_selected(entry, cx), cx));
+        let row = div()
             .id(SharedString::from(rkey.clone()))
             .group(group)
             .relative()
@@ -783,13 +794,14 @@ impl FleetView {
             .flex_none()
             .items_center()
             .gap(grid::gap())
-            .h(px(if entry.group { REPO_ROW } else { GROUP_ROW }))
-            .pl(grid::indent(level(entry)))
+            .h(px(if entry.group || !repo.listed() { REPO_ROW } else { GROUP_ROW }))
+            .pl(grid::indent(folder_level(entry, repo)))
             .pr_2()
             .text_sm()
             .cursor_pointer()
             .hover(|s| s.bg(colors.ghost_element_hover))
-            .active(|s| s.bg(colors.ghost_element_active))
+            .active(|s| s.bg(colors.ghost_element_active));
+        self.folder_drag(row, repo, cx)
             .when(empty, |d| d.text_color(quiet(cx)))
             .child(disclosure((!empty).then_some(open), secondary(cx)))
             .child(icon_slot(&self.hits, &tree_key, Some(if git { Icon::GitBranch } else { Icon::Folder }.slotted(grid::ICON, secondary(cx)).into_any_element())))
@@ -1008,6 +1020,11 @@ impl FleetView {
 /// A row's level under the tree's root: a group's folders are one in.
 pub(super) fn level(entry: &EntryNode) -> usize {
     usize::from(entry.group)
+}
+
+/// A folder row's level: a shown child is one in from its parent.
+pub(super) fn folder_level(entry: &EntryNode, folder: &FolderNode) -> usize {
+    level(entry) + usize::from(folder.parent.is_some())
 }
 
 #[cfg(test)]

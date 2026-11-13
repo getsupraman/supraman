@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use supraman_core::folders::{Entry, FolderEntry};
+use supraman_core::folders::{Entry, FolderEntry, Shown};
 use supraman_core::paths::{folder_name, normalize};
 
 use super::*;
@@ -132,9 +132,28 @@ fn place_groups_by_folder_and_keeps_the_rest() {
         session("e1", &plat.join("Alpha.Ext")),
         session("x1", &tmp.path().join("Elsewhere")),
     ];
-    let placed = place(&sessions, &p);
+    let placed = place(&sessions, &p, &Shown::new());
     let ids = |dir: PathBuf| placed.by_folder[&path_key(&dir)].iter().map(|s| s.id.as_str()).collect::<Vec<_>>();
     assert_eq!(ids(plat.join("Alpha")), ["a1", "a2"]);
     assert_eq!(ids(plat.join("Alpha.Ext")), ["e1"]);
     assert_eq!(placed.unplaced.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["x1"]);
+}
+
+#[test]
+fn a_session_under_a_shown_child_is_placed_under_the_child_not_its_parent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let larch = tmp.path().join("LarchSys");
+    let gaia = larch.join("gaia");
+    fs::create_dir_all(gaia.join("src")).unwrap();
+    let mut parent = FolderEntry::new(&larch);
+    parent.show_subfolders = true;
+    let entries = Entries::new(vec![Entry::Folder(parent)]);
+    let shown = Shown::from([(path_key(&larch), supraman_core::folders::subfolders(&larch))]);
+    let sessions = vec![session("g1", &gaia.join("src")), session("l1", &larch)];
+    let placed = place_with(&sessions, &entries, &shown, |_| None);
+    let ids = |dir: &Path| placed.by_folder.get(&path_key(dir)).map(|v| v.iter().map(|s| s.id.as_str()).collect::<Vec<_>>()).unwrap_or_default();
+    assert_eq!(ids(&gaia), ["g1"], "a session in gaia/src shows under the shown gaia");
+    assert_eq!(ids(&larch), ["l1"]);
+    let hidden = Entries::new(vec![Entry::Folder(FolderEntry::new(&larch))]);
+    assert_eq!(place_with(&sessions, &hidden, &shown, |_| None).by_folder[&path_key(&larch)].len(), 2, "a parent not showing them keeps them");
 }

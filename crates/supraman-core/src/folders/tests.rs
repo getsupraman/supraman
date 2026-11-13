@@ -167,3 +167,41 @@ fn on_disk_reads_git_and_branch_or_plain() {
     assert_eq!(on_disk(&git), OnDisk { kind: FolderKind::Git, branch: Some("main".into()) });
     assert_eq!(on_disk(tmp.path()), OnDisk { kind: FolderKind::Plain, branch: None });
 }
+
+#[test]
+fn subfolders_are_the_direct_child_folders_by_name_without_dot_hidden_or_skipped_ones() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    for d in ["gaia", "Alpha", ".git", ".claude", "node_modules", "Target", "obj", "src/deep"] {
+        std::fs::create_dir_all(root.join(d)).unwrap();
+    }
+    std::fs::write(root.join("README.md"), "x").unwrap();
+    let names: Vec<String> = subfolders(root).iter().map(|p| crate::paths::folder_name(p)).collect();
+    assert_eq!(names, ["Alpha", "gaia", "src"], "sorted by name ignoring case, one level, folders only");
+    assert!(subfolders(&root.join("missing")).is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn a_folder_with_the_hidden_attribute_is_no_subfolder() {
+    let dir = tempfile::tempdir().unwrap();
+    let hidden = dir.path().join("secret");
+    std::fs::create_dir(&hidden).unwrap();
+    let ran = crate::process::run(crate::process::command("attrib").arg("+h").arg(&hidden), std::time::Duration::from_secs(30), crate::process::Kill::Tree).unwrap();
+    assert_eq!(ran.code, Some(0));
+    assert!(subfolders(dir.path()).is_empty());
+}
+
+#[test]
+fn show_subfolders_is_set_by_position_and_shown_children_join_the_placed_folders() {
+    let mut e = sample();
+    e.set_show_subfolders(Pos::member(1, 0), true).unwrap();
+    assert!(e.folder_at(Pos::member(1, 0)).unwrap().show_subfolders);
+    assert!(e.set_show_subfolders(Pos::top(1), true).is_err(), "a group is no folder");
+    assert_eq!(e.showing(), [PathBuf::from(r"C:\g")]);
+    let shown = Shown::from([(crate::paths::path_key(Path::new(r"C:\g")), vec![PathBuf::from(r"C:\g\web")]), (crate::paths::path_key(Path::new(r"C:\a")), vec![PathBuf::from(r"C:\a\x")])]);
+    let placed: Vec<&Path> = e.placed(&shown).collect();
+    assert_eq!(placed, [Path::new(r"C:\a"), Path::new(r"C:\g"), Path::new(r"C:\g\api"), Path::new(r"C:\b"), Path::new(r"C:\g\web")], "a folder not showing its own adds none");
+    e.move_folder(Pos::member(1, 0), &Place::Top(0)).unwrap();
+    assert!(e.folder_at(Pos::top(0)).unwrap().show_subfolders, "a move keeps the flag");
+}

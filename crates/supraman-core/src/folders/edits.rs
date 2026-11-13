@@ -84,6 +84,26 @@ impl Entries {
         }
     }
 
+    /// The folder at `pos`.
+    pub fn folder_at(&self, pos: Pos) -> Option<&FolderEntry> {
+        match (self.list.get(pos.entry)?, pos.folder) {
+            (Entry::Folder(f), None) => Some(f),
+            (Entry::Group { folders, .. }, Some(i)) => folders.get(i),
+            _ => None,
+        }
+    }
+
+    /// Whether the folder at `pos` shows its direct child folders.
+    pub fn set_show_subfolders(&mut self, pos: Pos, show: bool) -> Result<()> {
+        let f = match (self.list.get_mut(pos.entry), pos.folder) {
+            (Some(Entry::Folder(f)), None) => f,
+            (Some(Entry::Group { folders, .. }), Some(i)) if i < folders.len() => &mut folders[i],
+            _ => return Err(CoreError::NoEntry(format!("{pos:?}"))),
+        };
+        f.show_subfolders = show;
+        Ok(())
+    }
+
     /// The folder at `from` moved to `to`; `to`'s index counts with the folder already taken out.
     pub fn move_folder(&mut self, from: Pos, to: &Place) -> Result<()> {
         if let Place::Group { name, .. } = to {

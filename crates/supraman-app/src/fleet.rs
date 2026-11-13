@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use supraman_claude::{Health, Kind, Session, main_repo, place_with};
-use supraman_core::folders::{Entries, Entry, FolderEntry, OnDisk};
+use supraman_core::folders::{Entries, Entry, FolderEntry, OnDisk, Pos, Shown};
 use supraman_core::paths::{folder_name, path_key};
 use supraman_core::time::ago;
 use supraman_core::{Event, FolderKind};
@@ -35,6 +35,11 @@ pub struct FolderNode {
     /// Its scheduled runs' sessions by schedule id ([`supraman_core::schedule::schedule_of_session`]), shown under
     /// its Schedules; a path listed twice has them on its first row only.
     pub scheduled: BTreeMap<String, Vec<SessionRow>>,
+    /// Its place in folders.toml; `None` for a shown child folder.
+    pub pos: Option<Pos>,
+    /// A shown child's: the key of the folder row it shows under.
+    pub parent: Option<String>,
+    pub shows_subfolders: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -147,8 +152,8 @@ pub struct TreeInputs<'a> {
     pub polled_at: i64,
     /// `None` walks the filesystem instead.
     pub main_repos: Option<&'a HashMap<PathBuf, Option<PathBuf>>>,
-    /// Each listed folder's kind and branch by [`path_key`]; `None` reads the disk instead.
-    pub disk: Option<&'a HashMap<String, OnDisk>>,
+    /// The listed and shown folders' kinds and the shown children; `None` reads the disk instead.
+    pub disk: Option<&'a Disk>,
     /// A session `claude agents` lists is shown from there instead.
     pub closed: &'a [Session],
     pub starred: Option<&'a BTreeSet<String>>,
@@ -168,9 +173,19 @@ pub fn main_repos(sessions: &[Session]) -> HashMap<PathBuf, Option<PathBuf>> {
     out
 }
 
-/// Each listed folder's kind and branch, read once per poll off the UI thread.
-pub fn on_disk(entries: &Entries) -> HashMap<String, OnDisk> {
-    entries.folders().map(|f| (path_key(&f.path), supraman_core::folders::on_disk(&f.path))).collect()
+/// What the disk says of the listed folders: the children shown under those that show them, and each listed or
+/// shown folder's kind and branch by [`path_key`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Disk {
+    pub kinds: HashMap<String, OnDisk>,
+    pub shown: Shown,
+}
+
+/// Read once per poll off the UI thread.
+pub fn on_disk(entries: &Entries) -> Disk {
+    let shown = supraman_core::folders::shown(entries);
+    let kinds = entries.placed(&shown).map(|p| (path_key(p), supraman_core::folders::on_disk(p))).collect();
+    Disk { kinds, shown }
 }
 
 #[derive(Debug)]
@@ -199,6 +214,11 @@ impl Tree {
 }
 
 impl FolderNode {
+    /// A row of folders.toml, not a shown child.
+    pub fn listed(&self) -> bool {
+        self.pos.is_some()
+    }
+
     /// The folder as a title's first part: `group · name`, or its name alone.
     pub fn place(&self) -> String {
         self.key.replace('/', " · ")
@@ -302,26 +322,45 @@ pub fn next_change(sessions: &[Session], closed: &[Session], now_ms: i64) -> Opt
 
 pub fn build(entries: &Entries, sessions: &[Session], now_ms: i64, show_stopped: bool, sup: &TreeInputs) -> Tree {
     let mut b = Build::new(sessions, now_ms, show_stopped, sup);
+    let read;
+    let disk = match sup.disk {
+        Some(disk) => disk,
+        None => {
+            read = on_disk(entries);
+            &read
+        }
+    };
     let keys: Vec<String> = entries.folders().map(|f| supraman_core::schedule::folder_key(&f.path)).collect();
     let rest = b.scheduled(&keys, sessions.to_vec());
     let main_of = |p: &Path| b.main_of(p);
-    let (open, gone) = (place_with(&rest, entries, main_of).by_folder, place_with(&b.closed, entries, main_of).by_folder);
+    let placed = Placed {
+        open: place_with(&rest, entries, &disk.shown, main_of).by_folder,
+        gone: place_with(&b.closed, entries, &disk.shown, main_of).by_folder,
+        disk,
+    };
     let mut nodes = Vec::new();
-    for entry in &entries.list {
+    for (e, entry) in entries.list.iter().enumerate() {
         let node = match entry {
             Entry::Folder(f) => {
-                let folder = b.folder(None, f, &open, &gone);
-                EntryNode { name: folder.key.clone(), group: false, folders: vec![folder] }
+                let folders = b.listed(None, f, Pos::top(e), &placed);
+                EntryNode { name: folders[0].key.clone(), group: false, folders }
             }
             Entry::Group { name, folders } => EntryNode {
                 name: name.clone(),
                 group: true,
-                folders: folders.iter().map(|f| b.folder(Some(name), f, &open, &gone)).collect(),
+                folders: folders.iter().enumerate().flat_map(|(i, f)| b.listed(Some(name), f, Pos::member(e, i), &placed)).collect(),
             },
         };
         nodes.push(node);
     }
     Tree { entries: nodes, hidden_stopped: b.hidden.len() }
+}
+
+/// The sessions placed by folder, open and closed, and what the disk says of the folders.
+struct Placed<'a> {
+    open: HashMap<String, Vec<Session>>,
+    gone: HashMap<String, Vec<Session>>,
+    disk: &'a Disk,
 }
 
 /// One [`build`]'s inputs and what it reads once from them; `hidden` gathers the rows left out.
@@ -413,23 +452,39 @@ impl<'a> Build<'a> {
         key
     }
 
-    /// A listed folder's row with the sessions it holds; a path listed before shows them again, its keys scoped.
-    fn folder(&mut self, group: Option<&str>, f: &FolderEntry, open: &HashMap<String, Vec<Session>>, gone: &HashMap<String, Vec<Session>>) -> FolderNode {
+    /// A listed folder's row, then a row for each child it shows.
+    fn listed(&mut self, group: Option<&str>, f: &FolderEntry, pos: Pos, placed: &Placed) -> Vec<FolderNode> {
         let name = folder_name(&f.path);
-        let key = self.unique_key(group.map_or_else(|| name.clone(), |g| format!("{g}/{name}")));
-        let at = path_key(&f.path);
+        let base = group.map_or_else(|| name.clone(), |g| format!("{g}/{name}"));
+        let mut parent = self.folder(base, &f.path, placed);
+        parent.scheduled = self.runs.remove(&supraman_core::schedule::folder_key(&f.path)).unwrap_or_default();
+        parent.pos = Some(pos);
+        parent.shows_subfolders = f.show_subfolders;
+        let children: &[PathBuf] = match f.show_subfolders {
+            true => placed.disk.shown.get(&path_key(&f.path)).map_or(&[], Vec::as_slice),
+            false => &[],
+        };
+        let mut out = vec![parent];
+        for child in children {
+            let mut node = self.folder(format!("{}/{}", out[0].key, folder_name(child)), child, placed);
+            node.parent = Some(out[0].key.clone());
+            out.push(node);
+        }
+        out
+    }
+
+    /// A folder's row with the sessions it holds; a path shown before shows them again, its keys scoped.
+    fn folder(&mut self, base: String, path: &Path, placed: &Placed) -> FolderNode {
+        let name = folder_name(path);
+        let key = self.unique_key(base);
+        let at = path_key(path);
         let held = |by: &HashMap<String, Vec<Session>>| by.get(&at).cloned().unwrap_or_default();
-        let (mut sessions, more) = self.place(&key, held(open), held(gone));
+        let (mut sessions, more) = self.place(&key, held(&placed.open), held(&placed.gone));
         if !self.listed.insert(at.clone()) {
             sessions.iter_mut().for_each(|r| r.scope = format!("@{key}"));
         }
-        let disk = match self.sup.disk {
-            Some(known) => known.get(&at).cloned(),
-            None => Some(supraman_core::folders::on_disk(&f.path)),
-        };
-        let OnDisk { kind, branch } = disk.unwrap_or(OnDisk { kind: FolderKind::Plain, branch: None });
-        let scheduled = self.runs.remove(&supraman_core::schedule::folder_key(&f.path)).unwrap_or_default();
-        FolderNode { key, name, path: f.path.clone(), kind, branch, sessions, more, scheduled }
+        let OnDisk { kind, branch } = placed.disk.kinds.get(&at).cloned().unwrap_or(OnDisk { kind: FolderKind::Plain, branch: None });
+        FolderNode { key, name, path: path.to_path_buf(), kind, branch, sessions, more, scheduled: BTreeMap::new(), pos: None, parent: None, shows_subfolders: false }
     }
 
     /// A folder's rows: the open ones, then the closed ones up to [`CLOSED_CAP`]; and how many that cap left out.
