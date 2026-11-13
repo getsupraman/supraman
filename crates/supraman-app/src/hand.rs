@@ -462,7 +462,7 @@ impl Hands {
                 return self.helped(name, Some(format!("This claude session runs without its own Workman token: cannot mint an {ROLE} one ({e})")));
             }
         };
-        let session = MintedSession { session_id: minted.session_id.clone(), role: EXTERNAL_ROLE.into(), claude_session_id: claude_session, last_active: None, origin: Some(base) };
+        let session = MintedSession { session_id: minted.session_id.clone(), role: EXTERNAL_ROLE.into(), claude_session_id: claude_session, origin: Some(base) };
         self.minted.insert_minted(&name, session, &request);
         if let Some(unsaved) = self.save() {
             notice = Some(notice.map_or(unsaved.clone(), |n| format!("{n}; {unsaved}")));
@@ -1214,7 +1214,7 @@ mod tests {
             takeover_from: None,
         };
         let sid = "fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff";
-        let session = MintedSession { session_id: "s1".into(), role: EXTERNAL_ROLE.into(), claude_session_id: Some(sid.into()), last_active: None, origin: None };
+        let session = MintedSession { session_id: "s1".into(), role: EXTERNAL_ROLE.into(), claude_session_id: Some(sid.into()), origin: None };
         hands.minted.insert_minted("hand-alpha-1", session, &former);
 
         let Launch::Minted { name, session, .. } = hands.launch_for(Path::new(r"C:\demo\alpha"), Some("mw-workflow"), Some(sid)) else { panic!() };

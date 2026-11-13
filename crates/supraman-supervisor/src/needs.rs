@@ -25,9 +25,6 @@ pub enum NeedsKind {
     LaunchFailed,
     /// Two or more rows carry one wanted name; the supervisor touches none of them.
     Duplicate,
-    /// A live minted session had no turn for longer than its token's idle window: its next
-    /// Workman call gets HTTP 401.
-    TokenExpired,
     /// A live minted session's token is from another Workman server than the one Supraman uses.
     OtherServer,
     /// `claude stop` failed on a session that should stop: it keeps running.

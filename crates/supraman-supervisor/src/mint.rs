@@ -13,7 +13,7 @@ use supraman_core::secret::SecretStore;
 
 mod keeping;
 
-pub use keeping::{CHECK_EVERY, Keeping, PING_TIMEOUT, RENEW_MARGIN};
+pub use keeping::{CHECK_EVERY, Checked, Keeping, PING_TIMEOUT, RENEW_MARGIN};
 
 /// `POST /api/agent-sessions`; `role` is the Workman role (never above the bearer's), `external_role` Supraman's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -234,9 +234,6 @@ pub struct MintedSession {
     /// The claude session uuid sent with the mint or PATCHed since; `None` until then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_session_id: Option<String>,
-    /// Epoch ms of what last slid the token's expiry: its mint or the last turn seen within its window.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_active: Option<crate::Millis>,
     /// The server the token is from ([`supraman_core::url::origin`] of its MCP URL); `None`: unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
@@ -875,7 +872,6 @@ mod tests {
                 session_id: "7".into(),
                 role: "workspace".into(),
                 claude_session_id: None,
-                last_active: Some(42),
                 origin: Some("http://127.0.0.1:1".into()),
             },
         );
@@ -888,10 +884,21 @@ mod tests {
     }
 
     #[test]
+    fn a_record_written_with_last_active_still_loads() {
+        let home = tempfile::tempdir().unwrap();
+        let path = MintedSessions::path(home.path(), "demo");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"fm-demo-workspace":{"sessionId":"7","role":"workspace","lastActive":1800000000000,"origin":"http://127.0.0.1:1"}}"#).unwrap();
+        let s = MintedSessions::load(path).unwrap();
+        let session = MintedSession { session_id: "7".into(), role: "workspace".into(), claude_session_id: None, origin: Some("http://127.0.0.1:1".into()) };
+        assert_eq!(s.get("fm-demo-workspace"), Some(&session));
+    }
+
+    #[test]
     fn two_writers_of_one_run_record_lose_no_update() {
         let home = tempfile::tempdir().unwrap();
         let path = MintedSessions::run_path(home.path(), "fm-demo-run");
-        let session = MintedSession { session_id: "7".into(), role: "run".into(), claude_session_id: None, last_active: None, origin: None };
+        let session = MintedSession { session_id: "7".into(), role: "run".into(), claude_session_id: None, origin: None };
         const EACH: usize = 40;
         std::thread::scope(|s| {
             for writer in ["a", "b"] {
@@ -966,7 +973,7 @@ mod tests {
             session_id: minted.session_id.clone(),
             role: "workspace".into(),
             claude_session_id: Some(SID.into()),
-            last_active: None,
+           
             origin: Some(fake.base().to_string()),
         };
         records.insert_minted(NAME, session, &req);
@@ -1144,7 +1151,7 @@ mod tests {
         let (keeper, token) = kept_at(home.path(), &fake, record.clone());
         let other = "bbbb0002-0000-4000-8000-000000000002";
         let mut records = MintedSessions::load(record.clone()).unwrap();
-        let session = MintedSession { session_id: "9".into(), role: "workspace".into(), claude_session_id: Some(other.into()), last_active: None, origin: Some(fake.base().to_string()) };
+        let session = MintedSession { session_id: "9".into(), role: "workspace".into(), claude_session_id: Some(other.into()), origin: Some(fake.base().to_string()) };
         records.insert_minted("fm-demo-other", session, &request());
         records.save().unwrap();
         let signed = || Bearer::Signed { url: fake.mcp_url(), token: "fake-static".into() };

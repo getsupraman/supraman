@@ -22,7 +22,7 @@ pub fn kind_color(kind: &str, cx: &App) -> Hsla {
     let status = cx.theme().status();
     match kind {
         "blocked" | "trust needed" | "question" | "assumption_due" | "done_unverified" | "approve" | "needs you" => status.warning,
-        "blocker_finding" | "gave up" | "launch failed" | "token expired" | "other server" | "stop failed" | "run failed" | "task not synced" => {
+        "blocker_finding" | "gave up" | "launch failed" | "other server" | "stop failed" | "run failed" | "task not synced" => {
             status.error
         }
         "duplicate" => status.hint,

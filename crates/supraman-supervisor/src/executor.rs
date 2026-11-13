@@ -8,7 +8,7 @@ use supraman_core::home::SessionEnv;
 use crate::mint::{Absent, Bearer, Keeper};
 use crate::{
     Action, Budget, DesiredState, Failure, HttpMinter, MintRepo, MintRequest, Minted, MintedSession, MintedSessions, Millis, Minter, NeedsKind,
-    NeedsYou, Policy, Remedy, SECOND, SupervisorMemory, WantedSession, adopt_prompt, is_live, mid_turn, reconcile,
+    NeedsYou, Policy, Remedy, SupervisorMemory, WantedSession, adopt_prompt, is_live, mid_turn, reconcile,
 };
 
 /// The three `claude` writes the supervisor performs.
@@ -311,11 +311,11 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         &self.needs
     }
 
-    /// The human's Retry: forgets `name`'s failures; on a [`NeedsKind::TokenExpired`] row it is the Re-mint.
+    /// The human's Retry: forgets `name`'s failures; on a [`NeedsKind::OtherServer`] row it is the Re-mint.
     pub fn retry(&mut self, name: &str) {
         self.memory.retry(name);
         self.held = None;
-        if self.needs.iter().any(|n| matches!(n.kind, NeedsKind::TokenExpired | NeedsKind::OtherServer) && n.name == name)
+        if self.needs.iter().any(|n| n.kind == NeedsKind::OtherServer && n.name == name)
             && !self.remint_due.iter().any(|n| n == name)
         {
             self.remint_due.push(name.to_string());
@@ -408,7 +408,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                     let exempt = wanted.as_ref().is_some_and(|w| w.exempt_from_budget());
                     // the resume keeps its `--mcp-config` path: a fresh token goes into the same file
                     let result = match &wanted {
-                        Some(w) => self.remint(w, &session_id, now),
+                        Some(w) => self.remint(w, &session_id),
                         None => Ok(()),
                     }
                     .and_then(|()| self.launcher.resume(&session_id, &cwd, prompt.as_deref()).map_err(|e| Failure::from(&e)))
@@ -439,7 +439,6 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         }
         self.record_stops(stops, now);
         self.settle_minted(observed, now);
-        self.track_activity(observed, now);
         self.inbox(observed, &reminting, budget.free, now)
     }
 
@@ -459,7 +458,6 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                 _ => None,
             })
             .collect();
-        needs.extend(self.expired_tokens(observed, reminting, now));
         needs.extend(self.other_server_tokens(observed, reminting, now));
         needs.extend(self.failed_stops());
         if let Some(need) = self.held_need(observed, now) {
@@ -517,7 +515,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             spec.resume = Some(from.clone());
             spec.prompt = adopt_prompt(&self.desired.workspace, w);
         }
-        spec = match self.mint(w, None, now)? {
+        spec = match self.mint(w, None)? {
             Some((url, minted)) => self.keeper.launch(spec, &url, &minted.token, minted.expires_at.as_deref()),
             None => self.keeper.launch_unminted(spec, self.tokens.mcp_url().ok().as_deref()),
         }
@@ -526,7 +524,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     }
 
     /// Mints `w`'s own token, always with `replace`; a launch sends no `claude_session_id`, as `--bg` ignores `--session-id`.
-    fn mint(&mut self, w: &WantedSession, claude_session_id: Option<&str>, now: Millis) -> Result<Option<(String, Minted)>, Failure> {
+    fn mint(&mut self, w: &WantedSession, claude_session_id: Option<&str>) -> Result<Option<(String, Minted)>, Failure> {
         let Some(t) = self
             .tokens
             .token(&w.role)
@@ -554,7 +552,6 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             session_id: minted.session_id.clone(),
             role: w.role.clone(),
             claude_session_id: claude_session_id.map(str::to_string),
-            last_active: Some(now),
             origin: Some(supraman_core::url::origin(&t.url)),
         };
         self.minted.insert_minted(&w.name, session, &request);
@@ -564,8 +561,8 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     }
 
     /// Before the resume of `claude_session_id`: a fresh token into the session's config file.
-    fn remint(&mut self, w: &WantedSession, claude_session_id: &str, now: Millis) -> Result<(), Failure> {
-        if let Some((url, minted)) = self.mint(w, Some(claude_session_id), now)? {
+    fn remint(&mut self, w: &WantedSession, claude_session_id: &str) -> Result<(), Failure> {
+        if let Some((url, minted)) = self.mint(w, Some(claude_session_id))? {
             self.keeper.write(&w.name, &url, &minted.token, minted.expires_at.as_deref(), &self.config.plugin_servers(&w.name)).map_err(Failure::Other)?;
         }
         Ok(())
@@ -590,7 +587,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             })
             .collect();
         for (w, claude_session_id) in due {
-            if let Err(Failure::Other(e)) = self.remint(&w, &claude_session_id, now) {
+            if let Err(Failure::Other(e)) = self.remint(&w, &claude_session_id) {
                 self.notices.push(format!("{} runs without its Workman token after the sign-in: {e}", w.name));
             }
         }
@@ -764,67 +761,6 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                 self.unconfirmed.push((name, id, at));
             }
         }
-    }
-
-    /// A turn on a minted session's live row slides its token's expiry, unless lapsed; saved at most once a minute.
-    fn track_activity(&mut self, observed: &[Session], now: Millis) {
-        let window = self.policy.token_window;
-        let mut changed = false;
-        for w in &self.desired.sessions {
-            let Some(m) = self.minted.get_mut(&w.name) else {
-                continue;
-            };
-            let mut rows = observed.iter().filter(|s| s.name == w.name && is_live(s, now));
-            let (Some(row), None) = (rows.next(), rows.next()) else {
-                continue;
-            };
-            let due = match m.last_active {
-                None => true,
-                Some(t) => mid_turn(row, now) && now - t <= window && now - t >= 60 * SECOND,
-            };
-            if due {
-                m.last_active = Some(now);
-                changed = true;
-            }
-        }
-        if changed {
-            self.save_minted();
-        }
-    }
-
-    /// [`NeedsKind::TokenExpired`] for each wanted, minted session whose live row had no turn within the window.
-    fn expired_tokens(&self, observed: &[Session], reminting: &[String], now: Millis) -> Vec<NeedsYou> {
-        if !self.desired.started {
-            return Vec::new();
-        }
-        let window = self.policy.token_window;
-        let mut out = Vec::new();
-        for w in &self.desired.sessions {
-            let Some(last) = self.minted.get(&w.name).and_then(|m| m.last_active) else {
-                continue;
-            };
-            if now - last <= window || reminting.contains(&w.name) {
-                continue;
-            }
-            let mut rows = observed.iter().filter(|s| s.name == w.name && is_live(s, now));
-            let (Some(row), None) = (rows.next(), rows.next()) else {
-                continue;
-            };
-            out.push(NeedsYou {
-                kind: NeedsKind::TokenExpired,
-                workspace: self.desired.workspace.clone(),
-                name: w.name.clone(),
-                since: last + window,
-                detail: format!(
-                    "no turn for {} h: its Workman token lapsed after {} h idle, so its next Workman call gets HTTP 401; \
-                     Re-mint stops it and resumes it with a fresh token",
-                    (now - last) / (3_600 * SECOND),
-                    window / (3_600 * SECOND)
-                ),
-                action: Some(Remedy::Remint { id: row.id.clone() }),
-            });
-        }
-        out
     }
 
     /// [`NeedsKind::OtherServer`] for each wanted, minted session whose live row holds another server's token.

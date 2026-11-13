@@ -282,7 +282,6 @@ fn mint(ctx: &RunCtx, spec: &LaunchSpec, host: &mut dyn SessionHost) -> Result<O
         session_id: minted.session_id.clone(),
         role: crate::schedule::RUN_ROLE.into(),
         claude_session_id: None,
-        last_active: None,
         origin: Some(supraman_core::url::origin(&t.url)),
     };
     MintedSessions::edit_run(&MintedSessions::run_path(ctx.home, &spec.name), |records| records.insert_minted(&spec.name, session.clone(), &request))

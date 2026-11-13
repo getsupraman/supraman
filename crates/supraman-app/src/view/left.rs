@@ -90,7 +90,6 @@ fn needs_label(kind: NeedsKind) -> &'static str {
         NeedsKind::GaveUp => "gave up",
         NeedsKind::LaunchFailed => "launch failed",
         NeedsKind::Duplicate => "duplicate",
-        NeedsKind::TokenExpired => "token expired",
         NeedsKind::OtherServer => "other server",
         NeedsKind::StopFailed => "stop failed",
     }
