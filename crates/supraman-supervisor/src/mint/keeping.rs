@@ -89,26 +89,26 @@ impl Keeping {
         self.signed_in = true;
     }
 
-    /// One check at `now`; `refused(mcp_url, token)` pings Workman with a kept token. What failed.
-    pub fn check(&mut self, keeper: &Keeper, minter: &dyn Minter, bearer: impl FnOnce() -> Bearer, now: Millis, refused: impl Fn(&str, &str) -> bool) -> Vec<String> {
+    /// One check at `now`; `refused(mcp_url, token)` pings Workman with a kept token.
+    pub fn check(&mut self, keeper: &Keeper, minter: &dyn Minter, bearer: impl FnOnce() -> Bearer, now: Millis, refused: impl Fn(&str, &str) -> bool) -> Checked {
+        let mut checked = Checked { kept: kept_names(&keeper.home), ..Checked::default() };
         let bearer = bearer();
         let Bearer::Signed { url, .. } = &bearer else {
-            return Vec::new();
+            return checked;
         };
         let origin = supraman_core::url::origin(url);
-        let mut notices = Vec::new();
         let table = read(&keeper.home).unwrap_or_else(|e| {
-            notices.push(format!("{}{}; every kept Workman token is pinged instead", e[..1].to_uppercase(), &e[1..]));
+            checked.notices.push(format!("{}{}; every kept Workman token is pinged instead", e[..1].to_uppercase(), &e[1..]));
             Table::new()
         });
-        for name in kept_names(&keeper.home) {
-            let (Some(token), Some(config)) = (keeper.kept(&name), supraman_claude::mcp_config_url(&keeper.mcp_dir, &name)) else {
+        for name in &checked.kept {
+            let (Some(token), Some(config)) = (keeper.kept(name), supraman_claude::mcp_config_url(&keeper.mcp_dir, name)) else {
                 continue;
             };
             if supraman_core::url::origin(&config) != origin {
                 continue;
             }
-            let kept = table.get(&name).cloned().unwrap_or_default();
+            let kept = table.get(name).cloned().unwrap_or_default();
             let why = if self.signed_in || kept.signed_out {
                 "after a sign-in"
             } else if kept.expires_at.is_some_and(|at| now >= at - self.margin) {
@@ -119,13 +119,22 @@ impl Keeping {
                 continue;
             };
             log::info!("{name}: a fresh Workman token {why}");
-            if let Err(e) = remint(keeper, &name, bearer.clone(), minter) {
-                notices.push(format!("Cannot renew the Workman token of {name}: {e}"));
-            }
+            checked.renewed.insert(name.clone(), remint(keeper, name, bearer.clone(), minter));
         }
         self.signed_in = false;
-        notices
+        checked
     }
+}
+
+/// What one [`Keeping::check`] found.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Checked {
+    /// Every name a minted-session record keeps.
+    pub kept: BTreeSet<String>,
+    /// Each renewal tried, by name: done, or why not.
+    pub renewed: BTreeMap<String, Result<(), String>>,
+    /// What else went wrong.
+    pub notices: Vec<String>,
 }
 
 fn kept_names(home: &Path) -> BTreeSet<String> {
@@ -165,7 +174,7 @@ mod tests {
         let keeper = Keeper::new(home, &home.join("mcp"), Arc::new(supraman_core::secret::MemoryStore::default()));
         let minted = HttpMinter::default().mint(fake.base(), "fake-static", &request()).unwrap();
         let mut records = MintedSessions::empty(MintedSessions::path(home, "demo"));
-        let session = MintedSession { session_id: minted.session_id.clone(), role: "workspace".into(), claude_session_id: None, last_active: None, origin: Some(fake.base().to_string()) };
+        let session = MintedSession { session_id: minted.session_id.clone(), role: "workspace".into(), claude_session_id: None, origin: Some(fake.base().to_string()) };
         records.insert_minted(NAME, session, &request());
         records.save().unwrap();
         keeper.write(NAME, &fake.mcp_url(), &minted.token, minted.expires_at.as_deref(), &[]).unwrap();
@@ -184,6 +193,54 @@ mod tests {
         supraman_workman::refuses(url, token, PING_TIMEOUT)
     }
 
+    fn quiet(checked: Checked) -> bool {
+        checked.notices.is_empty() && checked.renewed.values().all(Result::is_ok)
+    }
+
+    /// Mints on its Workman, or on a port nothing listens on while `down`.
+    struct Flaky(std::cell::Cell<bool>);
+
+    impl Minter for Flaky {
+        fn mint(&self, base: &str, bearer: &str, request: &MintRequest) -> Result<super::super::Minted, super::super::MintError> {
+            let base = if self.0.get() { supraman_workman::closed_base() } else { base.to_string() };
+            HttpMinter::default().mint(&base, bearer, request)
+        }
+        fn bind(&self, base: &str, bearer: &str, session_id: &str, claude_session_id: &str) -> Result<(), super::super::MintError> {
+            HttpMinter::default().bind(base, bearer, session_id, claude_session_id)
+        }
+        fn revoke(&self, base: &str, bearer: &str, session_id: &str) -> Result<(), super::super::MintError> {
+            HttpMinter::default().revoke(base, bearer, session_id)
+        }
+    }
+
+    #[test]
+    fn a_failed_renewal_is_said_by_name_and_the_next_renewal_of_it_succeeds() {
+        let home = tempfile::tempdir().unwrap();
+        let fake = FakeWorkman::start(Vec::new());
+        fake.enable_sessions();
+        let (keeper, first) = kept(home.path(), &fake);
+        let signed = || Bearer::Signed { url: fake.mcp_url(), token: "fake-static".into() };
+        let fine = |_: &str, _: &str| false;
+        let minter = Flaky(std::cell::Cell::new(true));
+        let mut keeping = Keeping::default();
+
+        keeping.signed_in();
+        let checked = keeping.check(&keeper, &minter, signed, T0, fine);
+        assert_eq!(checked.kept, BTreeSet::from([NAME.to_string()]));
+        let Some(Err(why)) = checked.renewed.get(NAME) else { panic!("{checked:?}") };
+        assert!(!why.is_empty());
+        assert_eq!(keeper.kept(NAME).as_deref(), Some(first.as_str()), "the kept token stays");
+
+        minter.0.set(false);
+        keeping.signed_in();
+        let checked = keeping.check(&keeper, &minter, signed, T0, fine);
+        assert_eq!(checked.renewed.get(NAME), Some(&Ok(())), "{checked:?}");
+        assert_ne!(keeper.kept(NAME).as_deref(), Some(first.as_str()));
+
+        let checked = keeping.check(&keeper, &minter, || Bearer::SignedOut, T0, fine);
+        assert_eq!((checked.kept.len(), checked.renewed.len()), (1, 0), "signed out: kept names, nothing tried");
+    }
+
     #[test]
     fn a_kept_token_workman_refuses_is_minted_afresh_at_the_next_check() {
         let home = tempfile::tempdir().unwrap();
@@ -193,12 +250,12 @@ mod tests {
         let signed = || Bearer::Signed { url: fake.mcp_url(), token: "fake-static".into() };
         let mut keeping = Keeping::default();
 
-        assert!(keeping.check(&keeper, &HttpMinter::default(), signed, T0, refuses).is_empty());
+        assert!(quiet(keeping.check(&keeper, &HttpMinter::default(), signed, T0, refuses)));
         assert_eq!((pings(&fake), mints(&fake)), (1, 1), "a live token is pinged, not minted");
         assert_eq!(keeper.kept(NAME).as_deref(), Some(first.as_str()));
 
         sessions.revoke_name(NAME);
-        assert!(keeping.check(&keeper, &HttpMinter::default(), signed, T0 + 5 * MINUTE, refuses).is_empty());
+        assert!(quiet(keeping.check(&keeper, &HttpMinter::default(), signed, T0 + 5 * MINUTE, refuses)));
         let fresh = sessions.token_of(NAME).expect("minted afresh");
         assert_ne!(fresh, first);
         assert_eq!(keeper.kept(NAME).as_deref(), Some(fresh.as_str()), "kept for the helper to print");
@@ -218,19 +275,19 @@ mod tests {
         let mut keeping = Keeping::with_margin(3 * MINUTE);
         let mut at = |t: Millis| {
             sessions.set_now(t);
-            keeping.check(&keeper, &HttpMinter::default(), signed, t, refuses)
+            quiet(keeping.check(&keeper, &HttpMinter::default(), signed, t, refuses))
         };
 
-        assert!(at(T0 + 5 * MINUTE).is_empty());
+        assert!(at(T0 + 5 * MINUTE));
         assert_eq!(mints(&fake), 1, "five minutes before its window ends: pinged only");
-        assert!(at(T0 + 8 * MINUTE).is_empty());
+        assert!(at(T0 + 8 * MINUTE));
         assert_eq!(mints(&fake), 2, "within the margin of the mint's expiresAt: minted afresh");
         let fresh = keeper.kept(NAME).unwrap();
         assert_ne!(fresh, first);
 
         sessions.set_now(T0 + 17 * MINUTE);
         assert!(sessions.live(&fresh), "the fresh token holds past the first one's window");
-        assert!(at(T0 + 17 * MINUTE).is_empty());
+        assert!(at(T0 + 17 * MINUTE));
         assert_eq!(mints(&fake), 3, "and is itself minted afresh before its own window ends");
         sessions.set_now(T0 + 26 * MINUTE);
         assert!(sessions.live(&keeper.kept(NAME).unwrap()));
@@ -247,23 +304,23 @@ mod tests {
         let mut keeping = Keeping::default();
 
         assert!(keeper.signed_out(&[NAME.to_string()]).is_empty());
-        assert!(keeping.check(&keeper, &HttpMinter::default(), || Bearer::SignedOut, T0, never).is_empty());
-        assert!(keeping.check(&keeper, &HttpMinter::default(), || Bearer::Unavailable("not signed in".into()), T0, never).is_empty());
+        assert!(quiet(keeping.check(&keeper, &HttpMinter::default(), || Bearer::SignedOut, T0, never)));
+        assert!(quiet(keeping.check(&keeper, &HttpMinter::default(), || Bearer::Unavailable("not signed in".into()), T0, never)));
         assert_eq!(mints(&fake), 1, "nothing minted while signed out");
         assert_eq!(keeper.kept(NAME).as_deref(), Some(first.as_str()), "the kept token stays");
         assert!(supraman_claude::mcp_config_url(keeper.mcp_dir(), NAME).is_some(), "the config stays");
 
         let fine = |_: &str, _: &str| false;
-        assert!(keeping.check(&keeper, &HttpMinter::default(), signed, T0, fine).is_empty());
+        assert!(quiet(keeping.check(&keeper, &HttpMinter::default(), signed, T0, fine)));
         assert_eq!(mints(&fake), 2, "a token marked signed out is minted afresh once signed in");
         assert!(!read(home.path()).unwrap()[NAME].signed_out, "and no longer marked");
-        assert!(keeping.check(&keeper, &HttpMinter::default(), signed, T0, fine).is_empty());
+        assert!(quiet(keeping.check(&keeper, &HttpMinter::default(), signed, T0, fine)));
         assert_eq!(mints(&fake), 2, "once");
 
         keeping.signed_in();
-        assert!(keeping.check(&keeper, &HttpMinter::default(), signed, T0, fine).is_empty());
+        assert!(quiet(keeping.check(&keeper, &HttpMinter::default(), signed, T0, fine)));
         assert_eq!(mints(&fake), 3, "a sign-in mints every kept token afresh");
-        assert!(keeping.check(&keeper, &HttpMinter::default(), signed, T0, fine).is_empty());
+        assert!(quiet(keeping.check(&keeper, &HttpMinter::default(), signed, T0, fine)));
         assert_eq!(mints(&fake), 3);
     }
 
@@ -277,10 +334,10 @@ mod tests {
         let mut keeping = Keeping::default();
         keeping.signed_in();
         let never = |_: &str, _: &str| -> bool { panic!("no ping") };
-        assert!(keeping.check(&keeper, &HttpMinter::default(), || Bearer::Signed { url: other.mcp_url(), token: "x".into() }, T0, never).is_empty());
+        assert!(quiet(keeping.check(&keeper, &HttpMinter::default(), || Bearer::Signed { url: other.mcp_url(), token: "x".into() }, T0, never)));
         super::super::remove_mcp_config(keeper.mcp_dir(), NAME).unwrap();
         keeping.signed_in();
-        assert!(keeping.check(&keeper, &HttpMinter::default(), || Bearer::Signed { url: fake.mcp_url(), token: "fake-static".into() }, T0, never).is_empty());
+        assert!(quiet(keeping.check(&keeper, &HttpMinter::default(), || Bearer::Signed { url: fake.mcp_url(), token: "fake-static".into() }, T0, never)));
         assert_eq!(mints(&fake), 1, "no config: its session ended");
     }
 }

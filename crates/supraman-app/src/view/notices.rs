@@ -12,6 +12,7 @@ pub enum Notice {
     Tabs,
     Inbox,
     Action,
+    Renewal,
 }
 
 impl NoticeKind for Notice {
@@ -24,6 +25,7 @@ impl NoticeKind for Notice {
             Notice::Tabs => "tabs",
             Notice::Inbox => "inbox",
             Notice::Action => "action",
+            Notice::Renewal => "renewal",
         }
     }
 }
@@ -37,7 +39,8 @@ impl FleetView {
         let tabs = self.saving.tab_notices.iter().map(|t| (Notice::Tabs, t.clone()));
         let inbox = self.work_inbox.read(cx).notice.clone().map(|t| (Notice::Inbox, t));
         let action = self.action_error.iter().map(|t| (Notice::Action, t.clone()));
-        setup.chain(supervise).chain(schedule).chain(hand).chain(tabs).chain(inbox).chain(action).collect()
+        let renewal = crate::keeping::notices(cx).into_iter().map(|t| (Notice::Renewal, t));
+        setup.chain(supervise).chain(schedule).chain(hand).chain(tabs).chain(inbox).chain(action).chain(renewal).collect()
     }
 
     pub fn dismiss_notice(&mut self, kind: Notice, text: &str, cx: &mut Context<Self>) {
@@ -57,6 +60,7 @@ impl FleetView {
                     self.action_error = None;
                 }
             }
+            Notice::Renewal => crate::keeping::dismiss(text, cx),
         }
         cx.notify();
     }
@@ -74,12 +78,12 @@ mod tests {
 
     #[test]
     fn each_kind_has_its_own_dismiss_key() {
-        let keys = [Notice::Setup, Notice::Supervise, Notice::Schedule, Notice::Hand, Notice::Tabs, Notice::Inbox, Notice::Action].map(|k| dismiss_key(k, 0));
+        let keys = [Notice::Setup, Notice::Supervise, Notice::Schedule, Notice::Hand, Notice::Tabs, Notice::Inbox, Notice::Action, Notice::Renewal].map(|k| dismiss_key(k, 0));
         assert_eq!(
             keys,
             ["notice-dismiss-setup-0", "notice-dismiss-supervise-0", "notice-dismiss-schedule-0", "notice-dismiss-hand-0",
                 "notice-dismiss-tabs-0",
-                "notice-dismiss-inbox-0", "notice-dismiss-action-0"]
+                "notice-dismiss-inbox-0", "notice-dismiss-action-0", "notice-dismiss-renewal-0"]
         );
     }
 

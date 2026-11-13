@@ -371,7 +371,7 @@ fn run(mode: Mode, commands: UnboundedSender<Command>, mut received: UnboundedRe
     supraman_ui::stall::watch(cx);
     let home = supraman_core::home_from_env();
     if let Some(home) = home.clone() {
-        keeping::start(home, cx.background_executor());
+        keeping::start(home, cx);
     }
     if let Some(problem) = settings_window::apply_theme(home.as_deref(), cx) {
         log::warn!("{problem}");

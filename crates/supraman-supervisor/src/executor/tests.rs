@@ -302,7 +302,7 @@ fn mint_of_a_name_recorded_as_foreman_takes_its_row_over_and_records_supraman() 
         claude_session_id: None,
         takeover_from: None,
     };
-    let session = MintedSession { session_id: "ws-0".into(), role: "workspace".into(), claude_session_id: None, last_active: None, origin: None };
+    let session = MintedSession { session_id: "ws-0".into(), role: "workspace".into(), claude_session_id: None, origin: None };
     sup.minted.insert_minted("fm-demo-workspace", session, &former);
     sup.tick(&[], &mut free(), NOW);
     let calls = minter.take();
@@ -936,7 +936,7 @@ fn a_live_supervised_session_keeps_its_token_across_quit_and_start() {
 }
 
 #[test]
-fn mint_a_live_session_idle_past_its_token_window_asks_for_a_remint() {
+fn mint_a_live_session_idle_for_days_raises_no_row_and_is_never_restarted() {
     const HOUR: Millis = 3_600 * SECOND;
     let dir = tempfile::tempdir().unwrap();
     let (mut sup, minter) = minting(true, dir.path());
@@ -946,57 +946,13 @@ fn mint_a_live_session_idle_past_its_token_window_asks_for_a_remint() {
     sup.tick(std::slice::from_ref(&busy), &mut free(), NOW + 61 * SECOND);
     sup.launcher().take();
     minter.take();
-    // a turn at +50 h slides the window: idle until +122 h is fine
-    sup.tick(std::slice::from_ref(&busy), &mut free(), NOW + 50 * HOUR);
-    assert_eq!(sup.tick(std::slice::from_ref(&idle), &mut free(), NOW + 122 * HOUR), []);
-    let needs = sup.tick(std::slice::from_ref(&idle), &mut free(), NOW + 122 * HOUR + SECOND);
-    assert_eq!(needs.len(), 1, "{needs:?}");
-    assert_eq!(needs[0].kind, NeedsKind::TokenExpired);
-    assert_eq!(needs[0].since, NOW + 122 * HOUR);
-    assert_eq!(needs[0].action, Some(Remedy::Remint { id: "aaaa0001".into() }));
-    assert!(needs[0].detail.contains("next Workman call gets HTTP 401"), "{}", needs[0].detail);
-    // a turn after the lapse does not renew it: the row stays, its since kept
-    let needs = sup.tick(std::slice::from_ref(&busy), &mut free(), NOW + 130 * HOUR);
-    assert_eq!((needs.len(), needs[0].since), (1, NOW + 122 * HOUR));
-    assert_eq!(sup.launcher().take(), [], "nothing is done without the human");
+    for at in [73 * HOUR, 200 * HOUR] {
+        assert_eq!(sup.tick(std::slice::from_ref(&idle), &mut free(), NOW + at), [], "the app's Keeping keeps its token fresh");
+    }
+    sup.retry("fm-demo-workspace");
+    sup.tick(std::slice::from_ref(&idle), &mut free(), NOW + 201 * HOUR);
+    assert_eq!(sup.launcher().take(), [], "a plain Retry never stops a session");
     assert_eq!(minter.take(), []);
-    // Re-mint: stopped this tick (no row for it), resumed with a fresh token after the respawn grace
-    sup.retry("fm-demo-workspace");
-    let t = NOW + 131 * HOUR;
-    assert_eq!(sup.tick(std::slice::from_ref(&idle), &mut free(), t), []);
-    assert_eq!(sup.launcher().take(), [Call::Stop { id: "aaaa0001".into() }]);
-    let stopped = row(SessionState::Stopped, None, None);
-    assert_eq!(sup.tick(std::slice::from_ref(&stopped), &mut free(), t + 5 * SECOND), []);
-    assert_eq!(sup.launcher().take(), [], "respawn grace");
-    sup.tick(std::slice::from_ref(&stopped), &mut free(), t + 31 * SECOND);
-    assert!(matches!(sup.launcher().take().as_slice(), [Call::Resume { .. }]));
-    assert!(matches!(minter.take().as_slice(), [MintCall::Mint { request, .. }] if request.replace));
-    assert_eq!(sup.minted().get("fm-demo-workspace").unwrap().last_active, Some(t + 31 * SECOND));
-    assert_eq!(kept(&sup, "fm-demo-workspace"), "wss_fake2");
-    assert_helped(dir.path(), "fm-demo-workspace");
-    assert_eq!(sup.tick(std::slice::from_ref(&idle), &mut free(), t + 40 * SECOND), [], "fresh window");
-    // a plain Retry elsewhere never stops a session
-    sup.retry("fm-demo-workspace");
-    sup.tick(std::slice::from_ref(&idle), &mut free(), t + 50 * SECOND);
-    assert_eq!(sup.launcher().take(), []);
-}
-
-#[test]
-fn mint_no_token_row_for_a_stopped_workspace_or_an_unminted_session() {
-    let dir = tempfile::tempdir().unwrap();
-    let idle = row(SessionState::Working, Some(Status::Idle), Some(7));
-    let later = NOW + 100 * 3_600 * SECOND;
-    // no role token: nothing minted, so no window to lapse
-    let mut sup = supervisor(true, None, dir.path());
-    sup.tick(&[], &mut free(), NOW);
-    assert_eq!(sup.tick(std::slice::from_ref(&idle), &mut free(), later), []);
-    // minted, then the workspace is stopped: its session is stopped, not re-minted
-    let (mut sup, _minter) = minting(true, dir.path());
-    sup.tick(&[], &mut free(), NOW);
-    sup.launcher().take();
-    sup.desired.started = false;
-    assert_eq!(sup.tick(std::slice::from_ref(&idle), &mut free(), later), []);
-    assert_eq!(sup.launcher().take(), [Call::Stop { id: "aaaa0001".into() }]);
 }
 
 #[test]
