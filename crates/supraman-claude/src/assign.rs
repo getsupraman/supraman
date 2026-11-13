@@ -2,26 +2,26 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use supraman_core::folders::{Entries, FolderEntry};
+use supraman_core::folders::{Entries, FolderEntry, Shown};
 use supraman_core::paths::{key_within, path_key};
 
 use crate::Session;
 
-/// The sessions by the [`path_key`] of the listed folder they show under; the rest are in none.
+/// The sessions by the [`path_key`] of the listed or shown folder they show under; the rest are in none.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Placement {
     pub by_folder: HashMap<String, Vec<Session>>,
     pub unplaced: Vec<Session>,
 }
 
-pub fn place(sessions: &[Session], entries: &Entries) -> Placement {
-    place_with(sessions, entries, main_repo)
+pub fn place(sessions: &[Session], entries: &Entries, shown: &Shown) -> Placement {
+    place_with(sessions, entries, shown, main_repo)
 }
 
 /// [`place`] with `main_of` in place of [`main_repo`]: the app renders every frame from a table
 /// filled once per poll, so the filesystem walk stays off the UI thread.
-pub fn place_with(sessions: &[Session], entries: &Entries, main_of: impl Fn(&Path) -> Option<PathBuf>) -> Placement {
-    let keys: Vec<String> = entries.folders().map(|f| path_key(&f.path)).collect();
+pub fn place_with(sessions: &[Session], entries: &Entries, shown: &Shown, main_of: impl Fn(&Path) -> Option<PathBuf>) -> Placement {
+    let keys: Vec<String> = entries.placed(shown).map(path_key).collect();
     let mut out = Placement::default();
     for s in sessions {
         match folder_key(&s.cwd, &keys, &main_of) {
@@ -32,7 +32,8 @@ pub fn place_with(sessions: &[Session], entries: &Entries, main_of: impl Fn(&Pat
     out
 }
 
-/// The listed folder a session in `cwd` shows under ([`place_with`]'s rule); a path listed twice is its first.
+/// The listed folder holding `cwd` by [`place_with`]'s rule over the listed folders alone (the entry a session
+/// belongs to); a path listed twice is its first.
 pub fn holding<'a>(cwd: &Path, entries: &'a Entries, main_of: impl Fn(&Path) -> Option<PathBuf>) -> Option<&'a FolderEntry> {
     let keys: Vec<String> = entries.folders().map(|f| path_key(&f.path)).collect();
     let key = folder_key(cwd, &keys, main_of)?;

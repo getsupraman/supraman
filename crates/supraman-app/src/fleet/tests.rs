@@ -78,7 +78,7 @@ fn groups_folders_blocked_first_and_hides_stopped() {
 
 #[test]
 fn a_folders_kind_and_branch_come_from_the_polls_table() {
-    let disk = HashMap::from([(path_key(Path::new(r"C:\demo\Alpha")), OnDisk { kind: FolderKind::Git, branch: Some("main".into()) })]);
+    let disk = Disk { kinds: HashMap::from([(path_key(Path::new(r"C:\demo\Alpha")), OnDisk { kind: FolderKind::Git, branch: Some("main".into()) })]), ..Disk::default() };
     let tree = build(&entries(), &[], NOW, false, &TreeInputs { disk: Some(&disk), ..TreeInputs::default() });
     let (alpha, beta) = (&demo(&tree).folders[0], &demo(&tree).folders[1]);
     assert_eq!((alpha.kind, alpha.branch.as_deref()), (FolderKind::Git, Some("main")));
@@ -382,4 +382,23 @@ fn a_linked_worktrees_session_shows_under_its_main_checkout() {
     let known = HashMap::from([(PathBuf::from(r"P:\L\AutoWork.worktrees\unit"), Some(PathBuf::from(r"P:\L\AutoWork")))]);
     let tree = build(&entries, &list, NOW, false, &TreeInputs { main_repos: Some(&known), ..TreeInputs::default() });
     assert_eq!(folders(&tree), [f("L", &[]), f("AutoWork", &["unit"])]);
+}
+
+#[test]
+fn a_shown_child_is_a_row_after_its_parent_and_takes_the_sessions_below_it() {
+    let mut larch = FolderEntry::new(r"P:\L");
+    larch.show_subfolders = true;
+    let entries = Entries::new(vec![group("work", &[r"P:\W"]), Entry::Folder(larch), top(r"P:\L\gaia")]);
+    let shown = Shown::from([(path_key(Path::new(r"P:\L")), vec![PathBuf::from(r"P:\L\gaia"), PathBuf::from(r"P:\L\zed")])]);
+    let disk = Disk { shown, ..Disk::default() };
+    let list = rows(&[("aaaa0401", "ui", r"P:\L\gaia\src"), ("aaaa0402", "top", r"P:\L\x.txt"), ("aaaa0403", "ed", r"P:\L\zed\src")]);
+    let tree = build(&entries, &list, NOW, false, &TreeInputs { disk: Some(&disk), ..TreeInputs::default() });
+    assert_eq!(folders(&tree), [f("work/W", &[]), f("L", &["top"]), f("L/gaia", &["ui"]), f("L/zed", &["ed"]), f("gaia", &["ui@gaia"])], "gaia/src under the shown gaia, also listed at the top level; zed/src under the shown zed alone");
+    let l = &tree.entries[1].folders;
+    assert_eq!((l[0].pos, l[0].shows_subfolders, l[0].parent.as_deref()), (Some(Pos::top(1)), true, None));
+    assert_eq!((l[1].pos, l[1].parent.as_deref()), (None, Some("L")), "a shown child is no entry of folders.toml");
+    assert_eq!(tree.entries[0].folders[0].pos, Some(Pos::member(0, 0)));
+    let hidden = Entries::new(vec![top(r"P:\L")]);
+    let tree = build(&hidden, &list, NOW, false, &TreeInputs { disk: Some(&disk), ..TreeInputs::default() });
+    assert_eq!(folders(&tree), [f("L", &["ui", "top", "ed"])], "a parent that does not show them keeps them");
 }

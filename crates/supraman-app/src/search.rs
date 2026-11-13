@@ -134,7 +134,7 @@ mod tests {
 
     fn folder(key: &str, sessions: Vec<SessionRow>) -> FolderNode {
         let name = key.rsplit('/').next().unwrap().to_string();
-        FolderNode { key: key.into(), path: PathBuf::from(&name), name, kind: supraman_core::FolderKind::Git, branch: None, sessions, more: 0, scheduled: Default::default() }
+        FolderNode { key: key.into(), path: PathBuf::from(&name), name, kind: supraman_core::FolderKind::Git, branch: None, sessions, more: 0, scheduled: Default::default(), pos: None, parent: None, shows_subfolders: false }
     }
 
     fn tree() -> Tree {

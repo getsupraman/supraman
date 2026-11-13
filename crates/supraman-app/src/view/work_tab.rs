@@ -30,7 +30,7 @@ impl FleetView {
                 fleet.update(cx, |fleet, cx| fleet.open_session(sid, cx)).ok();
             }),
         };
-        let folders: Vec<PathBuf> = self.tree().entry(workspace).map(|e| e.folders.iter().map(|f| f.path.clone()).collect()).unwrap_or_default();
+        let folders: Vec<PathBuf> = self.tree().entry(workspace).map(|e| e.folders.iter().filter(|f| f.listed()).map(|f| f.path.clone()).collect()).unwrap_or_default();
         let cwd = folders.first().cloned();
         let opening = work_view::Opening { workspace: workspace.to_string(), folders, home: self.home.clone(), hits: self.hits.clone(), link, open_link_with: self.open_link_with, repo_of: self.work_inbox.read(cx).repo_of() };
         let view = WorkView::open(opening, cx);

@@ -175,7 +175,7 @@ impl FleetView {
         self.resolve_tabs(cx);
         self.reopen_tabs(cx);
         let pids: Vec<u32> = self.sessions.iter().filter(|s| s.kind == supraman_claude::Kind::Interactive).filter_map(|s| s.pid).collect();
-        let named = self.tree().entries.iter().map(|e| (e.name.clone(), e.folders.iter().map(|f| f.path.clone()).collect())).collect();
+        let named = self.tree().entries.iter().map(|e| (e.name.clone(), e.folders.iter().filter(|f| f.listed()).map(|f| f.path.clone()).collect())).collect();
         self.work_inbox.update(cx, |inbox, cx| inbox.set_workspaces(named, cx));
         cx.notify();
         pids

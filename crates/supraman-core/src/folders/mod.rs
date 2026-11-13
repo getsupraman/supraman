@@ -2,6 +2,7 @@
 
 mod edits;
 pub(crate) mod migrate;
+mod subfolders;
 
 use std::fs;
 use std::io::ErrorKind;
@@ -13,6 +14,7 @@ use crate::paths::path_key;
 use crate::{CoreError, Result};
 
 pub use edits::{Place, Pos};
+pub use subfolders::{SKIPPED, Shown, shown, subfolders};
 
 pub const FILE: &str = "folders.toml";
 

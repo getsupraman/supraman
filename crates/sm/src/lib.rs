@@ -337,7 +337,7 @@ fn render(entries: &Entries, only: Option<&std::path::Path>, sessions: &[Session
     let mut visible: Vec<Session> = sessions.iter().filter(|s| show_stopped || s.health(now) != Health::Stopped).cloned().collect();
     visible.sort_by(|a, b| b.started_at.cmp(&a.started_at).then_with(|| a.id.cmp(&b.id)));
     let none = if show_stopped { "no sessions" } else { "no live sessions" };
-    let placed = place(&visible, entries);
+    let placed = place(&visible, entries, &supraman_core::folders::Shown::new());
     let mut out = String::new();
     if entries.list.is_empty() {
         out.push_str("no folders listed\n");

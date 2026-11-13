@@ -24,6 +24,8 @@ mod selftest_drop;
 #[cfg(feature = "selftest")]
 mod selftest_first_run;
 #[cfg(feature = "selftest")]
+mod selftest_folders;
+#[cfg(feature = "selftest")]
 mod selftest_font;
 #[cfg(feature = "selftest")]
 mod selftest_git;
