@@ -23,8 +23,8 @@ paste on Ctrl+V, find on Ctrl+Shift+F, no copy on select, plain-text copy). Code
 
 ## Text inputs (search box, Add workspace name, find bar, task box)
 
-One input (`crates/supraman-app/src/text_input.rs`), the keys of a Windows edit box. The task box (Task…, Reply…)
-is its multi-line kind: lines wrap, it grows to 8 rows and then scrolls (the wheel too). Characters, dead keys
+One input (`crates/supraman-app/src/text_input.rs`), the keys of a Windows edit box. The task box
+is its multi-line kind (New task…'s prompt): lines wrap, it grows to 8 rows and then scrolls (the wheel too). Characters, dead keys
 (`^` `´` `` ` ``) and IME compositions come from Windows' own text input, so German and Italian layouts type
 as anywhere else.
 
@@ -39,11 +39,11 @@ as anywhere else.
 | Backspace, Delete; Ctrl+Backspace, Ctrl+Delete | delete a character; a word |
 | Ctrl+C / Ctrl+Insert, Ctrl+X / Shift+Delete, Ctrl+V / Shift+Insert | copy, cut, paste (line breaks pasted as spaces; the task box keeps them) |
 | Ctrl+Z; Ctrl+Y, Ctrl+Shift+Z | undo (typing runs to a space are one step); redo |
-| Enter | Add workspace: save. Search: nothing. Find bar: next match up. Task box: a new line |
+| Enter | Add workspace: save. Search: nothing. Find bar: next match up. Task box: send |
 | Shift+Enter | find bar: next match down. Task box: a new line |
-| Ctrl+Enter | task box: send |
+| Ctrl+Enter | a commit message's fields: commit |
 | Tab, Shift+Tab | in a form (the commit area: summary, description, Amend previous commit, the graph's WIP row field standing for the summary; the commit panel's summary and description; Add Remote; Create Worktree): the next / previous field or button, wrapping; Space or Enter presses a focused button or ticks a focused box, Esc on it closes the form. Outside a form Tab goes where it went before (a terminal gets it); no field types a tab |
-| Esc | Search: clear the box (the tree is back); on an empty box, give the keys back to the window. Add workspace: cancel. Find bar: close. Task box: close, nothing sent. An open menu closes first |
+| Esc | Search: clear the box (the tree is back); on an empty box, give the keys back to the window. Add workspace: cancel. Find bar: close. An open menu closes first |
 | click, drag, Shift+click | place the caret, select, extend the selection |
 | double-click, triple-click | select the word, select all |
 

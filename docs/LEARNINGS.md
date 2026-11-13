@@ -6020,3 +6020,28 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **A pid alone names whatever runs now.** core's process tests ended a grandchild by `taskkill /PID` after it had exited; under parallel tests Windows reused the pid for another test's git, which died mid-call. Tests now end a process only by its pid and start time (`platform::process::terminate_started`), and `taskkill` is refused in every crate.
 - **The kill exposed a production bug:** `schedule::runs::spent` read HEAD with `symbolic-ref -q`, whose exit 1 means "detached" and also "git failed"; a failed read dropped the own-branch exclude and judged a run worktree with unpushed commits spent, so prune removed it (its branch survived). It reads HEAD with `rev-parse --symbolic-full-name HEAD` and keeps the worktree on any failure. A git call whose failure exit also carries an answer is read only when the answer cannot be a failure.
 - **A wall-clock bound on a graph read flakes under load** (a commit took 1.8–5.2 s with a 20 ms debounce): the live refresh tests wait through `testing::eventually`, woken by each refresh the watchers send; the deadline only bounds a refresh that never comes.
+
+## 2026-11-13 — the controllers, the supervisor's session keeping, the relay and Messages are gone (folders/no-controllers, fnc)
+- **What went:** `supraman-supervisor`'s desired state, reconcile (R1–R14), `Supervisor`, budget, memory and Inbox rows;
+  the app's Start/Stop, Adopt, the workspace session's row, menu sections and Details section, the relay glyph, the
+  Messages section and its answer box, the supervisor's Inbox rows (and with them Retry, Start fresh, Run in terminal,
+  Re-mint, Restart as administrator), the tray's Stop all and quit question, `--selftest-supervise`; `sm want`,
+  `unwant`, `roster`, `send`, `tell`, `messages`, `inbox`; core's relay files and `[sessions] relay_idle_secs`;
+  claude's pipe delivery (`human.rs`, `peer::deliver`) and `docs/peer-messaging.md`; the plugin's workspace, relay
+  and repo roles and the two controller skills. About 12,450 lines out, 1,450 in.
+- **What stayed and where:** the mint layer (`mint`), `tokens`, and the launch pieces in `launch.rs`
+  (`LaunchConfig`, `Launcher`, `TokenProvider`, `BgSession` in place of `WantedSession`, `is_live`, `mid_turn`,
+  `working`, `is_foreign`, `HAND_ROLE`). The app's `supervise.rs` is `upkeep.rs`: setup (the hand role only),
+  `launch_config`, the sign-out queue and `Upkeep` (settings, prune, signed-out runs, deleted runs and hands, the
+  daemon watch the [+] tabs still read). The crate keeps its name; folders/model can rename it to what it holds now
+  (session launch and tokens).
+- **A home from before:** the records of the controllers' and relays' tokens (`supervisor/<ws>.sessions.json`) are
+  revoked once at the first upkeep tick (`end_controllers`, through `mint::revoke`), then those records, the wanted
+  files, the controller role files and `<home>/relay` are deleted. A controller still running is not stopped; it
+  only loses its Workman token. A home signed out at that tick deletes the records anyway: the tokens lapse unused.
+- **A scheduled run's role stays `repo`** (minted as Workman's orchestrator, its `SUPRAMAN_ROLE`): run records on
+  disk carry it and their revoke looks the bearer up by it. With `roles/repo.md` deleted, `sm hook` injects nothing
+  into a run, as for every role but `hand`.
+- **Selftests:** step 7n keeps its notices; its messages and hover-hold checks went with Messages (the hold now only
+  holds Workman cards, which no selftest drives yet). `sm`'s update tests held the exe with `sm inbox`; they now hold
+  it with `sm hook` waiting on an open stdin.
