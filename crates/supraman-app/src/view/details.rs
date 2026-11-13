@@ -191,7 +191,7 @@ impl FleetView {
         Some((row_details::session_title(row), self.row_sections(entry, row, folder, &page.disk, page.listed, cx)))
     }
 
-    /// `row`'s facts as its Details tab shows them; `folder` the listed folder holding it, else found here.
+    /// `row`'s facts as its Details tab shows them; `folder` the folder holding it, else found here.
     pub(super) fn row_sections(&self, entry: &str, row: &SessionRow, folder: Option<(&str, &std::path::Path)>, disk: &OnDisk, listed: bool, cx: &gpui::App) -> Vec<Section> {
         let shown = &self.listed.disk.shown;
         let (group, found) = crate::tab_card::place(&row.session.cwd, &self.listed.entries, shown);
