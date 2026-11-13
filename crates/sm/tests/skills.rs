@@ -49,7 +49,8 @@ fn the_scheduler_skill_runs_only_the_allowed_fm_schedule_verbs() {
     assert!(!body.contains("worktree-edit"), "the profile is edit");
     assert!(body.contains("It is pending: it runs only after you Approve it on its row in the Supraman window."));
     assert!(!body.contains("sm schedule remove"), "remove stays the human's");
-    let verb_table = body.split("| Verb | Use |").nth(1).and_then(|t| t.split("`<w>` is the workspace").next()).expect("a verb table");
-    assert!(verb_table.contains("| `sm schedule edit [<w>] <id> <options>` | change a schedule **you added in this conversation at the human's request**"), "{verb_table}");
+    let verb_table = body.split("| Verb | Use |").nth(1).and_then(|t| t.split("Each verb works on one listed folder's schedules").next()).expect("a verb table");
+    assert!(verb_table.contains("| `sm schedule edit <id> <options>` | change a schedule **you added in this conversation at the human's request**"), "{verb_table}");
+    assert!(!body.contains("workspace") && body.contains("`--folder <dir>`"), "a schedule belongs to a listed folder");
     assert!(body.contains("Only for a schedule **you added in this conversation at the human's request**: `sm schedule edit"));
 }

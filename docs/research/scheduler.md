@@ -2,6 +2,8 @@
 
 The design every later `sched` unit builds on. It comes from the analysis René approved (run `sched`, 2026-10-30) and from reading the code at `6546be4`. Binding rules: C100 (only René's action in the window approves), C101 (no real Windows task outside a unit's own probe folder), C102 (unattended runs: profile, caps, stop never rm, token revoked, no secret in any file). Approval follows sched/10's answer **(b)+(c)**.
 
+Since folders/schedules (2026-11-13) a schedule belongs to a folder: every `<workspace>` below reads as the folder's `schedule::folder_key`, the file holds the folder's path instead of each schedule a folder name, and the MAC binds the folder's `path_key`; `docs/ARCHITECTURE.md` (`schedule`) is current.
+
 Each section ends with what it decides for the unit that builds it. The choices that were open are settled under [Decisions](#decisions) (René and the controller, 2026-10-30).
 
 ## Where things live
