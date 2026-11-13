@@ -203,6 +203,9 @@ pub(crate) fn prune(home: &Path, cutoff: i64, errors: &mut Vec<String>) {
     if let Ok(keys) = fs::read_dir(dir.join("state")) {
         for key in keys.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())) {
             let name = key.file_name().to_string_lossy().into_owned();
+            if !super::is_folder_key(&name) {
+                continue;
+            }
             let kept = match load_key(home, &name) {
                 Ok(found) => found.map(|s| s.schedules).unwrap_or_default(),
                 Err(_) => continue,

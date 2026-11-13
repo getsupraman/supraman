@@ -686,6 +686,8 @@ fn prune_takes_old_rotated_runs_the_state_of_removed_schedules_and_spent_worktre
         fs::create_dir_all(state.join(id)).unwrap();
         fs::write(state.join(id).join("seen.txt"), "1").unwrap();
     }
+    let unplaced = f.home.join("schedules").join("state").join("demo").join("left");
+    fs::create_dir_all(&unplaced).unwrap();
     let unreadable = f.home.join("schedules").join("state").join("broken");
     fs::create_dir_all(unreadable.join("x")).unwrap();
     fs::write(f.home.join("schedules").join("broken.toml"), "not toml [").unwrap();
@@ -698,6 +700,7 @@ fn prune_takes_old_rotated_runs_the_state_of_removed_schedules_and_spent_worktre
     assert!(runs.join(&rotated).exists() && wt("clean").exists(), "nothing is old yet");
     assert!(!state.join("removed").exists(), "the state of a removed schedule goes");
     assert!(state.join("autofix-prod-bugs").exists() && unreadable.join("x").exists(), "kept, and kept when unsure");
+    assert!(unplaced.exists(), "a former workspace's state, of a schedule no folder took, is kept");
 
     let later = now + crate::prune::KEEP_MS + 24 * 3600 * 1000;
     assert_eq!(prune_settled(&f.home, later), Vec::<String>::new());
