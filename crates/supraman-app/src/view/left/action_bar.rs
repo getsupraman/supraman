@@ -79,7 +79,7 @@ impl FleetView {
         let hits = &self.hits;
         let n = self.polled.max_working;
         let busy_tip: SharedString = format!(
-            "At most {n} session(s) of this Supraman working at once, across its workspaces; launches wait while it is reached. 0 pauses them all. Another Supraman's sessions are not counted."
+            "At most {n} session(s) of this Supraman working at once, across its folders; launches wait while it is reached. 0 pauses them all. Another Supraman's sessions are not counted."
         )
         .into();
         div()

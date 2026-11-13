@@ -53,7 +53,7 @@ impl SettingsView {
             ),
             row(
                 "Supraman home",
-                "SUPRAMAN_HOME, else %APPDATA%\\Supraman: workspaces, settings.toml, hook events, session token records.",
+                "SUPRAMAN_HOME, else %APPDATA%\\Supraman: folders.toml, settings.toml, hook events, session token records.",
                 div().max_w(px(300.)).text_xs().text_color(colors.text_muted).child(SharedString::from(home)).into_any_element(),
                 None,
                 cx,

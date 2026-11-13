@@ -6045,3 +6045,26 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **Selftests:** step 7n keeps its notices; its messages and hover-hold checks went with Messages (the hold now only
   holds Workman cards, which no selftest drives yet). `sm`'s update tests held the exe with `sm inbox`; they now hold
   it with `sm hook` waiting on an open stdin.
+
+## 2026-11-13 — the sidebar is folders.toml's folders and groups (folders/model, fmodel)
+- **The model:** `<home>/folders.toml` (`supraman_core::folders`) is an ordered list of `[[entry]]`: `path` for a
+  folder, `group` with its `[[entry.folders]]` for a group. Its one reader and writer is `folders::load`/`edit`
+  (`folders.lock`, `write_atomic`); a file that does not parse is the poll's error and is never written over.
+- **Migration, once:** with no folders.toml, the first load or edit makes a group of each loadable workspace file, by
+  name, with its folders (enabled or not, scanned ones as listed); a path already placed keeps its first place and a
+  workspace's home is no folder. The workspace files stay: the schedules read them through `Registry` until
+  folders/schedules, and the sidebar shows a workspace's schedules under the group of the same name meanwhile.
+- **Placement is one rule** (`supraman_claude::assign`): the deepest listed folder holding the cwd or the main
+  checkout of its linked worktree, across every group and the top level. Taking the deeper of the two keeps a
+  worktree under `AutoWork` even with its parent `LarchSys` listed (the old rule tried the prefix first and only
+  then the main checkout). A path listed twice shows its sessions in each row; the later rows' keys end in
+  `@<folder key>` so the hit keys stay one per row.
+- **Gone:** owners and claiming, enabled/disabled and parked folders, scans and Rescan, homes and the home's loose
+  folders, `also in` and `supervised in`, the workspace dialog (From a parent folder…, Custom workspace…, Edit
+  folders…), Remove, `sm workspace …`, `discover`/`rescan`/`scan`, `Registry::edit`, `SUPRAMAN_WORKSPACE` and the
+  roles' `{workspace}`. A session in no listed folder shows nowhere in the tree (it did under its home before).
+- **Folder kinds come from the disk** (`folders::on_disk` once per poll); the shots fixture therefore makes real
+  folders with a `.git/HEAD` under the shots home instead of paths that do not exist.
+- **Selftests:** step 7b is Add Folder (the + with the picker's seam), a top-level folder's row, menu, Details and
+  Open folder; the workspace dialog's steps (name editing by posted keys, the cut home path's tooltip, Edit folders…
+  at the minimum width, Rescan, Custom workspace…) went with the dialog.

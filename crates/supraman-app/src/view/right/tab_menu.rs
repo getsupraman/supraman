@@ -90,7 +90,7 @@ pub fn workman_item(folder: Option<&Path>, work: &Work) -> MenuItem {
         (Some(_), Work::Bound { workspace, project }) => open(workspace, project),
         (Some(_), Work::Reading) => open("", "").dimmed("Looking for its Workman project…"),
         (Some(_), Work::Unbound) => open("", "").dimmed("Not bound to a Workman project"),
-        (Some(_), Work::NoWorkspace) => open("", "").dimmed("Not in a Supraman workspace"),
+        (Some(_), Work::NoWorkspace) => open("", "").dimmed("Not in a listed folder"),
         (Some(_), Work::Unavailable(why)) => open("", "").dimmed(why),
     }
 }
@@ -319,7 +319,7 @@ otes"));
         let why = |folder, work: Work| workman_item(folder, &work).dimmed;
         assert_eq!(why(folder, Work::Unbound).as_deref(), Some("Not bound to a Workman project"));
         assert_eq!(why(folder, Work::Reading).as_deref(), Some("Looking for its Workman project…"));
-        assert_eq!(why(folder, Work::NoWorkspace).as_deref(), Some("Not in a Supraman workspace"));
+        assert_eq!(why(folder, Work::NoWorkspace).as_deref(), Some("Not in a listed folder"));
         assert_eq!(why(folder, Work::Unavailable("Workman is not signed in.".into())).as_deref(), Some("Workman is not signed in."));
         assert_eq!(why(None, Work::Reading).as_deref(), Some("This tab has no folder"));
     }
