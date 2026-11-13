@@ -265,7 +265,7 @@ impl FleetView {
             }
             return None;
         };
-        Some(ExtrasFrom { home: self.home.clone(), plugin_dir, entries: self.listed.entries.clone() })
+        Some(ExtrasFrom { home: self.home.clone(), plugin_dir, entries: self.listed.entries.clone(), shown: self.listed.disk.shown.clone() })
     }
 
     fn claude_shell(&self, launch: &Launch, claude: &str, extras: &Extras) -> util::shell::Shell {

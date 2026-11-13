@@ -41,7 +41,7 @@ fn session(id: &str, cwd: &Path) -> Session {
 }
 
 fn folder_of(cwd: &Path, entries: &Entries) -> Option<String> {
-    holding(cwd, entries, main_repo).map(|f| folder_name(&f.path))
+    holding(cwd, entries, &Shown::new(), main_repo).map(|at| folder_name(&at.folder))
 }
 
 #[test]
@@ -156,4 +156,36 @@ fn a_session_under_a_shown_child_is_placed_under_the_child_not_its_parent() {
     assert_eq!(ids(&larch), ["l1"]);
     let hidden = Entries::new(vec![Entry::Folder(FolderEntry::new(&larch))]);
     assert_eq!(place_with(&sessions, &hidden, &shown, |_| None).by_folder[&path_key(&larch)].len(), 2, "a parent not showing them keeps them");
+}
+
+#[test]
+fn holding_answers_the_shown_child_and_its_listed_parent_by_the_placement_rule() {
+    let tmp = tempfile::tempdir().unwrap();
+    let infra = tmp.path().join("infra");
+    let terraform = infra.join("terraform");
+    fs::create_dir_all(terraform.join("modules")).unwrap();
+    fs::create_dir_all(infra.join("docs")).unwrap();
+    let other = tmp.path().join("other");
+    fs::create_dir_all(&other).unwrap();
+    let mut parent = FolderEntry::new(&infra);
+    parent.show_subfolders = true;
+    let entries = Entries::new(vec![Entry::Group { name: "ops".into(), folders: vec![parent, FolderEntry::new(&other)] }]);
+    let shown = Shown::from([(path_key(&infra), supraman_core::folders::subfolders(&infra))]);
+    let at = |cwd: &Path| holding(cwd, &entries, &shown, |_| None).map(|h| (folder_name(&h.folder), folder_name(&h.listed.path)));
+    let pair = |a: &str, b: &str| Some((a.to_string(), b.to_string()));
+    assert_eq!(at(&terraform.join("modules")), pair("terraform", "infra"), "inside a shown child: the child, its listed parent");
+    assert_eq!(at(&infra), pair("infra", "infra"));
+    assert_eq!(at(&infra.join("README")), pair("infra", "infra"), "elsewhere in the parent: the listed folder");
+    assert_eq!(at(&other), pair("other", "other"));
+    assert_eq!(at(tmp.path()), None);
+    assert_eq!(holding(&terraform, &entries, &Shown::new(), |_| None).map(|h| folder_name(&h.folder)).as_deref(), Some("infra"), "no shown children: the listed folder");
+
+    let cwds = [terraform.join("modules"), terraform.clone(), infra.join("docs"), infra.clone(), other.clone(), tmp.path().to_path_buf()];
+    let sessions: Vec<Session> = cwds.iter().enumerate().map(|(i, c)| session(&format!("s{i}"), c)).collect();
+    let placed = place_with(&sessions, &entries, &shown, |_| None);
+    for s in &sessions {
+        let by_place = placed.by_folder.iter().find(|(_, v)| v.iter().any(|p| p.id == s.id)).map(|(k, _)| k.clone());
+        let by_holding = holding(&s.cwd, &entries, &shown, |_| None).map(|h| path_key(&h.folder));
+        assert_eq!(by_holding, by_place, "one rule for {}", s.cwd.display());
+    }
 }

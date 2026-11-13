@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use supraman_core::folders::Entries;
+use supraman_core::folders::{Entries, Shown};
 use supraman_core::schedule::{self, ActionKind, CatchUp, Change, Covered, Day, Fired, Foreign, ForeignTask, Live, Outcome, Overlap, Policy, Profile, Prompt, Run, Schedule, Span, Stage, Status, Trigger};
 use supraman_core::secret::SecretStore;
 use supraman_core::time::{self, date_words};
@@ -611,8 +611,9 @@ impl Others {
     pub fn of(found: &Foreign, entries: &Entries) -> Self {
         let mut out = Self::default();
         for t in &found.tasks {
-            match t.dirs().find_map(|d| supraman_claude::holding(d, entries, |_| None)) {
-                Some(f) => out.by_folder.entry(schedule::folder_key(&f.path)).or_default().push(t.clone()),
+            // Schedules key by listed folders, so a task in a shown child files under its listed parent.
+            match t.dirs().find_map(|d| supraman_claude::holding(d, entries, &Shown::new(), |_| None)) {
+                Some(at) => out.by_folder.entry(schedule::folder_key(&at.listed.path)).or_default().push(t.clone()),
                 None => out.unowned.push(t.clone()),
             }
         }

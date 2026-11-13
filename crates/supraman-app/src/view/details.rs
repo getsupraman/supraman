@@ -191,11 +191,12 @@ impl FleetView {
         Some((row_details::session_title(row), self.row_sections(entry, row, folder, &page.disk, page.listed, cx)))
     }
 
-    /// `row`'s facts as its Details tab shows them; `folder` the listed folder holding it, else found here.
+    /// `row`'s facts as its Details tab shows them; `folder` the folder holding it, else found here.
     pub(super) fn row_sections(&self, entry: &str, row: &SessionRow, folder: Option<(&str, &std::path::Path)>, disk: &OnDisk, listed: bool, cx: &gpui::App) -> Vec<Section> {
-        let (group, found) = crate::tab_card::place(&row.session.cwd, &self.listed.entries);
-        let holding = supraman_claude::holding(&row.session.cwd, &self.listed.entries, |_| None);
-        let folder = folder.or_else(|| Some((found.as_deref()?, holding?.path.as_path())));
+        let shown = &self.listed.disk.shown;
+        let (group, found) = crate::tab_card::place(&row.session.cwd, &self.listed.entries, shown);
+        let holding = supraman_claude::holding(&row.session.cwd, &self.listed.entries, shown, |_| None).map(|at| at.folder);
+        let folder = folder.or_else(|| Some((found.as_deref()?, holding.as_deref()?)));
         let claimed = self.work_open(entry, cx).then(|| self.claimed_item(entry, &row.session.name, cx));
         let facts = SessionFacts {
             row,

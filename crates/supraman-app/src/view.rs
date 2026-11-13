@@ -884,7 +884,7 @@ impl FleetView {
     }
 
     pub(crate) fn tab_card(&self, tab: &Tab, title: String) -> tab_card::Card {
-        let (group, repo) = tab.cwd.as_deref().map(|cwd| tab_card::place(cwd, &self.listed.entries)).unwrap_or_default();
+        let (group, repo) = tab.cwd.as_deref().map(|cwd| tab_card::place(cwd, &self.listed.entries, &self.listed.disk.shown)).unwrap_or_default();
         let attached = match &tab.kind {
             TabKind::Attach { session_id } => Some(self.sessions.iter().find(|s| &s.id == session_id).ok_or(session_id)),
             _ => None,
@@ -936,7 +936,7 @@ impl FleetView {
 
     pub fn new_shell_cwd(&self) -> Option<PathBuf> {
         let active = self.active.and_then(|id| self.tab(id)).and_then(|t| t.cwd.as_deref());
-        fleet::shell_cwd(active, &self.listed.entries, supraman_core::paths::user_home())
+        fleet::shell_cwd(active, &self.listed.entries, &self.listed.disk.shown, supraman_core::paths::user_home())
     }
 
     fn push_tab(&mut self, title: String, kind: TabKind, cwd: Option<PathBuf>, cx: &mut Context<Self>) -> u64 {

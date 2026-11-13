@@ -49,7 +49,7 @@ impl FleetView {
     pub(super) fn session_place(&self, session_id: &str) -> Option<(String, String, SessionRow)> {
         self.listed_place(session_id).or_else(|| {
             let s = self.sessions.iter().find(|s| s.session_id == session_id)?;
-            let (group, folder) = tab_card::place(&s.cwd, &self.listed.entries);
+            let (group, folder) = tab_card::place(&s.cwd, &self.listed.entries, &self.listed.disk.shown);
             let folder = folder.unwrap_or_else(|| folder_name(&s.cwd));
             let place = group.map_or_else(|| folder.clone(), |g| format!("{g}/{folder}"));
             Some((self.entry_of(&s.cwd).unwrap_or_default(), place, SessionRow::new(s.clone(), s.health(now_ms()))))

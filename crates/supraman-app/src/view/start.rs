@@ -62,10 +62,11 @@ pub fn first_prompt(text: &str, scheduled: bool) -> String {
     if scheduled { format!("{SCHEDULE_ASK}\n{text}") } else { text.to_string() }
 }
 
-/// The entry's folders, each once.
-pub fn folders(entry: &EntryNode) -> Vec<(String, PathBuf)> {
+/// The entry's listed folders, and `chosen` when it is one of its shown children, each once in the tree's order.
+pub fn folders(entry: &EntryNode, chosen: Option<&Path>) -> Vec<(String, PathBuf)> {
+    let chosen = chosen.map(path_key);
     let mut out: Vec<(String, PathBuf)> = Vec::new();
-    for f in entry.folders.iter().filter(|f| f.listed()) {
+    for f in entry.folders.iter().filter(|f| f.listed() || chosen.as_ref() == Some(&path_key(&f.path))) {
         if !out.iter().any(|(_, p)| path_key(p) == path_key(&f.path)) {
             out.push((f.name.clone(), f.path.clone()));
         }
@@ -95,7 +96,7 @@ impl FleetView {
     /// A new prompt tab, one per opening; `folder` preselects one of the entry's.
     pub fn open_start(&mut self, entry: &str, folder: Option<PathBuf>, scheduled: bool, window: &mut Window, cx: &mut Context<Self>) -> Option<u64> {
         self.dialogs.menu = None;
-        let choices = folders(self.tree().entry(entry)?);
+        let choices = folders(self.tree().entry(entry)?, folder.as_deref());
         let folder = folder
             .filter(|f| choices.iter().any(|(_, p)| path_key(p) == path_key(f)))
             .or_else(|| choices.first().map(|(_, p)| p.clone()))?;
@@ -236,7 +237,7 @@ impl FleetView {
     fn start_sections(&self, entry: &str) -> Vec<Section> {
         let mut out = Vec::new();
         let tree = self.tree();
-        let keys: Vec<String> = tree.entry(entry).map(folders).unwrap_or_default().iter().map(|(_, p)| supraman_core::schedule::folder_key(p)).collect();
+        let keys: Vec<String> = tree.entry(entry).map(|e| folders(e, None)).unwrap_or_default().iter().map(|(_, p)| supraman_core::schedule::folder_key(p)).collect();
         let rows: Vec<&crate::schedules::ScheduleRow> = keys.iter().flat_map(|k| self.scheduling.schedules.get(k).into_iter().flatten()).collect();
         if !rows.is_empty() {
             let mut s = Section::new("schedules", "Schedules");
@@ -276,7 +277,7 @@ impl FleetView {
         let label = |text: &'static str| div().flex_none().w(px(88.)).text_xs().text_color(colors.text_muted).child(text);
         let line = |name: &'static str| div().flex().flex_wrap().items_center().gap_2().min_w_0().child(label(name));
         let mut folder_line = line("Folder");
-        for (i, (name, path)) in folders(ws).into_iter().enumerate() {
+        for (i, (name, path)) in folders(ws, Some(&page.folder)).into_iter().enumerate() {
             let key = format!("start-folder-{i}");
             let selected = path_key(&path) == path_key(&page.folder);
             folder_line = folder_line.child(button::choice(SharedString::from(key.clone()), SharedString::from(name), selected, cx).relative().child(hit_target(&self.hits, key)).on_click(cx.listener(
@@ -364,8 +365,9 @@ because"), "use postgres");
         let folder = |key: &str, path: &str| crate::fleet::FolderNode { key: key.into(), name: key.rsplit('/').next().unwrap().into(), path: path.into(), kind: supraman_core::FolderKind::Git, branch: None, sessions: vec![], more: 0, scheduled: Default::default(), pos: Some(supraman_core::folders::Pos::member(0, 0)), parent: None, shows_subfolders: false };
         let child = crate::fleet::FolderNode { pos: None, parent: Some("demo/Alpha".into()), ..folder("demo/Alpha/web", "C:/demo/Alpha/web") };
         let entry = EntryNode { name: "demo".into(), group: true, folders: vec![folder("demo/Alpha", "C:/demo/Alpha"), child, folder("demo/Same", "c:/DEMO/alpha")] };
-        let names: Vec<String> = folders(&entry).into_iter().map(|(n, _)| n).collect();
-        assert_eq!(names, ["Alpha"], "a shown child is no folder of the entry");
+        let names = |chosen: Option<&str>| folders(&entry, chosen.map(std::path::Path::new)).into_iter().map(|(n, _)| n).collect::<Vec<_>>();
+        assert_eq!(names(None), ["Alpha"], "a shown child is no folder of the entry");
+        assert_eq!(names(Some("C:/demo/Alpha/web")), ["Alpha", "web"], "unless it is the one preselected");
         assert!(!MODES.contains(&"bypassPermissions"));
     }
 

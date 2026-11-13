@@ -145,8 +145,8 @@ impl FleetView {
             TabKind::Git(view) => view.read(cx).folder.clone(),
             _ => tab.cwd.clone()?,
         };
-        let folder = supraman_claude::holding(&cwd, &self.listed.entries, |_| None)?.path.clone();
-        Some((self.entry_of(&cwd)?, Some(folder)))
+        let (entry, folder) = self.entry_and_folder(&cwd)?;
+        Some((entry, Some(folder)))
     }
 }
 

@@ -9,7 +9,7 @@ use supraman_core::home::home_env;
 use supraman_core::platform::shell::launch::{encoded_command, runner};
 use supraman_core::platform::shell::quote;
 use supraman_core::paths::folder_name;
-use supraman_core::folders::Entries;
+use supraman_core::folders::{Entries, Shown};
 use supraman_supervisor::{Bearer, HAND_ROLE, HttpMinter, Keeper, LaunchConfig, MintError, MintRepo, MintRequest, Minted, MintedSession, MintedSessions, Minter, former_holder, git_repo, launched_by, mint_as};
 
 /// [`supraman_supervisor::bearer`]: the sign-in's MCP URL and access token, `None` while signed out.
@@ -95,12 +95,12 @@ pub struct Extras {
     pub prompt: Option<PathBuf>,
 }
 
-/// `name` is the session's `SUPRAMAN_SESSION`, `SUPRAMAN_REPO` the listed folder it shows under; a cwd under
-/// no listed folder gets the home and no role.
-pub fn extras(config: &LaunchConfig, entries: &Entries, cwd: &Path, name: &str, sm_dir: Option<&Path>) -> Extras {
-    let folder = supraman_claude::holding(cwd, entries, supraman_claude::main_repo);
+/// `name` is the session's `SUPRAMAN_SESSION`, `SUPRAMAN_REPO` the folder it shows under; a cwd under no listed
+/// folder gets the home and no role.
+pub fn extras(config: &LaunchConfig, entries: &Entries, shown: &Shown, cwd: &Path, name: &str, sm_dir: Option<&Path>) -> Extras {
+    let folder = supraman_claude::holding(cwd, entries, shown, supraman_claude::main_repo);
     let env = match (folder, &config.supraman_home) {
-        (Some(f), _) => config.session_env(name, HAND_ROLE, Some(&folder_name(&f.path)), &[]),
+        (Some(at), _) => config.session_env(name, HAND_ROLE, Some(&folder_name(&at.folder)), &[]),
         (None, Some(home)) => home_env(home).map(|(k, v)| (k.to_string(), v)).into(),
         (None, None) => Vec::new(),
     };
@@ -112,6 +112,7 @@ pub struct ExtrasFrom {
     pub home: Option<PathBuf>,
     pub plugin_dir: PathBuf,
     pub entries: Entries,
+    pub shown: Shown,
 }
 
 impl ExtrasFrom {
@@ -123,7 +124,7 @@ impl ExtrasFrom {
         };
         let settings = self.home.as_deref().and_then(|h| supraman_core::Settings::load(h).ok()).unwrap_or_default();
         let config = crate::upkeep::launch_config(self.home.clone(), Some(&self.plugin_dir), &settings);
-        extras(&config, &self.entries, cwd, &name, supraman_core::install::sm_dir().as_deref())
+        extras(&config, &self.entries, &self.shown, cwd, &name, supraman_core::install::sm_dir().as_deref())
     }
 }
 
@@ -1060,7 +1061,7 @@ mod tests {
         let config = crate::upkeep::launch_config(Some(home.clone()), Some(&plugin), &supraman_core::Settings::default());
         let ws = Entries::new(vec![supraman_core::folders::Entry::Folder(supraman_core::folders::FolderEntry::new(r"C:\demo\Alpha"))]);
         let sm = Path::new(r"C:\Tools\supraman");
-        let extras = extras(&config, &ws, Path::new(r"C:\demo\Alpha"), "hand-Alpha-1", Some(sm));
+        let extras = extras(&config, &ws, &Shown::new(), Path::new(r"C:\demo\Alpha"), "hand-Alpha-1", Some(sm));
         let mut want = vec!["--plugin-dir".to_string(), plugin.display().to_string(), "--allowedTools".into()];
         want.extend(supraman_core::sm_allowed_tools(&plugin));
         assert_eq!(extras.args, want);
@@ -1082,13 +1083,20 @@ mod tests {
             "the same env a scheduled run gets in its --settings"
         );
 
-        let deeper = super::extras(&config, &ws, Path::new(r"C:\demo\Alpha\src"), "René's review", None);
+        let deeper = super::extras(&config, &ws, &Shown::new(), Path::new(r"C:\demo\Alpha\src"), "René's review", None);
         assert!(deeper.env.contains(&("SUPRAMAN_SESSION".into(), "René's review".into())) && deeper.env.contains(&("SUPRAMAN_REPO".into(), "Alpha".into())));
         assert_eq!(deeper.path, None);
-        let outside = super::extras(&config, &ws, Path::new(r"C:\elsewhere"), "hand-elsewhere", None);
+        let outside = super::extras(&config, &ws, &Shown::new(), Path::new(r"C:\elsewhere"), "hand-elsewhere", None);
         assert_eq!(outside.env, home_env(&home).map(|(k, v)| (k.to_string(), v)).to_vec(), "under no listed folder: the home only, no role");
         assert_eq!(outside.args, want);
         assert_eq!(plain_name(Path::new(r"C:\demo\my repo")), "hand-my-repo");
+
+        let mut infra = supraman_core::folders::FolderEntry::new(r"C:\demo\infra");
+        infra.show_subfolders = true;
+        let ops = Entries::new(vec![supraman_core::folders::Entry::Folder(infra)]);
+        let shown = Shown::from([(supraman_core::paths::path_key(Path::new(r"C:\demo\infra")), vec![PathBuf::from(r"C:\demo\infra\terraform")])]);
+        let child = super::extras(&config, &ops, &shown, Path::new(r"C:\demo\infra\terraform\modules"), "hand-terraform-1", None);
+        assert!(child.env.contains(&("SUPRAMAN_REPO".into(), "terraform".into())), "a shown child is the session's folder: {:?}", child.env);
     }
 
     #[test]
