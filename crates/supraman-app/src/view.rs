@@ -2,17 +2,14 @@ use std::{
     collections::{BTreeMap, HashMap as StdHashMap},
     path::{Path, PathBuf},
     rc::Rc,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::atomic::Ordering,
     time::{Duration, Instant},
 };
 
 use futures::FutureExt as _;
-use supraman_claude::{ClaudeVersion, Sent, Session, list_sessions, now_ms, send_from_human};
+use supraman_claude::{ClaudeVersion, Sent, Session, now_ms, send_from_human};
 use supraman_core::{
-    Event, EventReader, FM_PREFIX, Workspace, Registry, Settings, mark_answered,
+    Event, FM_PREFIX, Workspace, Registry, Settings, mark_answered,
 };
 use supraman_supervisor::{DesiredState, workspace_session_name};
 use supraman_term::{
@@ -44,7 +41,7 @@ use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
 use crate::hand::Extras;
 use crate::settings_window::{self, SettingsView};
 use crate::stars::Stars;
-use crate::supervise::{self, Report, Supervision};
+use crate::supervise::{self, Report};
 use crate::tab_card;
 use crate::transcripts_load::TranscriptsLoad;
 use crate::work_view::{WorkHub, WorkInbox, WorkView};
@@ -1844,7 +1841,11 @@ fn not_sent(to: &str, e: &supraman_claude::SendError) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, atomic::AtomicU64};
+
     use supraman_term::PathLikeTarget;
+
+    use crate::supervise::Supervision;
 
     use super::*;
 
