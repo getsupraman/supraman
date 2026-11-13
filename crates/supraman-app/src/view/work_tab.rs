@@ -61,9 +61,9 @@ impl FleetView {
         self.next_tab_id += 1;
         let folders = self.target_folders(&target);
         let cwd = folders.first().cloned();
-        let bound: Vec<String> = match target.folder().and_then(|f| self.work_inbox.read(cx).folder_binding(f, cx)) {
-            Some(Ok(projects)) => projects.into_iter().map(|p| p.title).collect(),
-            _ => Vec::new(),
+        let bound: Vec<String> = match &target {
+            Target::Folder(f) => self.work_inbox.read(cx).folder_binding(f, cx).and_then(Result::ok).unwrap_or_default().into_iter().map(|p| p.title).collect(),
+            Target::Group(_) => self.work_inbox.read(cx).target_projects(&target).unwrap_or_default().iter().map(|p| p.title.clone()).collect(),
         };
         let title = work_view::title(&target, &bound.iter().map(String::as_str).collect::<Vec<_>>());
         let opening = work_view::Opening { target, folders, home: self.home.clone(), hits: self.hits.clone(), link: self.fleet_link(cx), open_link_with: self.open_link_with, repo_of: self.work_inbox.read(cx).repo_of() };

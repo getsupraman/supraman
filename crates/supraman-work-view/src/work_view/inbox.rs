@@ -393,6 +393,11 @@ impl WorkInbox {
         Some(Ok(projects::bound(overview, keys).into_iter().map(|p| p.item).collect()))
     }
 
+    /// The projects the Inbox last bound to `target`, when it has read them.
+    pub fn target_projects(&self, target: &Target) -> Option<&[ItemRef]> {
+        self.projects.get(target).map(Vec::as_slice)
+    }
+
     /// The first project `folder`'s repo binds (`projects::bound`); git, and Workman when no overview is kept, run off the UI thread.
     pub fn bind_folder(&mut self, folder: PathBuf, cx: &mut Context<Self>) -> Task<Binding> {
         let client = match self.hub.read(cx).access() {

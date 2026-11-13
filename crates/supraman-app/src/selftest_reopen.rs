@@ -160,8 +160,9 @@ async fn check(view: &Entity<FleetView>, home: &Path, own: &str, gone: &Path, cx
     let took = restart(view, home, 4, Some(gone), cx).await?;
     let mut expected = saved.clone();
     expected.tabs.remove(4);
+    let settled = until_app(view, cx, WITHIN, "the reopened tabs saved as before, the Work tab titled by its project once bound", |v, cx| (v.saved_tabs(cx) == expected).then_some(())).await;
     let (now, notices) = view.read_with(cx, |v, cx| (v.saved_tabs(cx), v.saving.tab_notices.clone()));
-    if now != expected {
+    if settled.is_err() {
         bail!("after the restart {now:?}, expected {expected:?}");
     }
     if notices.len() != 1 || !notices[0].contains("reopen gone") || !notices[0].contains("is gone") {
