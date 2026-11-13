@@ -1,9 +1,7 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::path::Path;
 
-use gpui::Context;
-use supraman_core::folders::{self, Entries, OnDisk, Place};
+use supraman_core::folders::{self, Entries, OnDisk};
 
 use super::FleetView;
 use crate::fleet;
@@ -50,40 +48,6 @@ impl Listed {
 }
 
 impl FleetView {
-    /// `path` added at the top level's end, written off the UI thread; a refusal is the action's error.
-    pub fn add_top_folder(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        let Some(home) = self.home.clone() else {
-            self.action_error = Some("Cannot add a folder: no Supraman home".into());
-            return;
-        };
-        let generation = self.polls.folder_writes.fetch_add(1, Ordering::SeqCst) + 1;
-        let added = path.clone();
-        let write = cx.background_executor().spawn(async move {
-            folders::edit(&home, |e| e.add_folder(&added, &Place::Top(usize::MAX))).map_err(|e| e.to_string())?;
-            Ok::<_, String>(read(Some(&home)))
-        });
-        cx.spawn(async move |this, cx| {
-            let done = write.await;
-            this.update(cx, |this, cx| {
-                match done {
-                    Ok(read) => {
-                        let writes = this.polls.folder_writes.load(Ordering::SeqCst);
-                        if this.listed.apply(read, generation, writes) {
-                            this.listed_changed();
-                        }
-                        let name = supraman_core::paths::folder_name(&path);
-                        this.reveal_new(super::left::PendingReveal::Row(format!("repo:{name}")));
-                        this.show_toast(format!("Added {name}."), cx);
-                    }
-                    Err(e) => this.action_error = Some(format!("Cannot add {}: {e}", path.display())),
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
     /// The entry (a group, or a top-level folder) whose folder a session in `cwd` shows under.
     pub(super) fn entry_of(&self, cwd: &Path) -> Option<String> {
         let folder = supraman_claude::holding(cwd, &self.listed.entries, |_| None)?;

@@ -8,7 +8,7 @@ use supraman_ui::{button, session};
 use supraman_ui::details::{self, Section};
 use theme::ActiveTheme as _;
 
-use super::menu::{MenuAction, MenuItem, MenuTarget, folder_items, group_items};
+use super::menu::{MenuAction, MenuItem, MenuTarget, group_items};
 use super::schedules::At;
 use super::{FleetView, Tab, TabKind};
 use crate::fleet::{EntryNode, SessionRow};
@@ -81,7 +81,7 @@ impl FleetView {
                 (format!("Details · {}", row_details::session_title(&row)), Some(row.session.cwd.clone()), Some(row), folder)
             }
             MenuTarget::Group(name) | MenuTarget::Folder(name) => {
-                let first = self.tree().entry(name)?.folders.first().map(|f| f.path.clone());
+                let first = self.details_node(name)?.folders.first().map(|f| f.path.clone());
                 (format!("Details · {name}"), first, None, None)
             }
             MenuTarget::Schedule { .. } | MenuTarget::Schedules { .. } | MenuTarget::OtherSchedule(_) => return None,
@@ -210,9 +210,18 @@ impl FleetView {
         row_details::session(&facts, now_ms())
     }
 
-    /// A group's or a top-level folder's page: the entry named `name` in the tree.
+    /// The entry named `name` in the tree, or a group's folder by its key on its own.
+    fn details_node(&self, name: &str) -> Option<EntryNode> {
+        let tree = self.tree();
+        tree.entry(name).cloned().or_else(|| {
+            let (_, folder) = tree.folders().find(|(_, f)| f.key == name)?;
+            Some(EntryNode { name: name.to_string(), group: false, folders: vec![folder.clone()] })
+        })
+    }
+
+    /// A group's or a folder's page.
     pub fn entry_sections(&self, name: &str, cx: &gpui::App) -> Option<(EntryNode, Vec<Section>)> {
-        let node = self.tree().entry(name)?.clone();
+        let node = self.details_node(name)?;
         let facts = EntryFacts {
             name: name.to_string(),
             group: node.group,
@@ -282,8 +291,7 @@ impl FleetView {
             }
             MenuTarget::Group(name) | MenuTarget::Folder(name) => {
                 let (node, sections) = self.entry_sections(name, cx)?;
-                let closed = self.has_closed_background(name);
-                let items = if node.group { group_items(&node, closed) } else { folder_items(&node, &node.folders[0], closed) };
+                let items = if node.group { group_items(&node, self.has_closed_background(name)) } else { self.folder_menu(name).map(|(_, items)| items).unwrap_or_default() };
                 (name.clone(), None, sections, items)
             }
             MenuTarget::Schedule { .. } | MenuTarget::Schedules { .. } | MenuTarget::OtherSchedule(_) => return None,

@@ -24,6 +24,7 @@ pub enum Icon {
     Attach,
     Claude,
     Folder,
+    Group,
     GitBranch,
     Play,
     RelayReady,
@@ -73,7 +74,7 @@ pub enum Icon {
 
 impl Icon {
     #[cfg(test)]
-    const ALL: [Icon; 63] = [
+    const ALL: [Icon; 64] = [
         Icon::ChevronDown,
         Icon::ChevronRight,
         Icon::Close,
@@ -92,6 +93,7 @@ impl Icon {
         Icon::Attach,
         Icon::Claude,
         Icon::Folder,
+        Icon::Group,
         Icon::GitBranch,
         Icon::Play,
         Icon::RelayReady,
@@ -159,6 +161,7 @@ impl Icon {
             Icon::Attach => include_bytes!("../assets/icons/tab_attach.svg"),
             Icon::Claude => include_bytes!("../assets/icons/claude.svg"),
             Icon::Folder => include_bytes!("../assets/icons/folder.svg"),
+            Icon::Group => include_bytes!("../assets/icons/folders.svg"),
             Icon::GitBranch => include_bytes!("../assets/icons/git_branch.svg"),
             Icon::Play => include_bytes!("../assets/icons/play_outlined.svg"),
             Icon::RelayReady => include_bytes!("../assets/icons/signal_high.svg"),
@@ -214,7 +217,7 @@ impl Icon {
     /// The share of a slot the icon fills so that thin outlines and filled marks look one size.
     fn optical(self) -> f32 {
         match self {
-            Icon::GitBranch | Icon::Folder => 1.0,
+            Icon::GitBranch | Icon::Folder | Icon::Group => 1.0,
             _ => 0.875,
         }
     }
@@ -241,6 +244,7 @@ mod tests {
             assert!(text.starts_with("<svg") && text.contains(r#"width="16""#), "{icon:?}: {text}");
             assert!(text.trim_end().ends_with("</svg>"), "{icon:?} is cut short");
         }
+        assert!(Icon::Group.bytes() != Icon::Folder.bytes() && Icon::Group.bytes() != Icon::GitBranch.bytes(), "a group's icon is neither a folder's nor a repo's");
     }
 
     #[test]

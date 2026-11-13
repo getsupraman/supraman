@@ -7,6 +7,8 @@ use super::FleetView;
 use super::menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuItem, MenuTarget, folder_items, group_items, is_foremans, other_schedule_items, schedule_items, schedules_items, session_items};
 use crate::fleet::{self, SessionRow};
 use crate::work_view;
+use supraman_core::folders::Pos;
+use supraman_ui::confirm::Answer;
 
 pub(super) fn send_name_of(session_id: &str) -> Option<String> {
     use supraman_claude::peer;
@@ -15,16 +17,6 @@ pub(super) fn send_name_of(session_id: &str) -> Option<String> {
 }
 
 impl FleetView {
-    /// The action bar's +: a folder picked, added at the top level's end.
-    pub fn add_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.dialogs.menu = None;
-        if let Some(path) = self.dialogs.pick_folder.take() {
-            self.add_top_folder(path, cx);
-            return;
-        }
-        supraman_ui::folder_picker::pick_folder("Add a folder to Supraman", window, cx, |this, path, _, cx| this.add_top_folder(path, cx));
-    }
-
     pub fn show_toast(&mut self, text: String, cx: &mut Context<Self>) {
         self.toast.show(text, |this: &mut Self| &mut this.toast, cx);
     }
@@ -65,10 +57,7 @@ impl FleetView {
         let tree = self.tree();
         match target {
             MenuTarget::Group(name) => tree.entry(name).map(|node| (name.clone(), group_items(node, self.has_closed_background(name)))),
-            MenuTarget::Folder(key) => tree
-                .folders()
-                .find(|(_, f)| &f.key == key)
-                .map(|(entry, f)| (f.place(), folder_items(entry, f, self.has_closed_background(&entry.name)))),
+            MenuTarget::Folder(key) => self.folder_menu(key),
             MenuTarget::Session { entry, place, session_id } => tree
                 .rows()
                 .find(|r| &r.session.session_id == session_id)
@@ -79,6 +68,17 @@ impl FleetView {
             MenuTarget::Schedules { entry, folder } => Some((format!("{} · Schedules", supraman_core::paths::folder_name(folder)), schedules_items(entry, folder))),
             MenuTarget::OtherSchedule(path) => self.others().find(path).map(|t| (t.path(), other_schedule_items(t))),
         }
+    }
+
+    /// A folder row's title and items, with its place in folders.toml.
+    pub(super) fn folder_menu(&self, key: &str) -> Option<(String, Vec<MenuItem>)> {
+        let tree = self.tree();
+        tree.entries.iter().enumerate().find_map(|(e, entry)| {
+            let f = entry.folders.iter().position(|f| f.key == key)?;
+            let pos = if entry.group { Pos::member(e, f) } else { Pos::top(e) };
+            let folder = &entry.folders[f];
+            Some((folder.place(), folder_items(entry, folder, pos, self.has_closed_background(&entry.name))))
+        })
     }
 
     pub(super) fn session_menu(&self, entry: &str, place: &str, row: &SessionRow, send_name: Option<String>, cx: &gpui::App) -> Vec<MenuItem> {
@@ -157,6 +157,9 @@ impl FleetView {
             tab @ (MenuAction::OpenGit(_) | MenuAction::OpenWorkman { .. } | MenuAction::CloseTab(_) | MenuAction::CloseOtherTabs(_) | MenuAction::CloseTabsRight(_) | MenuAction::ReopenClosed) => {
                 self.run_tab_action(tab, cx);
             }
+            folders @ (MenuAction::AddFolder(_) | MenuAction::AddGroup | MenuAction::RenameGroup(_) | MenuAction::RemoveFolder { .. } | MenuAction::RemoveGroup(_)) => {
+                self.run_folder_action(folders, window, cx);
+            }
         }
         cx.notify();
     }
@@ -188,15 +191,14 @@ impl FleetView {
         ));
     }
 
-    pub fn answer_confirm(&mut self, yes: bool, cx: &mut Context<Self>) {
-        if let Some(Confirm { action: Some(action), .. }) = self.dialogs.confirm.take()
-            && yes
-        {
+    pub fn answer_confirm(&mut self, answer: Answer, cx: &mut Context<Self>) {
+        if let Some(action) = self.dialogs.confirm.take().and_then(|c| c.take(answer)) {
             match action {
                 Confirmed::StopSession(session) => self.stop_session(session, cx),
                 Confirmed::Delete { session, discard } => self.delete_now(session, discard, cx),
                 Confirmed::DeleteClosed { entry, sessions, skipped } => self.delete_closed_now(entry, sessions, skipped, cx),
                 Confirmed::RemoveSchedule { folder_key, id } => self.remove_schedule(folder_key, id, cx),
+                Confirmed::EditFolders(edit) => self.edit_folders(edit, cx),
                 Confirmed::Update => self.update_confirmed(cx),
             }
         }

@@ -50,7 +50,20 @@ pub struct Form<V> {
 
 /// A one-line field holding `text`, its Enter `answers.ok`, its Esc `answers.close`, each edit `edited`.
 pub fn field<V: 'static>(placeholder: &str, text: &str, answers: Answers<V>, edited: fn(&mut V, &mut Context<V>), window: &mut Window, cx: &mut Context<V>) -> (Entity<TextInput>, Subscription) {
-    let input = cx.new(|cx| TextInput::new(placeholder.to_string(), None, window, cx));
+    field_with(placeholder, text, None, answers, edited, window, cx)
+}
+
+/// [`field`] taking only the characters `filter` keeps (`supraman_core::name_char` for a name).
+pub fn field_with<V: 'static>(
+    placeholder: &str,
+    text: &str,
+    filter: Option<fn(char) -> Option<char>>,
+    answers: Answers<V>,
+    edited: fn(&mut V, &mut Context<V>),
+    window: &mut Window,
+    cx: &mut Context<V>,
+) -> (Entity<TextInput>, Subscription) {
+    let input = cx.new(|cx| TextInput::new(placeholder.to_string(), filter, window, cx));
     if !text.is_empty() {
         input.update(cx, |i, cx| i.set_text(text, cx));
     }
