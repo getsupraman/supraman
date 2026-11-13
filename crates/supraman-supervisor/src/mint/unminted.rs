@@ -12,8 +12,7 @@ use crate::Millis;
 pub struct Unlisted(BTreeMap<String, Millis>);
 
 impl Keeper {
-    /// Deletes each config with no record and no kept token whose name two non-empty listings in a row lack, as
-    /// [`super::Absent`] judges a deletion, unless `held` holds it or it was written since the first of them; what failed.
+    /// Deletes each config with no record or kept token that two non-empty listings in a row lack ([`super::Absent`]), but `held`'s or one written since; what failed.
     pub fn sweep_unminted(&self, unlisted: &mut Unlisted, observed: &[Session], held: &[String], now: Millis) -> Vec<String> {
         if observed.is_empty() {
             unlisted.0.clear();

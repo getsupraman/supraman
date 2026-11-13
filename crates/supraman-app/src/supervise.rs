@@ -310,8 +310,7 @@ impl Supervision {
         notices
     }
 
-    /// A scheduled run whose claude session is deleted is revoked, and a token-less config whose session is gone
-    /// deleted, never one of the hands' (none without them). `observed` was read without error.
+    /// Revokes deleted scheduled runs and deletes token-less configs whose session is gone, none without the hands; `observed` was read without error.
     fn end_deleted(&mut self, observed: &[Session], now: Millis) -> Vec<String> {
         let keeper = Keeper::open(&self.home).with_claude_dir(supraman_core::paths::claude_dir());
         let auth = crate::signin::auth(&self.home);

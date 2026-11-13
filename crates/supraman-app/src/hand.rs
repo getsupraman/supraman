@@ -27,8 +27,7 @@ pub enum Launch {
     Plain,
     /// `name` keys the file and `hands.json`; `session` is the Workman session's name.
     Minted { name: String, session: String, config: PathBuf, notice: Option<String>, new_session: Option<String> },
-    /// No token of its own (signed out, or the mint failed, said in `notice`): its config's helper prints the placeholder
-    /// until [`mint_helped`] keeps one.
+    /// No token of its own (signed out, or the mint failed, said in `notice`): its helper prints the placeholder until [`mint_helped`].
     Helped { name: String, config: PathBuf, notice: Option<String>, new_session: Option<String> },
     Unminted(String),
 }
@@ -202,8 +201,7 @@ pub struct HelpedMinted {
     pub notices: Vec<String>,
 }
 
-/// After a sign-in: each [`Launch::Helped`] tab whose claude session runs is minted as its launch would have been,
-/// its token kept and its config rewritten in place, so its helper hands claude the token at its next connect.
+/// After a sign-in, each [`Launch::Helped`] tab whose claude runs is minted in place: its helper hands claude the token at its next connect.
 pub fn mint_helped(hands: &Mutex<Hands>) -> HelpedMinted {
     mint_helped_with(|| hands.lock().unwrap_or_else(|e| e.into_inner()))
 }
@@ -544,8 +542,7 @@ impl Hands {
         Pending { base, url, bearer, minter: self.minter.clone(), request, former, name, notice, new_session, claude_session, own, keep_name }
     }
 
-    /// The next free name after a 409 for the launch holding `held`, held for it instead, or as its Workman session's
-    /// only while it `keep`s its name; never `wanted` or one `tried`.
+    /// The next free name after a 409 for the launch holding `held`, held for it (its Workman session's only while it `keep`s its name); never `wanted` or one `tried`.
     fn next_fresh(&mut self, cwd: &Path, wanted: &str, tried: &[String], held: &str, keep: bool) -> Option<String> {
         let next = self.free_names(cwd, held).find(|n| n != wanted && !tried.contains(n))?;
         if keep {
@@ -594,8 +591,7 @@ impl Hands {
         (self.minted.get(name).is_some() || self.helped.contains_key(name)) && self.config_path(name).is_ok_and(|p| !p.exists())
     }
 
-    /// Revokes `name`'s token unless its claude session or a continuation of it still holds it ([`Self::follow`]);
-    /// a helped tab's config goes.
+    /// Revokes `name`'s token unless its claude session or a continuation of it still holds it ([`Self::follow`]); a helped tab's config goes.
     pub fn release(&mut self, name: &str) -> Option<String> {
         if self.helped.remove(name).is_some() {
             return self.keeper().forget_unminted(name);
