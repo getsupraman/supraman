@@ -6015,3 +6015,8 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   questions), both waiting on René; refactor4/14 holds the one warning of ours left (`Hands::launch_for` is never used,
   A-23). Followups: `fleetview-new-split`, `fleet-build-split`, `app-c144-leftovers`, `gitman-wt-reset-flake`,
   `selftest-feature-tidy`.
+
+## 2026-11-13 — the two flaky tests had one real cause and one stale one (flaky-pair)
+- **A pid alone names whatever runs now.** core's process tests ended a grandchild by `taskkill /PID` after it had exited; under parallel tests Windows reused the pid for another test's git, which died mid-call. Tests now end a process only by its pid and start time (`platform::process::terminate_started`), and `taskkill` is refused in every crate.
+- **The kill exposed a production bug:** `schedule::runs::spent` read HEAD with `symbolic-ref -q`, whose exit 1 means "detached" and also "git failed"; a failed read dropped the own-branch exclude and judged a run worktree with unpushed commits spent, so prune removed it (its branch survived). It reads HEAD with `rev-parse --symbolic-full-name HEAD` and keeps the worktree on any failure. A git call whose failure exit also carries an answer is read only when the answer cannot be a failure.
+- **A wall-clock bound on a graph read flakes under load** (a commit took 1.8–5.2 s with a 20 ms debounce): the live refresh tests wait through `testing::eventually`, woken by each refresh the watchers send; the deadline only bounds a refresh that never comes.

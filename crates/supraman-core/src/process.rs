@@ -378,9 +378,11 @@ mod tests {
     #[test]
     fn no_crate_starts_a_process_without_command() {
         let needle = concat!("Command", "::new(");
+        let kill_by_pid = concat!("\"task", "kill\"");
         let crates = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let own = Path::new("supraman-core").join("src").join("process.rs");
         let mut found = Vec::new();
+        let mut kills = Vec::new();
         let mut dirs = vec![crates.to_path_buf()];
         while let Some(dir) = dirs.pop() {
             for entry in std::fs::read_dir(&dir).unwrap().flatten() {
@@ -396,6 +398,9 @@ mod tests {
                         if line.contains(needle) && !line.trim_start().starts_with("//") {
                             found.push((at.clone(), i + 1));
                         }
+                        if line.contains(kill_by_pid) {
+                            kills.push((at.clone(), i + 1));
+                        }
                     }
                 }
             }
@@ -403,6 +408,7 @@ mod tests {
         let (own_uses, bare): (Vec<_>, Vec<_>) = found.into_iter().partition(|(at, _)| *at == own);
         assert!(bare.is_empty(), "start these through supraman_core::process::command: {bare:?}");
         assert_eq!(own_uses.len(), 1, "only `command` itself: {own_uses:?}");
+        assert!(kills.is_empty(), "end a pid through platform::process::terminate_started, never a pid another process took since: {kills:?}");
     }
 
     /// Windows PowerShell, a real exe: `pwsh` can be a Store alias whose process is no descendant of the caller.
@@ -481,10 +487,11 @@ mod tests {
             assert!(matches!(err, RunError::Timeout(d) if d == Duration::from_secs(8)), "{err:?}");
             assert!(started_at.elapsed() < Duration::from_secs(30), "{:?}", started_at.elapsed());
             let pid: u32 = std::fs::read_to_string(&pid_file).expect("the grandchild started").trim().parse().unwrap();
-            wait_until(Duration::from_secs(5), polled(Duration::from_millis(100)), || !(alive(pid) && !grandchild_left));
-            assert_eq!(alive(pid), grandchild_left, "{kill:?}");
             if grandchild_left {
-                let _ = command("taskkill").args(["/PID", &pid.to_string(), "/F"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+                terminate_started(pid, started(pid).expect("the grandchild runs"));
+            } else {
+                wait_until(Duration::from_secs(5), polled(Duration::from_millis(100)), || !alive(pid));
+                assert!(!alive(pid), "{kill:?}");
             }
         }));
         for case in cases {
@@ -505,12 +512,14 @@ mod tests {
         ))
     }
 
-    fn grandchild(pid_file: &Path) -> u32 {
-        std::fs::read_to_string(pid_file).expect("the grandchild started").trim().parse().unwrap()
+    // A pid alone may already name another test's process (a git), so a grandchild is its pid and start time.
+    fn grandchild(pid_file: &Path) -> (u32, u64) {
+        let pid = std::fs::read_to_string(pid_file).expect("the grandchild started").trim().parse().unwrap();
+        (pid, started(pid).expect("the grandchild runs"))
     }
 
-    fn end(pid: u32) {
-        let _ = command("taskkill").args(["/PID", &pid.to_string(), "/F"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    fn runs(pid: u32, start: u64) -> bool {
+        started(pid) == Some(start)
     }
 
     #[test]
@@ -520,7 +529,8 @@ mod tests {
         let started_at = Instant::now();
         let out = run(&mut leaves_a_grandchild(&pid_file, false), Duration::from_secs(30), Kill::Child).unwrap();
         let took = started_at.elapsed();
-        end(grandchild(&pid_file));
+        let (pid, start) = grandchild(&pid_file);
+        terminate_started(pid, start);
         assert_eq!(out.code, Some(0));
         assert!(out.stdout.lines().any(|l| l.trim() == "done"), "the child's own line, beside what the descendant wrote: {:?}", out.stdout);
         assert!(took < Duration::from_secs(20), "the call waited for the descendant: {took:?}");
@@ -532,21 +542,19 @@ mod tests {
         let kept = dir.path().join("kept");
         let out = run(&mut leaves_a_grandchild(&kept, true), Duration::from_secs(30), Kill::Tree).unwrap();
         assert_eq!(out.code, Some(0), "{out:?}");
-        let kept = grandchild(&kept);
-        assert!(alive(kept), "a descendant of a child that exited keeps running");
-        end(kept);
+        let (kept, start) = grandchild(&kept);
+        terminate_started(kept, start);
 
         let dropped = dir.path().join("dropped");
         let mut cmd = leaves_a_grandchild(&dropped, true);
         let mut child = cmd.stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
         let job = Job::adopt(&child).expect("a job");
         child.wait().unwrap();
-        let pid = grandchild(&dropped);
-        assert!(alive(pid));
+        let (pid, start) = grandchild(&dropped);
         drop(job);
-        wait_until(Duration::from_secs(5), polled(Duration::from_millis(50)), || !alive(pid));
-        let left = alive(pid);
-        end(pid);
+        wait_until(Duration::from_secs(5), polled(Duration::from_millis(50)), || !runs(pid, start));
+        let left = runs(pid, start);
+        terminate_started(pid, start);
         assert!(!left, "the job's last handle closing ends the tree, as when sm dies");
     }
 
@@ -562,15 +570,16 @@ mod tests {
             eventually(Duration::from_secs(30), "no ping under our cmd", polled(Duration::from_millis(10)), || {
                 let all = processes();
                 let ours = |parent: u32| all.iter().any(|(pid, up, name)| *pid == parent && *up == me && name.eq_ignore_ascii_case("cmd.exe"));
-                all.iter().find(|(_, parent, name)| name.eq_ignore_ascii_case("ping.exe") && ours(*parent)).map(|(pid, ..)| *pid)
+                let pid = all.iter().find(|(_, parent, name)| name.eq_ignore_ascii_case("ping.exe") && ours(*parent)).map(|(pid, ..)| *pid)?;
+                Some((pid, started(pid)?))
             })
         });
         let err = run(command("cmd").args(["/C", "ping -n 60 127.0.0.1"]), Duration::from_secs(2), Kill::Tree).unwrap_err();
         assert!(matches!(err, RunError::Timeout(_)), "{err:?}");
-        let pid = probe.join().unwrap();
-        wait_until(Duration::from_secs(5), polled(Duration::from_millis(50)), || !alive(pid));
-        let left = alive(pid);
-        end(pid);
+        let (pid, start) = probe.join().unwrap();
+        wait_until(Duration::from_secs(5), polled(Duration::from_millis(50)), || !runs(pid, start));
+        let left = runs(pid, start);
+        terminate_started(pid, start);
         assert!(!left, "the grandchild escaped the job");
     }
 

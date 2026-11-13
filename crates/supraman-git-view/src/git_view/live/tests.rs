@@ -1,7 +1,9 @@
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use gpui::{TestAppContext, VisualTestContext};
+use supraman_core::testing::eventually;
 use supraman_core::watch::Batch;
 use supraman_gitman::Dirs;
 use supraman_gitman::fixture::Fixture;
@@ -15,19 +17,22 @@ use crate::git_view::test_support::select_wip;
 use crate::git_view::wip::tests::open_file;
 use crate::git_view::*;
 
+/// Only a refresh that never comes runs into it: each wait is woken by the refreshes the watchers send.
 const DEADLINE: Duration = Duration::from_secs(10);
 
-/// Runs the app until `done`, failing after `within`; woken by each refresh the watchers' threads send.
+/// Runs the app until `done`, woken by each refresh the watchers' threads send.
 fn until(what: &str, within: Duration, cx: &mut VisualTestContext, mut done: impl FnMut(&mut VisualTestContext) -> bool) -> Duration {
     let start = Instant::now();
-    loop {
-        let seen = sent::count();
+    let seen = Cell::new(sent::count());
+    let wake = |left| {
+        sent::past(seen.get(), left);
+    };
+    eventually(within, what, wake, || {
+        seen.set(sent::count());
         cx.run_until_parked();
-        if done(cx) {
-            return start.elapsed();
-        }
-        assert!(sent::past(seen, within.saturating_sub(start.elapsed())), "{what}: not within {within:?}");
-    }
+        done(cx).then_some(())
+    });
+    start.elapsed()
 }
 
 /// Tabs this test opens from here on follow their repositories.
@@ -52,7 +57,7 @@ pub(crate) fn close(view: Entity<GitView>, cx: &mut VisualTestContext) -> Vec<su
 }
 
 #[gpui::test]
-fn live_refresh_shows_a_new_commit_and_its_refs_within_a_second_and_an_edit_within_three(cx: &mut TestAppContext) {
+fn live_refresh_shows_a_new_commit_and_its_refs_and_an_edit(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     follow(cx);
     let (view, cx) = open(&f.dir, Opts::default(), cx);

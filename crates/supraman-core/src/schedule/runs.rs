@@ -233,7 +233,11 @@ pub(super) fn spent(wt: &Path) -> std::result::Result<Option<(PathBuf, String)>,
     if !status.success() || !status.stdout.trim().is_empty() {
         return Ok(None);
     }
-    let branch = git(wt, &["symbolic-ref", "-q", "--short", "HEAD"])?.stdout.trim().to_string();
+    let head = git(wt, &["rev-parse", "--symbolic-full-name", "HEAD"])?;
+    if !head.success() {
+        return Ok(None);
+    }
+    let branch = head.stdout.trim().strip_prefix("refs/heads/").unwrap_or_default().to_string();
     let mut only_here = vec!["rev-list", "--count", "HEAD", "--not"];
     let exclude = format!("--exclude={branch}");
     if !branch.is_empty() {

@@ -630,20 +630,12 @@ fn run_records_rotate_at_one_mib_and_read_across_both_files() {
     assert!(all.windows(2).all(|w| w[0].ts < w[1].ts), "oldest first");
 }
 
-/// `git args` in `dir` with no user or system config, retried while Defender or the indexer holds a fresh file.
+/// `git args` in `dir` with no user or system config.
 fn git(dir: &Path, args: &[&str]) {
-    let mut out = None;
-    for _ in 0..5 {
-        let mut cmd = crate::process::command("git");
-        crate::process::without_user_config(cmd.arg("-C").arg(dir).args(args));
-        let ran = crate::process::run(&mut cmd, crate::process::GIT_TIMEOUT, crate::process::Kill::Tree).unwrap();
-        if ran.success() {
-            return;
-        }
-        out = Some(ran);
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-    panic!("git {args:?}: {}", out.map(|o| o.stderr).unwrap_or_default());
+    let mut cmd = crate::process::command("git");
+    crate::process::without_user_config(cmd.arg("-C").arg(dir).args(args));
+    let ran = crate::process::run(&mut cmd, crate::process::GIT_TIMEOUT, crate::process::Kill::Tree).unwrap();
+    assert!(ran.success(), "git {args:?} in {}: {}", dir.display(), ran.stderr);
 }
 
 /// [`crate::prune::prune`], again a few times while it cannot remove a file made a moment ago.
@@ -682,6 +674,9 @@ fn a_run_worktree_is_spent_when_clean_and_without_a_commit_of_its_own() {
     assert_eq!(super::runs::spent(&wt("dirty")).unwrap(), None, "uncommitted work");
     assert_eq!(super::runs::spent(&wt("ahead")).unwrap(), None, "a commit only it has");
     assert_eq!(super::runs::spent(&f.folder).unwrap(), None, "the main checkout is no run worktree");
+    git(&f.folder, &["worktree", "add", "-q", "--detach", wt("detached").to_str().unwrap(), "HEAD"]);
+    let (_, branch) = super::runs::spent(&wt("detached")).unwrap().expect("a detached HEAD a branch holds is spent");
+    assert_eq!(branch, "");
 }
 
 #[test]
