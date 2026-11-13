@@ -69,9 +69,7 @@ pub fn prepare(home: &Path, main_repo: &Path) -> anyhow::Result<()> {
 
 fn row(v: &FleetView, id: &str) -> Option<(String, bool, bool)> {
     v.tree()
-        .workspaces
-        .iter()
-        .flat_map(|w| w.repos.iter().flat_map(|r| &r.sessions))
+        .rows()
         .find(|r| r.session.session_id == id)
         .map(|r| (r.session.name.clone(), r.closed, r.starred))
 }

@@ -8,7 +8,8 @@ use std::{
 
 use anyhow::{Context as _, anyhow, bail};
 use supraman_claude::{Claude, Removal, Session, WRITE_TIMEOUT, check_supported, list_sessions, main_repo, main_repo_walks, now_ms};
-use supraman_core::{DEFAULT_DEPTH, Workspace, Registry, process, scan};
+use supraman_core::folders::{Entries, Entry, FolderEntry};
+use supraman_core::{Folder, Registry, Workspace, process};
 use supraman_term::Terminal;
 use supraman_core::platform::process::memory;
 use supraman_ui::mib;
@@ -172,14 +173,13 @@ fn clear_scratch(mode: Mode) -> anyhow::Result<(PathBuf, PathBuf, PathBuf, PathB
     let cwd = target.join("selftest-cwd");
     let work = target.join("selftest-work");
     let add = target.join(crate::selftest_manage::FOLDER);
-    let single = target.join(crate::selftest_manage::SINGLE);
     let sched = crate::selftest_schedules::folder();
     let fixture = target.join("selftest-larchsys");
-    for dir in [&home, &cwd, &work, &add, &single, &sched, &fixture] {
+    for dir in [&home, &cwd, &work, &add, &sched, &fixture] {
         remove_dir_retrying(dir).with_context(|| format!("cannot clear {}", dir.display()))?;
     }
     *lock() = Some(Scratch {
-        dirs: vec![home.clone(), cwd.clone(), work.clone(), add, single, sched, fixture.clone()],
+        dirs: vec![home.clone(), cwd.clone(), work.clone(), add, sched, fixture.clone()],
         session_name: None,
         kill: Vec::new(),
         transcripts: Vec::new(),
@@ -188,6 +188,7 @@ fn clear_scratch(mode: Mode) -> anyhow::Result<(PathBuf, PathBuf, PathBuf, PathB
     Ok((home, cwd, work, fixture))
 }
 
+/// The group `WORKSPACE` in folders.toml, and the same folders as the schedules' bridge workspace of that name.
 fn register_workspace(home: &Path, cwd: &Path, fixture: &Path) -> anyhow::Result<PathBuf> {
     // Still single-threaded apart from the watchdog, which never reads the environment.
     unsafe { std::env::set_var(supraman_core::HOME_VAR, home) };
@@ -198,25 +199,25 @@ fn register_workspace(home: &Path, cwd: &Path, fixture: &Path) -> anyhow::Result
         .ok_or_else(|| anyhow!("main repo {} has no folder name", main.display()))?
         .to_string_lossy()
         .into_owned();
-    let registry = Registry::from_env()?;
     // two fake repos beside this checkout's own repo, which the gate's session runs in: never the user's other folders
     for name in ["alpha", "beta"] {
         crate::selftest_manage::fake_repo(fixture, name)?;
     }
-    let mut workspace = Workspace::new(WORKSPACE, fixture, scan(fixture, DEFAULT_DEPTH)?);
-    let own = workspace.add_folder(&main).name.clone();
-    if own != repo_name {
-        bail!("{} registered as {own}, not {repo_name}", main.display());
-    }
+    let paths = [fixture.join("alpha"), fixture.join("beta"), main.clone()];
+    let group = Entry::Group { name: WORKSPACE.into(), folders: paths.iter().map(FolderEntry::new).collect() };
+    supraman_core::folders::edit(home, |e| {
+        *e = Entries::new(vec![group]);
+        Ok(())
+    })?;
+    let bridge = paths.iter().map(|p| Folder::new(supraman_core::paths::folder_name(p), p)).collect();
+    Registry::at(home).save(&Workspace::new(WORKSPACE, fixture, bridge), true)?;
     REPO.set(repo_name).ok();
-    let count = workspace.folders.len();
-    let saved = registry.save(&workspace, true)?;
     println!(
-        "step 1: SUPRAMAN_HOME={} ; workspace {WORKSPACE} = {} ({count} folders: two fixture repos and {}) registered at {}",
+        "step 1: SUPRAMAN_HOME={} ; group {WORKSPACE} = two fixture repos in {} and {}, in {}",
         home.display(),
         fixture.display(),
         main.display(),
-        saved.display()
+        supraman_core::folders::path(home).display()
     );
     Ok(main)
 }
@@ -636,17 +637,7 @@ async fn page_through(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowC
 }
 
 fn find_row(view: &FleetView, name: &str) -> Option<SessionRow> {
-    view.tree()
-        .workspaces
-        .clone()
-        .into_iter()
-        .find(|p| p.name == WORKSPACE)?
-        .repos
-        .into_iter()
-        .find(|r| r.name == repo())?
-        .sessions
-        .into_iter()
-        .find(|r| r.session.name == name)
+    view.tree().folder(&format!("{WORKSPACE}/{}", repo()))?.sessions.iter().find(|r| r.session.name == name).cloned()
 }
 
 /// Non-blank cells in what the painter last laid out (prepaint syncs `last_content`).
@@ -900,9 +891,9 @@ async fn loading_until_listed(view: &Entity<FleetView>, cx: &mut AsyncWindowCont
         (!v.polls.sessions_read && painted(v, "loading-sessions") && painted(v, "refresh-turning")).then_some(())
     })
     .await?;
-    let shown = view.read_with(cx, |v, _| (v.sessions.len(), v.tree().workspaces.len()));
+    let shown = view.read_with(cx, |v, _| (v.sessions.len(), v.tree().entries.len()));
     if shown != (0, 0) {
-        bail!("rows shown while loading: {} sessions, {} workspaces", shown.0, shown.1);
+        bail!("rows shown while loading: {} sessions, {} entries", shown.0, shown.1);
     }
     let started = Instant::now();
     let listed = std::cell::Cell::new(None);

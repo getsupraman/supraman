@@ -128,16 +128,17 @@ impl FleetView {
         offers_delete(row, self.in_tab(&row.session)) && !self.listing.deleting.contains(&row.session.session_id)
     }
 
-    fn closed_background(&self, workspace: &str) -> Vec<SessionRow> {
-        let tree = self.search_tree();
-        let Some(node) = tree.workspaces.into_iter().find(|w| w.name == workspace) else { return Vec::new() };
-        node.into_rows()
+    fn closed_background(&self, entry: &str) -> Vec<SessionRow> {
+        let tree = self.tree();
+        let Some(node) = tree.entry(entry) else { return Vec::new() };
+        node.clone()
+            .into_rows()
             .filter(|r| r.session.kind == Kind::Background && is_closed(r))
             .collect()
     }
 
-    pub fn has_closed_background(&self, workspace: &str) -> bool {
-        !self.closed_background(workspace).is_empty()
+    pub fn has_closed_background(&self, entry: &str) -> bool {
+        !self.closed_background(entry).is_empty()
     }
 
     pub(super) fn ask_delete(&mut self, session: Session) {
@@ -146,7 +147,7 @@ impl FleetView {
             _ => "Its transcript and its tool files under the claude dir are deleted, so it can no longer be resumed",
         };
         let kind = if session.kind == Kind::Background { "background session" } else { "closed session" };
-        let foreign = if fleet::is_foreign(&session.name, &self.workspaces, self.own_prefix.as_deref()) { " It is another Supraman's session." } else { "" };
+        let foreign = if fleet::is_foreign(&session.name, &self.own_names(), self.own_prefix.as_deref()) { " It is another Supraman's session." } else { "" };
         self.dialogs.confirm = Some(Confirm::ask(
             format!("Delete {kind} {}? {what}. This cannot be undone.{foreign}", label(&session)),
             "Delete",
@@ -202,9 +203,9 @@ impl FleetView {
         }
     }
 
-    pub(super) fn ask_delete_closed(&mut self, workspace: String, cx: &mut Context<Self>) {
+    pub(super) fn ask_delete_closed(&mut self, entry: String, cx: &mut Context<Self>) {
         let mut candidates: Vec<Candidate> = self
-            .closed_background(&workspace)
+            .closed_background(&entry)
             .into_iter()
             .map(|r| Candidate {
                 in_tab: self.in_tab(&r.session),
@@ -225,16 +226,16 @@ impl FleetView {
             this.update(cx, |this, cx| {
                 let skip = if skipped.is_empty() { String::new() } else { format!(" Skipped {}: {}.", skipped.len(), listed(&skipped)) };
                 this.dialogs.confirm = Some(if sessions.is_empty() {
-                    Confirm::report(format!("No closed background session of {workspace} can be deleted.{skip}"))
+                    Confirm::report(format!("No closed background session of {entry} can be deleted.{skip}"))
                 } else {
                     let n = sessions.len();
                     Confirm::ask(
                         format!(
-                            "Delete {} of {workspace}? claude rm removes each, then its transcript is deleted. A session with unpushed commits is kept, never discarded.{skip}",
+                            "Delete {} of {entry}? claude rm removes each, then its transcript is deleted. A session with unpushed commits is kept, never discarded.{skip}",
                             count(n, "closed background session", "closed background sessions")
                         ),
                         format!("Delete {n}"),
-                        Confirmed::DeleteClosed { workspace, sessions, skipped },
+                        Confirmed::DeleteClosed { entry, sessions, skipped },
                     )
                 });
                 cx.notify();
@@ -244,7 +245,7 @@ impl FleetView {
         .detach();
     }
 
-    pub(super) fn delete_closed_now(&mut self, workspace: String, sessions: Vec<Session>, mut skipped: Vec<(String, String)>, cx: &mut Context<Self>) {
+    pub(super) fn delete_closed_now(&mut self, entry: String, sessions: Vec<Session>, mut skipped: Vec<(String, String)>, cx: &mut Context<Self>) {
         let sessions: Vec<Session> = sessions.into_iter().filter(|s| self.listing.deleting.insert(s.session_id.clone())).collect();
         let claude_dir = self.claude_dir.clone();
         let todo = sessions.clone();
@@ -268,7 +269,7 @@ impl FleetView {
                     }
                 }
                 this.forget_rows(&deleted, cx);
-                let mut text = format!("Deleted {} of {workspace}.", count(deleted.len(), "closed background session", "closed background sessions"));
+                let mut text = format!("Deleted {} of {entry}.", count(deleted.len(), "closed background session", "closed background sessions"));
                 if !skipped.is_empty() {
                     text.push_str(&format!(" Skipped {}: {}.", skipped.len(), listed(&skipped)));
                 }

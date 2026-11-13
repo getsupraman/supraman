@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::{Context as _, anyhow, bail};
 use supraman_claude::Session;
-use supraman_core::{Folder, Registry, Workspace};
+
 use supraman_workman::fake::{Answer, FakeWorkman};
 use gpui::{AsyncWindowContext, Entity, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, PlatformInput};
 use serde_json::{Value, json};
@@ -270,7 +270,11 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
             bail!("git {args:?} in {} failed: {}", repo.display(), out.stderr.trim());
         }
     }
-    Registry::from_env()?.save(&Workspace::new(WORKSPACE, root, vec![Folder::new("repo", &repo)]), true)?;
+    supraman_core::folders::edit(&home, |e| {
+        e.list.retain(|x| x.group_name() != Some(WORKSPACE));
+        e.list.push(supraman_core::folders::Entry::Group { name: WORKSPACE.into(), folders: vec![supraman_core::folders::FolderEntry::new(&repo)] });
+        Ok(())
+    })?;
     let fake = FakeWorkman::start(vec![
         ("/health".into(), Answer::text("Healthy")),
         ("/api/v1/overview".into(), Answer::json(overview(100))),

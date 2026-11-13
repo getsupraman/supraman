@@ -8,7 +8,7 @@ use std::{
 
 use futures::FutureExt as _;
 use supraman_claude::{ClaudeVersion, Session, now_ms};
-use supraman_core::{Event, FM_PREFIX, Workspace, Registry, Settings};
+use supraman_core::{Event, FM_PREFIX, Registry, Settings};
 use supraman_term::{
     MouseInputMode, Terminal, TerminalBuilder, TerminalMode,
     terminal_settings::{AlternateScroll, CursorShape},
@@ -48,14 +48,13 @@ mod delete;
 pub(crate) mod details;
 mod dialogs;
 mod drop;
-mod folder_list;
-mod folders;
 pub(crate) mod git_tab;
 mod hand_tab;
 mod left;
 mod left_width;
 mod lifecycle;
 mod links;
+mod listed;
 mod listing;
 mod manage;
 mod menu;
@@ -84,7 +83,6 @@ mod term_look;
 mod work_tab;
 mod workman_url;
 mod workman_state;
-pub(crate) mod workspace_dialog;
 pub(crate) mod writes;
 
 #[cfg(test)]
@@ -236,7 +234,7 @@ impl Tab {
 
 pub struct FleetView {
     pub cli: Cli,
-    pub workspaces: Vec<Workspace>,
+    pub listed: listed::Listed,
     pub sessions: Vec<Session>,
     pub show_stopped: bool,
     /// Set only by a selftest: see [`fleet::Supervised::own_prefix`].
@@ -288,21 +286,6 @@ pub struct FleetView {
 
 const QUIT_RELEASE_WITHIN: Duration = Duration::from_secs(5);
 
-type RegistryRead = Result<(Vec<Workspace>, Vec<String>), String>;
-
-fn load_registry(registry: Result<Registry, String>) -> RegistryRead {
-    let (workspaces, failed) = registry?.load_all().map_err(|e| e.to_string())?;
-    Ok((workspaces, failed.iter().map(ToString::to_string).collect()))
-}
-
-/// A poll's registry read, or `None` when a registry write from this window came after it.
-fn fresh_registry(read: RegistryRead, read_at: u64, writes: u64) -> Option<RegistryRead> {
-    match read {
-        Ok(_) if read_at != writes => None,
-        read => Some(read),
-    }
-}
-
 pub fn offers_resume(s: &Session, health: &supraman_claude::Health, last_alive: Option<i64>, now: i64) -> bool {
     !fleet::is_alive(health)
         && !s.session_id.is_empty()
@@ -311,13 +294,13 @@ pub fn offers_resume(s: &Session, health: &supraman_claude::Health, last_alive: 
 }
 
 struct Refresh {
-    registry_writes: u64,
-    workspaces: RegistryRead,
+    folder_writes: u64,
+    listed: listed::Read,
     sessions: Option<Result<Vec<Session>, String>>,
     main_repos: StdHashMap<PathBuf, Option<PathBuf>>,
     polled_at: i64,
     events: Vec<Event>,
-    /// Each workspace's schedules and the errors reading them; `None` without a home or a registry.
+    /// The schedules by workspace and the errors reading them; `None` without a home.
     schedules: Option<(BTreeMap<String, Vec<crate::schedules::ScheduleRow>>, Vec<String>)>,
     took: Duration,
 }
@@ -345,11 +328,11 @@ impl FleetView {
         let tabs_writes = Self::tabs_writer(home.clone(), cx);
         Self::detect_shells(cx);
         cx.on_focus_lost(window, |this, window, cx| if !supraman_ui::focus::restore(window, cx) { this.focus.focus(window, cx) }).detach();
-        let search = cx.new(|cx| TextInput::new("Search sessions, workspaces, repos (Ctrl+Shift+E)", None, window, cx));
+        let search = cx.new(|cx| TextInput::new("Search sessions, groups, folders (Ctrl+Shift+E)", None, window, cx));
         cx.subscribe_in(&search, window, Self::on_search_event).detach();
         Self {
             cli: Cli::Checking,
-            workspaces: Vec::new(),
+            listed: listed::Listed::default(),
             sessions: Vec::new(),
             show_stopped: false,
             own_prefix: None,
@@ -580,18 +563,10 @@ impl FleetView {
 
     fn apply(&mut self, refresh: Refresh, cx: &mut Context<Self>) {
         let _stall = supraman_ui::stall::section("poll: apply");
-        let before = (self.workspaces.clone(), self.sessions.clone(), self.listing.main_repos.clone(), self.polled.hooks.clone(), self.polls.polled_at);
-        match fresh_registry(refresh.workspaces, refresh.registry_writes, self.polls.registry_writes.load(Ordering::SeqCst)) {
-            None => {}
-            Some(Ok((workspaces, skipped))) => {
-                if self.workspaces != workspaces {
-                    self.polls.transcripts_nudge.wake();
-                }
-                self.workspaces = workspaces;
-                self.listing.registry_skipped = skipped;
-                self.listing.registry_error = None;
-            }
-            Some(Err(error)) => self.listing.registry_error = Some(error),
+        let before = (self.sessions.clone(), self.listing.main_repos.clone(), self.polled.hooks.clone(), self.polls.polled_at);
+        let listed_changed = self.listed.apply(refresh.listed, refresh.folder_writes, self.polls.folder_writes.load(Ordering::SeqCst));
+        if listed_changed {
+            self.polls.transcripts_nudge.wake();
         }
         match refresh.sessions {
             Some(Ok(sessions)) => {
@@ -634,10 +609,10 @@ impl FleetView {
             self.save_pruned(save, "Cannot save the dismissed approvals", cx);
             self.find_asked_schedules();
         }
-        let (workspaces, sessions, main_repos, hooks, polled_at) = &before;
+        let (sessions, main_repos, hooks, polled_at) = &before;
         // a permission prompt newer than the last poll makes its row Blocked (fleet::with_hook)
         let prompted = self.polls.polled_at != *polled_at && self.polled.hooks.values().any(|h| h.is_permission_prompt() && h.last.ts > (*polled_at).min(self.polls.polled_at));
-        if prompted || self.workspaces != *workspaces || self.sessions != *sessions || self.listing.main_repos != *main_repos || self.polled.hooks != *hooks {
+        if prompted || listed_changed || self.sessions != *sessions || self.listing.main_repos != *main_repos || self.polled.hooks != *hooks {
             self.invalidate_tree();
         }
         self.polls.last_refresh_took = Some(refresh.took);
@@ -680,6 +655,7 @@ impl FleetView {
 
     fn build_tree(&self, now: i64) -> Tree {
         let _stall = supraman_ui::stall::section("tree");
+        let own_names = self.own_names();
         let sup = TreeInputs {
             hooks: Some(&self.polled.hooks),
             polled_at: self.polls.polled_at,
@@ -687,10 +663,11 @@ impl FleetView {
             closed: &self.listing.closed,
             starred: Some(self.stars.ids()),
             expanded: Some(&self.sidebar.closed_expanded),
-            disabled_folders: false,
+            disk: Some(&self.listed.disk),
+            own_names: &own_names,
             own_prefix: self.own_prefix.as_deref(),
         };
-        fleet::build(&self.workspaces, &self.sessions, now, self.show_stopped, &sup)
+        fleet::build(&self.listed.entries, &self.sessions, now, self.show_stopped, &sup)
     }
 
     /// Shown at once; written to `settings.toml` behind it, each write after the one set before it.
@@ -756,8 +733,8 @@ impl FleetView {
     }
 
     /// `claude --bg --resume` with no other flag keeps the session id.
-    pub fn resume(&mut self, workspace: &str, repo: &str, session: &Session, _window: &mut Window, cx: &mut Context<Self>) -> u64 {
-        self.resume_titled(format!("{workspace} · {repo} · {}", fleet::display_name(session)), session, cx)
+    pub fn resume(&mut self, place: &str, session: &Session, cx: &mut Context<Self>) -> u64 {
+        self.resume_titled(format!("{place} · {}", fleet::display_name(session)), session, cx)
     }
 
     fn resume_titled(&mut self, title: String, session: &Session, cx: &mut Context<Self>) -> u64 {
@@ -883,15 +860,8 @@ impl FleetView {
         self.focus.is_focused(window)
     }
 
-    pub fn attach(
-        &mut self,
-        workspace: &str,
-        repo: &str,
-        session: &Session,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> u64 {
-        self.attach_titled(format!("{workspace} · {repo} · {}", fleet::display_name(session)), session, cx)
+    pub fn attach(&mut self, place: &str, session: &Session, cx: &mut Context<Self>) -> u64 {
+        self.attach_titled(format!("{place} · {}", fleet::display_name(session)), session, cx)
     }
 
     fn attach_titled(&mut self, title: String, session: &Session, cx: &mut Context<Self>) -> u64 {
@@ -910,7 +880,7 @@ impl FleetView {
     }
 
     pub(crate) fn tab_card(&self, tab: &Tab, title: String) -> tab_card::Card {
-        let (workspace, repo) = tab.cwd.as_deref().map(|cwd| tab_card::place(cwd, &self.workspaces)).unwrap_or_default();
+        let (group, repo) = tab.cwd.as_deref().map(|cwd| tab_card::place(cwd, &self.listed.entries)).unwrap_or_default();
         let attached = match &tab.kind {
             TabKind::Attach { session_id } => Some(self.sessions.iter().find(|s| &s.id == session_id).ok_or(session_id)),
             _ => None,
@@ -929,7 +899,7 @@ impl FleetView {
         };
         tab_card::Card {
             title,
-            workspace,
+            group,
             repo,
             folder: tab.cwd.as_ref().map(|c| c.display().to_string()),
             branch: tab.branch.clone(),
@@ -962,7 +932,7 @@ impl FleetView {
 
     pub fn new_shell_cwd(&self) -> Option<PathBuf> {
         let active = self.active.and_then(|id| self.tab(id)).and_then(|t| t.cwd.as_deref());
-        fleet::shell_cwd(active, &self.workspaces, supraman_core::paths::user_home())
+        fleet::shell_cwd(active, &self.listed.entries, supraman_core::paths::user_home())
     }
 
     fn push_tab(&mut self, title: String, kind: TabKind, cwd: Option<PathBuf>, cx: &mut Context<Self>) -> u64 {
@@ -1206,7 +1176,6 @@ impl FleetView {
 
     pub fn input_focused(&self, window: &Window, cx: &gpui::App) -> bool {
         self.search.read(cx).is_focused(window)
-            || self.add_dialog().is_some_and(|d| d.read(cx).focused(window, cx))
             || self.tabs.iter().filter_map(|t| t.find.as_ref()).any(|f| f.input.read(cx).is_focused(window))
     }
 
@@ -1249,10 +1218,6 @@ impl FleetView {
         }
         if k.key == "escape" && self.dismiss_popup() {
             cx.notify();
-            cx.stop_propagation();
-            return;
-        }
-        if !k.modifiers.modified() && self.add_key(&k.key, window, cx) {
             cx.stop_propagation();
             return;
         }
@@ -1566,20 +1531,6 @@ mod tests {
     }
 
     #[test]
-    fn a_corrupt_workspace_file_is_skipped_and_named() {
-        let home = tempfile::tempdir().unwrap();
-        let registry = Registry::at(home.path());
-        registry.save(&Workspace::new("alpha", r"C:\demo\alpha", Vec::new()), false).unwrap();
-        let broken = registry.save(&Workspace::new("beta", r"C:\demo\beta", Vec::new()), false).unwrap();
-        std::fs::write(&broken, "name = [").unwrap();
-        let (workspaces, skipped) = load_registry(Ok(registry)).unwrap();
-        assert_eq!(workspaces.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), ["alpha"]);
-        assert_eq!(skipped.len(), 1);
-        assert!(skipped[0].contains("beta"), "{skipped:?}");
-        assert_eq!(load_registry(Err("no Supraman home".into())), Err("no Supraman home".to_string()));
-    }
-
-    #[test]
     fn only_open_hand_tabs_holding_a_token_from_elsewhere_restart() {
         let tab = |id, hand, key: Option<&str>, exited| Tab {
             hand,
@@ -1638,7 +1589,7 @@ mod tests {
             events: None,
             upkeep: Some(Upkeep::new(home.to_path_buf())),
             injected: Arc::default(),
-            registry_writes: writes,
+            folder_writes: writes,
             snapshot: None,
             first: false,
             store: None,
@@ -1655,22 +1606,4 @@ mod tests {
         assert!(poller.snapshot.is_none(), "the list is taken");
         assert!(poller.tick().is_none(), "nothing to tick until the next read");
     }
-
-    #[test]
-    fn a_poll_that_read_the_registry_before_a_save_keeps_the_saved_list() {
-        let writes = AtomicU64::new(0);
-        let read_at = writes.load(Ordering::SeqCst);
-        let before_save: RegistryRead = Ok((Vec::new(), vec!["read before Save".into()]));
-        writes.fetch_add(1, Ordering::SeqCst);
-        assert!(fresh_registry(before_save, read_at, writes.load(Ordering::SeqCst)).is_none(), "the list Save showed stays");
-
-        let read_at = writes.load(Ordering::SeqCst);
-        let after_save: RegistryRead = Ok((Vec::new(), vec!["read after Save".into()]));
-        let applied = fresh_registry(after_save, read_at, writes.load(Ordering::SeqCst)).and_then(Result::ok).map(|(_, skipped)| skipped);
-        assert_eq!(applied, Some(vec!["read after Save".to_string()]), "the next poll applies");
-
-        let failed = fresh_registry(Err("unreadable".into()), 0, 1);
-        assert!(matches!(failed, Some(Err(e)) if e == "unreadable"), "a failed read is shown even across a Save");
-    }
 }
-

@@ -108,7 +108,7 @@ impl FleetView {
                 .render_schedule_page(page, cx)
                 .unwrap_or_else(|| placeholder(format!("Schedule {} of {} is gone.", page.id, page.workspace), cx)),
             Some(Tab { kind: TabKind::Details(page), .. }) => self.render_details_page(page, cx).unwrap_or_else(|| placeholder("Its workspace is gone.".into(), cx)),
-            Some(Tab { id, kind: TabKind::Start(page), .. }) => self.render_start_page(*id, page, cx).unwrap_or_else(|| placeholder(format!("Workspace {} is gone.", page.workspace), cx)),
+            Some(Tab { id, kind: TabKind::Start(page), .. }) => self.render_start_page(*id, page, cx).unwrap_or_else(|| placeholder(format!("{} is no longer listed.", page.entry), cx)),
             Some(Tab { id: tab_id, terminal: Some(terminal), detach, find, .. }) => div()
                 .size_full()
                 .flex()

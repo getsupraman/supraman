@@ -6,8 +6,6 @@ use supraman_claude::Session;
 /// What the tree lists beside the open sessions: the read's errors, the closed sessions and the deletes under way.
 #[derive(Default)]
 pub struct Listing {
-    pub registry_error: Option<String>,
-    pub registry_skipped: Vec<String>,
     /// [`crate::fleet::main_repos`] of the sessions, so rendering never walks the filesystem.
     pub(super) main_repos: HashMap<PathBuf, Option<PathBuf>>,
     pub sessions_error: Option<String>,

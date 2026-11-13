@@ -21,4 +21,4 @@ passes it with `--mcp-config <file> --strict-mcp-config`; not signed in, a sessi
 
 - every event: one line in `<home>/events/<session_id>.jsonl` (`supraman_core::Event`)
 - SessionStart (startup, resume, compact, clear): stdout = `SUPRAMAN-ROLE <role> v<sha8>` + `<home>/roles/<role>.md`
-  with `{workspace}` replaced by `SUPRAMAN_WORKSPACE` and `{repo}` by `SUPRAMAN_REPO`
+  with `{repo}` replaced by `SUPRAMAN_REPO`

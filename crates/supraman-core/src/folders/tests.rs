@@ -134,8 +134,7 @@ fn the_first_load_makes_a_group_of_each_workspace_with_a_duplicate_at_its_first_
     let larchsys = PathBuf::from(r"P:\Projects\LarchSys");
     let gaia = larchsys.join("gaia");
     let registry = Registry::at(home.path());
-    let mut off = folder(&larchsys.join("old"));
-    off.enabled = false;
+    let off = folder(&larchsys.join("old"));
     registry.save(&Workspace::new("larchsys", r"P:\Projects", vec![folder(&larchsys), folder(&gaia), off]), false).unwrap();
     registry.save(&Workspace::new("gaia", &gaia, vec![folder(&gaia), folder(&gaia.join("api"))]), false).unwrap();
     std::fs::write(registry.workspaces_dir().join("broken.toml"), "name = ").unwrap();
@@ -146,7 +145,7 @@ fn the_first_load_makes_a_group_of_each_workspace_with_a_duplicate_at_its_first_
     assert_eq!(
         entries.list,
         [group("gaia", &[gaia_s, api.to_str().unwrap()]), group("larchsys", &[larchsys.to_str().unwrap(), larchsys.join("old").to_str().unwrap()])],
-        "by name; gaia is placed in its first group only; a disabled folder too; the home is no folder"
+        "by name; gaia is placed in its first group only; the home is no folder"
     );
     assert!(path(home.path()).is_file());
 

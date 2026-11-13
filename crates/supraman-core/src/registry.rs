@@ -1,3 +1,6 @@
+//! The schedules' bridge until folders/schedules: schedule code (core `schedule`, `sm schedule`/`fire`, the app's
+//! `schedules.rs` and `view/schedules.rs`) and folders.toml's one-time migration read workspaces here, nothing else.
+
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -30,10 +33,6 @@ impl Registry {
     pub fn path_of(&self, name: &str) -> Result<PathBuf> {
         validate_name(name)?;
         Ok(self.workspaces_dir().join(format!("{name}.toml")))
-    }
-
-    pub fn exists(&self, name: &str) -> Result<bool> {
-        Ok(self.path_of(name)?.is_file())
     }
 
     pub fn load(&self, name: &str) -> Result<Workspace> {
@@ -96,14 +95,6 @@ impl Registry {
         crate::fs::write_atomic(&path, text).map_err(|e| CoreError::io(&path, e))?;
         Ok(path)
     }
-
-    pub fn remove(&self, name: &str) -> Result<()> {
-        let path = self.path_of(name)?;
-        fs::remove_file(&path).map_err(|e| match e.kind() {
-            ErrorKind::NotFound => CoreError::NotFound(name.to_string()),
-            _ => CoreError::io(&path, e),
-        })
-    }
 }
 
 #[cfg(test)]
@@ -116,8 +107,8 @@ mod tests {
             name,
             r"C:\work\demo",
             vec![
-                Folder { has_claude_md: true, branch: Some("main".into()), ..Folder::new("Nomos", r"C:\work\demo\Nomos") },
-                Folder { has_agents_md: true, enabled: false, ..Folder::new("Nomos.Pdf", r"C:\work\demo\Nomos.Pdf") },
+                Folder { branch: Some("main".into()), ..Folder::new("Nomos", r"C:\work\demo\Nomos") },
+                Folder::new("Nomos.Pdf", r"C:\work\demo\Nomos.Pdf"),
             ],
         )
     }
@@ -151,7 +142,7 @@ mod tests {
     }
 
     #[test]
-    fn list_is_sorted_and_remove_works() {
+    fn list_is_sorted() {
         let home = tempfile::tempdir().unwrap();
         let reg = Registry::at(home.path());
         assert!(reg.list().unwrap().is_empty());
@@ -160,10 +151,6 @@ mod tests {
         reg.save(&sample("alpha"), false).unwrap();
         let names: Vec<_> = reg.list().unwrap().into_iter().map(|p| p.name).collect();
         assert_eq!(names, ["alpha", "zeta"]);
-        reg.remove("zeta").unwrap();
-        assert!(matches!(reg.remove("zeta"), Err(CoreError::NotFound(_))));
-        assert!(matches!(reg.load("zeta"), Err(CoreError::NotFound(_))));
-        assert!(reg.exists("alpha").unwrap());
     }
 
     #[test]

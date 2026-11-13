@@ -110,7 +110,7 @@ impl FleetView {
         };
         self.saving.tabs_reopening = true;
         let sessions = self.sessions.clone();
-        let workspaces: Vec<String> = self.workspaces.iter().map(|w| w.name.clone()).collect();
+        let workspaces = self.entry_names();
         let claude_dir = self.claude_dir.clone();
         let planned = cx.background_executor().spawn(async move {
             let settings = Settings::load(&home).unwrap_or_default().sessions;
@@ -171,7 +171,7 @@ impl FleetView {
         };
         let home = self.home.clone();
         let sessions = self.sessions.clone();
-        let workspaces: Vec<String> = self.workspaces.iter().map(|w| w.name.clone()).collect();
+        let workspaces = self.entry_names();
         let claude_dir = self.claude_dir.clone();
         let planned = cx.background_executor().spawn(async move {
             let resume_on_click = home.as_deref().and_then(|h| Settings::load(h).ok()).unwrap_or_default().sessions.resume_tabs_on_click;

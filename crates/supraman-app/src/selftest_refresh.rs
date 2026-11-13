@@ -22,7 +22,7 @@ const TURNS_WITHIN: Duration = Duration::from_millis(3000);
 
 fn row(v: &FleetView, id: &str) -> Option<(bool, bool)> {
     let tree = v.tree();
-    let row = tree.workspaces.iter().flat_map(|w| w.repos.iter().flat_map(|r| &r.sessions)).find(|r| r.session.session_id == id)?;
+    let row = tree.rows().find(|r| r.session.session_id == id)?;
     let painted = v.shown(&format!("resume-{}", &id[..8]));
     Some((row.closed, v.resumable(row) && painted))
 }

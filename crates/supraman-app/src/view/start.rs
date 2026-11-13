@@ -14,7 +14,7 @@ use theme::ActiveTheme as _;
 
 use super::schedules::At;
 use super::{FleetView, Tab, TabKind};
-use crate::fleet::SessionRow;
+use crate::fleet::{EntryNode, SessionRow};
 use crate::schedules;
 
 /// claude's `--permission-mode` values the page offers; never `bypassPermissions`.
@@ -27,7 +27,8 @@ pub const SCHEDULE_ASK: &str = "Set this up as a Supraman schedule (supraman-sch
 const RECENT: usize = 8;
 
 pub struct StartPage {
-    pub workspace: String,
+    /// A group's name or a top-level folder's key.
+    pub entry: String,
     pub scheduled: bool,
     pub folder: PathBuf,
     pub mode: &'static str,
@@ -60,13 +61,10 @@ pub fn first_prompt(text: &str, scheduled: bool) -> String {
     if scheduled { format!("{SCHEDULE_ASK}\n{text}") } else { text.to_string() }
 }
 
-/// The workspace's home, then its folders, each once.
-pub fn folders(workspace: &supraman_core::Workspace) -> Vec<(String, PathBuf)> {
+/// The entry's folders, each once.
+pub fn folders(entry: &EntryNode) -> Vec<(String, PathBuf)> {
     let mut out: Vec<(String, PathBuf)> = Vec::new();
-    if let Some(home) = workspace.home() {
-        out.push((format!("{} (home)", workspace.name), home.to_path_buf()));
-    }
-    for f in &workspace.folders {
+    for f in &entry.folders {
         if !out.iter().any(|(_, p)| path_key(p) == path_key(&f.path)) {
             out.push((f.name.clone(), f.path.clone()));
         }
@@ -93,11 +91,10 @@ fn write_prompt(home: Option<&Path>, text: &str) -> std::io::Result<PathBuf> {
 }
 
 impl FleetView {
-    /// A new prompt tab, one per opening; `folder` preselects one of the workspace's.
-    pub fn open_start(&mut self, workspace: &str, folder: Option<PathBuf>, scheduled: bool, window: &mut Window, cx: &mut Context<Self>) -> Option<u64> {
+    /// A new prompt tab, one per opening; `folder` preselects one of the entry's.
+    pub fn open_start(&mut self, entry: &str, folder: Option<PathBuf>, scheduled: bool, window: &mut Window, cx: &mut Context<Self>) -> Option<u64> {
         self.dialogs.menu = None;
-        let ws = self.workspaces.iter().find(|w| w.name == workspace)?;
-        let choices = folders(ws);
+        let choices = folders(self.tree().entry(entry)?);
         let folder = folder
             .filter(|f| choices.iter().any(|(_, p)| path_key(p) == path_key(f)))
             .or_else(|| choices.first().map(|(_, p)| p.clone()))?;
@@ -115,8 +112,8 @@ impl FleetView {
             }
             InputEvent::ConfirmBack | InputEvent::Cancel | InputEvent::Refused(_) | InputEvent::Submit => {}
         });
-        let title = if scheduled { format!("New scheduled task · {workspace}") } else { format!("New task · {workspace}") };
-        let page = StartPage { workspace: workspace.to_string(), scheduled, folder: folder.clone(), mode: DEFAULT_MODE, input: input.clone(), error: None, sending: false, scroll: ScrollHandle::new(), _events: events };
+        let title = if scheduled { format!("New scheduled task · {entry}") } else { format!("New task · {entry}") };
+        let page = StartPage { entry: entry.to_string(), scheduled, folder: folder.clone(), mode: DEFAULT_MODE, input: input.clone(), error: None, sending: false, scroll: ScrollHandle::new(), _events: events };
         self.tabs.push(Tab::new(tab, title, TabKind::Start(page), Some(folder)));
         self.active = Some(tab);
         input.update(cx, |input, cx| input.focus(window, cx));
@@ -157,7 +154,7 @@ impl FleetView {
     pub fn send_start(&mut self, tab: u64, cx: &mut Context<Self>) {
         let Some(page) = self.start_page(tab).filter(|p| !p.sending) else { return };
         let text = page.input.read(cx).text().trim().to_string();
-        let (workspace, scheduled, folder, mode) = (page.workspace.clone(), page.scheduled, page.folder.clone(), page.mode);
+        let (workspace, scheduled, folder, mode) = (page.entry.clone(), page.scheduled, page.folder.clone(), page.mode);
         if text.is_empty() {
             if let Some(page) = self.start_page_mut(tab) {
                 page.error = Some("Nothing to send.".into());
@@ -234,9 +231,9 @@ impl FleetView {
         )
     }
 
-    fn start_sections(&self, workspace: &str) -> Vec<Section> {
+    fn start_sections(&self, entry: &str) -> Vec<Section> {
         let mut out = Vec::new();
-        let rows = self.scheduling.schedules.get(workspace).map(Vec::as_slice).unwrap_or_default();
+        let rows = self.scheduling.schedules.get(entry).map(Vec::as_slice).unwrap_or_default();
         if !rows.is_empty() {
             let mut s = Section::new("schedules", "Schedules");
             for r in rows {
@@ -245,37 +242,32 @@ impl FleetView {
             out.push(s);
         }
         let tree = self.tree();
-        let mut recent: Vec<(&str, &SessionRow)> = tree
-            .workspaces
-            .iter()
-            .filter(|n| n.name == workspace)
-            .flat_map(|n| n.repos.iter().flat_map(|r| r.sessions.iter().map(move |s| (r.name.as_str(), s))))
-            .collect();
+        let mut recent: Vec<(&str, &SessionRow)> = tree.entry(entry).into_iter().flat_map(|n| n.folders.iter().flat_map(|r| r.sessions.iter().map(move |s| (r.key.as_str(), s)))).collect();
         recent.sort_by_key(|(_, r)| std::cmp::Reverse(r.session.started_at.unwrap_or_default()));
         if !recent.is_empty() {
             let mut s = Section::new("recent", "Recent sessions");
             for (repo, r) in recent.into_iter().take(RECENT) {
-                s = s.link(repo, crate::fleet::display_name(&r.session), format!("session:{repo}\u{0}{}", r.session.session_id));
+                s = s.link(repo.rsplit('/').next().unwrap_or(repo), crate::fleet::display_name(&r.session), format!("session:{repo}\u{0}{}", r.session.session_id));
             }
             out.push(s);
         }
         out
     }
 
-    fn open_start_link(&mut self, workspace: &str, target: &str, cx: &mut Context<Self>) {
+    fn open_start_link(&mut self, entry: &str, target: &str, cx: &mut Context<Self>) {
         if let Some(id) = target.strip_prefix("schedule:") {
-            self.open_schedule(workspace, id, At::Top, cx);
-        } else if let Some((repo, session_id)) = target.strip_prefix("session:").and_then(|t| t.split_once('\u{0}')) {
-            let tree = self.tree();
-            let row = tree.workspaces.iter().filter(|n| n.name == workspace).flat_map(|n| &n.repos).flat_map(|r| &r.sessions).find(|r| r.session.session_id == session_id).cloned();
+            self.open_schedule(entry, id, At::Top, cx);
+        } else if let Some((place, session_id)) = target.strip_prefix("session:").and_then(|t| t.split_once('\u{0}')) {
+            let row = self.tree().rows().find(|r| r.session.session_id == session_id).cloned();
             if let Some(row) = row {
-                self.open_row(workspace, repo, &row, cx);
+                self.open_row(&place.replace('/', " · "), &row, cx);
             }
         }
     }
 
     pub(super) fn render_start_page(&self, tab: u64, page: &StartPage, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let ws = self.workspaces.iter().find(|w| w.name == page.workspace)?;
+        let tree = self.tree();
+        let ws = tree.entry(&page.entry)?;
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let label = |text: &'static str| div().flex_none().w(px(88.)).text_xs().text_color(colors.text_muted).child(text);
@@ -328,10 +320,10 @@ impl FleetView {
                 }))
                 .into_any_element(),
         ];
-        let sections = self.start_sections(&page.workspace);
-        let workspace = page.workspace.clone();
+        let sections = self.start_sections(&page.entry);
+        let workspace = page.entry.clone();
         let on_link: details::OnLink<Self> = Rc::new(move |this: &mut Self, target: &str, _, cx| this.open_start_link(&workspace, target, cx));
-        let title = if page.scheduled { format!("New scheduled task in {}", page.workspace) } else { format!("New task in {}", page.workspace) };
+        let title = if page.scheduled { format!("New scheduled task in {}", page.entry) } else { format!("New task in {}", page.entry) };
         let key = format!("start-{tab}");
         let page = details::Page { key: &key, title, pill: None, sections: &sections, actions, scroll: &page.scroll, on_link: Some(on_link), top: Some(form.into_any_element()), over: None, bar: None };
         Some(details::render(page, &self.hits, cx))
@@ -341,7 +333,6 @@ impl FleetView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use supraman_core::{Folder, Workspace};
 
     #[test]
     fn first_line_is_the_first_non_blank_one_cut_at_80() {
@@ -367,10 +358,11 @@ because"), "use postgres");
     }
 
     #[test]
-    fn the_folders_are_the_home_then_each_folder_once() {
-        let ws = Workspace::new("demo", r"C:\demo", vec![Folder::new("Alpha", r"C:\demo\Alpha"), Folder::new("Same", r"c:\DEMO")]);
-        let names: Vec<String> = folders(&ws).into_iter().map(|(n, _)| n).collect();
-        assert_eq!(names, ["demo (home)", "Alpha"]);
+    fn the_folders_are_the_entrys_each_once() {
+        let folder = |key: &str, path: &str| crate::fleet::FolderNode { key: key.into(), name: key.rsplit('/').next().unwrap().into(), path: path.into(), kind: supraman_core::FolderKind::Git, branch: None, sessions: vec![], more: 0 };
+        let entry = EntryNode { name: "demo".into(), group: true, scheduled: Default::default(), folders: vec![folder("demo/Alpha", "C:/demo/Alpha"), folder("demo/Same", "c:/DEMO/alpha")] };
+        let names: Vec<String> = folders(&entry).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, ["Alpha"]);
         assert!(!MODES.contains(&"bypassPermissions"));
     }
 

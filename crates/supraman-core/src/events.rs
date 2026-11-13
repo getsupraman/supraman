@@ -73,26 +73,14 @@ pub fn append(home: &Path, event: &Event, rotate_at: u64) -> std::io::Result<Pat
     Ok(path)
 }
 
-/// What a SessionStart hook prints: a tag line `SUPRAMAN-ROLE <role> v<sha8>` and the role text from
-/// `<home>/roles/<role>.md`, with `{workspace}` replaced by `workspace` when given (one role file serves
-/// every workspace). The tag changes only with the text, so a repeated injection (every `--resume`
-/// and compaction fires SessionStart) is recognisable. `None` when the role name is unsafe or the
-/// file is missing or empty.
-pub fn role_injection(home: &Path, role: &str, workspace: Option<&str>) -> Option<String> {
-    role_injection_for(home, role, workspace, None)
-}
-
-/// [`role_injection`] with `{repo}` filled in too, from `SUPRAMAN_REPO`.
-pub fn role_injection_for(home: &Path, role: &str, workspace: Option<&str>, repo: Option<&str>) -> Option<String> {
+/// The `roles/<role>.md` text a SessionStart injects, `{repo}` filled in from `SUPRAMAN_REPO`, tagged by its content.
+pub fn role_injection(home: &Path, role: &str, repo: Option<&str>) -> Option<String> {
     if !is_safe_id(role) {
         return None;
     }
     let mut text = fs::read_to_string(home.join("roles").join(format!("{role}.md"))).ok()?;
     if let Some(repo) = repo {
         text = text.replace("{repo}", repo);
-    }
-    if let Some(workspace) = workspace {
-        text = text.replace("{workspace}", workspace);
     }
     let text = text.trim();
     if text.is_empty() {
@@ -363,18 +351,12 @@ mod tests {
     }
 
     #[test]
-    fn role_injection_fills_in_the_workspace() {
+    fn role_injection_fills_in_the_repo() {
         let home = tempfile::tempdir().unwrap();
         fs::create_dir_all(home.path().join("roles")).unwrap();
-        fs::write(home.path().join("roles").join("workspace.md"), "Controller for {workspace}.\n").unwrap();
-        let text = role_injection(home.path(), "workspace", Some("nomos")).unwrap();
-        assert_eq!(text, format!("{}\nController for nomos.\n", role_tag("workspace", "Controller for nomos.")));
-        assert!(role_injection(home.path(), "workspace", None).unwrap().contains("{workspace}"));
-        fs::write(home.path().join("roles").join("repo.md"), "Repo {repo} of {workspace}.
-").unwrap();
-        let text = role_injection_for(home.path(), "repo", Some("nomos"), Some("Nomos.Pdf")).unwrap();
-        assert!(text.ends_with("
-Repo Nomos.Pdf of nomos.
-"), "{text}");
+        fs::write(home.path().join("roles").join("repo.md"), "Repo {repo}.\n").unwrap();
+        let text = role_injection(home.path(), "repo", Some("Nomos.Pdf")).unwrap();
+        assert_eq!(text, format!("{}\nRepo Nomos.Pdf.\n", role_tag("repo", "Repo Nomos.Pdf.")));
+        assert!(role_injection(home.path(), "repo", None).unwrap().contains("{repo}"));
     }
 }

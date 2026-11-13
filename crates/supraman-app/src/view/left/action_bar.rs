@@ -23,8 +23,8 @@ impl FleetView {
             .border_b_1()
             .border_color(colors.border)
             .child(
-                icon_button(hits, "add-workspace", Icon::FolderAdd, "Add workspace…", false, cx)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_add_menu(cx))),
+                icon_button(hits, "add-folder", Icon::FolderAdd, "Add Folder…", false, cx)
+                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.add_folder(window, cx))),
             )
             .child(separator())
             .child(

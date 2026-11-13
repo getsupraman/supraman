@@ -15,10 +15,11 @@ impl FleetView {
     }
 
     /// The one open: its tab, an attach or a resume; a refusal shows why.
-    pub(super) fn open_row(&mut self, workspace: &str, repo: &str, row: &SessionRow, cx: &mut Context<Self>) {
+    /// `place`: where the row is, its tab's title before the session's name.
+    pub(super) fn open_row(&mut self, place: &str, row: &SessionRow, cx: &mut Context<Self>) {
         let s = &row.session;
         let open = self.open_of(row);
-        let title = || format!("{workspace} · {repo} · {}", fleet::display_name(s));
+        let title = || format!("{place} · {}", fleet::display_name(s));
         match open {
             Open::Tab(id) => self.activate_tab(id, cx),
             Open::Attach => {
@@ -35,10 +36,10 @@ impl FleetView {
         }
     }
 
-    /// The session of claude's `session_id` in the tree: its workspace, the folder it is listed under, the row.
+    /// The session of claude's `session_id` in the tree: its entry, the folder key or schedule id it is listed under, the row.
     pub(super) fn listed_place(&self, session_id: &str) -> Option<(String, String, SessionRow)> {
         let tree = self.tree();
-        tree.workspaces.iter().find_map(|node| {
+        tree.entries.iter().find_map(|node| {
             let row = node.rows().find(|r| r.session.session_id == session_id)?;
             Some((node.name.clone(), super::right::tab_menu::row_folder(node, session_id).to_string(), row.clone()))
         })
@@ -48,9 +49,10 @@ impl FleetView {
     pub(super) fn session_place(&self, session_id: &str) -> Option<(String, String, SessionRow)> {
         self.listed_place(session_id).or_else(|| {
             let s = self.sessions.iter().find(|s| s.session_id == session_id)?;
-            let (workspace, repo) = tab_card::place(&s.cwd, &self.workspaces);
-            let here = folder_name(&s.cwd);
-            Some((workspace.unwrap_or_else(|| here.clone()), repo.unwrap_or(here), SessionRow::new(s.clone(), s.health(now_ms()))))
+            let (group, folder) = tab_card::place(&s.cwd, &self.listed.entries);
+            let folder = folder.unwrap_or_else(|| folder_name(&s.cwd));
+            let place = group.map_or_else(|| folder.clone(), |g| format!("{g}/{folder}"));
+            Some((self.entry_of(&s.cwd).unwrap_or_default(), place, SessionRow::new(s.clone(), s.health(now_ms()))))
         })
     }
 
@@ -60,8 +62,8 @@ impl FleetView {
 
     /// [`Self::open_row`] of claude's `session_id`.
     pub fn open_session(&mut self, session_id: &str, cx: &mut Context<Self>) {
-        if let Some((workspace, repo, row)) = self.session_place(session_id) {
-            self.open_row(&workspace, &repo, &row, cx);
+        if let Some((_, place, row)) = self.session_place(session_id) {
+            self.open_row(&place.replace('/', " · "), &row, cx);
         }
     }
 }

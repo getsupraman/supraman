@@ -6,11 +6,11 @@ use std::time::{Duration, Instant};
 
 use gpui::Context;
 use supraman_claude::{Session, list_sessions, now_ms};
-use supraman_core::{EventReader, Registry};
+use supraman_core::EventReader;
 use supraman_ui::nudge::{self, Nudge, Nudged};
 use supraman_ui::timeline;
 
-use super::{FleetView, Refresh, load_registry};
+use super::{FleetView, Refresh, listed};
 use crate::fleet;
 use crate::hand::Hands;
 use crate::upkeep::{self, Report, Upkeep};
@@ -20,7 +20,7 @@ pub struct Polls {
     #[cfg(feature = "selftest")]
     pub injected: Arc<Mutex<Vec<Session>>>,
     /// Bumped by every registry write from this window; a poll that read the registry before one is not applied.
-    pub(super) registry_writes: Arc<AtomicU64>,
+    pub(super) folder_writes: Arc<AtomicU64>,
     pub poll_nudge: Nudge,
     pub transcripts_nudge: Nudge,
     pub refresh_asks: u64,
@@ -38,14 +38,14 @@ impl Polls {
     /// Starts the poll; the transcript scan waits on the returned [`Nudged`].
     pub(super) fn start(home: Option<PathBuf>, hands: Option<Arc<Mutex<Hands>>>, cx: &mut Context<FleetView>) -> (Self, Nudged) {
         let injected: Arc<Mutex<Vec<Session>>> = Arc::default();
-        let registry_writes: Arc<AtomicU64> = Arc::default();
+        let folder_writes: Arc<AtomicU64> = Arc::default();
         let (poll_nudge, woken) = nudge::nudge();
         let poller = Poller {
             home,
             events: None,
             upkeep: None,
             injected: injected.clone(),
-            registry_writes: registry_writes.clone(),
+            folder_writes: folder_writes.clone(),
             snapshot: None,
             first: true,
             store: None,
@@ -57,7 +57,7 @@ impl Polls {
         let polls = Self {
             #[cfg(feature = "selftest")]
             injected,
-            registry_writes,
+            folder_writes,
             poll_nudge,
             transcripts_nudge,
             refresh_asks: 0,
@@ -79,7 +79,7 @@ pub(super) struct Poller {
     pub(super) events: Option<EventReader>,
     pub(super) upkeep: Option<Upkeep>,
     pub(super) injected: Arc<Mutex<Vec<Session>>>,
-    pub(super) registry_writes: Arc<AtomicU64>,
+    pub(super) folder_writes: Arc<AtomicU64>,
     pub(super) snapshot: Option<Vec<Session>>,
     pub(super) first: bool,
     pub(super) store: Option<Arc<dyn supraman_core::secret::SecretStore>>,
@@ -102,8 +102,8 @@ impl Poller {
 
     pub(super) fn read(&mut self, with_sessions: bool) -> Refresh {
         let started = Instant::now();
-        let registry_writes = self.registry_writes.load(Ordering::SeqCst);
-        let workspaces = load_registry(Registry::from_env().map_err(|e| e.to_string()));
+        let folder_writes = self.folder_writes.load(Ordering::SeqCst);
+        let listed = listed::read(self.home.as_deref());
         let registry_took = started.elapsed();
         let polled_at = now_ms();
         let listing = Instant::now();
@@ -125,8 +125,9 @@ impl Poller {
             Some(Ok(sessions)) => Some(sessions.clone()),
             _ => None,
         };
-        let schedules = match (&self.home, &workspaces) {
-            (Some(home), Ok((workspaces, _))) => {
+        let schedules = match &self.home {
+            Some(home) => {
+                let workspaces = listed.workspaces();
                 for run in crate::schedules::recover(home, workspaces) {
                     log::info!("recovered the dead scheduled run {run} as interrupted");
                 }
@@ -136,13 +137,13 @@ impl Poller {
             _ => None,
         };
         if self.first {
-            timeline("registry done", registry_took);
+            timeline("folders done", registry_took);
             timeline(&format!("list_sessions done ({} rows)", sessions.as_ref().and_then(|s| s.as_ref().ok()).map_or(0, Vec::len)), list_took);
             timeline("main repos and events done", took - registry_took - list_took);
         }
         Refresh {
-            registry_writes,
-            workspaces,
+            folder_writes,
+            listed,
             sessions,
             main_repos,
             polled_at,

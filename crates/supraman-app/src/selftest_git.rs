@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use anyhow::anyhow;
 use gpui::{AsyncWindowContext, Bounds, Entity, Pixels, Size, point, px, size};
 use supraman_core::paths::path_key;
-use supraman_core::{Folder, Registry, Workspace};
+
 use supraman_gitman::fixture::Fixture;
 
 use crate::git_view::probe::Probe;
@@ -89,8 +89,11 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     let parent = home.join("git-fixture");
     std::fs::create_dir_all(&parent)?;
     let fixture = Arc::new(cx.background_executor().spawn(async move { Fixture::new_in(&parent) }).await);
-    let registry = Registry::at(home);
-    registry.save(&Workspace::new(WS, &fixture.dir, vec![Folder::new(FOLDER, &fixture.dir)]), true)?;
+    supraman_core::folders::edit(&home, |e| {
+        e.list.retain(|x| x.group_name() != Some(WS));
+        e.list.push(supraman_core::folders::Entry::Group { name: WS.into(), folders: vec![supraman_core::folders::FolderEntry::new(&fixture.dir)] });
+        Ok(())
+    })?;
     let (window, left) = (viewport(cx).await?, view.read_with(cx, |v, _| v.sidebar.left_width));
     let result = check(view, &fixture, cx).await;
     view.update(cx, |v, cx| {
@@ -99,7 +102,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
         tabs.into_iter().for_each(|id| v.close_tab(id, cx));
     });
     let restored = resize(view, window, cx).await;
-    registry.remove(WS)?;
+    supraman_core::folders::edit(home, |e| e.remove_group(WS, true))?;
     let result = result.and_then(|line| restored.map(|_| line));
     result.map(|line| format!("{line}; {:.1} s", started.elapsed().as_secs_f32()))
 }

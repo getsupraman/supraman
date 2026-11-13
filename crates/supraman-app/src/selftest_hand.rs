@@ -118,10 +118,9 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     view.read_with(cx, |v, _| v.polls.injected.lock().unwrap_or_else(|e| e.into_inner()).extend(rows));
     let label = until(view, cx, WITHIN, "the hand session's row with its hook signal", |v| {
         v.tree()
-            .workspaces
+            .folder(&format!("{WORKSPACE}/{repo}"))?
+            .sessions
             .iter()
-            .filter(|w| w.name == WORKSPACE)
-            .flat_map(|w| w.repos.iter().filter(|r| r.name == repo).flat_map(|r| &r.sessions))
             .find(|r| r.session.session_id == SID)
             .and_then(|r| r.hook.as_ref().map(|h| h.label(supraman_claude::now_ms())))
     })

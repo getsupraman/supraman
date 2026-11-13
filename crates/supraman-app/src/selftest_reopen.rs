@@ -129,9 +129,9 @@ async fn check(view: &Entity<FleetView>, home: &Path, own: &str, gone: &Path, cx
     let (shell, hand, work, attach, doomed) = cx.update(|window, cx| {
         view.update(cx, |v, cx| {
             let shell = v.open_shell_in(cwd.clone(), "reopen shell".into(), window, cx);
-            let hand = v.resume(WORKSPACE, "reopen", &closed, window, cx);
+            let hand = v.resume(&format!("{WORKSPACE} · reopen"), &closed, cx);
             let work = v.open_work(crate::selftest_work::WORKSPACE, cx);
-            let attach = v.attach(WORKSPACE, "reopen", &live, window, cx);
+            let attach = v.attach(&format!("{WORKSPACE} · reopen"), &live, cx);
             let doomed = v.open_shell_in(gone.to_path_buf(), "reopen gone".into(), window, cx);
             // the order a drag leaves: Work first
             supraman_ui::tabs::reorder(&mut v.tabs, 2, 0);

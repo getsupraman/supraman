@@ -3,11 +3,10 @@
 use std::path::{Path, PathBuf};
 
 use gpui::{App, Context, Pixels, Point};
-use supraman_core::holder_of;
 use supraman_core::paths::git_at;
 use supraman_ui::menu::item;
 
-use crate::fleet::WorkspaceNode;
+use crate::fleet::EntryNode;
 use crate::view::menu::{ContextMenu, MenuAction, MenuItem};
 use crate::view::{FleetView, Tab, TabKind};
 use crate::work_view::Binding;
@@ -103,12 +102,12 @@ pub fn with_workman(mut items: Vec<MenuItem>, folder: Option<&Path>, work: &Work
 }
 
 /// The folder a session row is listed under, as the sidebar names it for its menu.
-pub(in crate::view) fn row_folder<'a>(node: &'a WorkspaceNode, session_id: &str) -> &'a str {
+pub(in crate::view) fn row_folder<'a>(node: &'a EntryNode, session_id: &str) -> &'a str {
     let is = |row: &crate::fleet::SessionRow| row.session.session_id == session_id;
     if let Some((id, _)) = node.scheduled.iter().find(|(_, rows)| rows.iter().any(is)) {
         return id;
     }
-    node.repos.iter().find(|r| r.sessions.iter().any(is)).map_or("", |r| &r.name)
+    node.folders.iter().find(|r| r.sessions.iter().any(is)).map_or("", |r| &r.key)
 }
 
 impl FleetView {
@@ -120,7 +119,7 @@ impl FleetView {
             (TabKind::Git(_), Some(own)) => Repo::Top(own.clone()),
             (_, Some(_)) => Repo::Reading,
         };
-        let workspace = folder.as_deref().and_then(|f| holder_of(f, &self.workspaces)).map(|w| w.name.clone());
+        let workspace = folder.as_deref().and_then(|f| self.entry_of(f));
         let work = if workspace.is_some() { Work::Reading } else { Work::NoWorkspace };
         let title = tab.label();
         let items = with_workman(self.tab_menu_items(id, folder.as_deref(), &repo, cx), folder.as_deref(), &work);
@@ -174,7 +173,7 @@ impl FleetView {
     fn tab_folder(&self, tab: &Tab, cx: &App) -> Option<PathBuf> {
         match &tab.kind {
             TabKind::Git(view) => Some(view.read(cx).folder.clone()),
-            TabKind::Work(view) => self.workspaces.iter().find(|w| w.name == view.read(cx).workspace)?.home().map(Path::to_path_buf),
+            TabKind::Work(view) => self.tree().entry(&view.read(cx).workspace)?.folders.first().map(|f| f.path.clone()),
             TabKind::Start(page) => Some(page.folder.clone()),
             _ => tab.cwd.clone(),
         }
@@ -182,7 +181,7 @@ impl FleetView {
 
     fn tab_session_items(&self, tab: &Tab, cx: &Context<Self>) -> Option<(String, Vec<MenuItem>)> {
         let tree = self.tree();
-        tree.workspaces.iter().find_map(|node| {
+        tree.entries.iter().find_map(|node| {
             let row = node.rows().find(|r| Self::tab_runs(tab, &r.session))?;
             let folder = row_folder(node, &row.session.session_id);
             let caption = format!("session · {}", crate::fleet::display_name(&row.session));

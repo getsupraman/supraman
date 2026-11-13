@@ -38,7 +38,7 @@ async fn until<T>(view: &Entity<FleetView>, cx: &mut AsyncWindowContext, what: &
 
 fn row(v: &FleetView, session_id: &str) -> Option<(String, Health)> {
     v.search_tree()
-        .workspaces
+        .entries
         .into_iter()
         .flat_map(|w| w.into_rows())
         .find(|r| r.session.session_id == session_id)
@@ -79,9 +79,9 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, own: &str, cx: &mut Asyn
 async fn check(view: &Entity<FleetView>, home: &Path, own: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let session = until(view, cx, &format!("{own}'s row"), |v| {
         v.search_tree()
-            .workspaces
+            .entries
             .into_iter()
-            .flat_map(|w| w.repos.into_iter().flat_map(|r| r.sessions))
+            .flat_map(|w| w.into_rows())
             .find(|r| r.session.name == own)
             .map(|r| r.session)
     })

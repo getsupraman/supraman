@@ -20,10 +20,6 @@ pub enum CoreError {
     NotADirectory(PathBuf),
     #[error("workspace '{workspace}' has no folder '{folder}'; known: {known}")]
     NoFolder { workspace: String, folder: String, known: String },
-    #[error("workspace '{workspace}' has no scan of {}", path.display())]
-    NoScan { workspace: String, path: PathBuf },
-    #[error("{folder} is supervised in workspace {owner}; a folder's session belongs to one workspace")]
-    SupervisedElsewhere { folder: String, owner: String },
     #[error("workspace '{workspace}' has no schedule '{id}'")]
     NoSchedule { workspace: String, id: String },
     #[error("schedule '{id}': {why}")]
@@ -72,8 +68,6 @@ impl CoreError {
                 | Self::NotFound(_)
                 | Self::NotADirectory(_)
                 | Self::NoFolder { .. }
-                | Self::NoScan { .. }
-                | Self::SupervisedElsewhere { .. }
                 | Self::NoSchedule { .. }
                 | Self::InvalidSchedule { .. }
                 | Self::NoPrompt(_)

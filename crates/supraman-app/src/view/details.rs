@@ -1,24 +1,23 @@
-//! A session's and a workspace's Details tab; its actions are the row's menu items, run through `run_action`.
+//! A session's, a group's and a top-level folder's Details tab; its actions are the row's menu items, run through `run_action`.
 
 use std::path::PathBuf;
 use std::rc::Rc;
 
 use gpui::{AnyElement, ClickEvent, Context, ScrollHandle, SharedString, div, prelude::*};
-use supraman_core::paths::{path_key, within};
 use supraman_ui::{button, session};
 use supraman_ui::details::{self, Section};
 use theme::ActiveTheme as _;
 
-use super::menu::{MenuAction, MenuItem, MenuTarget, workspace_items};
+use super::menu::{MenuAction, MenuItem, MenuTarget, folder_items, group_items};
 use super::schedules::At;
 use super::{FleetView, Tab, TabKind};
-use crate::fleet::{SessionRow, WorkspaceNode};
-use crate::row_details::{self, OnDisk, SessionFacts, StartedBy, WorkspaceFacts};
+use crate::fleet::{EntryNode, SessionRow};
+use crate::row_details::{self, EntryFacts, OnDisk, SessionFacts, StartedBy};
 use supraman_claude::now_ms;
 
 /// The tab renders the last poll's tree; `seen` keeps a session readable once the tree drops it.
 pub struct DetailsPage {
-    /// [`MenuTarget::Session`] or [`MenuTarget::Workspace`].
+    /// [`MenuTarget::Session`], [`MenuTarget::Group`] or a top-level [`MenuTarget::Folder`].
     pub target: MenuTarget,
     pub scroll: ScrollHandle,
     pub seen: Option<SessionRow>,
@@ -40,8 +39,8 @@ impl DetailsPage {
     pub fn key(&self) -> String {
         match &self.target {
             MenuTarget::Session { session_id, .. } => format!("session-{session_id}"),
-            MenuTarget::Workspace(w) => format!("ws-{w}"),
-            MenuTarget::Repo { workspace, repo } => format!("repo-{workspace}/{repo}"),
+            MenuTarget::Group(name) => format!("group-{name}"),
+            MenuTarget::Folder(key) => format!("repo-{key}"),
             MenuTarget::Schedule { workspace, id } => format!("schedule-{workspace}/{id}"),
             MenuTarget::Schedules(workspace) => format!("schedules-{workspace}"),
             MenuTarget::OtherSchedule(path) => format!("other-{path}"),
@@ -64,9 +63,9 @@ impl FleetView {
         })
     }
 
-    fn session_row(&self, workspace: &str, session_id: &str) -> Option<(SessionRow, Option<(String, PathBuf)>)> {
+    fn session_row(&self, session_id: &str) -> Option<(SessionRow, Option<(String, PathBuf)>)> {
         let tree = self.tree();
-        let node = tree.workspaces.iter().find(|n| n.name == workspace)?;
+        let node = tree.entries.iter().find(|n| n.rows().any(|r| r.session.session_id == session_id))?;
         Some((node.rows().find(|r| r.session.session_id == session_id)?.clone(), folder_of(node, session_id)))
     }
 
@@ -77,15 +76,15 @@ impl FleetView {
             return Some(tab);
         }
         let (title, cwd, seen, folder) = match &target {
-            MenuTarget::Session { workspace, session_id, .. } => {
-                let (row, folder) = self.session_row(workspace, session_id)?;
+            MenuTarget::Session { session_id, .. } => {
+                let (row, folder) = self.session_row(session_id)?;
                 (format!("Details · {}", row_details::session_title(&row)), Some(row.session.cwd.clone()), Some(row), folder)
             }
-            MenuTarget::Workspace(w) => {
-                let home = self.workspaces.iter().find(|r| &r.name == w)?.home().map(std::path::Path::to_path_buf);
-                (format!("Details · {w}"), home, None, None)
+            MenuTarget::Group(name) | MenuTarget::Folder(name) => {
+                let first = self.tree().entry(name)?.folders.first().map(|f| f.path.clone());
+                (format!("Details · {name}"), first, None, None)
             }
-            MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) | MenuTarget::OtherSchedule(_) => return None,
+            MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) | MenuTarget::OtherSchedule(_) => return None,
         };
         let tab = self.next_tab_id;
         self.next_tab_id += 1;
@@ -133,8 +132,8 @@ impl FleetView {
         let mut fresh = Vec::new();
         for (i, t) in self.tabs.iter().enumerate() {
             let TabKind::Details(page) = &t.kind else { continue };
-            let MenuTarget::Session { workspace, session_id, .. } = &page.target else { continue };
-            let node = tree.workspaces.iter().find(|n| &n.name == workspace);
+            let MenuTarget::Session { session_id, .. } = &page.target else { continue };
+            let node = tree.entries.iter().find(|n| n.rows().any(|r| &r.session.session_id == session_id));
             let row = node.and_then(|n| n.rows().find(|r| &r.session.session_id == session_id)).cloned();
             let folder = node.and_then(|n| folder_of(n, session_id));
             let read = row.as_ref().or(page.seen.as_ref()).filter(|_| !page.reading).map(|r| DiskRead {
@@ -162,9 +161,9 @@ impl FleetView {
         self.read_disk(reads, cx);
     }
 
-    fn started_by(&self, workspace: &str, row: &SessionRow) -> StartedBy {
+    fn started_by(&self, row: &SessionRow) -> StartedBy {
         let name = &row.session.name;
-        if let Some(id) = supraman_core::schedule::schedule_of_session(workspace, name) {
+        if let Some(id) = self.listed.schedule_workspaces.iter().find_map(|w| supraman_core::schedule::schedule_of_session(&w.name, name)) {
             return StartedBy::Schedule(id.to_string());
         }
         if super::menu::is_foremans(&row.session) {
@@ -181,29 +180,28 @@ impl FleetView {
         self.tabs.iter().find(|t| t.hand && (Self::tab_runs(t, &row.session) || t.launched_session.as_ref() == Some(sid)))
     }
 
-    fn work_open(&self, workspace: &str, cx: &gpui::App) -> bool {
-        self.tabs.iter().any(|t| matches!(&t.kind, TabKind::Work(v) if v.read(cx).workspace == workspace))
+    fn work_open(&self, entry: &str, cx: &gpui::App) -> bool {
+        self.tabs.iter().any(|t| matches!(&t.kind, TabKind::Work(v) if v.read(cx).workspace == entry))
     }
 
     pub fn session_sections(&self, page: &DetailsPage, cx: &gpui::App) -> Option<(String, Vec<Section>)> {
-        let MenuTarget::Session { workspace, .. } = &page.target else { return None };
+        let MenuTarget::Session { entry, .. } = &page.target else { return None };
         let row = page.seen.as_ref()?;
         let folder = page.folder.as_ref().map(|(n, p)| (n.as_str(), p.as_path()));
-        Some((row_details::session_title(row), self.row_sections(workspace, row, folder, &page.disk, page.listed, cx)))
+        Some((row_details::session_title(row), self.row_sections(entry, row, folder, &page.disk, page.listed, cx)))
     }
 
-    /// `row`'s facts as its Details tab shows them; `folder` the workspace's folder holding it, else found here.
-    pub(super) fn row_sections(&self, workspace: &str, row: &SessionRow, folder: Option<(&str, &std::path::Path)>, disk: &OnDisk, listed: bool, cx: &gpui::App) -> Vec<Section> {
-        let registered = self.workspaces.iter().find(|w| w.name == workspace);
-        let folder = folder.or_else(|| {
-            registered?.folders.iter().filter(|f| within(&row.session.cwd, &f.path)).max_by_key(|f| path_key(&f.path).len()).map(|f| (f.name.as_str(), f.path.as_path()))
-        });
-        let claimed = self.work_open(workspace, cx).then(|| self.claimed_item(workspace, &row.session.name, cx));
+    /// `row`'s facts as its Details tab shows them; `folder` the listed folder holding it, else found here.
+    pub(super) fn row_sections(&self, entry: &str, row: &SessionRow, folder: Option<(&str, &std::path::Path)>, disk: &OnDisk, listed: bool, cx: &gpui::App) -> Vec<Section> {
+        let (group, found) = crate::tab_card::place(&row.session.cwd, &self.listed.entries);
+        let holding = supraman_claude::holding(&row.session.cwd, &self.listed.entries, |_| None);
+        let folder = folder.or_else(|| Some((found.as_deref()?, holding?.path.as_path())));
+        let claimed = self.work_open(entry, cx).then(|| self.claimed_item(entry, &row.session.name, cx));
         let facts = SessionFacts {
             row,
-            workspace,
+            group: group.as_deref(),
             folder,
-            started_by: self.started_by(workspace, row),
+            started_by: self.started_by(row),
             claimed,
             sign_in: self.hand_tab(row).and_then(|t| t.workman.clone()),
             disk,
@@ -212,24 +210,23 @@ impl FleetView {
         row_details::session(&facts, now_ms())
     }
 
-    pub fn workspace_sections(&self, workspace: &str, cx: &gpui::App) -> Option<(WorkspaceNode, Vec<Section>)> {
-        let node = self.tree().workspaces.iter().find(|n| n.name == workspace)?.clone();
-        let registered = self.workspaces.iter().find(|r| r.name == workspace);
-        let facts = WorkspaceFacts {
-            name: workspace.to_string(),
-            home: node.home.as_ref().map(|h| h.display().to_string()),
-            folders: registered.map(|r| r.folders.iter().map(|f| (f.name.clone(), f.path.clone(), f.enabled)).collect()).unwrap_or_default(),
-            scans: registered.map(|r| r.scans.iter().map(|s| (s.path.clone(), s.depth)).collect()).unwrap_or_default(),
+    /// A group's or a top-level folder's page: the entry named `name` in the tree.
+    pub fn entry_sections(&self, name: &str, cx: &gpui::App) -> Option<(EntryNode, Vec<Section>)> {
+        let node = self.tree().entry(name)?.clone();
+        let facts = EntryFacts {
+            name: name.to_string(),
+            group: node.group,
+            folders: node.folders.iter().map(|f| (f.name.clone(), f.path.clone())).collect(),
             sessions: node.session_count(),
             project: self.tabs.iter().find_map(|t| match &t.kind {
-                TabKind::Work(view) if view.read(cx).workspace == workspace => {
+                TabKind::Work(view) if view.read(cx).workspace == name => {
                     let refs: Vec<String> = view.read(cx).projects.iter().map(|p| p.item.qualified_ref.clone()).collect();
                     (!refs.is_empty()).then(|| refs.join(", "))
                 }
                 _ => None,
             }),
         };
-        let sections = row_details::workspace(&facts);
+        let sections = row_details::entry(&facts);
         Some((node, sections))
     }
 
@@ -239,8 +236,8 @@ impl FleetView {
         let (_, page) = self.details_page(target)?;
         match &page.target {
             MenuTarget::Session { .. } => self.session_sections(page, cx).map(|(title, s)| details::text(&title, &s)),
-            MenuTarget::Workspace(w) => self.workspace_sections(w, cx).map(|(_, s)| details::text(w, &s)),
-            MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) | MenuTarget::OtherSchedule(_) => None,
+            MenuTarget::Group(name) | MenuTarget::Folder(name) => self.entry_sections(name, cx).map(|(_, s)| details::text(name, &s)),
+            MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) | MenuTarget::OtherSchedule(_) => None,
         }
     }
 
@@ -266,15 +263,15 @@ impl FleetView {
         out
     }
 
-    /// `None` once the workspace is gone.
+    /// `None` once its group or folder is gone.
     pub(super) fn render_details_page(&self, page: &DetailsPage, cx: &mut Context<Self>) -> Option<AnyElement> {
         let page_key = page.key();
         let mut opener = None;
         let (title, pill, sections, items) = match &page.target {
-            MenuTarget::Session { workspace, repo, session_id } => {
+            MenuTarget::Session { entry, place, session_id } => {
                 let row = page.seen.as_ref()?;
                 let folder = page.folder.as_ref().map(|(n, p)| (n.as_str(), p.as_path()));
-                let view = self.session_view(workspace, repo, row, folder, &page.disk, page.listed, true, cx);
+                let view = self.session_view(entry, place, row, folder, &page.disk, page.listed, true, cx);
                 let (fleet, sid) = (cx.weak_entity(), session_id.clone());
                 let on_open = move |_: &mut gpui::Window, cx: &mut gpui::App| {
                     fleet.update(cx, |this, cx| this.open_session(&sid, cx)).ok();
@@ -283,19 +280,21 @@ impl FleetView {
                 opener = Some(open.into_any_element());
                 (view.title, Some(view.pill), view.sections, view.actions)
             }
-            MenuTarget::Workspace(w) => {
-                let (node, sections) = self.workspace_sections(w, cx)?;
-                (w.clone(), None, sections, workspace_items(&node, self.has_closed_background(w)))
+            MenuTarget::Group(name) | MenuTarget::Folder(name) => {
+                let (node, sections) = self.entry_sections(name, cx)?;
+                let closed = self.has_closed_background(name);
+                let items = if node.group { group_items(&node, closed) } else { folder_items(&node, &node.folders[0], closed) };
+                (name.clone(), None, sections, items)
             }
-            MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) | MenuTarget::OtherSchedule(_) => return None,
+            MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) | MenuTarget::OtherSchedule(_) => return None,
         };
         let actions = opener.into_iter().chain(self.action_buttons(page, items, cx)).collect();
-        let workspace = match &page.target {
-            MenuTarget::Session { workspace, .. } => workspace.clone(),
+        let entry = match &page.target {
+            MenuTarget::Session { entry, .. } => entry.clone(),
             _ => String::new(),
         };
         let on_link: details::OnLink<Self> = Rc::new(move |this: &mut Self, schedule: &str, _, cx| {
-            this.open_schedule(&workspace, schedule, At::Top, cx);
+            this.open_schedule(&entry, schedule, At::Top, cx);
         });
         let key = format!("details-{page_key}");
         let page = details::Page { key: &key, title, pill, sections: &sections, actions, scroll: &page.scroll, on_link: Some(on_link), top: None, over: None, bar: None };
@@ -322,8 +321,8 @@ fn apply_disk(tabs: &mut [Tab], read: Vec<(u64, String, OnDisk)>) -> bool {
     applied
 }
 
-fn folder_of(node: &WorkspaceNode, session_id: &str) -> Option<(String, PathBuf)> {
-    node.repos.iter().find(|r| r.sessions.iter().any(|s| s.session.session_id == session_id)).map(|r| (r.name.clone(), r.path.clone()))
+fn folder_of(node: &EntryNode, session_id: &str) -> Option<(String, PathBuf)> {
+    node.folders.iter().find(|r| r.sessions.iter().any(|s| s.session.session_id == session_id)).map(|r| (r.name.clone(), r.path.clone()))
 }
 
 #[cfg(test)]
@@ -331,7 +330,7 @@ mod tests {
     use super::*;
 
     fn page(tab: u64, session_id: &str) -> Tab {
-        let target = MenuTarget::Session { workspace: "demo".into(), repo: "api".into(), session_id: session_id.into() };
+        let target = MenuTarget::Session { entry: "demo".into(), place: "demo/api".into(), session_id: session_id.into() };
         let page = DetailsPage { target, scroll: ScrollHandle::new(), seen: None, folder: None, listed: true, disk: OnDisk::default(), reading: true };
         Tab::new(tab, format!("Details · {session_id}"), TabKind::Details(page), None)
     }
