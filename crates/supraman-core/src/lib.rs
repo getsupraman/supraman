@@ -3,6 +3,7 @@ mod discover;
 mod edit;
 mod error;
 mod events;
+pub mod folders;
 pub mod fs;
 pub mod hex;
 pub mod install;
