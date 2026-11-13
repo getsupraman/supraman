@@ -102,6 +102,15 @@ mod tests {
     }
 
     #[test]
+    fn a_file_written_before_folders_is_read_by_its_folder_keys() {
+        let home = tempfile::tempdir().unwrap();
+        let file = home.path().join("dismissed.json");
+        std::fs::write(&file, r#"{"workspaces":{"gaia-1a2b3c4d":["run-1"]}}"#).unwrap();
+        let (d, notice) = Dismissed::load_at(Some(file), LOST);
+        assert!(notice.is_none() && d.hides("gaia-1a2b3c4d", "run-1"));
+    }
+
+    #[test]
     fn without_a_file_nothing_is_saved() {
         let mut d = Dismissed::default();
         assert!(d.dismiss("w", "a").is_none(), "no file, nothing to save");
