@@ -141,8 +141,13 @@ impl HookSignal {
     }
 }
 
+/// A session's health as the sidebar, the agent rows and the Work tab show it.
+pub fn shown_health(session: &Session, now_ms: i64, hooks: Option<&HashMap<String, HookSignal>>, polled_at: i64) -> Health {
+    with_hook(session.supervised_health(now_ms), hooks.and_then(|h| h.get(&session.session_id)), polled_at)
+}
+
 /// A prompt the hook reported after the poll marks the row blocked before the next poll shows it.
-pub fn with_hook(health: Health, hook: Option<&HookSignal>, polled_at: i64) -> Health {
+fn with_hook(health: Health, hook: Option<&HookSignal>, polled_at: i64) -> Health {
     match (health, hook) {
         (Health::Running | Health::Idle, Some(h)) if h.is_permission_prompt() && h.last.ts > polled_at => Health::Blocked {
             waiting_for: Some("permission prompt".into()),
@@ -228,11 +233,11 @@ pub fn activity(health: &Health) -> Option<Activity> {
 }
 
 /// The live sessions as every tab shows them, by [`display_name`], their attach id while [`attachable`].
-pub fn live_sessions(sessions: &[Session], now_ms: i64) -> Vec<LiveSession> {
+pub fn live_sessions(sessions: &[Session], now_ms: i64, hooks: &HashMap<String, HookSignal>, polled_at: i64) -> Vec<LiveSession> {
     sessions
         .iter()
         .filter_map(|s| {
-            let health = s.health(now_ms);
+            let health = shown_health(s, now_ms, Some(hooks), polled_at);
             let activity = activity(&health)?;
             Some(LiveSession { name: display_name(s).to_string(), claude_session_id: s.session_id.clone(), cwd: s.cwd.clone(), activity, attach: attachable(s, &health).then(|| s.id.clone()) })
         })
@@ -359,7 +364,7 @@ impl<'a> Build<'a> {
 
     fn row(&self, session: Session) -> SessionRow {
         let hook = self.sup.hooks.and_then(|h| h.get(&session.session_id)).cloned();
-        let health = with_hook(session.supervised_health(self.now_ms), hook.as_ref(), self.sup.polled_at);
+        let health = shown_health(&session, self.now_ms, self.sup.hooks, self.sup.polled_at);
         SessionRow {
             foreign: is_foreign(&session.name, self.workspaces, self.sup.desired, self.sup.own_prefix),
             starred: self.starred(&session.session_id),
@@ -1172,6 +1177,27 @@ mod tests {
         let busy = tree.workspaces[0].repos[0].sessions.iter().find(|r| r.session.name == "busy").unwrap();
         assert_eq!(busy.health, blocked);
         assert!(busy.hook.is_some());
+    }
+
+    #[test]
+    fn live_sessions_show_the_sidebars_state() {
+        let list = sessions();
+        let activity_of = |hooks: &HashMap<String, HookSignal>, polled_at: i64| {
+            live_sessions(&list, NOW, hooks, polled_at).into_iter().find(|s| s.name == "busy").unwrap().activity
+        };
+        let health_of = |hooks: &HashMap<String, HookSignal>, polled_at: i64| {
+            let sup = Supervised { hooks: Some(hooks), polled_at, ..Supervised::default() };
+            let tree = build(&[workspace()], &list, NOW, false, &sup);
+            tree.workspaces[0].repos[0].sessions.iter().find(|r| r.session.name == "busy").unwrap().health.clone()
+        };
+        let mut hooks = HashMap::new();
+        HookSignal::record(&mut hooks, event("Notification", Some("permission_prompt"), NOW - 500));
+
+        let blocked = Health::Blocked { waiting_for: Some("permission prompt".into()) };
+        assert_eq!(activity_of(&hooks, NOW - 1_000), Activity::Waiting, "a prompt newer than the poll");
+        assert_eq!(health_of(&hooks, NOW - 1_000), blocked);
+        assert_eq!(activity_of(&hooks, NOW), Activity::Working, "the poll is newer: trust it");
+        assert_eq!(health_of(&hooks, NOW), Health::Running);
     }
 
     fn rows(list: &[(&str, &str, &str)]) -> Vec<Session> {
