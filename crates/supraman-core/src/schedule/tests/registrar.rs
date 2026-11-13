@@ -19,7 +19,8 @@ fn spec<'a>(s: &'a Schedule, level: RunLevel) -> TaskSpec<'a> {
         level,
         smw: Path::new(r"C:\Program Files\Supraman\smw.exe"),
         home: Path::new(r"C:\Users\rene\AppData\Roaming\Supraman\"),
-        workspace: "demo",
+        folder: Path::new(r"C:\Projects\Nomos"),
+        key: "nomos-1a2b3c4d",
         schedule: s,
         fingerprint: "9f2c00000000000000000000000000000000000000000000000000000000beef",
         start: NaiveDate::from_ymd_opt(2026, 11, 2).unwrap(),
@@ -85,7 +86,7 @@ fn second(f: &Fixture, store: &MemoryStore, id: &str) {
     s.id = id.into();
     s.trigger = daily(3, 0);
     add(f, s);
-    approve(&f.home, store, &f.ws, id, 1).unwrap();
+    approve(&f.home, store, &f.folder, id, 1).unwrap();
 }
 
 #[test]
@@ -94,7 +95,7 @@ fn sync_writes_only_its_own_folder_and_leaves_every_other_task_alone() {
     let store = MemoryStore::default();
     approved(&f, &store);
     let root = task_root(&f.home);
-    let mine = format!(r"{root}\demo");
+    let mine = format!(r"{root}\{}", folder_key(&f.folder));
     let fake = FakeRegistrar::default();
     let planted = [
         (format!(r"{root}\other"), "autofix-prod-bugs"),
@@ -106,20 +107,47 @@ fn sync_writes_only_its_own_folder_and_leaves_every_other_task_alone() {
         fake.plant(folder, name, "<Task>someone else's</Task>");
     }
 
-    let done = sync(&fake, &target(&f, &store, RunLevel::LeastPrivilege), &f.ws, &load(&f.home, "demo").unwrap()).unwrap();
+    let done = sync(&fake, &target(&f, &store, RunLevel::LeastPrivilege), &f.folder, &load(&f.home, &f.folder).unwrap()).unwrap();
     assert_eq!(done.folder, mine);
     assert_eq!(done.registered, [ID]);
     change(&f, ID, |s| s.status = Status::Paused);
-    let done = sync(&fake, &target(&f, &store, RunLevel::LeastPrivilege), &f.ws, &load(&f.home, "demo").unwrap()).unwrap();
+    let done = sync(&fake, &target(&f, &store, RunLevel::LeastPrivilege), &f.folder, &load(&f.home, &f.folder).unwrap()).unwrap();
     assert_eq!(done.removed, [ID]);
     assert!(done.folder_deleted && !fake.has_folder(&mine));
 
     for (folder, name) in &planted {
         assert_eq!(fake.xml(&format!(r"{folder}\{name}")).as_deref(), Some("<Task>someone else's</Task>"), r"{folder}\{name}");
     }
-    assert!(fake.has_folder(&root), "the root still holds another workspace's folder");
+    assert!(fake.has_folder(&root), "the root still holds another folder's");
     let writes = fake.writes();
     assert!(writes.iter().all(|w| w.ends_with(&format!(r"{mine}\{ID}")) || w == &format!("rmdir {mine}")), "{writes:?}");
+}
+
+#[test]
+fn sync_all_removes_the_tasks_of_folders_without_schedules_and_of_the_earlier_workspaces_only() {
+    let f = fixture();
+    let store = MemoryStore::default();
+    approved(&f, &store);
+    let root = task_root(&f.home);
+    let fake = FakeRegistrar::default();
+    let kept = [(r"\Microsoft\Windows\Defrag".to_string(), "ScheduledDefrag"), (format!(r"{root}-x\demo"), ID), (root.clone(), "loose")];
+    for (folder, name) in &kept {
+        fake.plant(folder, name, "<Task>someone else's</Task>");
+    }
+    for (folder, name) in [(format!(r"{root}\demo"), ID), (format!(r"{root}\demo"), "nightly"), (format!(r"{root}\gone-1a2b3c4d"), "x")] {
+        fake.plant(&folder, name, "<Task>Supraman's</Task>");
+    }
+    let (all, errors) = load_all(&f.home);
+    assert!(errors.is_empty(), "{errors:?}");
+    let synced = sync_all(&fake, &target(&f, &store, RunLevel::LeastPrivilege), &all).unwrap();
+    let mine = format!(r"{root}\{}", folder_key(&f.folder));
+    assert_eq!((synced.len(), synced[0].folder.as_str(), synced[0].registered.as_slice()), (1, mine.as_str(), [ID.to_string()].as_slice()));
+    let mut paths = fake.paths();
+    paths.sort();
+    let mut want: Vec<String> = kept.iter().map(|(folder, name)| format!(r"{folder}\{name}")).chain([format!(r"{mine}\{ID}")]).collect();
+    want.sort();
+    assert_eq!(paths, want);
+    assert!(!fake.has_folder(&format!(r"{root}\demo")) && !fake.has_folder(&format!(r"{root}\gone-1a2b3c4d")));
 }
 
 #[test]
@@ -134,10 +162,10 @@ fn pending_paused_and_changed_schedules_have_no_task() {
     second(&f, &store, "changed");
     fs::write(f.folder.join("scripts").join("gate.ps1"), "exit 0").unwrap();
     let fake = FakeRegistrar::default();
-    let all = load(&f.home, "demo").unwrap();
+    let all = load(&f.home, &f.folder).unwrap();
     assert_eq!(all.iter().find(|s| s.id == "changed").unwrap().status, Status::Active, "active in the file, but its script changed");
 
-    let done = sync(&fake, &target(&f, &store, RunLevel::LeastPrivilege), &f.ws, &all).unwrap();
+    let done = sync(&fake, &target(&f, &store, RunLevel::LeastPrivilege), &f.folder, &all).unwrap();
     assert!(done.registered.is_empty() && fake.paths().is_empty(), "{:?}", fake.paths());
     assert!(fake.writes().iter().all(|w| w.starts_with("rmdir")), "{:?}", fake.writes());
 }
@@ -150,17 +178,17 @@ fn an_unchanged_task_stays_and_a_changed_one_is_registered_again() {
     second(&f, &store, "nightly");
     let fake = FakeRegistrar::default();
     let level = RunLevel::LeastPrivilege;
-    let first = sync(&fake, &target(&f, &store, level), &f.ws, &load(&f.home, "demo").unwrap()).unwrap();
+    let first = sync(&fake, &target(&f, &store, level), &f.folder, &load(&f.home, &f.folder).unwrap()).unwrap();
     assert_eq!(first.registered, [ID, "nightly"]);
     let writes = fake.writes().len();
 
-    let again = sync(&fake, &target(&f, &store, level), &f.ws, &load(&f.home, "demo").unwrap()).unwrap();
+    let again = sync(&fake, &target(&f, &store, level), &f.folder, &load(&f.home, &f.folder).unwrap()).unwrap();
     assert!(again.registered.is_empty() && again.updated.is_empty() && again.removed.is_empty());
     assert_eq!(fake.writes().len(), writes, "nothing written when nothing changed");
 
     change(&f, "nightly", |s| s.trigger = daily(4, 0));
-    approve(&f.home, &store, &f.ws, "nightly", 2).unwrap();
-    let moved = sync(&fake, &target(&f, &store, level), &f.ws, &load(&f.home, "demo").unwrap()).unwrap();
+    approve(&f.home, &store, &f.folder, "nightly", 2).unwrap();
+    let moved = sync(&fake, &target(&f, &store, level), &f.folder, &load(&f.home, &f.folder).unwrap()).unwrap();
     assert_eq!(moved.updated, ["nightly"]);
     let path = format!(r"{}\nightly", moved.folder);
     assert!(fake.xml(&path).unwrap().contains("T04:00:00</StartBoundary>"));
@@ -173,31 +201,32 @@ fn a_change_of_the_services_elevation_registers_every_task_again() {
     approved(&f, &store);
     second(&f, &store, "nightly");
     let fake = FakeRegistrar::default();
-    let all = load(&f.home, "demo").unwrap();
-    sync(&fake, &target(&f, &store, RunLevel::LeastPrivilege), &f.ws, &all).unwrap();
+    let all = load(&f.home, &f.folder).unwrap();
+    sync(&fake, &target(&f, &store, RunLevel::LeastPrivilege), &f.folder, &all).unwrap();
 
-    let up = sync(&fake, &target(&f, &store, RunLevel::HighestAvailable), &f.ws, &all).unwrap();
+    let up = sync(&fake, &target(&f, &store, RunLevel::HighestAvailable), &f.folder, &all).unwrap();
     assert_eq!(up.level, RunLevel::HighestAvailable);
     assert_eq!(up.updated, [ID, "nightly"]);
     for path in fake.paths() {
         assert!(fake.xml(&path).unwrap().contains("<RunLevel>HighestAvailable</RunLevel>"), "{path}");
     }
-    let down = sync(&fake, &target(&f, &store, RunLevel::LeastPrivilege), &f.ws, &all).unwrap();
+    let down = sync(&fake, &target(&f, &store, RunLevel::LeastPrivilege), &f.folder, &all).unwrap();
     assert_eq!(down.updated, [ID, "nightly"]);
     assert!(fake.xml(&format!(r"{}\{ID}", down.folder)).unwrap().contains("<RunLevel>LeastPrivilege</RunLevel>"));
 }
 
 #[test]
-fn the_task_runs_smw_with_the_home_the_workspace_the_id_and_the_approved_fingerprint() {
+fn the_task_runs_smw_with_the_home_the_folder_key_the_id_and_the_approved_fingerprint() {
     let f = fixture();
     let store = MemoryStore::default();
     let s = approved(&f, &store);
     let fake = FakeRegistrar::default();
-    let done = sync(&fake, &target(&f, &store, RunLevel::LeastPrivilege), &f.ws, &[s.clone()]).unwrap();
+    let done = sync(&fake, &target(&f, &store, RunLevel::LeastPrivilege), &f.folder, &[s.clone()]).unwrap();
     let xml = fake.xml(&format!(r"{}\{ID}", done.folder)).unwrap();
     let fp = &s.approval.unwrap().fingerprint;
     let home = f.home.to_string_lossy();
-    assert!(xml.contains(&format!("<Arguments>schedule fire --home &quot;{home}&quot; demo {ID} --fingerprint {fp}</Arguments>")), "{xml}");
+    let key = folder_key(&f.folder);
+    assert!(xml.contains(&format!("<Arguments>schedule fire --home &quot;{home}&quot; {key} {ID} --fingerprint {fp}</Arguments>")), "{xml}");
     assert!(xml.contains(r"<Command>C:\Supraman\smw.exe</Command>"));
     assert!(xml.contains(&format!("<UserId>{}</UserId>", FakeRegistrar::USER)));
 }
@@ -216,7 +245,7 @@ fn a_new_task_starts_on_its_first_fire_after_now() {
     let s = approved(&f, &store);
     let fake = FakeRegistrar::default();
     let t = target(&f, &store, RunLevel::LeastPrivilege);
-    let done = sync(&fake, &t, &f.ws, &[s.clone()]).unwrap();
+    let done = sync(&fake, &t, &f.folder, &[s.clone()]).unwrap();
     let first = next_fire_local(&s.trigger, t.now_ms).unwrap();
     let day = chrono::Local.timestamp_millis_opt(first).unwrap().format("%Y-%m-%d").to_string();
     let xml = fake.xml(&format!(r"{}\{ID}", done.folder)).unwrap();
@@ -242,7 +271,8 @@ fn a_real_task_registers_reads_back_and_goes_with_its_folder() {
         level: RunLevel::LeastPrivilege,
         smw: Path::new(r"C:\fmbuild\sched-3\no-such-smw.exe"),
         home: Path::new(r"C:\fmbuild\sched-3\probe-home"),
-        workspace: "probe",
+        folder: Path::new(r"C:\fmbuild\sched-3\probe"),
+        key: "probe-00000000",
         schedule: &s,
         fingerprint: "00ff",
         start,

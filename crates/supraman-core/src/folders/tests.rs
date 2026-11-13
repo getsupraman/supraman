@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use super::*;
-use crate::{Folder, Registry, Workspace};
+use migrate::write_workspace;
 
 fn top(path: &str) -> Entry {
     Entry::Folder(FolderEntry::new(path))
@@ -124,20 +124,16 @@ fn folders_are_added_removed_and_moved_by_position() {
     assert_eq!(e.list[..3], before.list[..], "a refused move changes nothing");
 }
 
-fn folder(path: &Path) -> Folder {
-    Folder::new(crate::paths::folder_name(path), path)
-}
 
 #[test]
 fn the_first_load_makes_a_group_of_each_workspace_with_a_duplicate_at_its_first_place_once() {
     let home = tempfile::tempdir().unwrap();
     let larchsys = PathBuf::from(r"P:\Projects\LarchSys");
     let gaia = larchsys.join("gaia");
-    let registry = Registry::at(home.path());
-    let off = folder(&larchsys.join("old"));
-    registry.save(&Workspace::new("larchsys", r"P:\Projects", vec![folder(&larchsys), folder(&gaia), off]), false).unwrap();
-    registry.save(&Workspace::new("gaia", &gaia, vec![folder(&gaia), folder(&gaia.join("api"))]), false).unwrap();
-    std::fs::write(registry.workspaces_dir().join("broken.toml"), "name = ").unwrap();
+    let old = larchsys.join("old");
+    write_workspace(home.path(), "larchsys", &[&larchsys, &gaia, &old]);
+    write_workspace(home.path(), "gaia", &[&gaia, &gaia.join("api")]);
+    std::fs::write(home.path().join("workspaces").join("broken.toml"), "name = ").unwrap();
 
     let entries = load(home.path()).unwrap();
     let gaia_s = gaia.to_str().unwrap();
@@ -149,7 +145,8 @@ fn the_first_load_makes_a_group_of_each_workspace_with_a_duplicate_at_its_first_
     );
     assert!(path(home.path()).is_file());
 
-    registry.save(&Workspace::new("zeta", r"C:\z", vec![folder(Path::new(r"C:\z"))]), false).unwrap();
+    write_workspace(home.path(), "zeta", &[Path::new(r"C:\z")]);
+
     edit(home.path(), |e| e.remove_group("larchsys", true)).unwrap();
     let again = load(home.path()).unwrap();
     assert_eq!(again.list.len(), 1, "folders.toml is read, never migrated again: {:?}", again.list);

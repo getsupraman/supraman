@@ -29,13 +29,13 @@ pub enum MenuAction {
     Delete(Session),
     DeleteClosed(String),
     Details(MenuTarget),
-    Approve { workspace: String, id: String },
-    RunNow { workspace: String, id: String },
-    EditSchedule { workspace: String, id: String },
-    DryRun { workspace: String, id: String },
-    SetPaused { workspace: String, id: String, paused: bool },
-    History { workspace: String, id: String },
-    RemoveSchedule { workspace: String, id: String },
+    Approve { folder_key: String, id: String },
+    RunNow { folder_key: String, id: String },
+    EditSchedule { folder_key: String, id: String },
+    DryRun { folder_key: String, id: String },
+    SetPaused { folder_key: String, id: String, paused: bool },
+    History { folder_key: String, id: String },
+    RemoveSchedule { folder_key: String, id: String },
     OpenTaskScheduler,
     /// The Git tab of the repository whose top this is ([`super::tab_menu`]).
     OpenGit(PathBuf),
@@ -53,7 +53,7 @@ pub enum Confirmed {
     /// `discard`: the `--discard-unpushed` value rm printed, only after its own second question.
     Delete { session: Session, discard: Option<String> },
     DeleteClosed { entry: String, sessions: Vec<Session>, skipped: Vec<(String, String)> },
-    RemoveSchedule { workspace: String, id: String },
+    RemoveSchedule { folder_key: String, id: String },
     /// The banner's Update, while sessions are attached in tabs.
     Update,
 }
@@ -70,8 +70,10 @@ pub enum MenuTarget {
     Folder(String),
     /// By `session_id`, which every row has (an interactive one has no 8-hex `id`); `place` is its folder's key or its schedule's id.
     Session { entry: String, place: String, session_id: String },
-    Schedule { workspace: String, id: String },
-    Schedules(String),
+    /// A schedule by its folder's [`supraman_core::schedule::folder_key`] and its id.
+    Schedule { folder_key: String, id: String },
+    /// A folder's Schedules row: its entry and its folder.
+    Schedules { entry: String, folder: PathBuf },
     /// A Task Scheduler task outside Supraman, by its path.
     OtherSchedule(String),
 }
@@ -93,8 +95,8 @@ pub fn new_task_items(entry: &str, folder: Option<&std::path::Path>) -> [MenuIte
     [item("new-task", "New task…", action(false)), item("new-scheduled-task", "New scheduled task…", action(true))]
 }
 
-pub fn schedules_items(entry: &str) -> Vec<MenuItem> {
-    new_task_items(entry, None).into_iter().filter(|i| i.key == "new-scheduled-task").collect()
+pub fn schedules_items(entry: &str, folder: &std::path::Path) -> Vec<MenuItem> {
+    new_task_items(entry, Some(folder)).into_iter().filter(|i| i.key == "new-scheduled-task").collect()
 }
 
 /// A task outside Supraman: only what reads it.
@@ -172,23 +174,23 @@ pub fn session_items(
 
 /// The row's one action first, then the rest; Approve is offered while the schedule is pending or its slash command changed.
 pub fn schedule_items(row: &ScheduleRow) -> Vec<MenuItem> {
-    let (w, id) = (row.workspace.clone(), row.schedule.id.clone());
+    let (w, id) = (row.key.clone(), row.schedule.id.clone());
     let mut items = vec![match row.primary() {
-        Primary::Approve => item("approve", "Approve…", MenuAction::Approve { workspace: w.clone(), id: id.clone() }),
-        Primary::RunNow => item("run-now", "Run now", MenuAction::RunNow { workspace: w.clone(), id: id.clone() }),
+        Primary::Approve => item("approve", "Approve…", MenuAction::Approve { folder_key: w.clone(), id: id.clone() }),
+        Primary::RunNow => item("run-now", "Run now", MenuAction::RunNow { folder_key: w.clone(), id: id.clone() }),
     }];
     if row.command_changed {
-        items.push(item("approve", "Approve…", MenuAction::Approve { workspace: w.clone(), id: id.clone() }));
+        items.push(item("approve", "Approve…", MenuAction::Approve { folder_key: w.clone(), id: id.clone() }));
     }
-    items.push(item("edit-schedule", "Edit…", MenuAction::EditSchedule { workspace: w.clone(), id: id.clone() }));
-    items.push(item("dry-run", "Dry run", MenuAction::DryRun { workspace: w.clone(), id: id.clone() }));
+    items.push(item("edit-schedule", "Edit…", MenuAction::EditSchedule { folder_key: w.clone(), id: id.clone() }));
+    items.push(item("dry-run", "Dry run", MenuAction::DryRun { folder_key: w.clone(), id: id.clone() }));
     items.push(match row.schedule.status {
-        Status::Paused => item("resume", "Resume", MenuAction::SetPaused { workspace: w.clone(), id: id.clone(), paused: false }),
-        _ => item("pause", "Pause", MenuAction::SetPaused { workspace: w.clone(), id: id.clone(), paused: true }),
+        Status::Paused => item("resume", "Resume", MenuAction::SetPaused { folder_key: w.clone(), id: id.clone(), paused: false }),
+        _ => item("pause", "Pause", MenuAction::SetPaused { folder_key: w.clone(), id: id.clone(), paused: true }),
     });
-    items.push(item("history", "History", MenuAction::History { workspace: w.clone(), id: id.clone() }));
-    items.push(item("details", "Details", MenuAction::Details(MenuTarget::Schedule { workspace: w.clone(), id: id.clone() })));
-    items.push(item("remove-schedule", "Remove…", MenuAction::RemoveSchedule { workspace: w, id }));
+    items.push(item("history", "History", MenuAction::History { folder_key: w.clone(), id: id.clone() }));
+    items.push(item("details", "Details", MenuAction::Details(MenuTarget::Schedule { folder_key: w.clone(), id: id.clone() })));
+    items.push(item("remove-schedule", "Remove…", MenuAction::RemoveSchedule { folder_key: w, id }));
     items
 }
 
@@ -217,17 +219,19 @@ impl FleetView {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use supraman_claude::{Health, parse};
 
     use super::*;
 
     fn folder(key: &str) -> FolderNode {
-        FolderNode { key: key.into(), name: "Alpha".into(), path: r"C:\demo\Alpha".into(), kind: supraman_core::FolderKind::Git, branch: None, sessions: vec![], more: 0 }
+        FolderNode { key: key.into(), name: "Alpha".into(), path: r"C:\demo\Alpha".into(), kind: supraman_core::FolderKind::Git, branch: None, sessions: vec![], more: 0, scheduled: Default::default() }
     }
 
     fn node(group: bool) -> EntryNode {
         let key = if group { "demo/Alpha" } else { "Alpha" };
-        EntryNode { name: if group { "demo".into() } else { key.into() }, group, scheduled: Default::default(), folders: vec![folder(key)] }
+        EntryNode { name: if group { "demo".into() } else { key.into() }, group, folders: vec![folder(key)] }
     }
 
     fn keys(items: &[MenuItem]) -> Vec<&str> {
@@ -253,28 +257,28 @@ mod tests {
     #[test]
     fn a_schedules_menu_leads_with_its_one_action_and_pauses_or_resumes() {
         let s: supraman_core::schedule::Schedule = serde_json::from_value(serde_json::json!({
-            "id": "nightly", "folder": "Alpha", "trigger": {"kind": "daily", "at": "09:00"}, "action": {"kind": "script", "script": "gate.cmd"}
+            "id": "nightly", "trigger": {"kind": "daily", "at": "09:00"}, "action": {"kind": "script", "script": "gate.cmd"}
         }))
         .unwrap();
-        let mut row = ScheduleRow { workspace: "demo".into(), schedule: s, status: Status::Pending, command_changed: false, next_fire: None, running: None, runs: vec![], approvable: None, folder_path: None, command_path: None };
+        let mut row = ScheduleRow { key: "demo".into(), folder: r"C:\demo\Alpha".into(), schedule: s, status: Status::Pending, command_changed: false, next_fire: None, running: None, runs: vec![], approvable: None, command_path: None };
         let all = ["edit-schedule", "dry-run", "pause", "history", "details", "remove-schedule"];
         assert_eq!(keys(&schedule_items(&row)), [&["approve"][..], &all].concat());
         row.status = Status::Active;
         row.schedule.status = Status::Active;
         let items = schedule_items(&row);
         assert_eq!(keys(&items), [&["run-now"][..], &all].concat());
-        assert_eq!(items[0].action, MenuAction::RunNow { workspace: "demo".into(), id: "nightly".into() });
-        assert_eq!(items[3].action, MenuAction::SetPaused { workspace: "demo".into(), id: "nightly".into(), paused: true });
+        assert_eq!(items[0].action, MenuAction::RunNow { folder_key: "demo".into(), id: "nightly".into() });
+        assert_eq!(items[3].action, MenuAction::SetPaused { folder_key: "demo".into(), id: "nightly".into(), paused: true });
         row.command_changed = true;
         let items = schedule_items(&row);
         assert_eq!(keys(&items), [&["run-now", "approve"][..], &all].concat(), "a changed slash command adds Approve after Run now");
-        assert_eq!(items[1].action, MenuAction::Approve { workspace: "demo".into(), id: "nightly".into() });
+        assert_eq!(items[1].action, MenuAction::Approve { folder_key: "demo".into(), id: "nightly".into() });
         row.command_changed = false;
         row.status = Status::Paused;
         row.schedule.status = Status::Paused;
         let items = schedule_items(&row);
         assert_eq!(keys(&items)[..4], ["run-now", "edit-schedule", "dry-run", "resume"], "Run now of a paused schedule is fire's to refuse");
-        assert_eq!(items[5].action, MenuAction::Details(MenuTarget::Schedule { workspace: "demo".into(), id: "nightly".into() }));
+        assert_eq!(items[5].action, MenuAction::Details(MenuTarget::Schedule { folder_key: "demo".into(), id: "nightly".into() }));
         assert_eq!(items[6].label, "Remove…");
     }
 
@@ -291,9 +295,9 @@ mod tests {
         assert_eq!(keys(&items), ["new-claude", "work", "new-task", "new-scheduled-task", "open-terminal", "open-folder", "details", "delete-closed"]);
         assert_eq!(items[6].action, MenuAction::Details(MenuTarget::Folder("Alpha".into())));
         assert_eq!(items[7].action, MenuAction::DeleteClosed("Alpha".into()));
-        let group = schedules_items("demo");
-        assert_eq!(keys(&group), ["new-scheduled-task"]);
-        assert_eq!(group[0].action, MenuAction::NewTask { entry: "demo".into(), folder: None, scheduled: true });
+        let schedules = schedules_items("demo", Path::new(r"C:\demo\Alpha"));
+        assert_eq!(keys(&schedules), ["new-scheduled-task"]);
+        assert_eq!(schedules[0].action, MenuAction::NewTask { entry: "demo".into(), folder: Some(r"C:\demo\Alpha".into()), scheduled: true }, "in its folder");
     }
 
     #[test]

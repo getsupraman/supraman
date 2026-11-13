@@ -7,7 +7,7 @@ use supraman_claude::{LaunchSpec, mcp_config_path};
 use supraman_core::schedule::{
     self, Action, ActionKind, CatchUp, Clock, Day, Overlap, Profile, Prompt, Schedule, Span, Status, Trigger,
 };
-use supraman_core::{CoreError, Registry, Workspace, find_plugin_dir, sm_allowed_tools, paths, slugify};
+use supraman_core::{CoreError, find_plugin_dir, folders, sm_allowed_tools, paths, slugify};
 use supraman_supervisor::{BgSession, LaunchConfig};
 
 use crate::{Failure, value};
@@ -15,65 +15,85 @@ use crate::{Failure, value};
 /// The `SUPRAMAN_ROLE` a run's session carries; [`supraman_supervisor::workman_role`] mints it an orchestrator.
 pub(crate) const RUN_ROLE: &str = "repo";
 
-pub fn schedule(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
-    match args {
-        ["add", rest @ ..] => add(registry, rest),
-        ["list", rest @ ..] => list(registry, rest),
-        ["show", rest @ ..] => show(registry, rest),
-        ["edit", rest @ ..] => edit(registry, rest),
-        ["pause", rest @ ..] => set_status(registry, Status::Paused, rest),
-        ["resume", rest @ ..] => set_status(registry, Status::Active, rest),
-        ["remove", rest @ ..] => remove(registry, rest),
-        ["dry-run", rest @ ..] => dry_run(registry, rest),
-        ["run", rest @ ..] => run_now(registry, rest),
-        ["secret", "set", rest @ ..] => secret_set(registry, rest, &mut std::io::stdin().lock()),
-        ["report", rest @ ..] => report(registry, rest),
+pub fn schedule(home: &Path, args: &[&str]) -> Result<(), Failure> {
+    migrate(home);
+    let (folder, args) = folder_arg(args)?;
+    let at = || folder_of(home, folder);
+    match args.as_slice() {
+        ["add", rest @ ..] => add(home, &at()?, rest),
+        ["list", rest @ ..] => list(home, &at()?, rest),
+        ["show", rest @ ..] => show(home, &at()?, rest),
+        ["edit", rest @ ..] => edit(home, &at()?, rest),
+        ["pause", rest @ ..] => set_status(home, &at()?, Status::Paused, rest),
+        ["resume", rest @ ..] => set_status(home, &at()?, Status::Active, rest),
+        ["remove", rest @ ..] => remove(home, &at()?, rest),
+        ["dry-run", rest @ ..] => dry_run(home, &at()?, rest),
+        ["run", rest @ ..] => run_now(home, &at()?, rest),
+        ["secret", "set", rest @ ..] => secret_set(home, &at()?, rest, &mut std::io::stdin().lock()),
+        ["report", rest @ ..] => report(home, rest),
         _ => Err(Failure::Usage("schedule needs add, list, show, edit, pause, resume, remove, dry-run, run, report or secret set".into())),
     }
 }
 
-/// The workspace named, else the one whose folders contain the cwd (`Workspace::contains`).
-fn workspace(registry: &Registry, given: Option<&str>) -> Result<Workspace, Failure> {
-    if let Some(name) = given {
-        return Ok(registry.load(name)?);
-    }
-    let cwd = std::env::current_dir().map_err(|e| Failure::Usage(format!("cannot read the current folder: {e}")))?;
-    let (all, _) = registry.load_all()?;
-    let in_folder: Vec<&Workspace> = all.iter().filter(|w| w.folders.iter().any(|f| paths::within(&cwd, &f.path))).collect();
-    let found: Vec<&Workspace> = if in_folder.is_empty() { all.iter().filter(|w| w.contains(&cwd)).collect() } else { in_folder };
-    match found.as_slice() {
-        [one] => Ok((*one).clone()),
-        [] => Err(Failure::Refused(format!(
-            "error: no workspace contains {}; name the workspace (sm schedule … <workspace> …)",
-            cwd.display()
-        ))),
-        many => Err(Failure::Refused(format!(
-            "error: {} lies in workspaces {}; name the one meant",
-            cwd.display(),
-            many.iter().map(|w| w.name.as_str()).collect::<Vec<_>>().join(", ")
-        ))),
+/// The earlier per-workspace schedule files moved to their folders' once, what moved said on stderr.
+pub(crate) fn migrate(home: &Path) {
+    match schedule::migrate(home, &*supraman_core::secret::default_store(home)) {
+        Ok(m) => {
+            for (ws, id, folder) in &m.moved {
+                eprintln!("moved schedule {id} of the former workspace {ws} to {}: pending until Approve in the Supraman window", folder.display());
+            }
+            for line in &m.unplaced {
+                eprintln!("warning: {line}");
+            }
+        }
+        Err(e) => eprintln!("warning: cannot move the earlier schedule files to their folders: {e}"),
     }
 }
 
-/// `[<workspace>] <id>`.
-fn target<'a>(registry: &Registry, positional: &[&'a str], verb: &str) -> Result<(Workspace, &'a str), Failure> {
+/// `--folder <dir>` taken out of `args`, wherever it stands.
+fn folder_arg<'a>(args: &[&'a str]) -> Result<(Option<&'a str>, Vec<&'a str>), Failure> {
+    let (mut folder, mut rest) = (None, Vec::new());
+    let mut it = args.iter();
+    while let Some(&arg) = it.next() {
+        if arg == "--folder" {
+            folder = Some(value(&mut it, arg)?);
+        } else {
+            rest.push(arg);
+        }
+    }
+    Ok((folder, rest))
+}
+
+/// The deepest listed folder holding `--folder <dir>`, else the current folder (`assign::holding`).
+fn folder_of(home: &Path, given: Option<&str>) -> Result<PathBuf, Failure> {
+    let dir = match given {
+        Some(d) => std::path::absolute(d).map_err(|e| Failure::Usage(format!("--folder {d}: {e}")))?,
+        None => std::env::current_dir().map_err(|e| Failure::Usage(format!("cannot read the current folder: {e}")))?,
+    };
+    let entries = folders::load(home)?;
+    supraman_claude::holding(&dir, &entries, supraman_claude::main_repo).map(|f| f.path.clone()).ok_or_else(|| {
+        Failure::Refused(format!("error: no listed folder holds {}; give --folder <dir> of a listed folder, or list it with sm folder add <dir>", dir.display()))
+    })
+}
+
+/// `<id>`.
+fn one_id<'a>(positional: &[&'a str], verb: &str) -> Result<&'a str, Failure> {
     match positional {
-        [id] => Ok((workspace(registry, None)?, id)),
-        [w, id] => Ok((workspace(registry, Some(w))?, id)),
-        _ => Err(Failure::Usage(format!("schedule {verb} needs [<workspace>] <id>"))),
+        [id] => Ok(id),
+        _ => Err(Failure::Usage(format!("schedule {verb} needs <id> [--folder <dir>]"))),
     }
 }
 
-fn find<'a>(schedules: &'a mut [Schedule], workspace: &str, id: &str) -> supraman_core::Result<&'a mut Schedule> {
+fn find<'a>(schedules: &'a mut [Schedule], folder: &Path, id: &str) -> supraman_core::Result<&'a mut Schedule> {
     schedules
         .iter_mut()
         .find(|s| s.id == id)
-        .ok_or_else(|| CoreError::NoSchedule { workspace: workspace.to_string(), id: id.to_string() })
+        .ok_or_else(|| CoreError::NoSchedule { folder: folder.display().to_string(), id: id.to_string() })
 }
 
-fn load_one(registry: &Registry, w: &Workspace, id: &str) -> Result<Schedule, Failure> {
-    let mut all = schedule::load(registry.home(), &w.name)?;
-    Ok(find(&mut all, &w.name, id)?.clone())
+fn load_one(home: &Path, folder: &Path, id: &str) -> Result<Schedule, Failure> {
+    let mut all = schedule::load(home, folder)?;
+    Ok(find(&mut all, folder, id)?.clone())
 }
 
 /// Every option of `add` and `edit`; `None` (or empty) leaves the field as it is.
@@ -82,7 +102,6 @@ struct Opts {
     id: Option<String>,
     name: Option<String>,
     description: Option<String>,
-    folder: Option<String>,
     every: Option<Trigger>,
     prompt: Option<PromptArg>,
     script: Option<String>,
@@ -126,7 +145,6 @@ fn parse_opts<'a>(args: &[&'a str]) -> Result<(Opts, Vec<&'a str>), Failure> {
             "--id" => o.id = Some(v(arg)?.to_string()),
             "--name" => o.name = Some(v(arg)?.to_string()),
             "--description" => o.description = Some(v(arg)?.to_string()),
-            "--folder" => o.folder = Some(v(arg)?.to_string()),
             "--every" => o.every = Some(parse_every(v(arg)?)?),
             "--command" => {
                 let c = v(arg)?;
@@ -247,18 +265,14 @@ fn in_folder(folder: &Path, path: &str, what: &str) -> Result<String, Failure> {
     Ok(shown)
 }
 
-/// Applies `o` to `s`; files and the slash command are checked against the schedule's folder.
-fn apply(w: &Workspace, s: &mut Schedule, o: Opts) -> Result<(), Failure> {
+/// Applies `o` to `s`; files and the slash command are checked against `folder`.
+fn apply(folder: &Path, s: &mut Schedule, o: Opts) -> Result<(), Failure> {
     if let Some(name) = o.name {
         s.name = name;
     }
     if let Some(d) = o.description {
         s.description = d;
     }
-    if let Some(f) = o.folder {
-        s.folder = w.find_folder(&f).map(|f| f.name.clone()).ok_or_else(|| no_folder(w, &f))?;
-    }
-    let folder = w.folder(&s.folder).ok_or_else(|| no_folder(w, &s.folder))?.path.clone();
     if let Some(t) = o.every {
         s.trigger = t;
     }
@@ -266,7 +280,7 @@ fn apply(w: &Workspace, s: &mut Schedule, o: Opts) -> Result<(), Failure> {
     if let Some(p) = o.prompt {
         a.prompt = Some(match p {
             PromptArg::Command(c) => Prompt::Command(c),
-            PromptArg::File(f) => Prompt::File(in_folder(&folder, &f, "prompt file")?),
+            PromptArg::File(f) => Prompt::File(in_folder(folder, &f, "prompt file")?),
             PromptArg::Text(t) => Prompt::Text(t),
         });
     }
@@ -275,7 +289,7 @@ fn apply(w: &Workspace, s: &mut Schedule, o: Opts) -> Result<(), Failure> {
         a.script_args.clear();
     }
     if let Some(script) = o.script {
-        a.script = Some(in_folder(&folder, &script, "script")?);
+        a.script = Some(in_folder(folder, &script, "script")?);
     }
     if let Some(args) = o.script_args {
         a.script_args = args;
@@ -316,27 +330,16 @@ fn apply(w: &Workspace, s: &mut Schedule, o: Opts) -> Result<(), Failure> {
         s.policy.wake = v;
     }
     if let Some(command @ Prompt::Command(_)) = &s.action.prompt {
-        schedule::base_prompt(&folder, command)?;
+        schedule::base_prompt(folder, command)?;
     }
     Ok(())
 }
 
-fn no_folder(w: &Workspace, folder: &str) -> Failure {
-    CoreError::NoFolder {
-        workspace: w.name.clone(),
-        folder: folder.to_string(),
-        known: w.folders.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join(", "),
-    }
-    .into()
-}
-
-fn add(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
+fn add(home: &Path, folder: &Path, args: &[&str]) -> Result<(), Failure> {
     let (mut o, positional) = parse_opts(args)?;
-    let w = match positional.as_slice() {
-        [] => workspace(registry, None)?,
-        [name] => workspace(registry, Some(name))?,
-        _ => return Err(Failure::Usage("schedule add takes one [<workspace>]".into())),
-    };
+    if !positional.is_empty() {
+        return Err(Failure::Usage("schedule add takes options only; the folder is --folder <dir> or the current one".into()));
+    }
     let name = o.name.clone().ok_or_else(|| Failure::Usage("schedule add needs --name".into()))?;
     let trigger = o.every.take().ok_or_else(|| Failure::Usage("schedule add needs --every".into()))?;
     if o.prompt.is_none() && o.script.is_none() {
@@ -346,15 +349,10 @@ fn add(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
         Some(id) => id,
         None => slugify(&name).chars().take(schedule::MAX_ID_LEN).collect::<String>().trim_end_matches('-').to_string(),
     };
-    let folder = match o.folder.take() {
-        Some(f) => w.find_folder(&f).map(|f| f.name.clone()).ok_or_else(|| no_folder(&w, &f))?,
-        None => default_folder(&w)?,
-    };
     let mut s = Schedule {
         id,
         name: String::new(),
         description: String::new(),
-        folder,
         status: Status::Pending,
         created_by: schedule::CreatedBy::Fm,
         created_at: 0,
@@ -373,82 +371,66 @@ fn add(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
         policy: Default::default(),
         approval: None,
     };
-    apply(&w, &mut s, o)?;
+    apply(folder, &mut s, o)?;
     let id = s.id.clone();
-    let saved = schedule::edit(registry.home(), &w, |all| {
+    let saved = schedule::edit(home, folder, |all| {
         if all.iter().any(|o| o.id == id) {
-            return Err(CoreError::InvalidSchedule { id: id.clone(), why: format!("the id is taken in workspace {}; give another --id", w.name) });
+            return Err(CoreError::InvalidSchedule { id: id.clone(), why: format!("the id is taken in {}; give another --id", folder.display()) });
         }
         all.push(s);
         Ok(all.last().cloned().expect("just pushed"))
     })?;
-    println!("added schedule {} to workspace {}", saved.id, w.name);
-    print_schedule(registry, &w, &saved);
+    println!("added schedule {} to {}", saved.id, folder.display());
+    print_schedule(home, folder, &saved);
     print_pending(&saved);
     Ok(())
 }
 
-/// The folder that contains the cwd, else the workspace's only folder.
-fn default_folder(w: &Workspace) -> Result<String, Failure> {
-    let cwd = std::env::current_dir().ok();
-    if let Some(f) = cwd.and_then(|cwd| w.folders.iter().filter(|f| paths::within(&cwd, &f.path)).max_by_key(|f| f.path.as_os_str().len())) {
-        return Ok(f.name.clone());
-    }
-    match w.folders.as_slice() {
-        [only] => Ok(only.name.clone()),
-        _ => Err(Failure::Usage(format!(
-            "schedule add needs --folder: workspace {} has folders {}",
-            w.name,
-            w.folders.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join(", ")
-        ))),
-    }
-}
-
-fn edit(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
+fn edit(home: &Path, folder: &Path, args: &[&str]) -> Result<(), Failure> {
     let (o, positional) = parse_opts(args)?;
     if o.id.is_some() {
         return Err(Failure::Usage("an id cannot change; remove the schedule and add it again".into()));
     }
-    let (w, id) = target(registry, &positional, "edit")?;
-    let saved = schedule::edit(registry.home(), &w, |all| {
-        let s = find(all, &w.name, id)?;
-        apply(&w, s, o).map_err(|e| match e {
+    let id = one_id(&positional, "edit")?;
+    let saved = schedule::edit(home, folder, |all| {
+        let s = find(all, folder, id)?;
+        apply(folder, s, o).map_err(|e| match e {
             Failure::Core(e) => e,
             Failure::Usage(m) | Failure::Refused(m) => CoreError::InvalidSchedule { id: id.to_string(), why: m.trim_start_matches("error: ").to_string() },
             _ => CoreError::InvalidSchedule { id: id.to_string(), why: "cannot apply the options".into() },
         })?;
         Ok(s.clone())
     })?;
-    println!("edited schedule {} in workspace {}", saved.id, w.name);
-    print_schedule(registry, &w, &saved);
+    println!("edited schedule {} in {}", saved.id, folder.display());
+    print_schedule(home, folder, &saved);
     print_pending(&saved);
     Ok(())
 }
 
-fn set_status(registry: &Registry, to: Status, args: &[&str]) -> Result<(), Failure> {
+fn set_status(home: &Path, folder: &Path, to: Status, args: &[&str]) -> Result<(), Failure> {
     let verb = if to == Status::Paused { "pause" } else { "resume" };
-    let (w, id) = target(registry, args, verb)?;
-    let saved = schedule::edit(registry.home(), &w, |all| {
-        let s = find(all, &w.name, id)?;
+    let id = one_id(args, verb)?;
+    let saved = schedule::edit(home, folder, |all| {
+        let s = find(all, folder, id)?;
         s.status = to;
         Ok(s.clone())
     })?;
-    let shown = schedule::effective_status(&*supraman_core::secret::default_store(registry.home()), &w, &saved);
-    println!("schedule {} in workspace {}: {}", saved.id, w.name, status_text(shown));
+    let shown = schedule::effective_status(&*supraman_core::secret::default_store(home), folder, &saved);
+    println!("schedule {} in {}: {}", saved.id, folder.display(), status_text(shown));
     if to == Status::Active && shown != Status::Active {
         print_pending(&saved);
     }
     Ok(())
 }
 
-fn remove(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
-    let (w, id) = target(registry, args, "remove")?;
-    schedule::edit(registry.home(), &w, |all| {
-        find(all, &w.name, id)?;
+fn remove(home: &Path, folder: &Path, args: &[&str]) -> Result<(), Failure> {
+    let id = one_id(args, "remove")?;
+    schedule::edit(home, folder, |all| {
+        find(all, folder, id)?;
         all.retain(|s| s.id != id);
         Ok(())
     })?;
-    println!("removed schedule {id} from workspace {}; the Supraman window removes its task", w.name);
+    println!("removed schedule {id} from {}; the Supraman window removes its task", folder.display());
     Ok(())
 }
 
@@ -466,35 +448,26 @@ fn status_text(s: Status) -> &'static str {
     }
 }
 
-fn list(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
-    let w = match args {
-        [] => workspace(registry, None)?,
-        [name] => workspace(registry, Some(name))?,
-        _ => return Err(Failure::Usage("schedule list takes one [<workspace>]".into())),
-    };
-    let all = schedule::load(registry.home(), &w.name)?;
-    if all.is_empty() {
-        println!("no schedules in workspace {}", w.name);
+fn list(home: &Path, folder: &Path, args: &[&str]) -> Result<(), Failure> {
+    if !args.is_empty() {
+        return Err(Failure::Usage("schedule list takes [--folder <dir>] only".into()));
     }
-    let store = supraman_core::secret::default_store(registry.home());
+    let all = schedule::load(home, folder)?;
+    if all.is_empty() {
+        println!("no schedules in {}", folder.display());
+    }
+    let store = supraman_core::secret::default_store(home);
     for s in &all {
         let next = next_fires(&s.trigger, Local::now(), 1).first().map(local_text).unwrap_or_else(|| "-".into());
-        println!(
-            "{}\t{}\tfolder={}\tevery={}\tnext={next}\t{}",
-            s.id,
-            status_text(schedule::effective_status(&*store, &w, s)),
-            s.folder,
-            s.trigger,
-            s.name
-        );
+        println!("{}\t{}\tevery={}\tnext={next}\t{}", s.id, status_text(schedule::effective_status(&*store, folder, s)), s.trigger, s.name);
     }
     Ok(())
 }
 
-fn show(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
-    let (w, id) = target(registry, args, "show")?;
-    print_schedule(registry, &w, &load_one(registry, &w, id)?);
-    let runs: Vec<schedule::Run> = schedule::runs(registry.home(), &w.name)?.into_iter().filter(|r| r.schedule == id).collect();
+fn show(home: &Path, folder: &Path, args: &[&str]) -> Result<(), Failure> {
+    let id = one_id(args, "show")?;
+    print_schedule(home, folder, &load_one(home, folder, id)?);
+    let runs: Vec<schedule::Run> = schedule::runs(home, &schedule::folder_key(folder))?.into_iter().filter(|r| r.schedule == id).collect();
     if runs.is_empty() {
         println!("last runs: none");
         return Ok(());
@@ -526,18 +499,17 @@ fn run_text(r: &schedule::Run) -> String {
     format!("{}  {started}  {fired}  {ended}", r.run)
 }
 
-fn print_schedule(registry: &Registry, w: &Workspace, s: &Schedule) {
-    let store = supraman_core::secret::default_store(registry.home());
-    let shown = schedule::effective_status(&*store, w, s);
+fn print_schedule(home: &Path, folder: &Path, s: &Schedule) {
+    let store = supraman_core::secret::default_store(home);
+    let shown = schedule::effective_status(&*store, folder, s);
     let changed = s.approval.is_some() && shown != Status::Active && s.status != Status::Paused;
     println!("id: {}", s.id);
-    println!("workspace: {}", w.name);
+    println!("folder: {}", folder.display());
     println!("name: {}", s.name);
     if !s.description.is_empty() {
         println!("description: {}", s.description);
     }
     println!("status: {}{}", status_text(shown), if changed { " (changed since approval)" } else { "" });
-    println!("folder: {}", s.folder);
     println!("every: {}", s.trigger);
     let a = &s.action;
     println!("action: {}", match a.kind {
@@ -604,22 +576,21 @@ fn local_text(t: &DateTime<Local>) -> String {
 }
 
 /// The `claude --bg` a run of `s` stamped `stamp` launches, before its Workman token.
-pub(crate) fn run_spec(home: &Path, w: &Workspace, s: &Schedule, stamp: &str, plugin_dir: Option<&Path>) -> Result<LaunchSpec, Failure> {
-    let folder = w.folder(&s.folder).ok_or_else(|| no_folder(w, &s.folder))?;
+pub(crate) fn run_spec(home: &Path, folder: &Path, s: &Schedule, stamp: &str, plugin_dir: Option<&Path>) -> Result<LaunchSpec, Failure> {
     let prompt = s.action.prompt.as_ref().ok_or_else(|| Failure::Refused(format!("error: schedule {} runs a script alone; it has no session", s.id)))?;
     let run = schedule::run_id(&s.id, stamp);
-    let name = schedule::session_name(&w.name, &s.id, stamp);
+    let name = schedule::session_name(&schedule::folder_key(folder), &s.id, stamp);
     let run_branch = s.action.worktree.then(|| schedule::run_branch(&s.id, stamp));
-    let cwd = if s.action.worktree { schedule::run_worktree(&folder.path, &s.id, stamp) } else { folder.path.clone() };
+    let cwd = if s.action.worktree { schedule::run_worktree(folder, &s.id, stamp) } else { folder.to_path_buf() };
     let preamble = schedule::preamble(&run, &sm_command(plugin_dir), &cwd, run_branch.as_deref());
     let session = BgSession {
         name: name.clone(),
         role: RUN_ROLE.into(),
         cwd,
-        repo: Some(folder.name.clone()),
-        prompt: format!("{preamble}\n\n{}", schedule::base_prompt(&folder.path, prompt)?),
+        repo: Some(paths::folder_name(folder)),
+        prompt: format!("{preamble}\n\n{}", schedule::base_prompt(folder, prompt)?),
         permission_mode: s.permissions.profile.permission_mode().into(),
-        add_dirs: s.permissions.add_dirs.iter().map(|d| folder.path.join(d)).collect(),
+        add_dirs: s.permissions.add_dirs.iter().map(|d| folder.join(d)).collect(),
     };
     let always = plugin_dir.map(sm_allowed_tools).unwrap_or_else(|| vec!["Bash(sm:*)".into()]);
     let config = LaunchConfig {
@@ -660,14 +631,14 @@ fn tools_hint(profile: Profile) -> Option<&'static str> {
     }
 }
 
-fn dry_run(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
-    let (w, id) = target(registry, args, "dry-run")?;
-    let s = load_one(registry, &w, id)?;
+fn dry_run(home: &Path, folder: &Path, args: &[&str]) -> Result<(), Failure> {
+    let id = one_id(args, "dry-run")?;
+    let s = load_one(home, folder, id)?;
     let fires = next_fires(&s.trigger, Local::now(), 3);
     let stamp = schedule::run_stamp(fires.first().unwrap_or(&Local::now()));
-    let store = supraman_core::secret::default_store(registry.home());
-    println!("dry run of schedule {} in workspace {} (nothing launched, nothing written)", s.id, w.name);
-    println!("status: {}", status_text(schedule::effective_status(&*store, &w, &s)));
+    let store = supraman_core::secret::default_store(home);
+    println!("dry run of schedule {} in {} (nothing launched, nothing written)", s.id, folder.display());
+    println!("status: {}", status_text(schedule::effective_status(&*store, folder, &s)));
     println!("run: {}", schedule::run_id(&s.id, &stamp));
     if let Some(script) = &s.action.script {
         println!("script: {script} {}\t(in the folder's main checkout, timeout {})", s.action.script_args.join(" "), s.action.script_timeout);
@@ -676,7 +647,7 @@ fn dry_run(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
         println!("session: none (a script action)");
     } else {
         let plugin_dir = std::env::current_exe().ok().and_then(|exe| find_plugin_dir(&exe).ok());
-        let spec = run_spec(registry.home(), &w, &s, &stamp, plugin_dir.as_deref())?;
+        let spec = run_spec(home, folder, &s, &stamp, plugin_dir.as_deref())?;
         println!("prompt:");
         for line in spec.prompt.lines() {
             println!("  {line}");
@@ -699,8 +670,7 @@ fn dry_run(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
         if let Some(needs) = tools_hint(s.permissions.profile) {
             println!("  {needs}");
         }
-        let folder = w.folder(&s.folder).ok_or_else(|| no_folder(&w, &s.folder))?;
-        for tool in uncovered_tools(&prompt_text(&folder.path, s.action.prompt.as_ref()), &allowed) {
+        for tool in uncovered_tools(&prompt_text(folder, s.action.prompt.as_ref()), &allowed) {
             println!("hint: the run calls {tool}; add --allow-tools \"Bash({tool}:*)\"");
         }
     }
@@ -748,10 +718,11 @@ fn uncovered_tools(text: &str, allowed: &[String]) -> Vec<&'static str> {
 }
 
 /// Run now: the task's path without its fingerprint (checks 1 to 3 still hold).
-fn run_now(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
-    let (w, id) = target(registry, args, "run")?;
-    let req = crate::fire::Request { home: registry.home(), workspace: &w.name, id, trigger: schedule::Fired::RunNow, fingerprint: None };
-    let report = crate::fire::fire(&req, &mut crate::fire::RealHost::new(registry.home()));
+fn run_now(home: &Path, folder: &Path, args: &[&str]) -> Result<(), Failure> {
+    let id = one_id(args, "run")?;
+    let key = schedule::folder_key(folder);
+    let req = crate::fire::Request { home, key: &key, id, trigger: schedule::Fired::RunNow, fingerprint: None };
+    let report = crate::fire::fire(&req, &mut crate::fire::RealHost::new(home));
     crate::fire::print_report(&report);
     match report.exit {
         0 => Ok(()),
@@ -760,7 +731,7 @@ fn run_now(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
 }
 
 /// `<run> done|needs-you "<one line>"` from the run's session, left for the sm that owns the run (scheduler.md, step 9).
-fn report(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
+fn report(home: &Path, args: &[&str]) -> Result<(), Failure> {
     let usage = || Failure::Usage("schedule report needs <run> done|needs-you \"<one line>\"".into());
     let (run, outcome, why) = match args {
         [run, outcome, why @ ..] => (*run, *outcome, why.join(" ")),
@@ -771,9 +742,9 @@ fn report(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
         "needs-you" | "needs_you" => schedule::Outcome::NeedsYou,
         _ => return Err(usage()),
     };
-    let (all, _) = registry.load_all()?;
-    for w in &all {
-        let Ok(dir) = schedule::live_dir(registry.home(), &w.name) else { continue };
+    let (all, _) = schedule::load_all(home);
+    for scheduled in &all {
+        let Ok(dir) = schedule::live_dir(home, &scheduled.key) else { continue };
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
         for e in entries.flatten() {
             let path = e.path();
@@ -796,14 +767,13 @@ fn report(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
     Err(Failure::Refused(format!("error: no run {run} is in flight")))
 }
 
-/// `[<workspace>] <id> <NAME>`, the value on stdin (one line, its line end dropped), into the secret store.
-fn secret_set(registry: &Registry, args: &[&str], stdin: &mut dyn std::io::BufRead) -> Result<(), Failure> {
-    let (positional, name) = match args.split_last() {
-        Some((name, rest)) if !rest.is_empty() => (rest, *name),
-        _ => return Err(Failure::Usage("schedule secret set needs [<workspace>] <id> <NAME>, the value on stdin".into())),
+/// `<id> <NAME>`, the value on stdin (one line, its line end dropped), into the secret store.
+fn secret_set(home: &Path, folder: &Path, args: &[&str], stdin: &mut dyn std::io::BufRead) -> Result<(), Failure> {
+    let [id, name] = args else {
+        return Err(Failure::Usage("schedule secret set needs <id> <NAME> [--folder <dir>], the value on stdin".into()));
     };
-    let (w, id) = target(registry, positional, "secret set")?;
-    let s = load_one(registry, &w, id)?;
+    let (id, name) = (*id, *name);
+    let s = load_one(home, folder, id)?;
     if !s.permissions.secrets.iter().any(|n| n == name) {
         return Err(Failure::Refused(format!(
             "error: schedule {id} has no secret {name}; its secrets are {} (sm schedule edit … --secret {name})",
@@ -816,9 +786,9 @@ fn secret_set(registry: &Registry, args: &[&str], stdin: &mut dyn std::io::BufRe
     if value.is_empty() {
         return Err(Failure::Refused("error: the value on stdin is empty".into()));
     }
-    let store = supraman_core::secret::default_store(registry.home());
-    store.set(&schedule::secret_key(&w.name, id, name), value).map_err(|e| Failure::Refused(format!("error: {e}")))?;
-    println!("secret {name} of schedule {id} in workspace {} is set; fire passes it to the script's environment", w.name);
+    let store = supraman_core::secret::default_store(home);
+    store.set(&schedule::secret_key(&schedule::folder_key(folder), id, name), value).map_err(|e| Failure::Refused(format!("error: {e}")))?;
+    println!("secret {name} of schedule {id} in {} is set; fire passes it to the script's environment", folder.display());
     Ok(())
 }
 

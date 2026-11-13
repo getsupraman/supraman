@@ -40,10 +40,11 @@ pub struct StartPage {
     _events: Subscription,
 }
 
-/// A scheduled task's tab: the first pending schedule of `workspace` created at or after `since` is the one it asked for.
+/// A scheduled task's tab: the first pending schedule of its folder created at or after `since` is the one it asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AsksSchedule {
-    pub workspace: String,
+    /// The folder's [`supraman_core::schedule::folder_key`].
+    pub folder_key: String,
     pub since: i64,
     pub found: Option<(String, String)>,
 }
@@ -154,7 +155,8 @@ impl FleetView {
     pub fn send_start(&mut self, tab: u64, cx: &mut Context<Self>) {
         let Some(page) = self.start_page(tab).filter(|p| !p.sending) else { return };
         let text = page.input.read(cx).text().trim().to_string();
-        let (workspace, scheduled, folder, mode) = (page.entry.clone(), page.scheduled, page.folder.clone(), page.mode);
+        let (scheduled, folder, mode) = (page.scheduled, page.folder.clone(), page.mode);
+        let folder_key = supraman_core::schedule::folder_key(&folder);
         if text.is_empty() {
             if let Some(page) = self.start_page_mut(tab) {
                 page.error = Some("Nothing to send.".into());
@@ -182,7 +184,7 @@ impl FleetView {
                         let first = super::hand_tab::FirstPrompt { file, mode };
                         this.hand_claude_in(Some(tab), folder, first_line(&text), claude, None, None, Some(first), cx);
                         if scheduled && let Some(t) = this.tab_mut(tab) {
-                            t.asks_schedule = Some(AsksSchedule { workspace, since, found: None });
+                            t.asks_schedule = Some(AsksSchedule { folder_key, since, found: None });
                         }
                     }
                     Err(why) => page.error = Some(why),
@@ -202,7 +204,7 @@ impl FleetView {
     pub(super) fn find_asked_schedules(&mut self) {
         for tab in &mut self.tabs {
             let Some(ask) = tab.asks_schedule.as_mut().filter(|a| a.found.is_none()) else { continue };
-            let rows = self.scheduling.schedules.get(&ask.workspace).map(Vec::as_slice).unwrap_or_default();
+            let rows = self.scheduling.schedules.get(&ask.folder_key).map(Vec::as_slice).unwrap_or_default();
             ask.found = rows
                 .iter()
                 .filter(|r| r.status == supraman_core::schedule::Status::Pending && r.schedule.created_at >= ask.since)
@@ -215,7 +217,7 @@ impl FleetView {
         let ask = self.tab(tab)?.asks_schedule.as_ref()?;
         let (id, name) = ask.found.clone()?;
         let status = cx.theme().status().clone();
-        let workspace = ask.workspace.clone();
+        let folder_key = ask.folder_key.clone();
         Some(
             banner::tinted(status.warning)
                 .flex()
@@ -225,7 +227,7 @@ impl FleetView {
                 .child(div().flex_1().min_w_0().child(SharedString::from(format!("Schedule {name} waits for your approval"))))
                 .child(button::action(&self.hits, format!("start-schedule-open-{tab}"), "Open", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
-                    this.open_schedule(&workspace, &id, At::Top, cx);
+                    this.open_schedule(&folder_key, &id, At::Top, cx);
                 })))
                 .into_any_element(),
         )
@@ -233,15 +235,16 @@ impl FleetView {
 
     fn start_sections(&self, entry: &str) -> Vec<Section> {
         let mut out = Vec::new();
-        let rows = self.scheduling.schedules.get(entry).map(Vec::as_slice).unwrap_or_default();
+        let tree = self.tree();
+        let keys: Vec<String> = tree.entry(entry).map(folders).unwrap_or_default().iter().map(|(_, p)| supraman_core::schedule::folder_key(p)).collect();
+        let rows: Vec<&crate::schedules::ScheduleRow> = keys.iter().flat_map(|k| self.scheduling.schedules.get(k).into_iter().flatten()).collect();
         if !rows.is_empty() {
             let mut s = Section::new("schedules", "Schedules");
             for r in rows {
-                s = s.link(schedules::status_words(r).0, r.title(), format!("schedule:{}", r.schedule.id));
+                s = s.link(schedules::status_words(r).0, r.title(), format!("schedule:{}", super::schedules::key(&r.key, &r.schedule.id)));
             }
             out.push(s);
         }
-        let tree = self.tree();
         let mut recent: Vec<(&str, &SessionRow)> = tree.entry(entry).into_iter().flat_map(|n| n.folders.iter().flat_map(|r| r.sessions.iter().map(move |s| (r.key.as_str(), s)))).collect();
         recent.sort_by_key(|(_, r)| std::cmp::Reverse(r.session.started_at.unwrap_or_default()));
         if !recent.is_empty() {
@@ -254,9 +257,9 @@ impl FleetView {
         out
     }
 
-    fn open_start_link(&mut self, entry: &str, target: &str, cx: &mut Context<Self>) {
-        if let Some(id) = target.strip_prefix("schedule:") {
-            self.open_schedule(entry, id, At::Top, cx);
+    fn open_start_link(&mut self, target: &str, cx: &mut Context<Self>) {
+        if let Some((folder_key, id)) = target.strip_prefix("schedule:").and_then(|t| t.split_once('/')) {
+            self.open_schedule(folder_key, id, At::Top, cx);
         } else if let Some((place, session_id)) = target.strip_prefix("session:").and_then(|t| t.split_once('\u{0}')) {
             let row = self.tree().rows().find(|r| r.session.session_id == session_id).cloned();
             if let Some(row) = row {
@@ -321,8 +324,7 @@ impl FleetView {
                 .into_any_element(),
         ];
         let sections = self.start_sections(&page.entry);
-        let workspace = page.entry.clone();
-        let on_link: details::OnLink<Self> = Rc::new(move |this: &mut Self, target: &str, _, cx| this.open_start_link(&workspace, target, cx));
+        let on_link: details::OnLink<Self> = Rc::new(move |this: &mut Self, target: &str, _, cx| this.open_start_link(target, cx));
         let title = if page.scheduled { format!("New scheduled task in {}", page.entry) } else { format!("New task in {}", page.entry) };
         let key = format!("start-{tab}");
         let page = details::Page { key: &key, title, pill: None, sections: &sections, actions, scroll: &page.scroll, on_link: Some(on_link), top: Some(form.into_any_element()), over: None, bar: None };
@@ -359,8 +361,8 @@ because"), "use postgres");
 
     #[test]
     fn the_folders_are_the_entrys_each_once() {
-        let folder = |key: &str, path: &str| crate::fleet::FolderNode { key: key.into(), name: key.rsplit('/').next().unwrap().into(), path: path.into(), kind: supraman_core::FolderKind::Git, branch: None, sessions: vec![], more: 0 };
-        let entry = EntryNode { name: "demo".into(), group: true, scheduled: Default::default(), folders: vec![folder("demo/Alpha", "C:/demo/Alpha"), folder("demo/Same", "c:/DEMO/alpha")] };
+        let folder = |key: &str, path: &str| crate::fleet::FolderNode { key: key.into(), name: key.rsplit('/').next().unwrap().into(), path: path.into(), kind: supraman_core::FolderKind::Git, branch: None, sessions: vec![], more: 0, scheduled: Default::default() };
+        let entry = EntryNode { name: "demo".into(), group: true, folders: vec![folder("demo/Alpha", "C:/demo/Alpha"), folder("demo/Same", "c:/DEMO/alpha")] };
         let names: Vec<String> = folders(&entry).into_iter().map(|(n, _)| n).collect();
         assert_eq!(names, ["Alpha"]);
         assert!(!MODES.contains(&"bypassPermissions"));

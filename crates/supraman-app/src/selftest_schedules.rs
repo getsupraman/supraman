@@ -1,4 +1,4 @@
-//! `--selftest` step 7y: the Schedules group and a schedule's Details tab against the fake Task Scheduler; only the page's Approve approves.
+//! `--selftest` step 7y: a folder's Schedules and a schedule's Details tab against the fake Task Scheduler; only the page's Approve approves.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -6,7 +6,6 @@ use std::time::Duration;
 
 use anyhow::{Context as _, anyhow, bail};
 use supraman_core::schedule::{self, FakeRegistrar, Fired, Outcome, RunEvent, RunRecord, Status, TaskState};
-use supraman_core::{Folder, FolderKind, Registry, Workspace};
 use gpui::{AsyncWindowContext, Entity, MouseButton};
 use supraman_ui::themes::selftest_light::LIGHT;
 
@@ -17,7 +16,8 @@ use crate::view::FleetView;
 use crate::view::MenuAction;
 
 pub const FOLDER: &str = "selftest-sched";
-const WS: &str = "selftest-sched";
+/// The group listing [`folder`].
+const GROUP: &str = "selftest-sched";
 const ID: &str = "gate";
 const WITHIN: Duration = Duration::from_secs(10);
 const RUN_WITHIN: Duration = Duration::from_secs(60);
@@ -32,6 +32,15 @@ pub fn folder() -> PathBuf {
     cargo_root().join("target").join(FOLDER)
 }
 
+/// [`folder`]'s schedule key.
+fn ws() -> String {
+    schedule::folder_key(&folder())
+}
+
+fn folder_arg() -> String {
+    folder().to_string_lossy().into_owned()
+}
+
 pub(crate) fn sm(args: &[&str]) -> anyhow::Result<String> {
     let exe = supraman_core::install::sm_exe()?;
     let out = supraman_core::process::run(supraman_core::process::command(&exe).args(args), WITHIN, supraman_core::process::Kill::Tree)
@@ -43,7 +52,7 @@ pub(crate) fn sm(args: &[&str]) -> anyhow::Result<String> {
 }
 
 fn row_state(v: &FleetView) -> Option<(Status, bool)> {
-    v.schedule_row(WS, ID).map(|r| (r.status, r.running.is_some()))
+    v.schedule_row(&ws(), ID).map(|r| (r.status, r.running.is_some()))
 }
 
 fn painted(v: &FleetView, key: &str) -> bool {
@@ -58,9 +67,10 @@ fn a_word_after(v: &FleetView, word: &str, icon: &str) -> bool {
 
 /// The schedule's Details tab as text, once it is the active tab and holds `needle`.
 async fn page_text(view: &Entity<FleetView>, what: &str, needle: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let ws = ws();
     until(view, cx, WITHIN, what, |v| {
-        let (tab, page) = v.schedule_page(WS, ID)?;
-        let row = v.schedule_row(WS, ID)?;
+        let (tab, page) = v.schedule_page(&ws, ID)?;
+        let row = v.schedule_row(&ws, ID)?;
         let text = supraman_ui::details::text(row.title(), &v.page_sections(row, Some(page)));
         (v.active == Some(tab) && text.contains(needle)).then_some(text)
     })
@@ -112,10 +122,11 @@ fn other_task(folder: &str, name: &str, exec: &str, now: i64) -> TaskState {
     }
 }
 
-/// Task Scheduler's tasks that run claude outside Supraman, under the workspace holding their working
+/// Task Scheduler's tasks that run claude outside Supraman, under the listed folder holding their working
 /// directory or at the top, read only: a menu of Open in Task Scheduler and Copy action, and no write.
 async fn others(view: &Entity<FleetView>, fake: &FakeRegistrar, dir: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     const FOLDER: &str = r"\SelftestOther";
+    let ws = ws();
     let now = supraman_core::time::now_ms();
     let owned = format!(r"{FOLDER}\Nightly claude");
     let loose = format!(r"{FOLDER}\Loose claude");
@@ -130,26 +141,26 @@ async fn others(view: &Entity<FleetView>, fake: &FakeRegistrar, dir: &Path, cx: 
         fake.plant_task(t);
     }
     let writes = fake.writes().len();
-    let (group, owned_row, top, loose_row) = (format!("others-row-{WS}"), format!("other-row-{owned}"), "others-row".to_string(), format!("other-row-{loose}"));
+    let (group, owned_row, top, loose_row) = (format!("others-row-{ws}"), format!("other-row-{owned}"), "others-row".to_string(), format!("other-row-{loose}"));
     view.update(cx, |v, cx| v.scan_other_schedules(cx));
     until(view, cx, WITHIN, "the other schedules painted", |v| [&group, &owned_row, &top, &loose_row].iter().all(|k| painted(v, k)).then_some(())).await.map_err(|e| {
         let state = view.read_with(cx, |v, _| {
             let mut keys: Vec<String> = v.hits.borrow().keys().filter(|k| k.contains("other") || k.starts_with("schedules-row")).cloned().collect();
             keys.sort();
             let found = v.scheduling.other_schedules.as_ref().map(|f| f.tasks.iter().map(|t| t.path()).collect::<Vec<_>>());
-            format!("painted {keys:?}; scanned {found:?}, error {:?}; under {WS} {:?}", v.scheduling.other_scan_error, v.others().of_workspace(WS).len())
+            format!("painted {keys:?}; scanned {found:?}, error {:?}; under {ws} {:?}", v.scheduling.other_scan_error, v.others().of_folder(&ws).len())
         });
         e.context(state)
     })?;
     let (summary, stray) = view.read_with(cx, |v, _| {
         let others = v.others();
         let stray: Vec<String> = v.hits.borrow().keys().filter(|k| k.starts_with("other-row-") && (k.contains("Backup") || k.contains("Supraman-selftest"))).cloned().collect();
-        (others.of_workspace(WS).first().map(|t| schedules::other_summary(t, now)), stray)
+        (others.of_folder(&ws).first().map(|t| schedules::other_summary(t, now)), stray)
     });
     if !stray.is_empty() {
         bail!("rows for tasks that are not other schedules: {stray:?}");
     }
-    let summary = summary.ok_or_else(|| anyhow!("no other schedule under {WS}"))?;
+    let summary = summary.ok_or_else(|| anyhow!("no other schedule under {FOLDER}"))?;
     if !summary.starts_with("daily at 07:00 · next ") || !summary.ends_with("last OK") {
         bail!("the row reads {summary:?}");
     }
@@ -181,7 +192,7 @@ async fn others(view: &Entity<FleetView>, fake: &FakeRegistrar, dir: &Path, cx: 
     }
     view.update(cx, |v, cx| v.scan_other_schedules(cx));
     until(view, cx, WITHIN, "the other schedules gone", |v| (!painted(v, &group) && !painted(v, &top)).then_some(())).await?;
-    Ok("9 other schedules: one under the workspace, one at the top, the rest left out; Open in Task Scheduler and Copy action, no write".into())
+    Ok("9 other schedules: one under its folder, one at the top, the rest left out; Open in Task Scheduler and Copy action, no write".into())
 }
 
 async fn confirm_text(view: &Entity<FleetView>, what: &str, needle: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
@@ -191,8 +202,9 @@ async fn confirm_text(view: &Entity<FleetView>, what: &str, needle: &str, cx: &m
 }
 
 async fn from_menu(view: &Entity<FleetView>, item: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
-    press_painted(view, &format!("sched-row-{WS}/{ID}"), MouseButton::Right, cx).await?;
-    let keys = menu_open(view, &format!("{WS} · Gate"), cx).await?;
+    let ws = ws();
+    press_painted(view, &format!("sched-row-{ws}/{ID}"), MouseButton::Right, cx).await?;
+    let keys = menu_open(view, &format!("{FOLDER} · Gate"), cx).await?;
     if !keys.iter().any(|k| k == item) {
         bail!("no {item} in the schedule's menu: {keys:?}");
     }
@@ -209,33 +221,34 @@ async fn status_is(view: &Entity<FleetView>, want: Status, cx: &mut AsyncWindowC
 /// takes the new file and the entry goes. Its own schedule, removed again, so the later steps see one.
 async fn changed_command(view: &Entity<FleetView>, dir: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     const CMD: &str = "gate-command";
+    let ws = ws();
     let commands = dir.join(".claude").join("commands");
     std::fs::create_dir_all(&commands)?;
     std::fs::write(commands.join("selftest-gate.md"), "Run the gate.\n")?;
-    sm(&["schedule", "add", WS, "--id", CMD, "--name", "Gate command", "--every", "weekly mon 09:00", "--command", "/selftest-gate", "--profile", "edit"])?;
-    let open = format!("inbox-sched-open-{WS}/{CMD}");
+    sm(&["schedule", "add", "--folder", &folder_arg(), "--id", CMD, "--name", "Gate command", "--every", "weekly mon 09:00", "--command", "/selftest-gate", "--profile", "edit"])?;
+    let open = format!("inbox-sched-open-{ws}/{CMD}");
     until(view, cx, WITHIN, "the command schedule's Inbox entry", |v| painted(v, &open).then_some(())).await?;
     click(view, &open, cx).await?;
-    let approve = format!("sched-page-approve-{WS}/{CMD}");
+    let approve = format!("sched-page-approve-{ws}/{CMD}");
     crate::selftest::scrolled_into_view(view, &approve, cx).await?;
     click(view, &approve, cx).await?;
     until(view, cx, WITHIN, "the command schedule active", |v| {
-        v.schedule_row(WS, CMD).filter(|r| r.status == Status::Active && !r.command_changed).map(|_| ())
+        v.schedule_row(&ws, CMD).filter(|r| r.status == Status::Active && !r.command_changed).map(|_| ())
     })
     .await?;
     until(view, cx, WITHIN, "its Inbox entry gone", |v| (!painted(v, &open)).then_some(())).await?;
 
     std::fs::write(commands.join("selftest-gate.md"), "Run the gate, then fix what it found.\n")?;
     let row = until(view, cx, WITHIN, "the row says its command changed", |v| {
-        v.schedule_row(WS, CMD).filter(|r| r.status == Status::Active && r.command_changed).map(|r| r.status_text())
+        v.schedule_row(&ws, CMD).filter(|r| r.status == Status::Active && r.command_changed).map(|r| r.status_text())
     })
     .await?;
     until(view, cx, WITHIN, "the changed command's Inbox entry", |v| painted(v, &open).then_some(())).await?;
     let tip = view.read_with(cx, |v, _| v.tray_tooltip());
     click(view, &open, cx).await?;
     let page = until(view, cx, WITHIN, "the page with the changed file", |v| {
-        let (tab, page) = v.schedule_page(WS, CMD)?;
-        let row = v.schedule_row(WS, CMD)?;
+        let (tab, page) = v.schedule_page(&ws, CMD)?;
+        let row = v.schedule_row(&ws, CMD)?;
         let text = supraman_ui::details::text(row.title(), &v.page_sections(row, Some(page)));
         (v.active == Some(tab) && text.contains("File now")).then_some(text)
     })
@@ -248,47 +261,96 @@ async fn changed_command(view: &Entity<FleetView>, dir: &Path, cx: &mut AsyncWin
     crate::selftest::scrolled_into_view(view, &approve, cx).await?;
     click(view, &approve, cx).await?;
     until(view, cx, WITHIN, "approved again with the new file", |v| {
-        v.schedule_row(WS, CMD).filter(|r| r.status == Status::Active && !r.command_changed).map(|_| ())
+        v.schedule_row(&ws, CMD).filter(|r| r.status == Status::Active && !r.command_changed).map(|_| ())
     })
     .await?;
     until(view, cx, WITHIN, "the entry gone after Approve", |v| (!painted(v, &open) && v.tray_tooltip() == "Supraman").then_some(())).await?;
 
     view.update(cx, |v, cx| {
-        if let Some((tab, _)) = v.schedule_page(WS, CMD) {
+        if let Some((tab, _)) = v.schedule_page(&ws, CMD) {
             v.close_tab(tab, cx);
         }
-        v.remove_schedule(WS.into(), CMD.into(), cx);
+        v.remove_schedule(ws.clone(), CMD.into(), cx);
     });
-    until(view, cx, WITHIN, "the command schedule removed", |v| v.schedule_row(WS, CMD).is_none().then_some(())).await?;
+    until(view, cx, WITHIN, "the command schedule removed", |v| v.schedule_row(&ws, CMD).is_none().then_some(())).await?;
     Ok(format!("3c /selftest-gate edited after Approve: the row says {row:?}, the Inbox asks, the tray says {tip:?}, the page shows the approved and the new file's sha256 and offers Approve; approved again, the entry is gone"))
+}
+
+/// 0: an earlier release's per-workspace schedule file moves to its folder's at the poll, pending under the folder's
+/// row with no task, and the earlier workspace's task folder goes; Approve then registers its task under the folder key.
+/// The app's poll does the move and the sync, which no unit test of the core reaches.
+async fn migrated(view: &Entity<FleetView>, fake: &FakeRegistrar, home: &Path, dir: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    const OLD: &str = "selftest-old";
+    const MOVED: &str = "moved";
+    let ws = ws();
+    let root = schedule::task_root(home);
+    let old_task = format!(r"{root}\{OLD}\{MOVED}");
+    fake.plant(&format!(r"{root}\{OLD}"), MOVED, "<Task>an earlier release's</Task>");
+    let workspaces = home.join("workspaces");
+    std::fs::create_dir_all(&workspaces)?;
+    std::fs::write(workspaces.join(format!("{OLD}.toml")), format!("name = \"{OLD}\"\ncreated_at = \"2026-10-28T07:07:16Z\"\n\n[[folders]]\nname = \"gate\"\npath = '{}'\n", dir.display()))?;
+    let table = format!(
+        "version = 1\n\n[[schedule]]\nid = \"{MOVED}\"\nname = \"Moved\"\nfolder = \"gate\"\nstatus = \"active\"\n\n[schedule.trigger]\nkind = \"daily\"\nat = \"06:00\"\n\n[schedule.action]\nkind = \"script\"\nscript = \"gate.cmd\"\n"
+    );
+    std::fs::create_dir_all(home.join("schedules"))?;
+    std::fs::write(home.join("schedules").join(format!("{OLD}.toml")), table)?;
+    let row = format!("sched-row-{ws}/{MOVED}");
+    until(view, cx, WITHIN, "the moved schedule pending under its folder's Schedules", |v| {
+        (v.schedule_row(&ws, MOVED).is_some_and(|r| r.status == Status::Pending) && painted(v, &format!("schedules-row-{ws}")) && painted(v, &row)).then_some(())
+    })
+    .await?;
+    until(view, cx, WITHIN, "the earlier workspace's task gone", |_| (!fake.paths().contains(&old_task) && !fake.has_folder(&format!(r"{root}\{OLD}"))).then_some(())).await?;
+    if home.join("schedules").join(format!("{OLD}.toml")).exists() || !fake.paths().is_empty() {
+        bail!("after the move: the old file stays or a task is registered: {:?}", fake.paths());
+    }
+    let moved_task = format!(r"{root}\{ws}\{MOVED}");
+    let approve = format!("sched-approve-{ws}/{MOVED}");
+    until(view, cx, WITHIN, "Approve on the moved row", |v| painted(v, &approve).then_some(())).await?;
+    click(view, &approve, cx).await?;
+    let page_approve = format!("sched-page-approve-{ws}/{MOVED}");
+    crate::selftest::scrolled_into_view(view, &page_approve, cx).await?;
+    click(view, &page_approve, cx).await?;
+    until(view, cx, WITHIN, "the moved schedule's task registered", |v| {
+        (v.schedule_row(&ws, MOVED).is_some_and(|r| r.status == Status::Active) && fake.paths() == [moved_task.clone()]).then_some(())
+    })
+    .await?;
+    view.update(cx, |v, cx| {
+        if let Some((tab, _)) = v.schedule_page(&ws, MOVED) {
+            v.close_tab(tab, cx);
+        }
+        v.remove_schedule(ws.clone(), MOVED.into(), cx);
+    });
+    until(view, cx, WITHIN, "the moved schedule removed with its task", |v| (v.schedule_row(&ws, MOVED).is_none() && fake.paths().is_empty()).then_some(())).await?;
+    std::fs::remove_file(workspaces.join(format!("{OLD}.toml")))?;
+    Ok(format!("0 an earlier release's {OLD}.toml moved to {ws}.toml: pending under its folder, {old_task} gone; approved, {moved_task} registered; removed"))
 }
 
 pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let fake = registrar();
-    let task = format!(r"{}\{WS}\{ID}", schedule::task_root(home));
+    let ws = ws();
+    let task = format!(r"{}\{ws}\{ID}", schedule::task_root(home));
     let has_task = |fake: &FakeRegistrar| fake.paths().contains(&task);
     let dir = folder();
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join("gate.cmd"), "@exit /b 0\r\n")?;
-    let registry = Registry::at(home);
-    registry.save(&Workspace::new(WS, &dir, vec![Folder { kind: FolderKind::Plain, ..Folder::new("gate", &dir) }]), true)?;
-    supraman_core::folders::edit(&home, |e| {
-        e.list.retain(|x| x.group_name() != Some(WS));
-        e.list.push(supraman_core::folders::Entry::Group { name: WS.into(), folders: vec![supraman_core::folders::FolderEntry::new(&dir)] });
+    supraman_core::folders::edit(home, |e| {
+        e.list.retain(|x| x.group_name() != Some(GROUP));
+        e.list.push(supraman_core::folders::Entry::Group { name: GROUP.into(), folders: vec![supraman_core::folders::FolderEntry::new(&dir)] });
         Ok(())
     })?;
     let mut out = Vec::new();
+    out.push(migrated(view, &fake, home, &dir, cx).await?);
 
-    sm(&["schedule", "add", WS, "--id", ID, "--name", "Gate", "--every", "weekly mon 09:00", "--script", "gate.cmd", "--prompt", "Fix what the gate found.", "--profile", "edit"])?;
+    sm(&["schedule", "add", "--folder", &folder_arg(), "--id", ID, "--name", "Gate", "--every", "weekly mon 09:00", "--script", "gate.cmd", "--prompt", "Fix what the gate found.", "--profile", "edit"])?;
     status_is(view, Status::Pending, cx).await?;
-    let approve = format!("sched-approve-{WS}/{ID}");
+    let approve = format!("sched-approve-{ws}/{ID}");
     until(view, cx, WITHIN, "Approve painted on the pending row", |v| painted(v, &approve).then_some(())).await?;
     if !fake.paths().is_empty() {
         bail!("a task before any Approve: {:?}", fake.paths());
     }
-    let open = format!("inbox-sched-open-{WS}/{ID}");
+    let open = format!("inbox-sched-open-{ws}/{ID}");
     until(view, cx, WITHIN, "the pending schedule's Inbox entry", |v| painted(v, &open).then_some(())).await?;
-    let later = format!("inbox-sched-later-{WS}/{ID}");
+    let later = format!("inbox-sched-later-{ws}/{ID}");
     until(view, cx, WITHIN, "Review as a word after the card's hover ×", |v| a_word_after(v, &open, &later).then_some(())).await?;
     let tip = view.read_with(cx, |v, _| v.tray_tooltip());
     if tip != "Supraman · 1 schedule waits for your approval" {
@@ -306,7 +368,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     if first.contains("worktree-edit") || first.contains("trigger.at") {
         bail!("the page shows keys: {first}");
     }
-    let page_approve = format!("sched-page-approve-{WS}/{ID}");
+    let page_approve = format!("sched-page-approve-{ws}/{ID}");
     crate::selftest::scrolled_into_view(view, &page_approve, cx).await?;
     themed_shots(home, "sched-7-details", cx).await;
     click(view, &page_approve, cx).await?;
@@ -316,7 +378,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     out.push(format!("2 opened from the Inbox: the page says Every Monday and edit; approved there: {task} registered, the entry gone"));
 
     let writes = fake.writes().len();
-    sm(&["schedule", "edit", WS, ID, "--every", "weekly mon 10:00"])?;
+    sm(&["schedule", "edit", ID, "--folder", &folder_arg(), "--every", "weekly mon 10:00"])?;
     status_is(view, Status::Pending, cx).await?;
     if fake.writes().len() != writes {
         bail!("sm's edit reached Task Scheduler: {:?}", fake.writes());
@@ -324,14 +386,14 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     until(view, cx, WITHIN, "the changed schedule's Inbox entry", |v| painted(v, &later).then_some(())).await?;
     click(view, &later, cx).await?;
     until(view, cx, WITHIN, "the dismissed entry gone", |v| (!painted(v, &later) && v.tray_tooltip() == "Supraman").then_some(())).await?;
-    let (dismissed, entry) = (home.join("schedules").join("waiting-dismissed.json"), format!("{WS}/{ID}@"));
+    let (dismissed, entry) = (home.join("schedules").join("waiting-dismissed.json"), format!("{ws}/{ID}@"));
     until(view, cx, WITHIN, "the dismissal kept in the home for a restart", |_| {
         std::fs::read_to_string(&dismissed).ok().filter(|kept| kept.contains(&entry)).map(|_| ())
     })
     .await?;
-    sm(&["schedule", "edit", WS, ID, "--every", "weekly mon 10:30"])?;
+    sm(&["schedule", "edit", ID, "--folder", &folder_arg(), "--every", "weekly mon 10:30"])?;
     until(view, cx, WITHIN, "the entry back once the schedule changed again", |v| painted(v, &later).then_some(())).await?;
-    double_click(view, &format!("sched-row-{WS}/{ID}"), cx).await?;
+    double_click(view, &format!("sched-row-{ws}/{ID}"), cx).await?;
     let diff = page_text(view, "the change since the approval", "Changed since your last approval", cx).await?;
     if !diff.contains("\nTrigger time: 09:00 → 10:30") || diff.contains("File gate.cmd") {
         bail!("the page's change is not the one change: {diff}");
@@ -353,15 +415,15 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     until(view, cx, WITHIN, "the paused schedule's task gone", |_| (!has_task(&fake)).then_some(())).await?;
     // the page's button turns into Resume with the frame after the poll
     crate::selftest::sleep(cx, Duration::from_millis(300)).await;
-    click(view, &format!("sched-page-pause-{WS}/{ID}"), cx).await?;
+    click(view, &format!("sched-page-pause-{ws}/{ID}"), cx).await?;
     status_is(view, Status::Active, cx).await?;
     until(view, cx, WITHIN, "the resumed schedule's task back", |_| has_task(&fake).then_some(())).await?;
     out.push("4 Details from the row's menu focused the one tab; paused from the menu (task removed), resumed on the page (task back)".into());
 
-    let runs_before = schedule::runs(home, WS)?.len();
-    click(view, &format!("sched-run-{WS}/{ID}"), cx).await?;
+    let runs_before = schedule::runs(home, &ws)?.len();
+    click(view, &format!("sched-run-{ws}/{ID}"), cx).await?;
     let ended = until(view, cx, RUN_WITHIN, "Run now's run ended", |v| {
-        let row = v.schedule_row(WS, ID)?;
+        let row = v.schedule_row(&ws, ID)?;
         (row.runs.len() > runs_before).then(|| row.last().map(|(r, o)| (r.run.clone(), r.started.map(|s| s.1), o))).flatten()
     })
     .await
@@ -382,7 +444,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
         (at, RunEvent::Started { trigger: Fired::Task, fingerprint: String::new(), fm_pid: 1 }),
         (at + 1, RunEvent::Ended { outcome: Outcome::Failed, why: "exit 1".into(), tokens: None, ms: 1 }),
     ] {
-        schedule::append_run(home, WS, &RunRecord { ts, run: failed.clone(), schedule: ID.into(), event })?;
+        schedule::append_run(home, &ws, &RunRecord { ts, run: failed.clone(), schedule: ID.into(), event })?;
     }
     let dismiss = format!("inbox-sched-dismiss-{failed}");
     until(view, cx, WITHIN, "the failed run in the Inbox", |v| painted(v, &dismiss).then_some(())).await?;
@@ -396,39 +458,39 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     until(view, cx, WITHIN, "the dismissed notice gone", |v| (!painted(v, &dismiss) && v.tray_tooltip() == "Supraman").then_some(())).await?;
     out.push("6 a failed run in the Inbox and the tray, dismissed".into());
 
-    click(view, &format!("sched-page-edit-{WS}/{ID}"), cx).await?;
+    click(view, &format!("sched-page-edit-{ws}/{ID}"), cx).await?;
     until(view, cx, WITHIN, "the Edit dialog", |v| painted(v, "sched-edit-kind-weekly").then_some(())).await?;
     click(view, "sched-edit-kind-weekly", cx).await?;
     until(view, cx, WITHIN, "the days", |v| painted(v, "sched-edit-day-fri").then_some(())).await?;
     click(view, "sched-edit-day-fri", cx).await?;
     click(view, "sched-edit-save", cx).await?;
     status_is(view, Status::Pending, cx).await?;
-    let saved = schedule::load(home, WS)?.into_iter().find(|s| s.id == ID).ok_or_else(|| anyhow!("the schedule is gone"))?;
+    let saved = schedule::load(home, &dir)?.into_iter().find(|s| s.id == ID).ok_or_else(|| anyhow!("the schedule is gone"))?;
     if saved.trigger.to_string() != "weekly mon,fri 10:30" {
         bail!("the edit saved {}", saved.trigger);
     }
     until(view, cx, WITHIN, "the pending schedule's task gone", |_| (!has_task(&fake)).then_some(())).await?;
     out.push("7 edited in the dialog from the page: weekly mon,fri 10:30, pending, task removed".into());
 
-    click(view, &format!("sched-page-remove-{WS}/{ID}"), cx).await?;
+    click(view, &format!("sched-page-remove-{ws}/{ID}"), cx).await?;
     confirm_text(view, "Remove's question", "nothing in any folder is touched", cx).await?;
     click(view, "confirm-yes", cx).await?;
-    until(view, cx, WITHIN, "the schedule removed", |v| v.schedule_row(WS, ID).is_none().then_some(())).await?;
-    if !schedule::load(home, WS)?.is_empty() || has_task(&fake) || fake.has_folder(&format!(r"{}\{WS}", schedule::task_root(home))) {
+    until(view, cx, WITHIN, "the schedule removed", |v| v.schedule_row(&ws, ID).is_none().then_some(())).await?;
+    if !schedule::load(home, &dir)?.is_empty() || has_task(&fake) || fake.has_folder(&format!(r"{}\{ws}", schedule::task_root(home))) {
         bail!("Remove left the entry or the task: {:?}", fake.paths());
     }
     if !dir.join("gate.cmd").is_file() {
         bail!("Remove touched the folder");
     }
     out.push("8 removed: entry, task and task folder gone, the folder untouched".into());
-    if let Some(tab) = view.read_with(cx, |v, _| v.schedule_page(WS, ID).map(|(t, _)| t)) {
+    if let Some(tab) = view.read_with(cx, |v, _| v.schedule_page(&ws, ID).map(|(t, _)| t)) {
         view.update(cx, |v, cx| v.close_tab(tab, cx));
     }
 
     out.push(others(view, &fake, &dir, cx).await?);
 
-    std::fs::remove_file(registry.path_of(WS)?)?;
-    supraman_core::folders::edit(home, |e| e.remove_group(WS, true))?;
+    std::fs::remove_file(schedule::file_path(home, &ws)?)?;
+    supraman_core::folders::edit(home, |e| e.remove_group(GROUP, true))?;
     if fake.writes().iter().any(|w| !w.contains(&schedule::task_root(home))) {
         bail!("a write outside this home's task folder: {:?}", fake.writes());
     }

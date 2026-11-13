@@ -12,7 +12,7 @@ fn live_ids_lists_each_schedule_with_a_live_or_a_dead_file_once() {
 }
 
 #[test]
-fn live_ids_of_a_workspace_without_a_live_folder_is_empty() {
+fn live_ids_of_a_folder_key_without_a_live_folder_is_empty() {
     let home = tempfile::tempdir().unwrap();
     assert!(live_ids(home.path(), "demo").is_empty());
 }

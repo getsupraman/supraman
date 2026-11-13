@@ -127,12 +127,12 @@ impl Poller {
         };
         let schedules = match &self.home {
             Some(home) => {
-                let workspaces = listed.workspaces();
-                for run in crate::schedules::recover(home, workspaces) {
+                let keys: Vec<String> = supraman_core::schedule::load_all(home).0.into_iter().map(|s| s.key).collect();
+                for run in crate::schedules::recover(home, &keys) {
                     log::info!("recovered the dead scheduled run {run} as interrupted");
                 }
                 let store = self.store.get_or_insert_with(|| supraman_core::secret::default_store(home));
-                Some(crate::schedules::read(home, workspaces, &**store, now_ms()))
+                Some(crate::schedules::read(home, &**store, now_ms()))
             }
             _ => None,
         };

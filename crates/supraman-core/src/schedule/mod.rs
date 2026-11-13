@@ -1,9 +1,10 @@
-//! A workspace's schedules at `<home>/schedules/<workspace>.toml`, their approval, next fires and run
+//! A folder's schedules at `<home>/schedules/<folder key>.toml`, their approval, next fires and run
 //! records; the contract is `docs/research/scheduler.md`.
 
 mod approval;
 mod foreign;
 mod live;
+mod migrate;
 mod next;
 mod registrar;
 mod runs;
@@ -12,26 +13,27 @@ mod store;
 mod task_xml;
 
 use std::fmt;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{Workspace, validate_name};
+use crate::validate_name;
 
 pub use approval::{APPROVAL_KEY, Change, Covered, Refusal, approve, command_file, covered, covered_diff, covered_fields, effective_status, mac, verify, verify_approval};
 pub use live::{FIRE_LOG_CAP, Live, LiveSession, MASK, Reported, STDERR_TAIL, fire_log, live_dir, masked_tail, secret_key, state_dir};
 pub use next::{next_fire, next_fire_local, previous_fire};
-pub use foreign::{Foreign, ForeignTask, NOT_RUN, SCRIPT_CAP, Via, is_own_root, names_claude, of_task, ole_date_ms, owner, read_script, runs_claude, scan as scan_foreign, scan_with as scan_foreign_with, trigger_words};
-pub use registrar::{SMW_EXE, FakeRegistrar, Listing, Registrar, TaskState, SyncTarget, Synced, smw_exe, sync, task_root, task_root_for};
+pub use foreign::{Foreign, ForeignTask, NOT_RUN, SCRIPT_CAP, Via, is_own_root, names_claude, of_task, ole_date_ms, read_script, runs_claude, scan as scan_foreign, scan_with as scan_foreign_with, trigger_words};
+pub use migrate::{Migrated, RESYNC, migrate};
+pub use registrar::{SMW_EXE, FakeRegistrar, Listing, Registrar, TaskState, SyncTarget, Synced, prune_tasks, smw_exe, sync, sync_all, task_root, task_root_for};
 pub use runs::{Fired, Outcome, RUNS_CAP, Run, RunEvent, RunRecord, Stage, Tokens, append_run, read_runs, runs, runs_path};
 pub use session::{DEFAULT_DENY, base_prompt, preamble, run_branch, run_id, run_stamp, run_worktree, schedule_of_session, session_name};
-pub use store::{edit, file_path, load, schedules_dir};
+pub use store::{FILE_VERSION, Scheduled, edit, file_path, folder_key, is_folder_key, load, load_all, load_key, schedules_dir};
 pub use task_xml::{RunLevel, TaskSpec, definition_digest, task_xml, version_of};
 pub(crate) use runs::prune as prune_schedules;
 pub use runs::run_worktrees;
 
-/// A slug `repo_session_name` refuses: `fm-<ws>-sched-<id>-<stamp>` names a scheduled run.
+/// `fm-<folder key>-sched-<id>-<stamp>` names a scheduled run.
 pub const SCHED_SLUG_PREFIX: &str = "sched-";
 pub const MAX_ID_LEN: usize = 32;
 pub const MIN_EVERY: Span = Span(15 * 60);
@@ -44,13 +46,16 @@ pub const SCRIPT_EXTENSIONS: [&str; 4] = ["ps1", "cmd", "bat", "exe"];
 pub struct ScheduleFile {
     #[serde(default = "version_one")]
     pub version: u32,
+    /// The folder the schedules run in; the file is named by its [`folder_key`].
+    #[serde(default)]
+    pub folder: PathBuf,
     #[serde(default)]
     pub schedule: Vec<Schedule>,
 }
 
 impl Default for ScheduleFile {
     fn default() -> Self {
-        Self { version: 1, schedule: Vec::new() }
+        Self { version: FILE_VERSION, folder: PathBuf::new(), schedule: Vec::new() }
     }
 }
 
@@ -66,7 +71,6 @@ pub struct Schedule {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    pub folder: String,
     #[serde(default)]
     pub status: Status,
     #[serde(default)]
@@ -201,7 +205,7 @@ pub struct Permissions {
     pub deny_tools: Vec<String>,
     #[serde(default)]
     pub add_dirs: Vec<String>,
-    /// Names only; each value is in the `SecretStore` under `supraman/schedule/<ws>/<id>/<NAME>`.
+    /// Names only; each value is in the `SecretStore` under [`secret_key`].
     #[serde(default)]
     pub secrets: Vec<String>,
 }
@@ -379,14 +383,11 @@ impl<'de> Deserialize<'de> for Span {
 }
 
 impl Schedule {
-    /// What `sm schedule add` and the app check before a save, against `workspace`'s folders.
-    pub fn validate(&self, workspace: &Workspace) -> Result<(), String> {
+    /// What `sm schedule add` and the app check before a save.
+    pub fn validate(&self) -> Result<(), String> {
         validate_name(&self.id).map_err(|_| "the id takes lowercase letters, digits and '-' only".to_string())?;
         if self.id.len() > MAX_ID_LEN {
             return Err(format!("the id is longer than {MAX_ID_LEN} characters"));
-        }
-        if workspace.folder(&self.folder).is_none() {
-            return Err(format!("workspace '{}' has no folder '{}'", workspace.name, self.folder));
         }
         match &self.trigger {
             Trigger::Weekly { days, .. } if days.is_empty() => return Err("a weekly trigger needs at least one day".into()),

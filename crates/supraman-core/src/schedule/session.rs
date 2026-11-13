@@ -103,15 +103,24 @@ pub fn run_id(id: &str, stamp: &str) -> String {
     format!("{id}-{stamp}")
 }
 
-/// `fm-<workspace>-sched-<id>-<stamp>`; see docs/research/scheduler.md "The session name".
-pub fn session_name(workspace: &str, id: &str, stamp: &str) -> String {
-    format!("{}{workspace}-{}{id}-{stamp}", crate::FM_PREFIX, super::SCHED_SLUG_PREFIX)
+/// `fm-<folder key>-sched-<id>-<stamp>`; see docs/research/scheduler.md "The session name".
+pub fn session_name(key: &str, id: &str, stamp: &str) -> String {
+    format!("{}{key}-{}{id}-{stamp}", crate::FM_PREFIX, super::SCHED_SLUG_PREFIX)
 }
 
-/// The schedule id of a run's session in `workspace`: the `<id>` of [`session_name`], whose stamp may carry
-/// a `-<n>` suffix.
-pub fn schedule_of_session<'a>(workspace: &str, name: &'a str) -> Option<&'a str> {
-    let rest = name.strip_prefix(crate::FM_PREFIX)?.strip_prefix(workspace)?.strip_prefix('-')?.strip_prefix(super::SCHED_SLUG_PREFIX)?;
+/// The folder key and schedule id of a run's session: the `<key>` and `<id>` of [`session_name`], whose stamp
+/// may carry a `-<n>` suffix.
+pub fn schedule_of_session(name: &str) -> Option<(&str, &str)> {
+    let rest = name.strip_prefix(crate::FM_PREFIX)?;
+    let marker = format!("-{}", super::SCHED_SLUG_PREFIX);
+    rest.match_indices(&marker).find_map(|(at, _)| {
+        let key = &rest[..at];
+        let id = id_before_stamp(&rest[at + marker.len()..])?;
+        super::is_folder_key(key).then_some((key, id))
+    })
+}
+
+fn id_before_stamp(rest: &str) -> Option<&str> {
     let is_stamp = |s: &str| {
         let mut parts = s.split('-');
         let digits = |p: Option<&str>, n: usize| p.is_some_and(|p| p.len() == n && p.bytes().all(|b| b.is_ascii_digit()));

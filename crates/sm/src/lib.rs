@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use supraman_claude::{ClaudeError, Health, Session, check_supported, list_sessions, now_ms, place};
 use supraman_core::folders::Entries;
 use supraman_core::paths::path_key;
-use supraman_core::{CoreError, Registry};
+use supraman_core::CoreError;
 
 const USAGE: &str = "\
 usage:
@@ -16,22 +16,22 @@ usage:
   sm group add <name> [--at N]  |  sm group rename <name> <new>
   sm group remove <name> [--with-folders]          (else its folders move to the top level)
   sm sessions [--folder <dir>] [--all]   (each under the deepest listed folder holding its cwd)
-  sm schedule add [<workspace>] --name <text> --every <when> (--command /<name> | --prompt-file <path> | --prompt <text>)
-      [--id <id>] [--folder <folder>] [--script <path> [--script-arg <a>]... [--script-timeout 10m]]
+  sm schedule add [--folder <dir>] --name <text> --every <when> (--command /<name> | --prompt-file <path> | --prompt <text>)
+      [--id <id>] [--script <path> [--script-arg <a>]... [--script-timeout 10m]]
       [--profile read|edit|auto] [--allow-tools <rule>]... [--deny-tools <rule>]... [--add-dir <dir>]...
       [--secret NAME]... [--model <model>] [--max-runtime 1h] [--max-tokens N] [--overlap skip|queue|restart]
       [--catch-up once|skip] [--wake] [--description <text>]
       <when>: 'weekly mon,fri 09:00' | 'daily 09:00' | 'interval 2h [from 08:00]'; a --script alone runs no session
-  sm schedule edit [<workspace>] <id> <add's options>   (a list option replaces the list; --no-script, --no-wake)
-  sm schedule list [<workspace>]  |  sm schedule show [<workspace>] <id>
-  sm schedule pause|resume|remove [<workspace>] <id>
-  sm schedule dry-run [<workspace>] <id>   (the prompt, the claude argv, the permissions, the next three fires)
-  sm schedule run [<workspace>] <id>       (Run now: an active, approved schedule fires at once)
-  sm schedule secret set [<workspace>] <id> <NAME>   (the value on stdin; the script gets it as $NAME)
+  sm schedule edit <id> [--folder <dir>] <add's options>   (a list option replaces the list; --no-script, --no-wake)
+  sm schedule list [--folder <dir>]  |  sm schedule show <id> [--folder <dir>]
+  sm schedule pause|resume|remove <id> [--folder <dir>]
+  sm schedule dry-run <id> [--folder <dir>]   (the prompt, the claude argv, the permissions, the next three fires)
+  sm schedule run <id> [--folder <dir>]       (Run now: an active, approved schedule fires at once)
+  sm schedule secret set <id> <NAME> [--folder <dir>]   (the value on stdin; the script gets it as $NAME)
   sm schedule report <run> done|needs-you <one line>   (inside a scheduled run: its outcome, to the run's owner)
-  sm schedule fire --home <home> <workspace> <id> --fingerprint <hex>   (what the schedule's task runs, as smw.exe)
-      <workspace>: default the one whose folders hold the current folder. An added or changed schedule is
-      pending until Approve in the Supraman window; sm never approves and never registers a task.
+  sm schedule fire --home <home> <folder key> <id> --fingerprint <hex>   (what the schedule's task runs, as smw.exe)
+      --folder <dir>: the deepest listed folder holding it, default the current folder's. An added or changed
+      schedule is pending until Approve in the Supraman window; sm never approves and never registers a task.
   sm release manifest <zip> --version <semver> --commit <sha> [--notes-url <url>]
       (writes supraman-update.json and SHA256SUMS beside the zip; the zip is Supraman-<semver>.zip)
   sm release sign <manifest>           (the secret key from UPDATE_SIGNING_KEY; writes <manifest>.sig)
@@ -222,7 +222,7 @@ fn run(args: &[String]) -> Result<(), Failure> {
             0 => Ok(()),
             code => Err(Failure::Exit(code)),
         },
-        ["schedule", rest @ ..] => schedule::schedule(&registry()?, rest),
+        ["schedule", rest @ ..] => schedule::schedule(&home()?, rest),
         #[cfg(feature = "probes")]
         ["probe", rest @ ..] => probe_cmd(rest),
         ["release", rest @ ..] => release::release(rest),
@@ -307,9 +307,7 @@ pub(crate) fn value<'a>(it: &mut std::slice::Iter<'_, &'a str>, flag: &str) -> R
         .ok_or_else(|| Failure::Usage(format!("{flag} needs a value")))
 }
 
-pub(crate) fn registry() -> Result<Registry, Failure> {
-    Ok(Registry::from_env()?)
-}
+
 
 pub(crate) fn home() -> Result<PathBuf, Failure> {
     Ok(supraman_core::home_from_env().ok_or(CoreError::NoHome)?)

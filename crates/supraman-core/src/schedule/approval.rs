@@ -11,20 +11,19 @@ use super::store::{edit_raw, schedules_dir};
 use super::{Action, ActionKind, Approval, Caps, Permissions, Policy, Profile, Prompt, Schedule, Span, Status, Trigger};
 use crate::hex::{decode as unhex, encode as hex};
 use crate::secret::SecretStore;
-use crate::{CoreError, Result, Workspace};
+use crate::{CoreError, Result};
 
 /// The `SecretStore` key of the approval key: 32 random bytes as hex.
 pub const APPROVAL_KEY: &str = "supraman/schedule-approval/v1";
-const MAC_DOMAIN: &str = "supraman-schedule-v1";
+const MAC_DOMAIN: &str = "supraman-schedule-v2";
 const MISSING: &str = "missing";
 
 /// The fingerprinted JSON; field order is the canonical order of docs/research/scheduler.md.
 #[derive(Serialize)]
 struct CoveredJson<'a> {
     v: u32,
-    workspace: &'a str,
+    folder: String,
     id: &'a str,
-    folder: &'a str,
     trigger: &'a Trigger,
     action: CoveredAction<'a>,
     permissions: CoveredPermissions<'a>,
@@ -109,17 +108,16 @@ impl fmt::Display for Refusal {
 }
 
 /// The covered fields alone, without the files: what an edit compares.
-pub(super) fn covered_toml(workspace: &str, s: &Schedule) -> String {
-    serde_json::to_string(&covered_json(workspace, s, None)).expect("plain data serializes")
+pub(super) fn covered_toml(folder: &Path, s: &Schedule) -> String {
+    serde_json::to_string(&covered_json(folder, s, None)).expect("plain data serializes")
 }
 
-fn covered_json<'a>(workspace: &'a str, s: &'a Schedule, command_path: Option<String>) -> CoveredJson<'a> {
+fn covered_json<'a>(folder: &Path, s: &'a Schedule, command_path: Option<String>) -> CoveredJson<'a> {
     let a: &Action = &s.action;
     CoveredJson {
-        v: 1,
-        workspace,
+        v: 2,
+        folder: crate::paths::normalize(folder),
         id: &s.id,
-        folder: &s.folder,
         trigger: &s.trigger,
         action: CoveredAction {
             kind: a.kind,
@@ -141,16 +139,11 @@ fn covered_json<'a>(workspace: &'a str, s: &'a Schedule, command_path: Option<St
     }
 }
 
-/// `s`'s covered JSON and fingerprint, hashing its script and prompt file in `workspace`'s folder.
-pub fn covered(workspace: &Workspace, s: &Schedule) -> Result<Covered> {
-    let folder = workspace.folder(&s.folder).ok_or_else(|| CoreError::NoFolder {
-        workspace: workspace.name.clone(),
-        folder: s.folder.clone(),
-        known: workspace.folders.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join(", "),
-    })?;
+/// `s`'s covered JSON and fingerprint, hashing its script and prompt file in `folder`.
+pub fn covered(folder: &Path, s: &Schedule) -> Result<Covered> {
     let mut files = BTreeMap::new();
     let mut hash = |rel: &str| -> Result<()> {
-        files.insert(rel.to_string(), sha256_file(&folder.path.join(rel))?.unwrap_or_else(|| MISSING.into()));
+        files.insert(rel.to_string(), sha256_file(&folder.join(rel))?.unwrap_or_else(|| MISSING.into()));
         Ok(())
     };
     if let Some(script) = &s.action.script {
@@ -161,12 +154,12 @@ pub fn covered(workspace: &Workspace, s: &Schedule) -> Result<Covered> {
     }
     let (command_path, command_sha256) = match &s.action.prompt {
         Some(Prompt::Command(name)) => {
-            let (shown, file) = command_file(&folder.path, name);
+            let (shown, file) = command_file(folder, name);
             (Some(shown), sha256_file(&file)?)
         }
         _ => (None, None),
     };
-    let mut doc = covered_json(&workspace.name, s, command_path);
+    let mut doc = covered_json(folder, s, command_path);
     doc.files = files;
     let json = serde_json::to_string(&doc).expect("plain data serializes");
     Ok(Covered { fingerprint: hex(&Sha256::digest(json.as_bytes())), json, command_sha256 })
@@ -244,39 +237,39 @@ fn sha256_file(path: &Path) -> Result<Option<String>> {
     }
 }
 
-fn hmac_of(key: &[u8], workspace: &str, id: &str, fingerprint: &str) -> Hmac<Sha256> {
+fn hmac_of(key: &[u8], folder: &Path, id: &str, fingerprint: &str) -> Hmac<Sha256> {
     let mut m = Hmac::<Sha256>::new_from_slice(key).expect("HMAC takes a key of any length");
-    m.update(format!("{MAC_DOMAIN}\n{workspace}\n{id}\n{fingerprint}").as_bytes());
+    m.update(format!("{MAC_DOMAIN}\n{}\n{id}\n{fingerprint}", crate::paths::path_key(folder)).as_bytes());
     m
 }
 
-/// HMAC-SHA256 of the approved fingerprint, as hex.
-pub fn mac(key: &[u8], workspace: &str, id: &str, fingerprint: &str) -> String {
-    hex(&hmac_of(key, workspace, id, fingerprint).finalize().into_bytes())
+/// HMAC-SHA256 of the approved fingerprint of schedule `id` in `folder`, as hex.
+pub fn mac(key: &[u8], folder: &Path, id: &str, fingerprint: &str) -> String {
+    hex(&hmac_of(key, folder, id, fingerprint).finalize().into_bytes())
 }
 
 /// `approval` holds for `fingerprint_now` under `key`; the MAC compares in constant time.
-pub fn verify(approval: &Approval, workspace: &str, id: &str, fingerprint_now: &str, key: &[u8]) -> std::result::Result<(), Refusal> {
+pub fn verify(approval: &Approval, folder: &Path, id: &str, fingerprint_now: &str, key: &[u8]) -> std::result::Result<(), Refusal> {
     if approval.fingerprint != fingerprint_now {
         return Err(Refusal::Changed);
     }
     let tag = unhex(&approval.mac).ok_or(Refusal::BadMac)?;
-    hmac_of(key, workspace, id, &approval.fingerprint).verify_slice(&tag).map_err(|_| Refusal::BadMac)
+    hmac_of(key, folder, id, &approval.fingerprint).verify_slice(&tag).map_err(|_| Refusal::BadMac)
 }
 
 /// Checks 2 and 3 of a fire: the fingerprint now is the approved one and its MAC verifies under the key.
-pub fn verify_approval(store: &dyn SecretStore, workspace: &Workspace, s: &Schedule) -> std::result::Result<Covered, Refusal> {
+pub fn verify_approval(store: &dyn SecretStore, folder: &Path, s: &Schedule) -> std::result::Result<Covered, Refusal> {
     let approval = s.approval.as_ref().ok_or(Refusal::NotApproved)?;
     let key = read_key(store)?.ok_or(Refusal::NoKey)?;
-    let now = covered(workspace, s).map_err(|e| Refusal::Unreadable(e.to_string()))?;
-    verify(approval, &workspace.name, &s.id, &now.fingerprint, &key)?;
+    let now = covered(folder, s).map_err(|e| Refusal::Unreadable(e.to_string()))?;
+    verify(approval, folder, &s.id, &now.fingerprint, &key)?;
     Ok(now)
 }
 
 /// `status`, except that an `active` schedule whose approval does not verify counts as `pending`.
-pub fn effective_status(store: &dyn SecretStore, workspace: &Workspace, s: &Schedule) -> Status {
+pub fn effective_status(store: &dyn SecretStore, folder: &Path, s: &Schedule) -> Status {
     match s.status {
-        Status::Active if verify_approval(store, workspace, s).is_err() => Status::Pending,
+        Status::Active if verify_approval(store, folder, s).is_err() => Status::Pending,
         status => status,
     }
 }
@@ -290,7 +283,7 @@ fn read_key(store: &dyn SecretStore) -> std::result::Result<Option<Vec<u8>>, Ref
 
 /// René's Approve in the Supraman window, and nothing else (C100): records the approval of schedule `id` as
 /// it is now and makes it active. Creates the key on the first approval in this home.
-pub fn approve(home: &Path, store: &dyn SecretStore, workspace: &Workspace, id: &str, now_ms: i64) -> Result<Schedule> {
+pub fn approve(home: &Path, store: &dyn SecretStore, folder: &Path, id: &str, now_ms: i64) -> Result<Schedule> {
     let key = {
         let lock = schedules_dir(home).join("approval.lock");
         let _held = crate::fs::lock_file(&lock).map_err(|e| CoreError::io(&lock, e))?;
@@ -304,15 +297,16 @@ pub fn approve(home: &Path, store: &dyn SecretStore, workspace: &Workspace, id: 
             }
         }
     };
-    edit_raw(home, workspace, |schedules| {
+    edit_raw(home, folder, |schedules| {
         let s = schedules
             .iter_mut()
             .find(|s| s.id == id)
-            .ok_or_else(|| CoreError::NoSchedule { workspace: workspace.name.clone(), id: id.to_string() })?;
-        s.validate(workspace).map_err(|why| CoreError::InvalidSchedule { id: s.id.clone(), why })?;
-        let c = covered(workspace, s)?;
+            .ok_or_else(|| CoreError::NoSchedule { folder: folder.display().to_string(), id: id.to_string() })?;
+        s.validate().map_err(|why| CoreError::InvalidSchedule { id: s.id.clone(), why })?;
+        let c = covered(folder, s)?;
         s.approval = Some(Approval {
-            mac: mac(&key, &workspace.name, id, &c.fingerprint),
+            mac: mac(&key, folder, id, &c.fingerprint),
+
             fingerprint: c.fingerprint,
             approved_at: now_ms,
             covered: c.json,

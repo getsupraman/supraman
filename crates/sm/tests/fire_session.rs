@@ -13,7 +13,6 @@ use supraman_claude::{Kind, LaunchSpec, Session, SessionState, Status};
 use supraman_core::schedule::{self, Action, ActionKind, Fired, LiveSession, Outcome, Profile, Prompt, RunEvent, Schedule, Span, Stage, Status as Sched, Trigger};
 use supraman_core::secret::{MemoryStore, SecretStore};
 use supraman_core::workman_server::{self, ServerJson};
-use supraman_core::{Folder, Registry, Workspace};
 use supraman_supervisor::{AppTokens, HttpMinter, Launcher, Minter, TokenProvider};
 use supraman_workman::fake::{Answer, FakeWorkman};
 use supraman_workman::{Auth, auth::http_browser};
@@ -56,8 +55,7 @@ fn fixture_with(signed_in: bool, set_up: bool) -> Fixture {
     git(&alpha, &["init", "-q", "-b", "main"]);
     git(&alpha, &["-c", "user.name=t", "-c", "user.email=t@t", "add", "-A"]);
     git(&alpha, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"]);
-    let w = Workspace::new("demo", tmp.path().join("ws"), vec![Folder::new("Alpha", &alpha)]);
-    Registry::at(&home).save(&w, false).unwrap();
+    supraman_core::folders::edit(&home, |e| e.add_folder(&alpha, &supraman_core::folders::Place::Top(0))).unwrap();
     let fake = FakeWorkman::start(vec![
         (
             "POST /api/agent-sessions".into(),
@@ -80,7 +78,6 @@ fn session_schedule(id: &str, kind: ActionKind, profile: Profile) -> Schedule {
         id: id.into(),
         name: id.into(),
         description: String::new(),
-        folder: "Alpha".into(),
         status: Sched::Pending,
         created_by: schedule::CreatedBy::Fm,
         created_at: 0,
@@ -102,23 +99,23 @@ fn session_schedule(id: &str, kind: ActionKind, profile: Profile) -> Schedule {
 }
 
 impl Fixture {
-    fn workspace(&self) -> Workspace {
-        Registry::at(&self.home).load("demo").unwrap()
+    fn key(&self) -> String {
+        schedule::folder_key(&self.alpha)
     }
 
     /// Adds `s` and stands in for the window's Approve; sm itself never approves (C100).
     fn add_approved(&self, s: Schedule) {
         let id = s.id.clone();
-        schedule::edit(&self.home, &self.workspace(), |all| {
+        schedule::edit(&self.home, &self.alpha, |all| {
             all.push(s);
             Ok(())
         })
         .unwrap();
-        schedule::approve(&self.home, &self.store, &self.workspace(), &id, 1).unwrap();
+        schedule::approve(&self.home, &self.store, &self.alpha, &id, 1).unwrap();
     }
 
     fn records(&self, run: &str) -> Vec<RunEvent> {
-        schedule::read_runs(&self.home, "demo").unwrap().into_iter().filter(|r| r.run == run).map(|r| r.event).collect()
+        schedule::read_runs(&self.home, &self.key()).unwrap().into_iter().filter(|r| r.run == run).map(|r| r.event).collect()
     }
 
     fn auth(&self) -> Arc<Auth> {
@@ -289,7 +286,7 @@ impl SessionHost for TestHost<'_> {
 }
 
 fn run_now(f: &Fixture, id: &str, host: &mut TestHost) -> Report {
-    fire::fire(&Request { home: &f.home, workspace: "demo", id, trigger: Fired::RunNow, fingerprint: None }, host)
+    fire::fire(&Request { home: &f.home, key: &f.key(), id, trigger: Fired::RunNow, fingerprint: None }, host)
 }
 
 fn ended(events: &[RunEvent]) -> Vec<(Outcome, String, Option<schedule::Tokens>)> {
@@ -334,7 +331,7 @@ fn report_done_after(after_ms: i64) -> OnSleep {
     Box::new(move |elapsed, home| {
         if !sent && elapsed >= after_ms {
             sent = true;
-            let live = schedule::live_dir(home, "demo").unwrap();
+            let live = schedule::live_dir(home, &key_of(home)).unwrap();
             let entry = fs::read_dir(&live).unwrap().flatten().find(|e| e.path().extension().is_some_and(|x| x == "json")).unwrap();
             let run = serde_json::from_slice::<schedule::Live>(&fs::read(entry.path()).unwrap()).unwrap().run;
             let out = fm_report(home, &[&run, "done", "fixed 2 bugs, branch pushed"]);
@@ -356,7 +353,7 @@ fn fire_session_only_starts_one_session_with_the_profile_the_prompt_and_a_mint()
     let run = report.run.unwrap();
     let stamp = run.strip_prefix("fix-").unwrap().to_string();
     let spec = host.spec();
-    assert_eq!(spec.name, format!("fm-demo-sched-fix-{stamp}"));
+    assert_eq!(spec.name, format!("fm-{}-sched-fix-{stamp}", f.key()));
     let worktree = schedule::run_worktree(&f.alpha, "fix", &stamp);
     assert_eq!(spec.cwd, worktree);
     assert_eq!(git(&worktree, &["rev-parse", "--abbrev-ref", "HEAD"]), format!("fm-sched/fix/{stamp}"), "a fresh worktree on the run's branch");
@@ -381,7 +378,8 @@ fn fire_session_only_starts_one_session_with_the_profile_the_prompt_and_a_mint()
     let [post] = posts.as_slice() else { panic!("{posts:?}") };
     let body: serde_json::Value = serde_json::from_str(&post.body).unwrap();
     assert_eq!(body["role"], "orchestrator");
-    assert_eq!((&body["launchedBy"], &body["origin"]), (&"supraman/demo/schedule/fix".into(), &"supraman/demo/schedule/fix".into()));
+    let label = serde_json::Value::from(format!("supraman/{}/schedule/fix", f.key()));
+    assert_eq!((&body["launchedBy"], &body["origin"]), (&label, &label));
     assert_eq!((&body["externalRole"], &body["replace"], &body["name"]), (&"schedule".into(), &false.into(), &spec.name.clone().into()));
     assert_eq!(f.api("PATCH").len(), 1, "the claude session is bound");
 
@@ -397,8 +395,8 @@ fn fire_session_only_starts_one_session_with_the_profile_the_prompt_and_a_mint()
     assert_eq!((name.as_str(), id.as_str(), session_id.as_str()), (spec.name.as_str(), "aaaa0001", UUID));
     assert_eq!((wt, workstate_session.as_deref(), without_workstate), (Some(worktree), Some("91"), None));
     assert_eq!(ended(&events).len(), 1);
-    assert!(!schedule::live_dir(&f.home, "demo").unwrap().join("fix.json").exists());
-    let all = fs::read_to_string(schedule::runs_path(&f.home, "demo").unwrap()).unwrap();
+    assert!(!schedule::live_dir(&f.home, &f.key()).unwrap().join("fix.json").exists());
+    let all = fs::read_to_string(schedule::runs_path(&f.home, &f.key()).unwrap()).unwrap();
     assert!(!all.contains(MINTED), "never a token in a run record");
 }
 
@@ -497,7 +495,7 @@ fn fire_session_blocked_is_needs_you_at_once_and_parked_until_max_runtime() {
     let early = seen_early.clone();
     host.on_sleep = Some(Box::new(move |elapsed, home| {
         if elapsed == 60_000 {
-            let records = schedule::read_runs(home, "demo").unwrap().into_iter().map(|r| r.event).collect();
+            let records = schedule::read_runs(home, &key_of(home)).unwrap().into_iter().map(|r| r.event).collect();
             *early.lock().unwrap() = Some(records);
         }
     }));
@@ -587,7 +585,7 @@ fn fire_session_needs_a_repo_for_a_worktree_and_launches_nothing() {
 fn fire_session_of_a_dead_fm_is_stopped_by_the_next_fire_and_keeps_its_token() {
     let f = fixture(true);
     f.add_approved(session_schedule("crash", ActionKind::Session, Profile::Read));
-    let live = schedule::live_dir(&f.home, "demo").unwrap();
+    let live = schedule::live_dir(&f.home, &f.key()).unwrap();
     fs::create_dir_all(&live).unwrap();
     let dead = schedule::Live {
         run: "crash-20261101-090000".into(),
@@ -633,4 +631,9 @@ fn fire_session_of_an_edit_schedule_works_in_the_folders_checkout() {
     assert!(!f.alpha.join(".claude").join("worktrees").exists(), "no run worktree");
     let Stage::Session { worktree, .. } = session_stage(&f.records(&report.run.unwrap())) else { unreachable!() };
     assert_eq!(worktree, None);
+}
+
+/// The folder key of the one folder with schedules in `home`.
+fn key_of(home: &Path) -> String {
+    schedule::load_all(home).0.remove(0).key
 }

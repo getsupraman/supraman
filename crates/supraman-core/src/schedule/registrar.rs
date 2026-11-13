@@ -5,10 +5,11 @@ use std::sync::Mutex;
 use chrono::{DateTime, Local, NaiveDate, TimeZone};
 use sha2::{Digest, Sha256};
 
+use super::store::{Scheduled, folder_key};
 use super::task_xml::{RunLevel, TaskSpec, definition_digest, task_xml, version_of};
 use super::{Schedule, Status, Trigger, next_fire, verify_approval};
 use crate::secret::SecretStore;
-use crate::{CoreError, Result, Workspace};
+use crate::{CoreError, Result};
 
 /// The windowless fire binary; it ships next to `sm.exe` and `supraman.exe`.
 pub const SMW_EXE: &str = "smw.exe";
@@ -35,7 +36,7 @@ fn root_named(name: &str, home: &Path, defaults: &[Option<&Path>]) -> String {
     format!(r"\{name}-{}", &crate::hex::encode(&Sha256::digest(key.as_bytes()))[..8])
 }
 
-/// Task Scheduler as [`sync`] sees it. Folders are `\`-separated paths from the root, such as `\Supraman\demo`.
+/// Task Scheduler as [`sync`] sees it. Folders are `\`-separated paths from the root, such as `\Supraman\gaia-1a2b3c4d`.
 pub trait Registrar {
     /// The SID every task runs as: the current user.
     fn user(&self) -> Result<String>;
@@ -90,10 +91,51 @@ pub struct Synced {
     pub folder_deleted: bool,
 }
 
-/// Makes `<task_root>\<workspace>` hold one task per active, approved schedule and nothing else; touches no other task.
-pub fn sync(registrar: &dyn Registrar, target: &SyncTarget, workspace: &Workspace, schedules: &[Schedule]) -> Result<Synced> {
+/// [`sync`] of each folder's schedules, then [`prune_tasks`] of every task folder none of them has.
+pub fn sync_all(registrar: &dyn Registrar, target: &SyncTarget, all: &[Scheduled]) -> Result<Vec<Synced>> {
+    let synced = all.iter().map(|s| sync(registrar, target, &s.folder, &s.schedules)).collect::<Result<Vec<_>>>()?;
+    let keys: Vec<String> = all.iter().map(|s| s.key.clone()).collect();
+    prune_tasks(registrar, target.home, &keys)?;
+    Ok(synced)
+}
+
+/// Deletes every task in a folder of `<task_root>` that `keys` does not name, and those folders once empty; the
+/// tasks of a removed folder's schedules and of the earlier per-workspace folders. Nothing outside the root.
+pub fn prune_tasks(registrar: &dyn Registrar, home: &Path, keys: &[String]) -> Result<Vec<String>> {
+    let root = task_root(home);
+    let below = format!("{root}\\").to_ascii_lowercase();
+    let outside = |folder: &str| {
+        let f = format!("{}\\", folder.trim_end_matches('\\')).to_ascii_lowercase();
+        !f.starts_with(&below) && !below.starts_with(&f)
+    };
+    let listing = registrar.all_tasks(&outside)?;
+    let mut removed = Vec::new();
+    let mut emptied = BTreeSet::new();
+    for t in &listing.tasks {
+        let Some(name) = t.folder.strip_prefix(&root).and_then(|rest| rest.strip_prefix('\\')) else { continue };
+        if name.contains('\\') || keys.iter().any(|k| k.eq_ignore_ascii_case(name)) {
+            continue;
+        }
+        registrar.delete(&t.folder, &t.name)?;
+        removed.push(format!(r"{}\{}", t.folder, t.name));
+        emptied.insert(t.folder.clone());
+    }
+    for folder in &emptied {
+        registrar.delete_empty_folder(folder)?;
+    }
+    if !emptied.is_empty() {
+        registrar.delete_empty_folder(&root)?;
+    }
+    Ok(removed)
+}
+
+/// Makes `<task_root>\<folder key>` hold one task per active, approved schedule of `folder` and nothing else;
+/// touches no other task.
+pub fn sync(registrar: &dyn Registrar, target: &SyncTarget, folder: &Path, schedules: &[Schedule]) -> Result<Synced> {
     let root = task_root(target.home);
-    let folder = format!(r"{root}\{}", workspace.name);
+    let key = folder_key(folder);
+    let path = folder;
+    let folder = format!(r"{root}\{key}");
     let existing: BTreeMap<String, String> = registrar.tasks(&folder)?.into_iter().collect();
     let user = registrar.user()?;
     let now = Local.timestamp_millis_opt(target.now_ms).single().ok_or_else(|| CoreError::Tasks(format!("no local time for {}", target.now_ms)))?;
@@ -107,13 +149,15 @@ pub fn sync(registrar: &dyn Registrar, target: &SyncTarget, workspace: &Workspac
     };
     let mut wanted = BTreeSet::new();
     for s in schedules.iter().filter(|s| s.status == Status::Active) {
-        let Ok(covered) = verify_approval(target.store, workspace, s) else { continue };
+        let Ok(covered) = verify_approval(target.store, path, s) else { continue };
         let spec = TaskSpec {
             user: &user,
             level: target.level,
             smw: target.smw,
             home: target.home,
-            workspace: &workspace.name,
+            folder: path,
+            key: &key,
+
             schedule: s,
             fingerprint: &covered.fingerprint,
             start: start_date(&s.trigger, &now),

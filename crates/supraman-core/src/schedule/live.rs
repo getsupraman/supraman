@@ -12,7 +12,7 @@ pub const STDERR_TAIL: usize = 2048;
 /// What a secret's value reads as in a recorded stderr tail.
 pub const MASK: &str = "***";
 
-/// The run in flight of one schedule at `schedules/live/<ws>/<id>.json`; never a token.
+/// The run in flight of one schedule at `schedules/live/<key>/<id>.json`; never a token.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Live {
     pub run: String,
@@ -39,7 +39,7 @@ pub struct LiveSession {
     pub origin: Option<String>,
 }
 
-/// What `sm schedule report` hands the run's owner at `schedules/live/<ws>/<id>.report`.
+/// What `sm schedule report` hands the run's owner at `schedules/live/<key>/<id>.report`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Reported {
     pub run: String,
@@ -48,17 +48,17 @@ pub struct Reported {
     pub why: String,
 }
 
-/// `schedules/live/<ws>/`: each schedule's live file, overlap lock, `.queued` and `.restart`.
-pub fn live_dir(home: &Path, workspace: &str) -> Result<PathBuf> {
-    validate_name(workspace)?;
-    Ok(schedules_dir(home).join("live").join(workspace))
+/// `schedules/live/<key>/`: each schedule's live file, overlap lock, `.queued` and `.restart`.
+pub fn live_dir(home: &Path, key: &str) -> Result<PathBuf> {
+    validate_name(key)?;
+    Ok(schedules_dir(home).join("live").join(key))
 }
 
-/// `schedules/state/<ws>/<id>/`, the script's own dir, kept between runs.
-pub fn state_dir(home: &Path, workspace: &str, id: &str) -> Result<PathBuf> {
-    validate_name(workspace)?;
+/// `schedules/state/<key>/<id>/`, the script's own dir, kept between runs.
+pub fn state_dir(home: &Path, key: &str, id: &str) -> Result<PathBuf> {
+    validate_name(key)?;
     validate_name(id)?;
-    Ok(schedules_dir(home).join("state").join(workspace).join(id))
+    Ok(schedules_dir(home).join("state").join(key).join(id))
 }
 
 /// `schedules/fire.log`: fire's diagnostics, appended with `append_capped` at [`FIRE_LOG_CAP`].
@@ -66,9 +66,9 @@ pub fn fire_log(home: &Path) -> PathBuf {
     schedules_dir(home).join("fire.log")
 }
 
-/// The `SecretStore` key of a schedule's secret `name`.
-pub fn secret_key(workspace: &str, id: &str, name: &str) -> String {
-    format!("supraman/schedule/{workspace}/{id}/{name}")
+/// The `SecretStore` key of secret `name` of schedule `id` in the folder of [`super::folder_key`] `key`.
+pub fn secret_key(key: &str, id: &str, name: &str) -> String {
+    format!("supraman/schedule/{key}/{id}/{name}")
 }
 
 /// `text` with each non-empty secret replaced by [`MASK`], then its last `max` bytes (cut on a char boundary).

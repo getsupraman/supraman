@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 
 use supraman_core::schedule::{self, Status};
-use supraman_core::{Registry, secret};
+use supraman_core::secret;
 
 struct Fixture {
     _tmp: tempfile::TempDir,
@@ -14,7 +14,7 @@ struct Fixture {
     outside: PathBuf,
 }
 
-/// Workspace `demo` with plain folders Alpha (with `/fix`) and Beta, in a temp home.
+/// Listed plain folders Alpha (with `/fix`) and Beta, in a temp home.
 fn fixture() -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
@@ -28,9 +28,9 @@ fn fixture() -> Fixture {
     fs::write(alpha.join("scripts").join("gate.ps1"), "exit 10\n").unwrap();
     fs::write(alpha.join("scripts").join("gate.py"), "print(1)\n").unwrap();
     let f = Fixture { _tmp: tmp, home, claude, alpha, beta, outside };
-    let plain = |name: &str, path: &Path| supraman_core::Folder { kind: supraman_core::FolderKind::Plain, ..supraman_core::Folder::new(name, path) };
-    let demo = supraman_core::Workspace { home: None, ..supraman_core::Workspace::new("demo", &f.alpha, vec![plain("Alpha", &f.alpha), plain("Beta", &f.beta)]) };
-    supraman_core::Registry::at(&f.home).save(&demo, false).unwrap();
+    for (i, folder) in [&f.alpha, &f.beta].into_iter().enumerate() {
+        supraman_core::folders::edit(&f.home, |e| e.add_folder(folder, &supraman_core::folders::Place::Top(i))).unwrap();
+    }
     f
 }
 
@@ -39,8 +39,9 @@ fn s(p: &Path) -> &str {
 }
 
 impl Fixture {
+    /// `sm` in folder Alpha, the folder a schedule command takes by default.
     fn sm(&self, args: &[&str]) -> Output {
-        self.fm_in(&self.outside, args)
+        self.fm_in(&self.alpha, args)
     }
 
     fn fm_in(&self, cwd: &Path, args: &[&str]) -> Output {
@@ -67,23 +68,19 @@ impl Fixture {
         String::from_utf8_lossy(&out.stderr).into_owned()
     }
 
-    fn workspace(&self) -> supraman_core::Workspace {
-        Registry::at(self.home.clone()).load("demo").unwrap()
-    }
-
     fn stored(&self, id: &str) -> schedule::Schedule {
-        schedule::load(&self.home, "demo").unwrap().into_iter().find(|s| s.id == id).unwrap()
+        schedule::load(&self.home, &self.alpha).unwrap().into_iter().find(|s| s.id == id).unwrap()
     }
 
     /// René's Approve, which only the window makes; here it stands in for it to test what sm does after.
     fn approve(&self, id: &str) {
         let store = secret::default_store(&self.home);
-        schedule::approve(&self.home, &*store, &self.workspace(), id, 1).unwrap();
+        schedule::approve(&self.home, &*store, &self.alpha, id, 1).unwrap();
         assert_eq!(self.stored(id).status, Status::Active);
     }
 }
 
-const ADD: [&str; 9] = ["schedule", "add", "demo", "--name", "Fix bugs", "--folder", "Alpha", "--every", "weekly mon,fri 09:00"];
+const ADD: [&str; 6] = ["schedule", "add", "--name", "Fix bugs", "--every", "weekly mon,fri 09:00"];
 
 fn add_fix(f: &Fixture, extra: &[&str]) -> String {
     let mut args: Vec<&str> = ADD.to_vec();
@@ -97,25 +94,24 @@ fn add_saves_a_pending_schedule_through_the_store() {
     let f = fixture();
     let text = add_fix(&f, &["--profile", "worktree-edit", "--allow-tools", "Bash(dotnet test:*)", "--secret", "SENTRY_TOKEN", "--max-tokens", "500000", "--overlap", "queue", "--wake"]);
     assert!(text.contains("profile: edit\n") && !text.contains("worktree:"), "the earlier name reads as edit: {text}");
-    assert!(text.contains("added schedule fix-bugs to workspace demo"), "{text}");
+    assert!(text.contains(&format!("added schedule fix-bugs to {}\n", f.alpha.display())), "{text}");
     assert!(text.contains("status: pending\n"), "{text}");
     assert!(text.contains("pending: it runs only after Approve in the Supraman window"), "{text}");
 
     let saved = f.stored("fix-bugs");
     assert_eq!(saved.status, Status::Pending);
     assert!(saved.approval.is_none());
-    assert_eq!(saved.folder, "Alpha");
     assert_eq!(saved.action.prompt, Some(schedule::Prompt::Command("/fix".into())));
     assert_eq!((saved.permissions.profile, saved.action.worktree), (schedule::Profile::Edit, false), "a new schedule runs in the checkout");
     assert_eq!(saved.permissions.secrets, ["SENTRY_TOKEN"]);
     assert_eq!(saved.caps.max_tokens, 500_000);
     assert!(saved.policy.wake);
-    let toml = fs::read_to_string(schedule::file_path(&f.home, "demo").unwrap()).unwrap();
+    let toml = fs::read_to_string(schedule::file_path(&f.home, &schedule::folder_key(&f.alpha)).unwrap()).unwrap();
     assert!(toml.contains("secrets = [\"SENTRY_TOKEN\"]") && !toml.contains("[schedule.approval]"), "{toml}");
 
-    let list = f.ok(&["schedule", "list", "demo"]);
-    assert!(list.starts_with("fix-bugs\tpending\tfolder=Alpha\tevery=weekly mon,fri 09:00\tnext="), "{list}");
-    assert!(f.ok(&["schedule", "show", "demo", "fix-bugs"]).contains("profile: edit\n"));
+    let list = f.ok(&["schedule", "list"]);
+    assert!(list.starts_with("fix-bugs\tpending\tevery=weekly mon,fri 09:00\tnext="), "{list}");
+    assert!(f.ok(&["schedule", "show", "fix-bugs"]).contains("profile: edit\n"));
     assert!(toml.contains("profile = \"edit\"") && toml.contains("worktree = false"), "{toml}");
 
     let taken = f.refused(&ADD.iter().copied().chain(["--command", "/fix"]).collect::<Vec<_>>());
@@ -126,31 +122,31 @@ fn add_saves_a_pending_schedule_through_the_store() {
 fn prompt_file_and_script_are_kept_relative_to_the_folder() {
     let f = fixture();
     let prompt = f.alpha.join("prompt.md");
-    f.ok(&["schedule", "add", "demo", "--name", "Triage", "--folder", "Alpha", "--every", "daily 07:30", "--prompt-file", s(&prompt), "--script", "scripts/gate.ps1", "--script-arg", "-Quick"]);
+    f.ok(&["schedule", "add", "--name", "Triage", "--every", "daily 07:30", "--prompt-file", s(&prompt), "--script", "scripts/gate.ps1", "--script-arg", "-Quick"]);
     let saved = f.stored("triage");
     assert_eq!(saved.action.prompt, Some(schedule::Prompt::File("prompt.md".into())));
     assert_eq!(saved.action.kind, schedule::ActionKind::ScriptThenSession);
     assert_eq!(saved.action.script_args, ["-Quick"]);
 
-    f.ok(&["schedule", "add", "demo", "--name", "Gate only", "--folder", "Alpha", "--every", "interval 2h from 08:00", "--script", "scripts/gate.ps1"]);
+    f.ok(&["schedule", "add", "--name", "Gate only", "--every", "interval 2h from 08:00", "--script", "scripts/gate.ps1"]);
     assert_eq!(f.stored("gate-only").action.kind, schedule::ActionKind::Script);
-    let dry = f.ok(&["schedule", "dry-run", "demo", "gate-only"]);
+    let dry = f.ok(&["schedule", "dry-run", "gate-only"]);
     assert!(dry.contains("session: none (a script action)"), "{dry}");
 
-    let missing = f.refused(&["schedule", "add", "demo", "--name", "Nope", "--folder", "Beta", "--every", "daily 07:30", "--prompt-file", "nope.md"]);
+    let missing = f.refused(&["schedule", "add", "--name", "Nope", "--folder", s(&f.beta), "--every", "daily 07:30", "--prompt-file", "nope.md"]);
     assert!(missing.contains("no prompt file nope.md in folder") && missing.contains("Beta"), "{missing}");
 }
 
 #[test]
 fn a_missing_slash_command_names_the_folder() {
     let f = fixture();
-    let err = f.refused(&["schedule", "add", "demo", "--name", "X", "--folder", "Beta", "--every", "daily 09:00", "--command", "/fix"]);
+    let err = f.refused(&["schedule", "add", "--name", "X", "--folder", s(&f.beta), "--every", "daily 09:00", "--command", "/fix"]);
     assert!(err.contains("no slash command /fix in folder") && err.contains(s(&f.beta)) && err.contains(".claude/commands/fix.md"), "{err}");
-    assert!(schedule::load(&f.home, "demo").unwrap().is_empty(), "nothing is written");
+    assert!(schedule::load(&f.home, &f.alpha).unwrap().is_empty(), "nothing is written");
 
     add_fix(&f, &[]);
     fs::remove_file(f.alpha.join(".claude").join("commands").join("fix.md")).unwrap();
-    let err = f.refused(&["schedule", "dry-run", "demo", "fix-bugs"]);
+    let err = f.refused(&["schedule", "dry-run", "fix-bugs"]);
     assert!(err.contains("no slash command /fix in folder") && err.contains(s(&f.alpha)), "{err}");
 }
 
@@ -163,7 +159,7 @@ fn a_command_git_bash_rewrote_into_its_install_folder_is_refused_with_the_fix() 
     let run = |args: &[&str]| {
         supraman_core::process::command(env!("CARGO_BIN_EXE_sm"))
             .args(args)
-            .current_dir(&f.outside)
+            .current_dir(&f.alpha)
             .env("SUPRAMAN_HOME", &f.home)
             .env("CLAUDE_CONFIG_DIR", &f.claude)
             .env("EXEPATH", &git_root)
@@ -174,13 +170,13 @@ fn a_command_git_bash_rewrote_into_its_install_folder_is_refused_with_the_fix() 
             .unwrap()
     };
     let want = format!("error: Git Bash rewrote /fix into {rewritten}; write //fix (or set MSYS_NO_PATHCONV=1)");
-    let out = run(&["schedule", "add", "demo", "--name", "Fix bugs", "--every", "daily 09:00", "--command", &rewritten]);
+    let out = run(&["schedule", "add", "--name", "Fix bugs", "--every", "daily 09:00", "--command", &rewritten]);
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     assert!(String::from_utf8_lossy(&out.stderr).contains(&want), "{out:?}");
-    assert!(schedule::load(&f.home, "demo").unwrap().is_empty(), "nothing is written");
+    assert!(schedule::load(&f.home, &f.alpha).unwrap().is_empty(), "nothing is written");
 
     add_fix(&f, &[]);
-    let out = run(&["schedule", "edit", "demo", "fix-bugs", "--command", &rewritten]);
+    let out = run(&["schedule", "edit", "fix-bugs", "--command", &rewritten]);
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     assert!(String::from_utf8_lossy(&out.stderr).contains(&want), "{out:?}");
     assert_eq!(f.stored("fix-bugs").action.prompt, Some(schedule::Prompt::Command("/fix".into())));
@@ -204,65 +200,66 @@ fn refuses_bypass_permissions_unknown_scripts_and_flag_shaped_rules() {
     assert!(err.contains("use --max-tokens"), "{err}");
     let err = f.refused(&with(&["--every", "interval 5m"]));
     assert!(err.contains("an interval is at least 15m"), "{err}");
-    assert!(schedule::load(&f.home, "demo").unwrap().is_empty(), "nothing is written");
+    assert!(schedule::load(&f.home, &f.alpha).unwrap().is_empty(), "nothing is written");
 }
 
 #[test]
-fn the_workspace_and_folder_come_from_the_cwd() {
+fn the_folder_is_the_deepest_listed_one_holding_the_cwd_or_folder_given() {
     let f = fixture();
     let out = f.fm_in(&f.alpha.join("sub"), &["schedule", "add", "--name", "Here", "--every", "daily 09:00", "--command", "/fix"]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    assert_eq!(f.stored("here").folder, "Alpha");
-    let out = f.fm_in(&f.alpha, &["schedule", "show", "here"]);
-    assert!(String::from_utf8_lossy(&out.stdout).contains("workspace: demo\n"), "{out:?}");
+    assert_eq!(f.stored("here").name, "Here");
+    let out = f.fm_in(&f.outside, &["schedule", "show", "here", "--folder", s(&f.alpha.join("sub"))]);
+    assert!(String::from_utf8_lossy(&out.stdout).contains(&format!("folder: {}\n", f.alpha.display())), "{out:?}");
+    assert!(f.ok(&["schedule", "list", "--folder", s(&f.beta)]).contains("no schedules in"), "Beta has its own");
 
-    let out = f.sm(&["schedule", "list"]);
+    let out = f.fm_in(&f.outside, &["schedule", "list"]);
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("no workspace contains") && err.contains(s(&f.outside)), "{err}");
+    assert!(err.contains("no listed folder holds") && err.contains(s(&f.outside)) && err.contains("--folder"), "{err}");
 }
 
 #[test]
 fn covered_edits_pause_and_resume_never_make_a_schedule_active_without_approval() {
     let f = fixture();
     add_fix(&f, &[]);
-    let resumed = f.ok(&["schedule", "resume", "demo", "fix-bugs"]);
-    assert!(resumed.contains("fix-bugs in workspace demo: pending"), "{resumed}");
+    let resumed = f.ok(&["schedule", "resume", "fix-bugs"]);
+    assert!(resumed.contains(&format!("fix-bugs in {}: pending", f.alpha.display())), "{resumed}");
     assert_eq!(f.stored("fix-bugs").status, Status::Pending);
 
     f.approve("fix-bugs");
     let approval = f.stored("fix-bugs").approval;
-    let text = f.ok(&["schedule", "edit", "demo", "fix-bugs", "--name", "Fix all bugs", "--description", "weekly"]);
+    let text = f.ok(&["schedule", "edit", "fix-bugs", "--name", "Fix all bugs", "--description", "weekly"]);
     assert!(text.contains("status: active\n"), "an uncovered edit keeps the approval: {text}");
 
-    let text = f.ok(&["schedule", "edit", "demo", "fix-bugs", "--every", "daily 10:00"]);
+    let text = f.ok(&["schedule", "edit", "fix-bugs", "--every", "daily 10:00"]);
     assert!(text.contains("status: pending (changed since approval)"), "{text}");
     let saved = f.stored("fix-bugs");
     assert_eq!((saved.status, saved.approval), (Status::Pending, approval), "the edit leaves the approval for Approve to diff");
-    assert!(f.ok(&["schedule", "resume", "demo", "fix-bugs"]).contains(": pending"));
+    assert!(f.ok(&["schedule", "resume", "fix-bugs"]).contains(": pending"));
     assert_eq!(f.stored("fix-bugs").status, Status::Pending);
 
     f.approve("fix-bugs");
-    assert!(f.ok(&["schedule", "pause", "demo", "fix-bugs"]).contains(": paused"));
-    assert!(f.ok(&["schedule", "resume", "demo", "fix-bugs"]).contains(": active"), "an approved schedule resumes");
+    assert!(f.ok(&["schedule", "pause", "fix-bugs"]).contains(": paused"));
+    assert!(f.ok(&["schedule", "resume", "fix-bugs"]).contains(": active"), "an approved schedule resumes");
 
-    let text = f.ok(&["schedule", "remove", "demo", "fix-bugs"]);
+    let text = f.ok(&["schedule", "remove", "fix-bugs"]);
     assert!(text.contains("removed schedule fix-bugs"), "{text}");
-    assert!(f.ok(&["schedule", "list", "demo"]).contains("no schedules in workspace demo"));
-    assert!(f.refused(&["schedule", "show", "demo", "fix-bugs"]).contains("has no schedule 'fix-bugs'"));
+    assert!(f.ok(&["schedule", "list"]).contains(&format!("no schedules in {}", f.alpha.display())));
+    assert!(f.refused(&["schedule", "show", "fix-bugs"]).contains("has no schedule 'fix-bugs'"));
 }
 
 #[test]
 fn dry_run_prints_the_prompt_the_argv_the_permissions_and_three_fires() {
     let f = fixture();
     add_fix(&f, &["--profile", "edit", "--allow-tools", "Bash(dotnet test:*)", "--deny-tools", "WebFetch", "--secret", "SENTRY_TOKEN", "--model", "opus"]);
-    let text = f.ok(&["schedule", "dry-run", "demo", "fix-bugs"]);
+    let text = f.ok(&["schedule", "dry-run", "fix-bugs"]);
     assert!(text.contains("nothing launched, nothing written"), "{text}");
     assert!(text.contains("This is an unattended scheduled run `fix-bugs-") && text.contains(" schedule report fix-bugs-"), "{text}");
     assert!(text.contains("` with the Bash tool, exactly as written"), "a PowerShell `sm` parks the run: {text}");
     assert!(text.contains("\n  /fix\n"), "the base prompt follows the preamble: {text}");
     let argv = text.split("argv:\n").nth(1).unwrap();
-    for arg in ["  claude\n", "  --bg\n", "  --name\n  fm-demo-sched-fix-bugs-", "  --permission-mode\n  acceptEdits\n", "  --strict-mcp-config\n", "  --allowedTools\n", "  Bash(sm:*)\n", "  Edit\n", "  \"Bash(dotnet test:*)\"\n", "  --disallowedTools\n", "  \"Bash(git push --force:*)\"\n", "  Bash(schtasks:*)\n", "  WebFetch\n", "  --model\n  opus\n", "  --\n"] {
+    for arg in ["  claude\n", "  --bg\n", &*format!("  --name\n  fm-{}-sched-fix-bugs-", schedule::folder_key(&f.alpha)), "  --permission-mode\n  acceptEdits\n", "  --strict-mcp-config\n", "  --allowedTools\n", "  Bash(sm:*)\n", "  Edit\n", "  \"Bash(dotnet test:*)\"\n", "  --disallowedTools\n", "  \"Bash(git push --force:*)\"\n", "  Bash(schtasks:*)\n", "  WebFetch\n", "  --model\n  opus\n", "  --\n"] {
         assert!(argv.contains(arg), "argv lacks {arg:?}: {text}");
     }
     assert!(text.contains(&format!("\ncwd: {}\n", f.alpha.display())), "the folder's checkout: {text}");
@@ -283,7 +280,7 @@ fn dry_run_prints_the_prompt_the_argv_the_permissions_and_three_fires() {
 
     let read = fixture();
     add_fix(&read, &[]);
-    let text = read.ok(&["schedule", "dry-run", "demo", "fix-bugs"]);
+    let text = read.ok(&["schedule", "dry-run", "fix-bugs"]);
     assert!(text.contains(&format!("cwd: {}\n", read.alpha.display())), "read runs in the main checkout: {text}");
     assert!(text.contains("  --permission-mode\n  default\n") && text.contains("allow: Bash(sm:*)") && !text.contains("  Edit\n"), "{text}");
 }
@@ -293,7 +290,7 @@ fn show_lists_the_schedules_last_runs_newest_first() {
     use schedule::{Fired, Outcome, RunEvent, RunRecord};
     let f = fixture();
     add_fix(&f, &[]);
-    assert!(f.ok(&["schedule", "show", "demo", "fix-bugs"]).ends_with("last runs: none\n"));
+    assert!(f.ok(&["schedule", "show", "fix-bugs"]).ends_with("last runs: none\n"));
     let record = |run: &str, schedule: &str, ts: i64, event: RunEvent| RunRecord { ts, run: run.into(), schedule: schedule.into(), event };
     let started = |ts, run: &str, schedule: &str| record(run, schedule, ts, RunEvent::Started { trigger: Fired::Task, fingerprint: "f".into(), fm_pid: 1 });
     let ended = |ts, run: &str, outcome, why: &str| record(run, "fix-bugs", ts, RunEvent::Ended { outcome, why: why.into(), tokens: None, ms: 1 });
@@ -305,9 +302,9 @@ fn show_lists_the_schedules_last_runs_newest_first() {
         ended(5_000, "fix-bugs-2", Outcome::CappedTokens, "3000001 tokens"),
         started(6_000, "fix-bugs-3", "fix-bugs"),
     ] {
-        schedule::append_run(&f.home, "demo", &r).unwrap();
+        schedule::append_run(&f.home, &schedule::folder_key(&f.alpha), &r).unwrap();
     }
-    let text = f.ok(&["schedule", "show", "demo", "fix-bugs"]);
+    let text = f.ok(&["schedule", "show", "fix-bugs"]);
     let runs: Vec<&str> = text.split("last runs (newest first):\n").nth(1).expect(&text).lines().collect();
     assert_eq!(runs.len(), 3, "{text}");
     assert!(runs[0].starts_with("  fix-bugs-3  ") && runs[0].ends_with("  task  running"), "{runs:?}");
@@ -345,13 +342,13 @@ fn fm_never_approves_and_never_registers_a_task() {
 fn dry_run_hints_the_allow_rule_of_each_tool_the_command_file_calls() {
     let f = fixture();
     fs::write(f.alpha.join(".claude").join("commands").join("ops.md"), "Run `docker compose up -d`, then `dotnet run` and report.\n").unwrap();
-    f.ok(&["schedule", "add", "demo", "--name", "Ops", "--folder", "Alpha", "--every", "daily 07:00", "--command", "/ops", "--profile", "edit"]);
-    let text = f.ok(&["schedule", "dry-run", "demo", "ops"]);
+    f.ok(&["schedule", "add", "--name", "Ops", "--every", "daily 07:00", "--command", "/ops", "--profile", "edit"]);
+    let text = f.ok(&["schedule", "dry-run", "ops"]);
     let hints: Vec<&str> = text.lines().filter(|l| l.starts_with("hint:")).collect();
     assert_eq!(hints, ["hint: the run calls dotnet; add --allow-tools \"Bash(dotnet:*)\"", "hint: the run calls docker; add --allow-tools \"Bash(docker:*)\""], "{text}");
 
-    f.ok(&["schedule", "edit", "demo", "ops", "--allow-tools", "Bash(docker:*)", "--allow-tools", "Bash(dotnet:*)"]);
-    let text = f.ok(&["schedule", "dry-run", "demo", "ops"]);
+    f.ok(&["schedule", "edit", "ops", "--allow-tools", "Bash(docker:*)", "--allow-tools", "Bash(dotnet:*)"]);
+    let text = f.ok(&["schedule", "dry-run", "ops"]);
     assert!(!text.contains("hint:"), "both are allowed now: {text}");
 }
 
@@ -360,19 +357,19 @@ fn dry_run_hints_the_allow_rule_of_each_tool_the_command_file_calls() {
 fn an_earlier_worktree_schedule_keeps_its_worktree_until_a_covered_edit() {
     let f = fixture();
     add_fix(&f, &["--profile", "edit"]);
-    let path = schedule::file_path(&f.home, "demo").unwrap();
+    let path = schedule::file_path(&f.home, &schedule::folder_key(&f.alpha)).unwrap();
     let toml = fs::read_to_string(&path).unwrap().replace("worktree = false", "worktree = true").replace("profile = \"edit\"", "profile = \"worktree-edit\"");
     fs::write(&path, toml).unwrap();
     f.approve("fix-bugs");
-    let text = f.ok(&["schedule", "dry-run", "demo", "fix-bugs"]);
+    let text = f.ok(&["schedule", "dry-run", "fix-bugs"]);
     assert!(text.contains(&format!("cwd: {}", f.alpha.join(".claude").join("worktrees").join("fm-sched-fix-bugs-").display())), "{text}");
     assert!(text.contains("Bash(git push -u origin fm-sched/fix-bugs/"), "the run worktree's branch, as before: {text}");
-    assert!(f.ok(&["schedule", "show", "demo", "fix-bugs"]).contains("worktree: yes (saved by an earlier release"));
+    assert!(f.ok(&["schedule", "show", "fix-bugs"]).contains("worktree: yes (saved by an earlier release"));
 
-    f.ok(&["schedule", "edit", "demo", "fix-bugs", "--name", "Fix all bugs"]);
+    f.ok(&["schedule", "edit", "fix-bugs", "--name", "Fix all bugs"]);
     assert_eq!((f.stored("fix-bugs").status, f.stored("fix-bugs").action.worktree), (Status::Active, true), "a name is not covered");
-    f.ok(&["schedule", "edit", "demo", "fix-bugs", "--max-runtime", "2h"]);
+    f.ok(&["schedule", "edit", "fix-bugs", "--max-runtime", "2h"]);
     let saved = f.stored("fix-bugs");
     assert_eq!((saved.status, saved.action.worktree), (Status::Pending, false));
-    assert!(f.ok(&["schedule", "dry-run", "demo", "fix-bugs"]).contains(&format!("\ncwd: {}\n", f.alpha.display())));
+    assert!(f.ok(&["schedule", "dry-run", "fix-bugs"]).contains(&format!("\ncwd: {}\n", f.alpha.display())));
 }

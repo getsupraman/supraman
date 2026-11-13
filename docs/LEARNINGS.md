@@ -6068,3 +6068,37 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **Selftests:** step 7b is Add Folder (the + with the picker's seam), a top-level folder's row, menu, Details and
   Open folder; the workspace dialog's steps (name editing by posted keys, the cut home path's tooltip, Edit folders…
   at the minimum width, Rescan, Custom workspace…) went with the dialog.
+
+## 2026-11-13 — a schedule belongs to a folder by its path (folders/schedules, fsched)
+- **One key per folder:** `schedule::folder_key` is the folder's name's slug (cut at 20) and 8 hex of the sha256 of
+  its `path_key`, e.g. `gaia-1a2b3c4d`: readable in a task folder and a session name, distinct for two folders of
+  one name, the same however the path is spelt. Everything a workspace keyed is keyed by it: `schedules/<key>.toml`
+  (which holds the folder's path, so `smw schedule fire --home <home> <key> <id>` finds the folder without
+  folders.toml), `runs/<key>.jsonl`, `live/<key>/`, `state/<key>/<id>/`, secrets `supraman/schedule/<key>/<id>/<NAME>`,
+  the task folder `\Supraman[-hex8]\<key>` and the run's session `fm-<key>-sched-<id>-<stamp>`.
+- **`Schedule.folder` went** in favour of the file's `folder`: a per-schedule folder could disagree with the file it
+  sits in. The covered JSON is `v: 2` with the folder's normalised path and the MAC binds its `path_key`, so an
+  approval made for one folder never verifies in another.
+- **The session-name parser** (`schedule_of_session(name) -> (key, id)`) looks for `-sched-` after a key of
+  `folder_key`'s shape, so a folder or an id holding `sched` still parses; `is_foreign` and Details' `started_by`
+  take this home's keys (every listed folder's and every schedule file's). The shots fixture's `fm-demo-…`
+  sessions, own only through the old bridge, are named `demo-…` now.
+- **Migration, once** (`schedule::migrate`, from the app's poll and from every `sm schedule`/`fire`, under
+  `schedules/migrate.lock`): an earlier `schedules/<ws>.toml` (no `folder` key) is read as TOML tables, each
+  schedule put in the file of its workspace's folder of that name (`folders::migrate::workspace_folders`, the one
+  reader left of `workspaces/*.toml`), pending, its approval kept for Approve's diff; its run records appended to the
+  new key's, live files, state dir and secrets moved (values never printed). A schedule whose folder is gone goes to
+  `schedules/unplaced/<ws>.toml` and `load_all` names it in every poll's notices. A re-run after a crash finds the
+  same id with the same `created_at` and takes it as moved.
+- **Tasks:** `RESYNC` in the schedules dir asks the app for `sync_all`, which also prunes the task folders under
+  Supraman's root no key names (the earlier workspaces' and a removed folder's). Every Approve, Pause, Remove and
+  edit now runs `sync_all`, so a sync failure is one error for all and a success clears them all.
+- **sm:** `--folder <dir>` on every verb, taken out of the args wherever it stands; without it the cwd. Either goes
+  through `assign::holding`, so `--folder` names any folder inside a listed one; an unlisted one is refused with
+  `sm folder add`. The positional `<workspace>` is gone, as is the script's `SUPRAMAN_WORKSPACE`.
+- **Sidebar:** `LeftRow::Schedules(entry, folder)` follows a folder's row, once per path; runs sit on
+  `FolderNode::scheduled`. Other schedules are attributed with `supraman_claude::holding` (no `main_of` walk: it
+  runs at render).
+- **Compat to remove in 0.1.19** with `end_controllers` (backlog/end-controllers-removal): `folders::migrate`
+  (folders.toml's first entries and `workspace_folders`), `schedule::migrate` with `RESYNC` and `schedules/unplaced/`,
+  and the `"workspace"` label of Approve's diff.

@@ -68,14 +68,14 @@ impl SessionEnd {
     }
 }
 
-/// `schedules/live/<ws>/<id>.report`, where `sm schedule report` leaves the run's outcome.
+/// `schedules/live/<key>/<id>.report`, where `sm schedule report` leaves the run's outcome.
 pub fn report_path(live_dir: &Path, id: &str) -> PathBuf {
     live_dir.join(format!("{id}.report"))
 }
 
 /// Steps 8 to 10 for the run in `ctx`; `gate` is the script's stdout when it exited 10.
 pub fn session_stage(ctx: &RunCtx, gate: Option<&str>, host: &mut dyn SessionHost, log: &mut dyn RunLog) -> SessionEnd {
-    let (w, s) = (ctx.workspace, ctx.schedule);
+    let s = ctx.schedule;
     let (spec, report, worktree) = match prepare(ctx, gate, host) {
         Ok(prepared) => prepared,
         Err(why) => return SessionEnd::failed(why),
@@ -109,13 +109,13 @@ pub fn session_stage(ctx: &RunCtx, gate: Option<&str>, host: &mut dyn SessionHos
         && supraman_core::url::origin(&t.url) == supraman_core::url::origin(&m.url)
         && let Err(e) = host.minter().bind(&supraman_core::url::origin(&t.url), &t.token, &m.session_id, &row.session_id)
     {
-        crate::fire::log(ctx.home, &format!("{}/{} {}: cannot tell Workman the claude session: {e}", w.name, s.id, ctx.run));
+        crate::fire::log(ctx.home, &format!("{}/{} {}: cannot tell Workman the claude session: {e}", ctx.key, s.id, ctx.run));
     }
 
     let mut end = watch(ctx, &spec, &row, &report, host, log);
 
     if let Err(e) = host.claude().stop(&row.id) {
-        crate::fire::log(ctx.home, &format!("{}/{} {}: claude stop {}: {e}", w.name, s.id, ctx.run, row.id));
+        crate::fire::log(ctx.home, &format!("{}/{} {}: claude stop {}: {e}", ctx.key, s.id, ctx.run, row.id));
     }
     let _ = fs::remove_file(&report);
     if end.outcome == Outcome::Done && end.why.is_empty() {
@@ -126,24 +126,21 @@ pub fn session_stage(ctx: &RunCtx, gate: Option<&str>, host: &mut dyn SessionHos
 
 /// The run's spec with the gate's capped stdout, its report path cleared, and its worktree when the profile asks for one.
 fn prepare(ctx: &RunCtx, gate: Option<&str>, host: &mut dyn SessionHost) -> Result<(LaunchSpec, PathBuf, Option<PathBuf>), String> {
-    let (w, s) = (ctx.workspace, ctx.schedule);
-    let Some(folder) = w.folder(&s.folder) else {
-        return Err(format!("workspace {} has no folder {}", w.name, s.folder));
-    };
-    let live_dir = schedule::live_dir(ctx.home, &w.name).map_err(|e| e.to_string())?;
+    let (folder, s) = (ctx.folder, ctx.schedule);
+    let live_dir = schedule::live_dir(ctx.home, ctx.key).map_err(|e| e.to_string())?;
     let report = report_path(&live_dir, &s.id);
     let _ = fs::remove_file(&report);
 
-    git_accepts(&folder.path, s.action.worktree)?;
+    git_accepts(folder, s.action.worktree)?;
     let worktree = if s.action.worktree {
-        let path = schedule::run_worktree(&folder.path, &s.id, ctx.stamp);
-        add_worktree(&folder.path, &path, &schedule::run_branch(&s.id, ctx.stamp))?;
+        let path = schedule::run_worktree(folder, &s.id, ctx.stamp);
+        add_worktree(folder, &path, &schedule::run_branch(&s.id, ctx.stamp))?;
         Some(path)
     } else {
         None
     };
 
-    let mut spec = crate::schedule::run_spec(ctx.home, w, s, ctx.stamp, host.plugin_dir().as_deref()).map_err(crate::failure_text)?;
+    let mut spec = crate::schedule::run_spec(ctx.home, ctx.folder, s, ctx.stamp, host.plugin_dir().as_deref()).map_err(crate::failure_text)?;
     if let Some(stdout) = gate {
         spec.prompt.push_str(&format!("\n\n<gate-output>\n{}\n</gate-output>", capped(stdout)));
     }
@@ -191,7 +188,7 @@ fn launch_with_token(ctx: &RunCtx, mut spec: LaunchSpec, host: &mut dyn SessionH
         && !row.session_id.is_empty()
         && let Err(e) = m.bind(ctx.home, &spec.name, &row.session_id)
     {
-        crate::fire::log(ctx.home, &format!("{}/{} {}: {e}", ctx.workspace.name, ctx.schedule.id, ctx.run));
+        crate::fire::log(ctx.home, &format!("{}/{} {}: {e}", ctx.key, ctx.schedule.id, ctx.run));
     }
     Ok(Launched { spec, row, mint, without_workstate })
 }
@@ -264,7 +261,7 @@ fn mint(ctx: &RunCtx, spec: &LaunchSpec, host: &mut dyn SessionHost) -> Result<O
     let Some(t) = host.tokens().token(crate::schedule::RUN_ROLE).map_err(|e| format!("cannot mint a Workman token for {}: {e}", spec.name))? else {
         return Ok(None);
     };
-    let origin = supraman_supervisor::launched_by(&format!("{}/schedule/{}", ctx.workspace.name, ctx.schedule.id));
+    let origin = supraman_supervisor::launched_by(&format!("{}/schedule/{}", ctx.key, ctx.schedule.id));
     let request = MintRequest {
         name: spec.name.clone(),
         role: t.role.clone(),

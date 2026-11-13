@@ -35,7 +35,9 @@ pub struct TaskSpec<'a> {
     pub level: RunLevel,
     pub smw: &'a Path,
     pub home: &'a Path,
-    pub workspace: &'a str,
+    pub folder: &'a Path,
+    /// The folder's [`super::folder_key`]: what `sm schedule fire` finds the schedule by.
+    pub key: &'a str,
     pub schedule: &'a Schedule,
     pub fingerprint: &'a str,
     /// The local date of the trigger's first start.
@@ -74,7 +76,7 @@ fn render(spec: &TaskSpec, version: &str, start: NaiveDate) -> String {
     x.push_str("  <RegistrationInfo>\n");
     x.push_str("    <Source>Supraman</Source>\n");
     let _ = writeln!(x, "    <Version>{}</Version>", esc(version));
-    let _ = writeln!(x, "    <Description>{}</Description>", esc(&format!("Supraman schedule {}/{}; Supraman rewrites this task.", spec.workspace, s.id)));
+    let _ = writeln!(x, "    <Description>{}</Description>", esc(&format!("Supraman schedule {} in {}; Supraman rewrites this task.", s.id, crate::paths::normalize(spec.folder))));
     x.push_str("  </RegistrationInfo>\n");
     x.push_str("  <Triggers>\n    <CalendarTrigger>\n");
     let at = match &s.trigger {
@@ -116,7 +118,8 @@ fn render(spec: &TaskSpec, version: &str, start: NaiveDate) -> String {
     x.push_str("  </Settings>\n");
     x.push_str("  <Actions Context=\"Author\">\n    <Exec>\n");
     let _ = writeln!(x, "      <Command>{}</Command>", esc(&spec.smw.to_string_lossy()));
-    let args = format!("schedule fire --home \"{home}\" {} {} --fingerprint {}", spec.workspace, s.id, spec.fingerprint);
+    let args = format!("schedule fire --home \"{home}\" {} {} --fingerprint {}", spec.key, s.id, spec.fingerprint);
+
     let _ = writeln!(x, "      <Arguments>{}</Arguments>", esc(&args));
     let _ = writeln!(x, "      <WorkingDirectory>{}</WorkingDirectory>", esc(&home));
     x.push_str("    </Exec>\n  </Actions>\n</Task>\n");

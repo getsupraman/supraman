@@ -19,8 +19,6 @@ pub struct EntryNode {
     /// The group's name, or the folder's [`FolderNode::key`].
     pub name: String,
     pub group: bool,
-    /// Scheduled runs' sessions by schedule id ([`supraman_core::schedule::schedule_of_session`]), shown under it.
-    pub scheduled: BTreeMap<String, Vec<SessionRow>>,
     pub folders: Vec<FolderNode>,
 }
 
@@ -34,6 +32,9 @@ pub struct FolderNode {
     pub branch: Option<String>,
     pub sessions: Vec<SessionRow>,
     pub more: usize,
+    /// Its scheduled runs' sessions by schedule id ([`supraman_core::schedule::schedule_of_session`]), shown under
+    /// its Schedules; a path listed twice has them on its first row only.
+    pub scheduled: BTreeMap<String, Vec<SessionRow>>,
 }
 
 #[derive(Debug, Clone)]
@@ -211,11 +212,11 @@ impl EntryNode {
     }
 
     pub fn rows(&self) -> impl Iterator<Item = &SessionRow> {
-        self.scheduled.values().flatten().chain(self.folders.iter().flat_map(|r| &r.sessions))
+        self.folders.iter().flat_map(|f| f.scheduled.values().flatten().chain(&f.sessions))
     }
 
     pub fn into_rows(self) -> impl Iterator<Item = SessionRow> {
-        self.scheduled.into_values().flatten().chain(self.folders.into_iter().flat_map(|r| r.sessions))
+        self.folders.into_iter().flat_map(|f| f.scheduled.into_values().flatten().chain(f.sessions))
     }
 }
 
@@ -301,8 +302,8 @@ pub fn next_change(sessions: &[Session], closed: &[Session], now_ms: i64) -> Opt
 
 pub fn build(entries: &Entries, sessions: &[Session], now_ms: i64, show_stopped: bool, sup: &TreeInputs) -> Tree {
     let mut b = Build::new(sessions, now_ms, show_stopped, sup);
-    let groups: Vec<&str> = entries.groups().map(|(name, _)| name).collect();
-    let (mut scheduled, rest) = b.scheduled(&groups, sessions.to_vec());
+    let keys: Vec<String> = entries.folders().map(|f| supraman_core::schedule::folder_key(&f.path)).collect();
+    let rest = b.scheduled(&keys, sessions.to_vec());
     let main_of = |p: &Path| b.main_of(p);
     let (open, gone) = (place_with(&rest, entries, main_of).by_folder, place_with(&b.closed, entries, main_of).by_folder);
     let mut nodes = Vec::new();
@@ -310,12 +311,11 @@ pub fn build(entries: &Entries, sessions: &[Session], now_ms: i64, show_stopped:
         let node = match entry {
             Entry::Folder(f) => {
                 let folder = b.folder(None, f, &open, &gone);
-                EntryNode { name: folder.key.clone(), group: false, scheduled: BTreeMap::new(), folders: vec![folder] }
+                EntryNode { name: folder.key.clone(), group: false, folders: vec![folder] }
             }
             Entry::Group { name, folders } => EntryNode {
                 name: name.clone(),
                 group: true,
-                scheduled: scheduled.remove(name.as_str()).unwrap_or_default(),
                 folders: folders.iter().map(|f| b.folder(Some(name), f, &open, &gone)).collect(),
             },
         };
@@ -334,11 +334,13 @@ struct Build<'a> {
     keys: HashSet<String>,
     listed: HashSet<String>,
     hidden: HashSet<String>,
+    /// Scheduled runs' rows by folder key and schedule id, each taken by the first row of its folder.
+    runs: HashMap<String, BTreeMap<String, Vec<SessionRow>>>,
 }
 
 impl<'a> Build<'a> {
     fn new(sessions: &'a [Session], now_ms: i64, show_stopped: bool, sup: &'a TreeInputs<'a>) -> Self {
-        let mut b = Build { sessions, now_ms, show_stopped, sup, closed: Vec::new(), keys: HashSet::new(), listed: HashSet::new(), hidden: HashSet::new() };
+        let mut b = Build { sessions, now_ms, show_stopped, sup, closed: Vec::new(), keys: HashSet::new(), listed: HashSet::new(), hidden: HashSet::new(), runs: HashMap::new() };
         b.closed = b.closed_shown();
         b
     }
@@ -386,24 +388,23 @@ impl<'a> Build<'a> {
             .collect()
     }
 
-    /// The scheduled runs' rows by group and schedule id, and the sessions that are not runs.
-    fn scheduled<'g>(&mut self, groups: &[&'g str], sessions: Vec<Session>) -> (HashMap<&'g str, BTreeMap<String, Vec<SessionRow>>>, Vec<Session>) {
-        let mut scheduled: HashMap<&str, BTreeMap<String, Vec<SessionRow>>> = HashMap::new();
+    /// The scheduled runs of a listed folder into [`Self::runs`]; the sessions that are not, back.
+    fn scheduled(&mut self, keys: &[String], sessions: Vec<Session>) -> Vec<Session> {
         let mut rest = Vec::new();
         for s in sessions {
-            let run = groups.iter().find_map(|g| supraman_core::schedule::schedule_of_session(g, &s.name).map(|id| (*g, id.to_string())));
+            let run = supraman_core::schedule::schedule_of_session(&s.name).filter(|(key, _)| keys.iter().any(|k| k == key)).map(|(key, id)| (key.to_string(), id.to_string()));
             match run {
-                Some((group, id)) => {
+                Some((key, id)) => {
                     let r = self.row(s);
                     if self.keep(&r) {
-                        scheduled.entry(group).or_default().entry(id).or_default().push(r);
+                        self.runs.entry(key).or_default().entry(id).or_default().push(r);
                     }
                 }
                 None => rest.push(s),
             }
         }
-        scheduled.values_mut().flat_map(|by_id| by_id.values_mut()).for_each(|rows| sort(rows));
-        (scheduled, rest)
+        self.runs.values_mut().flat_map(|by_id| by_id.values_mut()).for_each(|rows| sort(rows));
+        rest
     }
 
     fn unique_key(&mut self, base: String) -> String {
@@ -427,7 +428,8 @@ impl<'a> Build<'a> {
             None => Some(supraman_core::folders::on_disk(&f.path)),
         };
         let OnDisk { kind, branch } = disk.unwrap_or(OnDisk { kind: FolderKind::Plain, branch: None });
-        FolderNode { key, name, path: f.path.clone(), kind, branch, sessions, more }
+        let scheduled = self.runs.remove(&supraman_core::schedule::folder_key(&f.path)).unwrap_or_default();
+        FolderNode { key, name, path: f.path.clone(), kind, branch, sessions, more, scheduled }
     }
 
     /// A folder's rows: the open ones, then the closed ones up to [`CLOSED_CAP`]; and how many that cap left out.

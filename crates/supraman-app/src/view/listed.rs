@@ -4,48 +4,32 @@ use std::sync::atomic::Ordering;
 
 use gpui::Context;
 use supraman_core::folders::{self, Entries, OnDisk, Place};
-use supraman_core::{Registry, Workspace};
 
 use super::FleetView;
 use crate::fleet;
 
-/// The sidebar's entries with what the disk says of their folders, and the workspaces schedules read.
+/// The sidebar's entries with what the disk says of their folders.
 #[derive(Default)]
 pub struct Listed {
     pub entries: Entries,
     pub disk: HashMap<String, OnDisk>,
-    /// The schedules' bridge (folders/schedules removes it): only schedule code reads these.
-    pub schedule_workspaces: Vec<Workspace>,
     pub error: Option<String>,
-    /// The workspace files the schedules' bridge could not read.
-    pub skipped: Vec<String>,
 }
 
-/// One read off the UI thread: folders.toml with its folders' kinds, and the schedules' workspaces.
+/// One read off the UI thread: folders.toml with its folders' kinds.
 pub struct Read {
     entries: Result<(Entries, HashMap<String, OnDisk>), String>,
-    workspaces: (Vec<Workspace>, Vec<String>),
-}
-
-impl Read {
-    pub fn workspaces(&self) -> &[Workspace] {
-        &self.workspaces.0
-    }
 }
 
 pub fn read(home: Option<&Path>) -> Read {
     let Some(home) = home else {
-        return Read { entries: Err("no Supraman home".into()), workspaces: Default::default() };
+        return Read { entries: Err("no Supraman home".into()) };
     };
     let entries = folders::load(home).map(|e| {
         let disk = fleet::on_disk(&e);
         (e, disk)
     }).map_err(|e| e.to_string());
-    let workspaces = match Registry::at(home).load_all() {
-        Ok((loaded, failed)) => (loaded, failed.iter().map(ToString::to_string).collect()),
-        Err(e) => (Vec::new(), vec![e.to_string()]),
-    };
-    Read { entries, workspaces }
+    Read { entries }
 }
 
 impl Listed {
@@ -61,7 +45,6 @@ impl Listed {
             }
             Err(e) => self.error = Some(e),
         }
-        (self.schedule_workspaces, self.skipped) = read.workspaces;
         before != (self.entries.clone(), self.disk.clone())
     }
 }
@@ -113,9 +96,13 @@ impl FleetView {
         self.tree().entries.iter().map(|e| e.name.clone()).collect()
     }
 
-    /// The names this home's scheduled runs are named after (the schedules' bridge).
+    /// The folder keys this home's scheduled runs are named after: every listed folder's and every schedule file's.
     pub(super) fn own_names(&self) -> Vec<String> {
-        self.listed.schedule_workspaces.iter().map(|w| w.name.clone()).collect()
+        let listed = self.listed.entries.folders().map(|f| supraman_core::schedule::folder_key(&f.path));
+        let mut out: Vec<String> = listed.chain(self.scheduling.schedules.keys().cloned()).collect();
+        out.sort();
+        out.dedup();
+        out
     }
 
     pub(super) fn listed_changed(&mut self) {
@@ -131,14 +118,15 @@ mod tests {
     #[test]
     fn a_read_from_before_this_windows_write_keeps_the_written_list() {
         let entries = Entries::new(vec![folders::Entry::Folder(folders::FolderEntry::new(r"C:\a"))]);
-        let read = |e: Entries| Read { entries: Ok((e, HashMap::new())), workspaces: Default::default() };
+        let read = |e: Entries| Read { entries: Ok((e, HashMap::new())) };
         let mut listed = Listed { entries: entries.clone(), ..Listed::default() };
         assert!(!listed.apply(read(Entries::default()), 1, 2), "read before the write");
         assert_eq!(listed.entries, entries);
         assert!(listed.apply(read(Entries::default()), 2, 2));
         assert_eq!(listed.entries, Entries::default());
-        listed.apply(Read { entries: Err("unreadable".into()), workspaces: (Vec::new(), vec!["broken.toml".into()]) }, 2, 2);
-        assert_eq!((listed.error.as_deref(), listed.skipped.as_slice()), (Some("unreadable"), &["broken.toml".to_string()][..]));
+        listed.apply(Read { entries: Err("unreadable".into()) }, 2, 2);
+        assert_eq!(listed.error.as_deref(), Some("unreadable"));
+
     }
 
     #[test]

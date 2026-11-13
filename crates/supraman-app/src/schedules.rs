@@ -1,9 +1,9 @@
-//! The Schedules group of the tree: what each schedule shows, read off the UI thread with each poll.
+//! Each folder's Schedules in the tree: what each schedule shows, read off the UI thread with each poll.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use supraman_core::Workspace;
+use supraman_core::folders::Entries;
 use supraman_core::schedule::{self, ActionKind, CatchUp, Change, Covered, Day, Fired, Foreign, ForeignTask, Live, Outcome, Overlap, Policy, Profile, Prompt, Run, Schedule, Span, Stage, Status, Trigger};
 use supraman_core::secret::SecretStore;
 use supraman_core::time::{self, date_words};
@@ -16,7 +16,9 @@ const RUNS_SHOWN: usize = 10;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScheduleRow {
-    pub workspace: String,
+    /// The folder's [`schedule::folder_key`].
+    pub key: String,
+    pub folder: PathBuf,
     pub schedule: Schedule,
     /// [`schedule::effective_status`].
     pub status: Status,
@@ -28,7 +30,6 @@ pub struct ScheduleRow {
     pub runs: Vec<Run>,
     /// While pending or `command_changed`: what Approve approves, or why it cannot.
     pub approvable: Option<std::result::Result<Covered, String>>,
-    pub folder_path: Option<PathBuf>,
     /// The slash command's file as `schedule::command_file` shows it.
     pub command_path: Option<String>,
 }
@@ -77,6 +78,11 @@ pub fn outcome_text(o: Outcome) -> &'static str {
 }
 
 impl ScheduleRow {
+    /// The folder's name, as a card's context shows it.
+    pub fn place(&self) -> String {
+        supraman_core::paths::folder_name(&self.folder)
+    }
+
     pub fn title(&self) -> &str {
         if self.schedule.name.is_empty() { &self.schedule.id } else { &self.schedule.name }
     }
@@ -121,70 +127,72 @@ fn tokens_text(n: u64) -> String {
     }
 }
 
-/// Every workspace's schedules, its errors as lines. Rows of a workspace whose file cannot be read are left out.
-pub fn read(home: &Path, workspaces: &[Workspace], store: &dyn SecretStore, now_ms: i64) -> (BTreeMap<String, Vec<ScheduleRow>>, Vec<String>) {
-    let mut out = BTreeMap::new();
+/// What one [`read`] found: the rows by folder key, the errors as lines, and whether a migration asks for a sync.
+#[derive(Default)]
+pub struct Read {
+    pub rows: BTreeMap<String, Vec<ScheduleRow>>,
+    pub errors: Vec<String>,
+    pub resync: bool,
+}
+
+/// Every folder's schedules, after the earlier per-workspace files are moved to their folders (once). Rows of
+/// a file that cannot be read are left out.
+pub fn read(home: &Path, store: &dyn SecretStore, now_ms: i64) -> Read {
     let mut errors = Vec::new();
-    for w in workspaces {
-        let schedules = match schedule::load(home, &w.name) {
-            Ok(s) if s.is_empty() => continue,
-            Ok(s) => s,
-            Err(e) => {
-                errors.push(format!("Cannot read the schedules of {}: {e}", w.name));
-                continue;
-            }
-        };
-        let mut runs = schedule::runs(home, &w.name).unwrap_or_else(|e| {
-            errors.push(format!("Cannot read the run records of {}: {e}", w.name));
+    if let Err(e) = schedule::migrate(home, store) {
+        errors.push(format!("Cannot move the earlier schedule files to their folders: {e}"));
+    }
+    let (all, notices) = schedule::load_all(home);
+    errors.extend(notices);
+    let mut rows = BTreeMap::new();
+    for found in all.into_iter().filter(|f| !f.schedules.is_empty()) {
+        let mut runs = schedule::runs(home, &found.key).unwrap_or_else(|e| {
+            errors.push(format!("Cannot read the run records of {}: {e}", found.folder.display()));
             Vec::new()
         });
         runs.reverse();
-        let live = schedule::live_dir(home, &w.name).ok();
-        let rows = schedules
-            .into_iter()
-            .map(|s| {
-                let (status, command_changed) = match s.status {
-                    Status::Active => match schedule::verify_approval(store, w, &s) {
-                        Ok(now) => (Status::Active, s.approval.as_ref().is_some_and(|a| a.command_sha256 != now.command_sha256)),
-                        Err(_) => (Status::Pending, false),
-                    },
-                    other => (other, false),
-                };
-                let approvable = (status == Status::Pending || command_changed).then(|| {
-                    s.validate(w).map_err(|why| format!("it cannot be approved: {why}"))?;
-                    schedule::covered(w, &s).map_err(|e| e.to_string())
-                });
-                let folder_path = w.folder(&s.folder).map(|f| f.path.clone());
-                let command_path = match (&s.action.prompt, &folder_path) {
-                    (Some(schedule::Prompt::Command(name)), Some(folder)) => Some(schedule::command_file(folder, name).0),
-                    _ => None,
-                };
-                let running = live
-                    .as_ref()
-                    .and_then(|d| std::fs::read(d.join(format!("{}.json", s.id))).ok())
-                    .and_then(|b| serde_json::from_slice::<Live>(&b).ok());
-                ScheduleRow {
-                    workspace: w.name.clone(),
-                    next_fire: (status == Status::Active).then(|| schedule::next_fire_local(&s.trigger, now_ms)).flatten(),
-                    runs: runs.iter().filter(|r| r.schedule == s.id).take(HISTORY).cloned().collect(),
-                    running,
-                    status,
-                    command_changed,
-                    approvable,
-                    folder_path,
-                    command_path,
-                    schedule: s,
-                }
-            })
-            .collect();
-        out.insert(w.name.clone(), rows);
+        let live = schedule::live_dir(home, &found.key).ok();
+        let folder = found.folder;
+        let list = found.schedules.into_iter().map(|s| row_of(&found.key, &folder, s, &runs, live.as_deref(), store, now_ms)).collect();
+        rows.insert(found.key, list);
     }
-    (out, errors)
+    Read { rows, errors, resync: schedule::schedules_dir(home).join(schedule::RESYNC).exists() }
 }
 
-/// Each live file of `workspaces` whose sm is gone, recovered (`sm::fire::recover_workspace`); the runs recovered.
-pub fn recover(home: &Path, workspaces: &[Workspace]) -> Vec<String> {
-    workspaces.iter().flat_map(|w| sm::fire::recover_workspace(home, &w.name).into_iter().map(move |run| format!("{}/{run}", w.name))).collect()
+fn row_of(key: &str, folder: &Path, s: Schedule, runs: &[Run], live: Option<&Path>, store: &dyn SecretStore, now_ms: i64) -> ScheduleRow {
+    let (status, command_changed) = match s.status {
+        Status::Active => match schedule::verify_approval(store, folder, &s) {
+            Ok(now) => (Status::Active, s.approval.as_ref().is_some_and(|a| a.command_sha256 != now.command_sha256)),
+            Err(_) => (Status::Pending, false),
+        },
+        other => (other, false),
+    };
+    let approvable = (status == Status::Pending || command_changed).then(|| {
+        s.validate().map_err(|why| format!("it cannot be approved: {why}"))?;
+        schedule::covered(folder, &s).map_err(|e| e.to_string())
+    });
+    let command_path = match &s.action.prompt {
+        Some(schedule::Prompt::Command(name)) => Some(schedule::command_file(folder, name).0),
+        _ => None,
+    };
+    let running = live.and_then(|d| std::fs::read(d.join(format!("{}.json", s.id))).ok()).and_then(|b| serde_json::from_slice::<Live>(&b).ok());
+    ScheduleRow {
+        key: key.to_string(),
+        folder: folder.to_path_buf(),
+        next_fire: (status == Status::Active).then(|| schedule::next_fire_local(&s.trigger, now_ms)).flatten(),
+        runs: runs.iter().filter(|r| r.schedule == s.id).take(HISTORY).cloned().collect(),
+        running,
+        status,
+        command_changed,
+        approvable,
+        command_path,
+        schedule: s,
+    }
+}
+
+/// Each live file filed under `keys` whose sm is gone, recovered (`sm::fire::recover_folder`); the runs recovered.
+pub fn recover(home: &Path, keys: &[String]) -> Vec<String> {
+    keys.iter().flat_map(|k| sm::fire::recover_folder(home, k).into_iter().map(move |run| format!("{k}/{run}"))).collect()
 }
 
 fn session_of(run: &Run) -> Option<&str> {
@@ -273,7 +281,7 @@ fn field_words(field: &str) -> String {
     }
     match field {
         "v" => "Format",
-        "workspace" => "Workspace",
+        "workspace" => "Workspace (before folders)",
         "id" => "Id",
         "folder" => "Folder",
         "trigger.kind" => "Trigger",
@@ -388,16 +396,12 @@ pub fn sections(row: &ScheduleRow, zone: &str, dry_run: Option<&str>, now_ms: i6
             .text(policy_words(&s.policy)),
     );
 
-    let folder = match &row.folder_path {
-        Some(p) => format!("{} ({})", s.folder, p.display()),
-        None => format!("{} (not a folder of {})", s.folder, row.workspace),
-    };
     let checkout = if s.action.worktree {
         "In its own worktree (saved by an earlier release; the next change moves it to the checkout)"
     } else {
         "In the folder's checkout"
     };
-    out.push(Section::new("where", "Where").row("Workspace", row.workspace.clone()).row("Folder", folder).text(checkout));
+    out.push(Section::new("where", "Where").path("Folder", &row.folder).text(checkout));
 
     let a = &s.action;
     let mut what = Section::new("what", "What").text(match a.kind {
@@ -506,7 +510,9 @@ fn sha_words(sha: Option<&str>) -> String {
 /// The Inbox entry of a pending schedule, or an active one whose slash command changed; `key` follows what it covers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Waiting {
-    pub workspace: String,
+    /// The folder's key, and its name as the card shows it.
+    pub folder_key: String,
+    pub place: String,
     pub id: String,
     pub title: String,
     pub key: String,
@@ -525,21 +531,22 @@ pub fn waiting(rows: &BTreeMap<String, Vec<ScheduleRow>>) -> Vec<Waiting> {
                 None => String::new(),
             };
             Waiting {
-                workspace: row.workspace.clone(),
+                folder_key: row.key.clone(),
+                place: row.place(),
                 id: row.schedule.id.clone(),
                 title: row.title().to_string(),
-                key: format!("{}/{}@{state}", row.workspace, row.schedule.id),
+                key: format!("{}/{}@{state}", row.key, row.schedule.id),
                 command_changed: row.command_changed,
             }
         })
         .collect()
 }
 
-/// Every workspace with schedules, and the keys of its pending ones: what a dismissal of a waiting entry is kept against.
+/// Every folder with schedules, and the keys of its pending ones: what a dismissal of a waiting entry is kept against.
 pub fn waiting_keys(rows: &BTreeMap<String, Vec<ScheduleRow>>) -> BTreeMap<String, Vec<String>> {
     let mut out: BTreeMap<String, Vec<String>> = rows.keys().map(|w| (w.clone(), Vec::new())).collect();
     for w in waiting(rows) {
-        out.entry(w.workspace).or_default().push(w.key);
+        out.entry(w.folder_key).or_default().push(w.key);
     }
     out
 }
@@ -547,7 +554,8 @@ pub fn waiting_keys(rows: &BTreeMap<String, Vec<ScheduleRow>>) -> BTreeMap<Strin
 /// A schedule's latest run, when it ended in a way that needs René: the Inbox and the tray show it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Attention {
-    pub workspace: String,
+    pub folder_key: String,
+    pub place: String,
     pub id: String,
     pub run: String,
     pub outcome: Outcome,
@@ -562,7 +570,8 @@ pub fn attention(rows: &BTreeMap<String, Vec<ScheduleRow>>) -> Vec<Attention> {
             let (run, outcome) = row.last()?;
             let (at, _, why) = run.ended.as_ref()?;
             outcome.needs_attention().then(|| Attention {
-                workspace: row.workspace.clone(),
+                folder_key: row.key.clone(),
+                place: row.place(),
                 id: row.schedule.id.clone(),
                 run: run.run.clone(),
                 outcome,
@@ -589,31 +598,33 @@ pub fn tray_tooltip(attention: usize, waiting: usize) -> String {
     out
 }
 
-/// Task Scheduler's tasks that run claude outside Supraman, by [`schedule::owner`]; Supraman never touches them.
+/// Task Scheduler's tasks that run claude outside Supraman, by the deepest listed folder holding their working
+/// folder or script (`supraman_claude::holding`); Supraman never touches them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Others {
-    pub by_workspace: BTreeMap<String, Vec<ForeignTask>>,
+    /// By the folder's [`schedule::folder_key`].
+    pub by_folder: BTreeMap<String, Vec<ForeignTask>>,
     pub unowned: Vec<ForeignTask>,
 }
 
 impl Others {
-    pub fn of(found: &Foreign, workspaces: &[Workspace]) -> Self {
+    pub fn of(found: &Foreign, entries: &Entries) -> Self {
         let mut out = Self::default();
         for t in &found.tasks {
-            match schedule::owner(t, workspaces) {
-                Some(w) => out.by_workspace.entry(w.name.clone()).or_default().push(t.clone()),
+            match t.dirs().find_map(|d| supraman_claude::holding(d, entries, |_| None)) {
+                Some(f) => out.by_folder.entry(schedule::folder_key(&f.path)).or_default().push(t.clone()),
                 None => out.unowned.push(t.clone()),
             }
         }
         out
     }
 
-    pub fn of_workspace(&self, workspace: &str) -> &[ForeignTask] {
-        self.by_workspace.get(workspace).map(Vec::as_slice).unwrap_or_default()
+    pub fn of_folder(&self, key: &str) -> &[ForeignTask] {
+        self.by_folder.get(key).map(Vec::as_slice).unwrap_or_default()
     }
 
     pub fn find(&self, path: &str) -> Option<&ForeignTask> {
-        self.by_workspace.values().flatten().chain(&self.unowned).find(|t| t.path() == path)
+        self.by_folder.values().flatten().chain(&self.unowned).find(|t| t.path() == path)
     }
 }
 
@@ -644,7 +655,7 @@ mod tests {
 
     fn schedule() -> Schedule {
         serde_json::from_value(serde_json::json!({
-            "id": "nightly", "name": "Nightly gate", "folder": "Alpha",
+            "id": "nightly", "name": "Nightly gate",
             "trigger": {"kind": "daily", "at": "09:00"}, "action": {"kind": "script_then_session", "script": "gate.cmd", "prompt": {"text": "fix"}}
         }))
         .unwrap()
@@ -663,7 +674,8 @@ mod tests {
 
     fn row(status: Status, runs: Vec<Run>) -> ScheduleRow {
         ScheduleRow {
-            workspace: "demo".into(),
+            key: "alpha-1a2b3c4d".into(),
+            folder: PathBuf::from(r"C:\code\Alpha"),
             schedule: schedule(),
             status,
             command_changed: false,
@@ -671,7 +683,6 @@ mod tests {
             running: None,
             runs,
             approvable: None,
-            folder_path: None,
             command_path: None,
         }
     }
@@ -718,7 +729,7 @@ mod tests {
             "Zone  zone",
             "Next, once active  ",
             "runs once when it is back; a fire while the last run still works is skipped. It does not wake the computer.",
-            "Folder  Alpha (not a folder of demo)",
+            "Folder  C:/code/Alpha",
             "In the folder's checkout",
             "Script  gate.cmd",
             "Script timeout  10 minutes",
@@ -803,22 +814,22 @@ mod tests {
         let mut rows = BTreeMap::new();
         let mut pending = row(Status::Pending, vec![]);
         pending.approvable = Some(Ok(Covered { json: "{}".into(), fingerprint: "f1".into(), command_sha256: None }));
-        rows.insert("demo".to_string(), vec![pending, row(Status::Active, vec![])]);
+        rows.insert("alpha-1a2b3c4d".to_string(), vec![pending, row(Status::Active, vec![])]);
         let w = waiting(&rows);
-        assert_eq!(w, [Waiting { workspace: "demo".into(), id: "nightly".into(), title: "Nightly gate".into(), key: "demo/nightly@f1".into(), command_changed: false }]);
-        rows.get_mut("demo").unwrap()[0].approvable = Some(Ok(Covered { json: "{}".into(), fingerprint: "f2".into(), command_sha256: None }));
-        assert_eq!(waiting(&rows)[0].key, "demo/nightly@f2");
-        rows.get_mut("demo").unwrap()[0].status = Status::Active;
+        assert_eq!(w, [Waiting { folder_key: "alpha-1a2b3c4d".into(), place: "Alpha".into(), id: "nightly".into(), title: "Nightly gate".into(), key: "alpha-1a2b3c4d/nightly@f1".into(), command_changed: false }]);
+        rows.get_mut("alpha-1a2b3c4d").unwrap()[0].approvable = Some(Ok(Covered { json: "{}".into(), fingerprint: "f2".into(), command_sha256: None }));
+        assert_eq!(waiting(&rows)[0].key, "alpha-1a2b3c4d/nightly@f2");
+        rows.get_mut("alpha-1a2b3c4d").unwrap()[0].status = Status::Active;
         assert!(waiting(&rows).is_empty());
 
-        let changed = &mut rows.get_mut("demo").unwrap()[0];
+        let changed = &mut rows.get_mut("alpha-1a2b3c4d").unwrap()[0];
         changed.command_changed = true;
         changed.approvable = Some(Ok(Covered { json: "{}".into(), fingerprint: "f2".into(), command_sha256: Some("c2".into()) }));
         let w = waiting(&rows);
-        assert_eq!((w.len(), w[0].key.as_str(), w[0].command_changed), (1, "demo/nightly@command-c2", true), "an active schedule whose command changed waits too");
-        rows.get_mut("demo").unwrap()[0].approvable = Some(Ok(Covered { json: "{}".into(), fingerprint: "f2".into(), command_sha256: Some("c3".into()) }));
-        assert_eq!(waiting(&rows)[0].key, "demo/nightly@command-c3", "another edit of the file is another entry");
-        rows.get_mut("demo").unwrap()[0].command_changed = false;
+        assert_eq!((w.len(), w[0].key.as_str(), w[0].command_changed), (1, "alpha-1a2b3c4d/nightly@command-c2", true), "an active schedule whose command changed waits too");
+        rows.get_mut("alpha-1a2b3c4d").unwrap()[0].approvable = Some(Ok(Covered { json: "{}".into(), fingerprint: "f2".into(), command_sha256: Some("c3".into()) }));
+        assert_eq!(waiting(&rows)[0].key, "alpha-1a2b3c4d/nightly@command-c3", "another edit of the file is another entry");
+        rows.get_mut("alpha-1a2b3c4d").unwrap()[0].command_changed = false;
         assert!(waiting(&rows).is_empty(), "approved again, the entry goes");
         assert_eq!(tray_tooltip(0, 1), "Supraman · 1 schedule waits for your approval");
         assert_eq!(tray_tooltip(1, 2), "Supraman · 1 scheduled run needs you · 2 schedules wait for your approval");
@@ -832,18 +843,18 @@ mod tests {
         let pending = |fingerprint: &str| {
             let mut r = row(Status::Pending, vec![]);
             r.approvable = Some(Ok(Covered { json: "{}".into(), fingerprint: fingerprint.into(), command_sha256: None }));
-            BTreeMap::from([("demo".to_string(), vec![r])])
+            BTreeMap::from([("alpha-1a2b3c4d".to_string(), vec![r])])
         };
-        let shown = |d: &Dismissed, rows: &BTreeMap<String, Vec<ScheduleRow>>| waiting(rows).into_iter().filter(|w| !d.hides(&w.workspace, &w.key)).count();
+        let shown = |d: &Dismissed, rows: &BTreeMap<String, Vec<ScheduleRow>>| waiting(rows).into_iter().filter(|w| !d.hides(&w.folder_key, &w.key)).count();
         let rows = pending("f1");
         let (mut d, notice) = Dismissed::load_at(Some(file.clone()), "x");
         assert!(notice.is_none() && shown(&d, &rows) == 1);
         let w = &waiting(&rows)[0];
-        d.dismiss(&w.workspace, &w.key).unwrap().write().unwrap();
+        d.dismiss(&w.folder_key, &w.key).unwrap().write().unwrap();
         let (mut restarted, _) = Dismissed::load_at(Some(file.clone()), "x");
         assert!(!restarted.prune_keys(&waiting_keys(&rows)).0);
         assert_eq!(shown(&restarted, &rows), 0, "still dismissed after a restart");
-        assert!(!restarted.prune_keys(&waiting_keys(&BTreeMap::new())).0, "a workspace the poll did not read keeps it");
+        assert!(!restarted.prune_keys(&waiting_keys(&BTreeMap::new())).0, "a folder the poll did not read keeps it");
         let edited = pending("f2");
         assert_eq!(shown(&restarted, &edited), 1, "a covered edit shows it again");
         let (changed, save) = restarted.prune_keys(&waiting_keys(&edited));
@@ -856,12 +867,12 @@ mod tests {
     #[test]
     fn only_a_latest_run_that_needs_rene_goes_to_the_inbox_and_the_tray() {
         let mut rows = BTreeMap::new();
-        rows.insert("demo".to_string(), vec![row(Status::Active, vec![run("r2", NOW, Some(Outcome::Failed), "exit 1"), run("r1", NOW - 1, Some(Outcome::Done), "")])]);
+        rows.insert("alpha-1a2b3c4d".to_string(), vec![row(Status::Active, vec![run("r2", NOW, Some(Outcome::Failed), "exit 1"), run("r1", NOW - 1, Some(Outcome::Done), "")])]);
         let a = attention(&rows);
-        assert_eq!(a, [Attention { workspace: "demo".into(), id: "nightly".into(), run: "r2".into(), outcome: Outcome::Failed, why: "exit 1".into(), at: NOW + 65_000 }]);
-        rows.get_mut("demo").unwrap()[0].runs.insert(0, run("r3", NOW + 1, Some(Outcome::Done), ""));
+        assert_eq!(a, [Attention { folder_key: "alpha-1a2b3c4d".into(), place: "Alpha".into(), id: "nightly".into(), run: "r2".into(), outcome: Outcome::Failed, why: "exit 1".into(), at: NOW + 65_000 }]);
+        rows.get_mut("alpha-1a2b3c4d").unwrap()[0].runs.insert(0, run("r3", NOW + 1, Some(Outcome::Done), ""));
         assert!(attention(&rows).is_empty(), "a later good run clears it");
-        rows.get_mut("demo").unwrap()[0].runs.insert(0, run("r4", NOW + 2, Some(Outcome::NeedsYou), "a prompt"));
+        rows.get_mut("alpha-1a2b3c4d").unwrap()[0].runs.insert(0, run("r4", NOW + 2, Some(Outcome::NeedsYou), "a prompt"));
         assert_eq!(attention(&rows)[0].outcome, Outcome::NeedsYou);
         assert_eq!(tray_tooltip(0, 0), "Supraman");
         assert_eq!(tray_tooltip(2, 0), "Supraman · 2 scheduled runs need you");
@@ -883,23 +894,24 @@ mod tests {
     }
 
     #[test]
-    fn other_schedules_go_under_the_workspace_holding_them_and_the_rest_apart() {
-        use supraman_core::{Folder, FolderKind};
-        let alpha = PathBuf::from(r"C:\code\alpha");
-        let ws = Workspace::new("alpha", &alpha, vec![Folder { kind: FolderKind::Plain, ..Folder::new("alpha", &alpha) }]);
+    fn other_schedules_go_under_the_deepest_listed_folder_holding_them_and_the_rest_apart() {
+        use supraman_core::folders::{Entry, FolderEntry};
+        let (code, alpha) = (PathBuf::from(r"C:\code"), PathBuf::from(r"C:\code\alpha"));
+        let entries = Entries::new(vec![Entry::Folder(FolderEntry::new(&code)), Entry::Group { name: "g".into(), folders: vec![FolderEntry::new(&alpha)] }]);
         let found = Foreign {
             tasks: vec![
                 other(r"\", "in alpha", Some(r"C:\code\alpha\sub"), schedule::Via::Direct),
                 other(r"\Mine", "script in alpha", None, schedule::Via::Script(PathBuf::from(r"C:\code\alpha\jobs\run.ps1"))),
+                other(r"\Mine", "in code", Some(r"C:\code\beta"), schedule::Via::Direct),
                 other(r"\Mine", "elsewhere", Some(r"D:\other"), schedule::Via::Shell),
             ],
             unreadable: 0,
         };
-        let others = Others::of(&found, &[ws]);
+        let others = Others::of(&found, &entries);
         let names = |ts: &[ForeignTask]| ts.iter().map(|t| t.name.clone()).collect::<Vec<_>>();
-        assert_eq!(names(others.of_workspace("alpha")), ["in alpha", "script in alpha"]);
+        assert_eq!(names(others.of_folder(&schedule::folder_key(&alpha))), ["in alpha", "script in alpha"], "the deepest listed folder");
+        assert_eq!(names(others.of_folder(&schedule::folder_key(&code))), ["in code"]);
         assert_eq!(names(&others.unowned), ["elsewhere"]);
-        assert!(others.of_workspace("beta").is_empty());
         assert_eq!(others.find(r"\Mine\elsewhere").map(|t| t.name.as_str()), Some("elsewhere"));
         assert_eq!(others.find(r"\in alpha").map(|t| t.name.as_str()), Some("in alpha"));
     }
