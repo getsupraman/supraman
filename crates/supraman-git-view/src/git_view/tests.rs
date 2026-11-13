@@ -340,8 +340,8 @@ fn git_tab_says_why_its_settings_give_no_git_and_retries(cx: &mut TestAppContext
     let settings = home.path().join("settings.toml");
     let said = |view: &Entity<GitView>, cx: &mut VisualTestContext| {
         view.read_with(cx, |v, _| match &v.load {
-            Load::Problem(Problem::Git(why)) => why.clone(),
-            Load::Problem(Problem::Failed(why)) => format!("failed: {why}"),
+            Load::Problem(Problem::Settings(why)) => why.clone(),
+            Load::Problem(problem) => format!("{problem:?}"),
             Load::Loading => "loading".into(),
             Load::Ready => "ready".into(),
         })
@@ -359,4 +359,30 @@ git = 5
     super::test_support::click(&view, "git-retry", cx);
     cx.run_until_parked();
     assert_eq!(said(&view, cx), "ready", "Retry loads the graph");
+}
+
+fn problem_title(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<&'static str> {
+    view.read_with(cx, |v, _| match &v.load {
+        Load::Problem(problem) => Some(problem.title()),
+        _ => None,
+    })
+}
+
+#[gpui::test]
+fn git_tab_titles_a_bad_setting_apart_from_a_missing_git(cx: &mut TestAppContext) {
+    let f = Fixture::shared();
+    let home = tempfile::tempdir().unwrap();
+    let settings = home.path().join("settings.toml");
+    std::fs::write(&settings, "[gitman]\ngit = 5\n").unwrap();
+    let (view, cx) = open_unchecked(&f.dir, Opts::default().home(home.path()), cx);
+    assert_eq!(problem_title(&view, cx), Some("Git is not set right"), "a [gitman] git that does not parse");
+    std::fs::write(&settings, "not toml [").unwrap();
+    super::test_support::click(&view, "git-retry", cx);
+    cx.run_until_parked();
+    assert_eq!(problem_title(&view, cx), Some("Git is not set right"), "an unreadable settings.toml");
+    let missing = home.path().join("no-git").join(supraman_core::platform::fs::exe_name("git"));
+    std::fs::write(&settings, format!("[gitman]\ngit = '{}'\n", missing.display())).unwrap();
+    super::test_support::click(&view, "git-retry", cx);
+    cx.run_until_parked();
+    assert_eq!(problem_title(&view, cx), Some("Git is missing or too old"), "a git that is not there");
 }

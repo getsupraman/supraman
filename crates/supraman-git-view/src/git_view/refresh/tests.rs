@@ -86,6 +86,30 @@ fn refresh_of_a_hidden_tab_waits_until_it_is_shown(cx: &mut TestAppContext) {
     assert_eq!(refreshes(&view, cx), before + 1, "nothing changed meanwhile, nothing read");
 }
 
+fn walks(view: &Entity<GitView>, cx: &mut VisualTestContext) -> u64 {
+    view.read_with(cx, |v, _| v.follow.graph_token)
+}
+
+#[gpui::test]
+fn wip_read_that_lands_on_a_hidden_tab_walks_the_graph_once_shown(cx: &mut TestAppContext) {
+    let g = Generated::copy(30);
+    git_in(&g.git, &g.dir, &["reset", "-q", "--hard"], &[], None);
+    git_in(&g.git, &g.dir, &["clean", "-q", "-fd"], &[], None);
+    let (view, cx) = open(&g.dir, Opts::default(), cx);
+    let has_wip = |cx: &mut VisualTestContext| view.update(cx, |v, cx| v.wip_row(cx).is_some());
+    assert!(!has_wip(cx), "a clean checkout has no WIP row");
+    let (walked, read) = (walks(&view, cx), refreshes(&view, cx));
+    std::fs::write(g.dir.join("new.txt"), "new").unwrap();
+    view.update(cx, |v, cx| v.refresh_wip(None, cx));
+    view.update(cx, |v, cx| v.set_shown(false, cx));
+    cx.run_until_parked();
+    assert_eq!(walks(&view, cx), walked, "a hidden tab starts no walk when the WIP row comes");
+    view.update(cx, |v, cx| v.set_shown(true, cx));
+    cx.run_until_parked();
+    assert_eq!((walks(&view, cx), refreshes(&view, cx)), (walked + 1, read + 1), "shown, it walks once");
+    assert!(has_wip(cx), "the WIP row is there");
+}
+
 #[gpui::test]
 fn refresh_on_activation_only_for_a_tab_without_watchers(cx: &mut TestAppContext) {
     let g = Generated::copy(30);

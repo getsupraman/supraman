@@ -52,7 +52,25 @@ impl GraphRow {
 pub(crate) enum Problem {
     /// No git, or one too old or unusable: the words of the page.
     Git(String),
+    /// settings.toml unreadable, or a `[gitman]` key that does not parse.
+    Settings(String),
     Failed(String),
+}
+
+impl Problem {
+    pub(crate) fn title(&self) -> &'static str {
+        match self {
+            Problem::Git(_) => "Git is missing or too old",
+            Problem::Settings(_) => "Git is not set right",
+            Problem::Failed(_) => "Cannot read this repository",
+        }
+    }
+
+    pub(crate) fn why(&self) -> &str {
+        match self {
+            Problem::Git(why) | Problem::Settings(why) | Problem::Failed(why) => why,
+        }
+    }
 }
 
 /// A page laid out: its rows, whether more follow, and the layout to lay out the next one with.
@@ -120,14 +138,15 @@ const NO_GIT: &str = "No git on PATH. Install Git for Windows, or set [gitman] g
 #[cfg(not(windows))]
 const NO_GIT: &str = "No git on PATH. Install git, or set [gitman] git to a git program.";
 
-pub(crate) fn git_problem(located: &Located) -> Option<String> {
+pub(crate) fn git_problem(located: &Located) -> Option<Problem> {
+    let git = |why: String| Some(Problem::Git(why));
     match located {
         Located::Found(_) => None,
-        Located::Missing { at: Some(at) } => Some(format!("No git at {}, the path set in [gitman] git.", at.display())),
-        Located::Missing { at: None } => Some(NO_GIT.into()),
-        Located::TooOld { path, version, floor } => Some(format!("{} is git {version}; the Git tab needs {floor} or newer.", path.display())),
-        Located::Unusable { path, reason } => Some(format!("{} does not run as git: {reason}", path.display())),
-        Located::BadSetting(notice) => Some(notice.clone()),
+        Located::Missing { at: Some(at) } => git(format!("No git at {}, the path set in [gitman] git.", at.display())),
+        Located::Missing { at: None } => git(NO_GIT.into()),
+        Located::TooOld { path, version, floor } => git(format!("{} is git {version}; the Git tab needs {floor} or newer.", path.display())),
+        Located::Unusable { path, reason } => git(format!("{} does not run as git: {reason}", path.display())),
+        Located::BadSetting(notice) => Some(Problem::Settings(notice.clone())),
     }
 }
 
@@ -135,11 +154,11 @@ pub(crate) fn git_problem(located: &Located) -> Option<String> {
 pub(crate) fn first(home: Option<&Path>, folder: &Path, walk: &Walk) -> Result<First, Problem> {
     let (settings, notice) = match home.map(supraman_gitman::read_settings).transpose() {
         Ok(read) => read.unwrap_or_default(),
-        Err(why) => return Err(Problem::Git(why)),
+        Err(why) => return Err(Problem::Settings(why)),
     };
     let located = supraman_gitman::located_at(settings.git.clone());
     if let Some(problem) = git_problem(&located) {
-        return Err(Problem::Git(problem));
+        return Err(problem);
     }
     let Located::Found(git) = located else { unreachable!() };
     let repo = Repo::new(git, folder);
