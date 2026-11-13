@@ -241,7 +241,7 @@ mod tests {
             assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1, "{results:?}");
             assert!(results.iter().any(|r| matches!(r, Err(CoreError::SupervisedElsewhere { .. }))), "{results:?}");
             let enabled = ["a", "b"].iter().filter(|w| reg.load(w).unwrap().folders[0].enabled).count();
-            assert_eq!(enabled, 1, "one supervisor for the folder");
+            assert_eq!(enabled, 1, "one owner for the folder");
         }
     }
 

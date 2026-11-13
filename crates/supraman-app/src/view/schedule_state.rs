@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use super::schedules::{ScheduleEdit, SharedRegistrar};
-use crate::dismissed_messages::DismissedMessages;
+use crate::dismissed::Dismissed;
 use crate::schedules::ScheduleRow;
 
 /// The Schedules group's state: each workspace's schedules, their errors, the Task Scheduler scan and the Edit dialog.
@@ -18,8 +18,8 @@ pub struct ScheduleState {
     pub other_scan_error: Option<String>,
     pub(crate) other_scans: u64,
     pub schedule_edit: Option<ScheduleEdit>,
-    pub runs_dismissed: DismissedMessages,
-    pub waiting_dismissed: DismissedMessages,
+    pub runs_dismissed: Dismissed,
+    pub waiting_dismissed: Dismissed,
 }
 
 impl ScheduleState {
@@ -34,8 +34,8 @@ impl ScheduleState {
             other_scan_error: None,
             other_scans: 0,
             schedule_edit: None,
-            runs_dismissed: DismissedMessages::default(),
-            waiting_dismissed: DismissedMessages::default(),
+            runs_dismissed: Dismissed::default(),
+            waiting_dismissed: Dismissed::default(),
         }
     }
 }

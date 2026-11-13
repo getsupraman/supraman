@@ -25,6 +25,7 @@ use crate::{
 };
 
 pub(crate) mod frames;
+pub(crate) mod keys;
 mod shell_tab;
 mod wait;
 pub(crate) mod win;
@@ -40,8 +41,6 @@ const RENDERED_WITHIN: Duration = Duration::from_secs(10);
 pub(crate) struct Scratch {
     pub(crate) dirs: Vec<PathBuf>,
     pub(crate) session_name: Option<String>,
-    /// `--selftest-supervise`: every row whose name starts with this is the run's own.
-    pub(crate) name_prefix: Option<String>,
     /// Processes this run started (pid, creation time).
     pub(crate) kill: Vec<(u32, u64)>,
     /// `(sessionId, cwd)` of this run's own `fm-selftest` sessions: their transcripts in the real claude dir are the only write a selftest makes there.
@@ -132,9 +131,6 @@ pub(crate) fn remove_dir_retrying(dir: &Path) -> std::io::Result<()> {
 
 pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     isolate()?;
-    if mode == Mode::SelftestSupervise {
-        return crate::selftest_supervise::prepare();
-    }
     if mode == Mode::SelftestShots {
         return crate::selftest_shots::prepare();
     }
@@ -185,7 +181,6 @@ fn clear_scratch(mode: Mode) -> anyhow::Result<(PathBuf, PathBuf, PathBuf, PathB
     *lock() = Some(Scratch {
         dirs: vec![home.clone(), cwd.clone(), work.clone(), add, single, sched, fixture.clone()],
         session_name: None,
-        name_prefix: None,
         kill: Vec::new(),
         transcripts: Vec::new(),
     });
@@ -254,13 +249,6 @@ pub(crate) fn hold_secs() -> Option<u64> {
     std::env::var("SUPRAMAN_SELFTEST_HOLD_SECS").ok().and_then(|s| s.parse().ok())
 }
 
-/// A message in `outbox` from `from_name`, as the relay's watcher writes one; its file name.
-pub(crate) fn drop_outbox(outbox: &Path, from_name: &str, tag: &str, body: &str) -> anyhow::Result<String> {
-    let file = format!("{:013}-selftest-{tag}.json", now_ms());
-    let text = serde_json::json!({"from": "uds:selftest", "from_name": from_name, "body": body}).to_string();
-    supraman_core::fs::write_atomic(&outbox.join(&file), text)?;
-    Ok(file)
-}
 
 pub(crate) fn lock() -> MutexGuard<'static, Option<Scratch>> {
     SCRATCH.lock().unwrap_or_else(|e| e.into_inner())
@@ -271,7 +259,6 @@ pub(crate) fn install_guards(mode: Mode) {
         Mode::Selftest if crate::selftest_shots::dir().is_some() => Duration::from_secs(360),
         Mode::Selftest => Duration::from_secs(300), // slow frames while the display is off: docs/LEARNINGS.md 2026-11-10
         Mode::SelftestDetach(cycles) => Duration::from_secs(90 + 15 * u64::from(cycles)),
-        Mode::SelftestSupervise => Duration::from_secs(420),
         Mode::SelftestPerf => Duration::from_secs(300),
         _ => Duration::from_secs(120),
     };
@@ -359,11 +346,6 @@ fn run_cleanup(guard: &mut Option<Scratch>) {
         supraman_core::platform::process::terminate_started(pid, start);
     }
     let mut transcripts = scratch.transcripts.clone();
-    if let Some(prefix) = &scratch.name_prefix {
-        let (removed, own) = crate::selftest_supervise::remove_own_rows(prefix);
-        ok &= removed;
-        transcripts.extend(own);
-    }
     if let Some(name) = &scratch.session_name {
         ok &= remove_named(name, &mut transcripts);
     }
@@ -452,7 +434,7 @@ fn remove_named(name: &str, transcripts: &mut Vec<(String, PathBuf)>) -> bool {
 pub fn start(mode: Mode, view: Entity<FleetView>, window: &mut Window, cx: &mut App) {
     window
         .spawn(cx, async move |cx| {
-            let own = lock().as_ref().and_then(|s| s.name_prefix.clone()).unwrap_or_else(|| format!("fm-selftest-{}", run_hex()));
+            let own = format!("fm-selftest-{}", run_hex());
             view.update(cx, |v, _| {
                 v.own_prefix = Some(own);
                 v.scheduling.registrar = crate::selftest_schedules::registrar();
@@ -461,7 +443,6 @@ pub fn start(mode: Mode, view: Entity<FleetView>, window: &mut Window, cx: &mut 
                 Mode::Selftest => gate(&view, cx).await,
                 Mode::SelftestDetach(cycles) => detach_cycles(&view, cycles, cx).await,
                 Mode::SelftestDetachShutdown => detach_on_shutdown(&view, cx).await,
-                Mode::SelftestSupervise => crate::selftest_supervise::run(&view, cx).await,
                 Mode::SelftestShots => crate::selftest_shots::run(&view, cx).await,
                 _ => perf(&view, cx).await,
             };
@@ -955,7 +936,7 @@ async fn loading_until_listed(view: &Entity<FleetView>, cx: &mut AsyncWindowCont
     ))
 }
 
-/// The first list is painted within this of `claude agents` returning: its apply and one frame, never the supervisor tick.
+/// The first list is painted within this of `claude agents` returning: its apply and one frame, never the upkeep tick.
 const PAINTED_AFTER_LIST: f64 = 150.0;
 
 /// The startup phase lines in the log, each source's line required; with how long the first list took to paint.
@@ -968,7 +949,7 @@ fn startup_timeline() -> anyhow::Result<(String, f64)> {
     let (Some(listed), Some(painted)) = (at("list_sessions"), at("first paint with sessions")) else {
         bail!("no list_sessions and first paint lines in supraman.log: {phases:?}");
     };
-    let sources = ["list_sessions done", "desired state done", "supervisor tick done", "transcripts done", "workman status done", "every source done"];
+    let sources = ["list_sessions done", "upkeep tick done", "transcripts done", "workman status done", "every source done"];
     if let Some(missing) = sources.iter().find(|s| at(s).is_none()) {
         bail!("no \"startup {missing}\" line in supraman.log: {phases:?}");
     }
@@ -1065,10 +1046,8 @@ async fn window_steps(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> 
 }
 
 async fn home_steps(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
-    let dismissed = step("7n", crate::selftest_messages::run(view, &home(), cx)).await?;
-    let held = step("7n", crate::selftest_messages::held(view, &home(), cx)).await?;
     let notices = step("7n", crate::selftest_notices::run(view, cx)).await?;
-    println!("step 7n: messages: {dismissed}; hold: {held}; notices: {notices}");
+    println!("step 7n: notices: {notices}");
 
     let updated = step("7+u", crate::selftest_updates::run(view, &home(), cx)).await?;
     println!("step 7+u: {updated}");

@@ -1,12 +1,10 @@
 use std::rc::Rc;
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::HashSet,
     time::{Duration, Instant},
 };
 
 use supraman_claude::{Health, now_ms};
-use supraman_core::{Ask, AskState, OutboxMessage, ask_states};
-use supraman_supervisor::{NeedsKind, NeedsYou, Remedy, repo_session_name, workspace_session_name};
 use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, SharedString, Stateful, div, prelude::*, px, relative, rems};
 use supraman_ui::banner;
 use supraman_ui::button;
@@ -15,10 +13,9 @@ use supraman_ui::tabs::DraggedSession;
 use theme::ActiveTheme as _;
 
 use supraman_ui::icon::Icon;
-use supraman_ui::inbox_card::{self, InboxCard};
-use supraman_ui::marks::{self, Mark};
+use supraman_ui::marks;
 use supraman_ui::tooltip::Tooltip;
-use super::{Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE};
+use super::{Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE, MAX_WORKING_LIMIT};
 use supraman_ui::clipped::clipped;
 use crate::settings_window::page;
 use crate::updates::Stage;
@@ -26,7 +23,6 @@ use crate::fleet::{self, Open, RepoNode, SessionRow, WorkspaceNode};
 
 mod action_bar;
 mod work_cards;
-mod messages;
 
 const REVEAL_WITHIN: Duration = Duration::from_secs(60);
 
@@ -39,7 +35,6 @@ pub(super) enum PendingReveal {
 #[derive(Clone, Copy)]
 pub(super) enum LeftRow {
     Workspace(usize),
-    Supervised(usize, usize),
     Schedules(usize),
     Folder(usize, usize),
     Session(usize, usize, usize),
@@ -48,7 +43,7 @@ pub(super) enum LeftRow {
 }
 
 const TREE_MIN_SHARE: f32 = 0.3;
-/// Inbox and Messages shrink only once the notices are squeezed to nothing.
+/// The Inbox shrinks only once the notices are squeezed to nothing.
 const NOTICES_SHRINK: f32 = 1000.;
 pub const HOLD_STILL: Duration = Duration::from_secs(2);
 
@@ -58,10 +53,6 @@ pub(crate) struct Hold {
     moved: Instant,
 }
 
-fn need_key(need: &NeedsYou) -> String {
-    format!("need:{}/{}/{}", need.workspace, need.name, needs_label(need.kind))
-}
-
 fn work_key(workspace: &str, row: &supraman_workman::InboxRow) -> String {
     format!("work:{workspace}/{}", row.key)
 }
@@ -69,7 +60,6 @@ fn work_key(workspace: &str, row: &supraman_workman::InboxRow) -> String {
 const SEAM_GAP: f32 = 6.;
 
 pub(crate) use supraman_ui::themes::{DIMMED, QUIET};
-use supraman_ui::themes::{MESSAGE_TINT, MESSAGE_TINT_HOVER};
 
 pub(crate) fn quiet(cx: &gpui::App) -> Hsla {
     cx.theme().colors().text.opacity(QUIET)
@@ -81,59 +71,6 @@ pub(crate) fn secondary(cx: &gpui::App) -> Hsla {
 
 fn seam_color(cx: &gpui::App) -> Hsla {
     cx.theme().colors().text_muted.opacity(0.35)
-}
-
-fn needs_label(kind: NeedsKind) -> &'static str {
-    match kind {
-        NeedsKind::Blocked => "blocked",
-        NeedsKind::TrustNeeded => "trust needed",
-        NeedsKind::GaveUp => "gave up",
-        NeedsKind::LaunchFailed => "launch failed",
-        NeedsKind::Duplicate => "duplicate",
-        NeedsKind::OtherServer => "other server",
-        NeedsKind::StopFailed => "stop failed",
-    }
-}
-
-pub fn inbox_key(need: &NeedsYou) -> Option<String> {
-    let verb = match need.action.as_ref()? {
-        Remedy::Attach { .. } => "attach",
-        Remedy::Retry | Remedy::Adopt { .. } => "retry",
-        Remedy::RunInTerminal { .. } => "run",
-        Remedy::Remint { .. } => "remint",
-        Remedy::RestartElevated => "restart-elevated",
-    };
-    Some(format!("inbox-{verb}-{}", need.name))
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InboxButton {
-    Remedy(Remedy),
-    Retry,
-    StartFresh,
-}
-
-/// A trust row's Retry follows its Run in terminal: Supraman never answers the trust prompt, so the human says when it is.
-pub fn inbox_buttons(need: &NeedsYou) -> Vec<(String, &'static str, InboxButton)> {
-    let (Some(action), Some(key)) = (&need.action, inbox_key(need)) else { return Vec::new() };
-    let label = match action {
-        Remedy::Attach { .. } => "Attach",
-        Remedy::Retry | Remedy::Adopt { .. } => "Retry",
-        Remedy::RunInTerminal { .. } => "Run in terminal",
-        Remedy::Remint { .. } => "Re-mint",
-        Remedy::RestartElevated => "Restart as administrator",
-    };
-    let mut buttons = vec![(key, label, InboxButton::Remedy(action.clone()))];
-    match action {
-        Remedy::Adopt { .. } => buttons.push((format!("inbox-fresh-{}", need.name), "Start fresh", InboxButton::StartFresh)),
-        Remedy::RunInTerminal { .. } => buttons.push((format!("inbox-retry-{}", need.name), "Retry", InboxButton::Retry)),
-        _ => {}
-    }
-    buttons
-}
-
-fn inbox_button_icon(button: &InboxButton) -> Icon {
-    if matches!(button, InboxButton::StartFresh) { Icon::Plus } else { Icon::Refresh }
 }
 
 fn icon_button(hits: &HitTargets, key: &'static str, icon: Icon, tip: impl Into<SharedString>, on: bool, cx: &gpui::App) -> Stateful<Div> {
@@ -211,9 +148,7 @@ impl FleetView {
             hold.moved = Instant::now();
             return;
         }
-        let mut keys: HashSet<String> = self.supervising.needs.iter().map(need_key).collect();
-        keys.extend(self.mail.messages.iter().flat_map(|(w, msgs)| msgs.iter().map(move |m| messages::message_key(w, m))));
-        keys.extend(self.work_inbox.read(cx).rows().into_iter().map(|(w, r)| work_key(w, r)));
+        let keys: HashSet<String> = self.work_inbox.read(cx).rows().into_iter().map(|(w, r)| work_key(w, r)).collect();
         self.sidebar.left_hold = Some(Hold { keys, moved: Instant::now() });
         self.sidebar.left_holds += 1;
         self.sidebar.left_hold_timer = Some(cx.spawn(async move |this, cx| {
@@ -291,7 +226,6 @@ impl FleetView {
             .child(header)
             .children(self.render_loading(cx))
             .children(self.render_inbox(cx))
-            .children(self.render_messages(cx))
             .when(!notices.is_empty(), |d| {
                 d.child(
                     div()
@@ -357,16 +291,6 @@ impl FleetView {
             notices.push(self.render_workman_notice(problem, cx));
         }
         notices.extend(self.render_update_notice(cx));
-        if let Some(warning) = &self.workman_state.start_warning {
-            notices.push(notice(warning.clone(), banner::tinted(status.warning)));
-        }
-        for (name, r) in &self.removing {
-            let waiting = r.wanted.len();
-            notices.push(notice(
-                format!("Removing {name}: waiting for its {waiting} supervised session(s) to stop…"),
-                banner::plain(cx),
-            ));
-        }
         if let Some(e) = &self.scheduling.other_scan_error {
             notices.push(notice(e.clone(), banner::tinted(status.warning)));
         }
@@ -412,9 +336,6 @@ impl FleetView {
             rows.push((LeftRow::Workspace(w), format!("ws:{name}"), vec![name.clone()]));
             if self.sidebar.collapsed.contains(&format!("workspace:{name}")) {
                 continue;
-            }
-            for (i, row) in workspace.supervised.iter().enumerate() {
-                rows.push((LeftRow::Supervised(w, i), format!("sup:{name}/{}", row.session.session_id), vec![row.session.session_id.clone(), row.session.id.clone()]));
             }
             rows.push((LeftRow::Schedules(w), format!("sched:{name}"), ["schedules-row-", "sched-row-", "sched-state-", "sched-error-"].iter().map(|p| format!("{p}{name}")).collect()));
             for (r, repo) in workspace.repos.iter().enumerate() {
@@ -492,10 +413,6 @@ impl FleetView {
                 let open = !self.sidebar.collapsed.contains(&format!("workspace:{}", workspace.name));
                 self.render_workspace_row(workspace, open, cx)
             }
-            LeftRow::Supervised(w, i) => {
-                let workspace = &tree.workspaces[w];
-                self.render_session(&workspace.name, "supervised", &workspace.supervised[i], grid::indent(1), cx)
-            }
             LeftRow::Schedules(w) => div().flex().flex_col().children(self.render_schedules(&tree.workspaces[w], cx)).into_any_element(),
             LeftRow::Folder(w, r) => {
                 let (workspace, repo) = (&tree.workspaces[w], &tree.workspaces[w].repos[r]);
@@ -562,18 +479,15 @@ impl FleetView {
     fn render_inbox(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let all_work: Vec<(String, supraman_workman::InboxRow)> =
             self.work_inbox.read(cx).rows().into_iter().map(|(w, r)| (w.to_string(), r.clone())).collect();
-        let total = self.supervising.needs.len() + all_work.len();
+        let total = all_work.len();
         let work_rows: Vec<_> = all_work.into_iter().filter(|(w, r)| self.shown_now(&work_key(w, r))).collect();
-        let mut needs: Vec<&NeedsYou> = self.supervising.needs.iter().filter(|n| self.shown_now(&need_key(n))).collect();
         let scheduled = self.render_schedule_inbox(cx);
-        if needs.is_empty() && work_rows.is_empty() && scheduled.is_empty() {
+        if work_rows.is_empty() && scheduled.is_empty() {
             return None;
         }
-        let waiting = total - needs.len() - work_rows.len();
+        let waiting = total - work_rows.len();
         let total = total + scheduled.len();
         let colors = cx.theme().colors().clone();
-        let now = now_ms();
-        needs.sort_by_key(|n| (n.since, n.kind));
         let (scroll, flashing) = { let w = self.work_inbox.read(cx); (w.scroll.clone(), w.flashing()) };
         let mut inbox = div()
             .id("inbox")
@@ -602,41 +516,9 @@ impl FleetView {
                         n => format!("INBOX · {total} · {n} new, shown when the pointer leaves"),
                     })),
             );
-        for need in needs {
-            inbox = inbox.child(self.render_need(need, now, cx));
-        }
         let (work_needs, housekeeping) = self.render_work_cards(&work_rows, cx);
         inbox = inbox.children(work_needs).children(scheduled).children(housekeeping);
         Some(inbox.into_any_element())
-    }
-
-    fn render_need(&self, need: &NeedsYou, now: i64, cx: &mut Context<Self>) -> AnyElement {
-        let label = needs_label(need.kind);
-        let key = format!("inbox-need-{}/{}", need.workspace, need.name);
-        let mut card = InboxCard::new(key.clone(), label, label, need.name.clone()).context(need.workspace.clone()).when(Some(need.since), now).line("detail", need.detail.clone(), false);
-        for (button, tip, does) in inbox_buttons(need) {
-            let (workspace, name) = (need.workspace.clone(), need.name.clone());
-            let main = matches!(does, InboxButton::Remedy(_));
-            let shown = if main {
-                inbox_card::primary(&self.hits, button, tip, cx)
-            } else {
-                inbox_card::action(&self.hits, button, key.clone(), inbox_button_icon(&does).svg(inbox_card::ICON, inbox_card::icon_color(cx)), tip, cx)
-            };
-            let shown = shown.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                cx.stop_propagation();
-                match &does {
-                    InboxButton::Remedy(Remedy::Attach { id }) => this.open_by_id(id, cx),
-                    InboxButton::Remedy(Remedy::Retry | Remedy::Remint { .. } | Remedy::Adopt { .. }) | InboxButton::Retry => this.retry(&workspace, &name, cx),
-                    InboxButton::Remedy(Remedy::RunInTerminal { cwd, command }) => {
-                        this.run_in_terminal(cwd.clone(), command.clone(), window, cx);
-                    }
-                    InboxButton::Remedy(Remedy::RestartElevated) => this.restart_elevated(window, cx),
-                    InboxButton::StartFresh => this.start_fresh(&workspace, &name, cx),
-                }
-            }));
-            card = if main { card.primary(shown) } else { card.action(shown) };
-        }
-        card.render(&self.hits, cx)
     }
 
     fn render_workman_notice(&self, problem: String, cx: &mut Context<Self>) -> AnyElement {
@@ -761,27 +643,16 @@ impl FleetView {
         let Some(tab) = self.active.and_then(|id| self.tab(id)) else { return false };
         match &tab.kind {
             TabKind::Work(view) => view.read(cx).workspace == workspace.name,
-            _ => workspace.own.as_ref().is_some_and(|own| Self::tab_runs(tab, &own.session)),
+            _ => false,
         }
     }
 
-    /// The workspace row stands for the workspace session: its health, its `waiting for`, its controls.
     fn render_workspace_row(&self, workspace: &WorkspaceNode, open: bool, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
-        let status = cx.theme().status().clone();
         let w = workspace.name.clone();
         let pkey = format!("workspace:{w}");
         let group = SharedString::from(format!("ws-group-{w}"));
         let shown = self.workspace_selected(workspace, cx);
-        let own = workspace.own.as_ref();
-        let live = own.filter(|r| fleet::is_alive(&r.health));
-        let blocked = live.is_some_and(|r| matches!(r.health, Health::Blocked { .. }));
-        let waiting = live.and_then(|r| match &r.health {
-            Health::Blocked { waiting_for: Some(why) } => Some(format!("waiting for: {why}")),
-            _ => None,
-        });
-        let dot = marks::dot(own.map_or(Mark::Ring(colors.text_disabled), |r| fleet::State::of_row(r).mark(cx)));
-        let relay_glyph = self.relay_glyph(&w, cx);
 
         let buttons = self.workspace_buttons(workspace, &group, shown, cx);
 
@@ -791,10 +662,9 @@ impl FleetView {
             .gap(grid::gap())
             .h(px(WORKSPACE_ROW))
             .child(disclosure(Some(open), colors.text_muted))
-            .child(icon_slot(&self.hits, &format!("ws-{w}"), Some(dot.into_any_element())))
+            .child(icon_slot(&self.hits, &format!("ws-{w}"), None))
             .child(tree_label(&self.hits, &format!("ws-{w}"), div().flex_none().font_weight(FontWeight::BOLD).whitespace_nowrap().child(SharedString::from(w.clone()))))
             .child(clipped(format!("ws-root-{w}"), home_text(workspace.home.as_deref()), true).flex_1().text_xs().text_color(secondary(cx)).child(hit_target(&self.hits, format!("ws-root-{w}"))))
-            .child(div().relative().flex_none().size(px(16.)).children(relay_glyph).child(hit_target(&self.hits, format!("relay-slot-{w}"))))
             .child(buttons);
         div()
             .id(SharedString::from(pkey.clone()))
@@ -809,11 +679,7 @@ impl FleetView {
             .cursor_pointer()
             .hover(|s| s.bg(colors.ghost_element_hover))
             .active(|s| s.bg(colors.ghost_element_active))
-            .when(blocked, |d| d.bg(status.warning.opacity(0.12)).hover(|s| s.bg(status.warning.opacity(0.18))))
             .child(line)
-            .when_some(waiting, |d, why| {
-                d.child(clipped(format!("ws-waiting-{w}"), why, false).pl(px(grid::LABEL)).pb(px(4.)).text_xs().text_color(status.warning))
-            })
             .child(hit_target(&self.hits, format!("ws-row-{w}")))
             .on_mouse_down(MouseButton::Right, {
                 let w = w.clone();
@@ -826,36 +692,8 @@ impl FleetView {
             .into_any_element()
     }
 
-    fn relay_glyph(&self, w: &str, cx: &gpui::App) -> Option<Stateful<Div>> {
-        let status = cx.theme().status();
-        let relay = self.mail.relays.get(w).and_then(|r| r.label(now_ms()));
-        relay.and_then(|(text, _)| {
-            let (icon, color) = match relay_word(&text) {
-                "direct" => return None,
-                "ready" => (Icon::RelayReady, status.success),
-                "starting" => (Icon::RelayStarting, status.warning),
-                _ => (Icon::Warning, status.warning),
-            };
-            let key = format!("relay-{w}");
-            Some(
-                div()
-                    .id(SharedString::from(key.clone()))
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size_full()
-                    .child(icon.svg(14., color))
-                    .child(hit_target(&self.hits, key))
-                    .tooltip(Tooltip::text(text)),
-            )
-        })
-    }
-
     fn workspace_buttons(&self, workspace: &WorkspaceNode, group: &SharedString, shown: bool, cx: &mut Context<Self>) -> Div {
         let w = workspace.name.clone();
-        let started = workspace.started == Some(true);
-        let own = workspace.own.as_ref();
         let work = {
             let w = w.clone();
             self.hover_icon(format!("work-{w}"), Icon::Work, "Work: the workspace's Workman board", group, shown, cx).on_click(cx.listener(
@@ -874,42 +712,6 @@ impl FleetView {
                 },
             ))
         };
-        let session = own.and_then(|row| {
-            let (w, session) = (w.clone(), row.session.clone());
-            if row.attachable {
-                Some(self.hover_icon(format!("attach-ws-{w}"), Icon::Attach, "Attach the workspace session", group, shown, cx).on_click(cx.listener(
-                    move |this, _: &ClickEvent, window, cx| {
-                        cx.stop_propagation();
-                        this.attach(&w, "workspace", &session, window, cx);
-                    },
-                )))
-            } else if self.resumable(row) {
-                Some(self.hover_icon(format!("resume-ws-{w}"), Icon::Resume, "Resume the workspace session", group, shown, cx).on_click(cx.listener(
-                    move |this, _: &ClickEvent, window, cx| {
-                        cx.stop_propagation();
-                        this.resume(&w, "workspace", &session, window, cx);
-                    },
-                )))
-            } else {
-                None
-            }
-        });
-        let start_stop = {
-            let w = w.clone();
-            let (key, icon, tip) = if started {
-                (format!("stop-{w}"), Icon::Square, "Stop: its supervised sessions stop (stop, never rm)")
-            } else {
-                (format!("start-{w}"), Icon::Play, "Start: supervise the workspace, its session first")
-            };
-            self.hover_icon(key, icon, tip, group, shown, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                cx.stop_propagation();
-                if started {
-                    this.stop_workspace(&w, cx);
-                } else {
-                    this.start_workspace(&w, cx);
-                }
-            }))
-        };
         div()
             .flex()
             .flex_none()
@@ -917,8 +719,6 @@ impl FleetView {
             .gap(px(2.))
             .child(work)
             .child(task)
-            .child(session.map_or_else(slot, IntoElement::into_any_element))
-            .child(start_stop)
     }
 
     fn render_folder_row(&self, workspace: &WorkspaceNode, repo: &RepoNode, open: bool, cx: &mut Context<Self>) -> AnyElement {
@@ -1217,21 +1017,6 @@ impl FleetView {
                     .into_any_element(),
             );
         }
-        let adopting = repo_session_name(workspace, &repo.name)
-            .and_then(|name| self.supervising.needs.iter().find(|n| n.workspace == workspace && n.name == name && matches!(n.action, Some(Remedy::Adopt { .. }))));
-        if let Some(need) = adopting {
-            let key = format!("adopt-failed-{workspace}/{}", repo.name);
-            let why = format!("{}: {}. Retry or Start fresh in the Inbox.", need.name, need.detail);
-            out.push(
-                tag("adopt failed", cx)
-                    .id(SharedString::from(key.clone()))
-                    .relative()
-                    .text_color(cx.theme().status().warning)
-                    .child(hit_target(&self.hits, key))
-                    .tooltip(Tooltip::text(why))
-                    .into_any_element(),
-            );
-        }
         let also: Vec<&str> = repo.also_in.iter().map(String::as_str).filter(|w| repo.supervised_in.as_deref() != Some(*w)).collect();
         if !also.is_empty() {
             out.push(
@@ -1270,15 +1055,6 @@ pub(crate) fn home_text(home: Option<&std::path::Path>) -> String {
     home.map(|h| h.display().to_string()).unwrap_or_default()
 }
 
-fn relay_word(label: &str) -> &str {
-    match label {
-        "relay ready" => "ready",
-        "relay starting" => "starting",
-        "direct" => "direct",
-        _ => "expired",
-    }
-}
-
 pub(crate) fn tag(text: impl Into<SharedString>, cx: &gpui::App) -> Div {
     div()
         .flex_none()
@@ -1296,33 +1072,6 @@ pub(crate) fn tag(text: impl Into<SharedString>, cx: &gpui::App) -> Div {
 mod tests {
     use super::*;
 
-    fn need(kind: NeedsKind, action: Option<Remedy>) -> NeedsYou {
-        NeedsYou { kind, workspace: "demo".into(), name: "fm-demo-workspace".into(), since: 0, detail: String::new(), action }
-    }
-
-    #[test]
-    fn a_trust_row_offers_run_in_terminal_then_retry_each_under_its_own_key() {
-        let run = Remedy::RunInTerminal { cwd: r"C:\demo".into(), command: "claude".into() };
-        let buttons = inbox_buttons(&need(NeedsKind::TrustNeeded, Some(run.clone())));
-        assert_eq!(
-            buttons,
-            [
-                ("inbox-run-fm-demo-workspace".to_string(), "Run in terminal", InboxButton::Remedy(run)),
-                ("inbox-retry-fm-demo-workspace".to_string(), "Retry", InboxButton::Retry),
-            ]
-        );
-        let adopt = Remedy::Adopt { from: "abcd".into() };
-        assert_eq!(
-            inbox_buttons(&need(NeedsKind::LaunchFailed, Some(adopt.clone()))),
-            [
-                ("inbox-retry-fm-demo-workspace".to_string(), "Retry", InboxButton::Remedy(adopt)),
-                ("inbox-fresh-fm-demo-workspace".to_string(), "Start fresh", InboxButton::StartFresh),
-            ]
-        );
-        assert_eq!(inbox_buttons(&need(NeedsKind::GaveUp, Some(Remedy::Retry))).len(), 1, "one Retry, never two");
-        assert!(inbox_buttons(&need(NeedsKind::Duplicate, None)).is_empty());
-    }
-
     #[test]
     fn a_childs_icon_starts_under_its_parents_label() {
         for level in 0..3 {
@@ -1331,14 +1080,12 @@ mod tests {
     }
 
     #[test]
-    fn folder_labels_name_the_home_and_relay_labels_shorten_to_a_state_word() {
+    fn folder_labels_name_the_home() {
         use std::path::Path;
         assert_eq!(repo_label("Gaia", Path::new(r"P:\x\Gaia"), Some(Path::new(r"p:/x/gaia/"))), "Gaia (home)");
         assert_eq!(repo_label("child", Path::new(r"P:\x\Gaia\child"), Some(Path::new(r"P:\x\Gaia"))), "./child");
         assert_eq!(repo_label("child", Path::new(r"P:\x\Gaia\child"), None), "./child");
         assert_eq!(folder_label("Gaia", Path::new(r"P:\x\Gaia"), Some(Path::new(r"p:/x/gaia/"))), "Gaia (home)");
         assert_eq!(folder_label("child", Path::new(r"P:\x\Gaia\child"), Some(Path::new(r"P:\x\Gaia"))), "child");
-        assert_eq!(relay_word("relay watcher expired, not re-armed (armed 40 min ago)"), "expired");
-        assert_eq!(relay_word("relay ready"), "ready");
     }
 }

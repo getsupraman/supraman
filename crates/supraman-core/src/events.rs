@@ -82,7 +82,7 @@ pub fn role_injection(home: &Path, role: &str, workspace: Option<&str>) -> Optio
     role_injection_for(home, role, workspace, None)
 }
 
-/// [`role_injection`] for a repo session: `{repo}` too, from `SUPRAMAN_REPO`.
+/// [`role_injection`] with `{repo}` filled in too, from `SUPRAMAN_REPO`.
 pub fn role_injection_for(home: &Path, role: &str, workspace: Option<&str>, repo: Option<&str>) -> Option<String> {
     if !is_safe_id(role) {
         return None;

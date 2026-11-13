@@ -95,18 +95,21 @@ fn assert_new(c: &Case) {
     assert_eq!(listed, want);
 }
 
-/// `sm.exe inbox` run from the install's hooks copy: a running exe Windows will not overwrite or delete.
+/// `sm.exe hook` run from the install's hooks copy, reading a stdin held open: a running exe Windows will not overwrite or delete.
 fn hold(install: &Path) -> Holder {
     let exe = install.join(HOOK_EXE);
     fs::copy(env!("CARGO_BIN_EXE_sm"), &exe).unwrap();
-    let inbox = install.parent().unwrap().join("inbox");
-    fs::create_dir_all(&inbox).unwrap();
-    let mut cmd = supraman_core::process::command(&exe);
-    cmd.args(["inbox", "--dir"]).arg(&inbox).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-    let child = Holder(cmd.spawn().unwrap());
+    let child = Holder(waiting(&exe, &install.parent().unwrap().join("home")).spawn().unwrap());
     wait_until(Duration::from_secs(10), polled(Duration::from_millis(20)), || supraman_core::process::alive(child.id()));
     assert!(fs::write(&exe, b"x").is_err(), "the running hooks copy cannot be overwritten");
     child
+}
+
+/// `exe hook Stop`, which waits for its stdin to end: it runs until the [`Holder`] holding its stdin drops.
+fn waiting(exe: &Path, home: &Path) -> std::process::Command {
+    let mut cmd = supraman_core::process::command(exe);
+    cmd.args(["hook", "Stop"]).env("SUPRAMAN_HOME", home).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+    cmd
 }
 
 /// A folder `sm plugin install` copies into: what the restarted exe leaves behind.
@@ -250,11 +253,7 @@ fn a_file_that_cannot_even_be_renamed_rolls_the_whole_apply_back() {
 #[test]
 fn a_supraman_that_does_not_exit_changes_nothing_and_starts_nothing() {
     let c = case();
-    let mut sleeper = supraman_core::process::command(env!("CARGO_BIN_EXE_sm"));
-    let inbox = c.install.parent().unwrap().join("inbox-wait");
-    fs::create_dir_all(&inbox).unwrap();
-    sleeper.args(["inbox", "--dir"]).arg(&inbox).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-    let child = Holder(sleeper.spawn().unwrap());
+    let child = Holder(waiting(Path::new(env!("CARGO_BIN_EXE_sm")), &c.install.parent().unwrap().join("home")).spawn().unwrap());
     let marker = marker(&c);
     let out = install::apply(&Apply {
         wait_pid: Some(child.id()),

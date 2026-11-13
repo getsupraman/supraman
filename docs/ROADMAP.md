@@ -46,7 +46,7 @@ These pieces are Windows-only in the same way for macOS and Linux, and the count
 | A command's file (`.ps1`, then `PATHEXT`) for a [+] tab | `supraman-core/src/paths.rs` (`pwsh_command`), `supraman-app/src/hand.rs` | Looked up on `PATH` with the executable bit; no extensions | **expected** |
 | The [+] tab runs pwsh with a launch script | `supraman-app/src/hand.rs` | The user's login shell (`$SHELL`, `-l -c`) and a POSIX `sh` script with the same steps | **expected** |
 | The scheduler's raw argument line | `sm/src/fire.rs` (`raw`) | `Command::arg`, which the stub already does | **verified** |
-| Claude's peer protocol (message pipes) | `supraman-claude/src/peer.rs` | A Unix domain socket under `$XDG_RUNTIME_DIR/cc-socks/` or `/tmp/cc-socks-<uid>/`, the same JSON lines, the auth line optional (`docs/peer-messaging.md`, read from claude's code). `peer.rs` already has a `cfg(unix)` `write_pipe` on a `UnixStream` | **verified** in code on both sides; never run against a real session; the `procStart` format claude writes there: **unknown** |
+| Claude's live session registry (`~/.claude/sessions/<pid>.json`) | `supraman-claude/src/peer.rs` | The same files; `messagingSocketPath` a Unix domain socket under `$XDG_RUNTIME_DIR/cc-socks/` or `/tmp/cc-socks-<uid>/` | **expected**; the `procStart` format claude writes there: **unknown** |
 | The process memory figure in the status bar | `supraman-ui/src/lib.rs` (`memory`) | Linux: `/proc/self/statm`. macOS: `task_info` (`MACH_TASK_BASIC_INFO`) | **verified**: 0 off Windows |
 | Icon font (`Segoe Fluent Icons` or `Segoe MDL2 Assets`) | `supraman-ui/src/fonts.rs` (`icons`) | A bundled icon font, the same on every platform | **expected**; off Windows it names Segoe Fluent Icons, which is not installed there (**verified**) |
 | Clipboard lock and save/restore around selftests | `supraman-app/src/selftest_clipboard.rs` | Not needed on a private display (Xvfb, or a CI machine's own session); a lock file stays for machines that share one | **expected** |
@@ -91,7 +91,7 @@ These pieces are Windows-only in the same way for macOS and Linux, and the count
    `Security.framework` through `native-tls`), and a CI job that runs `cargo check` and the unit tests. Nothing
    else can be tried before this.
 2. **Processes and paths** (`process.rs`, `proc_tree.rs`, `paths.rs`). `started` and `alive` decide which
-   sessions run, so the supervisor, `recover_if_dead` and the peer registry all depend on them; on macOS they are
+   sessions run, so `recover_if_dead`, the [+] tabs' liveness and the peer registry all depend on them; on macOS they are
    wrong today.
 3. **The terminal** (`supraman-term`). The Unix PTY branches exist; this makes the app usable for a session by
    hand, with the [+] tab on the user's shell.

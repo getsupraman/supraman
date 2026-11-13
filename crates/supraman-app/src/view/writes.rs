@@ -5,11 +5,10 @@ use futures::FutureExt as _;
 /// A poll's report gives way to these ([`MaxWrites`]).
 #[derive(Default)]
 pub(super) struct Writes {
-    pub(super) sends: Serial,
     pub(super) max: MaxWrites,
 }
 
-/// The human's sends, each started only after the one before it has finished, so they arrive in the order sent.
+/// Writes each started only after the one before it has finished, so they land in the order made.
 #[derive(Default)]
 pub(crate) struct Serial(Option<futures::future::Shared<futures::future::LocalBoxFuture<'static, ()>>>);
 

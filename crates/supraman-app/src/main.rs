@@ -1,6 +1,5 @@
 mod brand;
-mod compose;
-mod dismissed_messages;
+mod dismissed;
 mod elevate;
 mod fleet;
 mod hand;
@@ -43,8 +42,6 @@ mod selftest_manage;
 #[cfg(feature = "selftest")]
 mod selftest_mark;
 #[cfg(feature = "selftest")]
-mod selftest_messages;
-#[cfg(feature = "selftest")]
 mod selftest_notices;
 #[cfg(feature = "selftest")]
 mod selftest_overflow;
@@ -66,8 +63,6 @@ mod selftest_shots;
 #[cfg(feature = "selftest")]
 mod selftest_start;
 #[cfg(feature = "selftest")]
-mod selftest_supervise;
-#[cfg(feature = "selftest")]
 mod selftest_tab_keys;
 #[cfg(feature = "selftest")]
 mod selftest_tab_menu;
@@ -85,7 +80,6 @@ mod selftest_work;
 mod selftest_zoom;
 mod settings_window;
 mod stars;
-mod supervise;
 mod tab_card;
 mod titlebar;
 mod signin;
@@ -93,6 +87,7 @@ mod signin;
 mod test_auth;
 mod transcripts_load;
 mod tray;
+mod upkeep;
 mod updates;
 mod view;
 mod workman_setup;
@@ -126,7 +121,6 @@ pub enum Mode {
     SelftestDetach(u32),
     SelftestDetachShutdown,
     SelftestPerf,
-    SelftestSupervise,
     SelftestShots,
 }
 
@@ -138,7 +132,7 @@ impl Mode {
 
 #[cfg(feature = "selftest")]
 const USAGE: &str =
-    "usage: supraman [--selftest | --selftest-detach <n> | --selftest-detach-shutdown | --selftest-perf | --selftest-supervise [--release] | --selftest-shots] [--visible]";
+    "usage: supraman [--selftest | --selftest-detach <n> | --selftest-detach-shutdown | --selftest-perf | --selftest-shots] [--visible]";
 
 fn parse_args() -> (Mode, Option<elevate::Relaunched>) {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -180,20 +174,15 @@ fn selftest_mode(args: &[&str]) -> Mode {
         }
         ["--selftest-detach-shutdown"] => Mode::SelftestDetachShutdown,
         ["--selftest-perf"] => Mode::SelftestPerf,
-        ["--selftest-supervise"] => Mode::SelftestSupervise,
-        ["--selftest-supervise", "--release"] => {
-            selftest_supervise::RELEASE.store(true, Ordering::Relaxed);
-            Mode::SelftestSupervise
-        }
         ["--selftest-shots"] => Mode::SelftestShots,
         other => {
             eprintln!("unknown arguments {other:?}; {USAGE}");
             std::process::exit(2);
         }
     };
-    let hideable = matches!(mode, Mode::Selftest | Mode::SelftestSupervise | Mode::SelftestDetachShutdown | Mode::SelftestShots);
+    let hideable = matches!(mode, Mode::Selftest | Mode::SelftestDetachShutdown | Mode::SelftestShots);
     if visible && !hideable {
-        eprintln!("{} is for --selftest, --selftest-supervise and --selftest-detach-shutdown; {USAGE}", selftest_desktop::VISIBLE_FLAG);
+        eprintln!("{} is for --selftest, --selftest-shots and --selftest-detach-shutdown; {USAGE}", selftest_desktop::VISIBLE_FLAG);
         std::process::exit(2);
     }
     if hideable {
@@ -306,7 +295,7 @@ fn prepare_selftest(mode: Mode) {
 #[cfg(feature = "selftest")]
 fn hold_machine(mode: Mode) -> Option<selftest_clipboard::Held> {
     match mode {
-        Mode::Selftest | Mode::SelftestSupervise | Mode::SelftestDetachShutdown | Mode::SelftestShots => match selftest_clipboard::hold_machine() {
+        Mode::Selftest | Mode::SelftestDetachShutdown | Mode::SelftestShots => match selftest_clipboard::hold_machine() {
             Ok(held) => Some(held),
             Err(error) => {
                 println!("FAIL setup: {error:#}");

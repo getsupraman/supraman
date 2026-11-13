@@ -6,7 +6,7 @@ use super::FleetView;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Notice {
     Setup,
-    Supervise,
+    Upkeep,
     Schedule,
     Hand,
     Tabs,
@@ -19,7 +19,7 @@ impl NoticeKind for Notice {
     fn tag(self) -> &'static str {
         match self {
             Notice::Setup => "setup",
-            Notice::Supervise => "supervise",
+            Notice::Upkeep => "upkeep",
             Notice::Schedule => "schedule",
             Notice::Hand => "hand",
             Notice::Tabs => "tabs",
@@ -33,7 +33,7 @@ impl NoticeKind for Notice {
 impl FleetView {
     pub(super) fn plain_notices(&self, cx: &App) -> Vec<(Notice, String)> {
         let setup = self.setup_notices.iter().map(|t| (Notice::Setup, t.clone()));
-        let supervise = undismissed(&self.supervising.supervise_errors, &self.supervising.supervise_dismissed).map(|t| (Notice::Supervise, t));
+        let supervise = undismissed(&self.polled.upkeep_errors, &self.polled.upkeep_dismissed).map(|t| (Notice::Upkeep, t));
         let schedule = undismissed(&self.scheduling.schedule_errors, &self.scheduling.schedule_errors_dismissed).map(|t| (Notice::Schedule, t));
         let hand = self.hand_notices.iter().map(|t| (Notice::Hand, t.clone()));
         let tabs = self.saving.tab_notices.iter().map(|t| (Notice::Tabs, t.clone()));
@@ -46,7 +46,7 @@ impl FleetView {
     pub fn dismiss_notice(&mut self, kind: Notice, text: &str, cx: &mut Context<Self>) {
         match kind {
             Notice::Setup => remove_one(&mut self.setup_notices, text),
-            Notice::Supervise => self.supervising.supervise_dismissed.push(text.to_string()),
+            Notice::Upkeep => self.polled.upkeep_dismissed.push(text.to_string()),
             Notice::Schedule => self.scheduling.schedule_errors_dismissed.push(text.to_string()),
             Notice::Hand => remove_one(&mut self.hand_notices, text),
             Notice::Tabs => remove_one(&mut self.saving.tab_notices, text),
@@ -78,10 +78,10 @@ mod tests {
 
     #[test]
     fn each_kind_has_its_own_dismiss_key() {
-        let keys = [Notice::Setup, Notice::Supervise, Notice::Schedule, Notice::Hand, Notice::Tabs, Notice::Inbox, Notice::Action, Notice::Renewal].map(|k| dismiss_key(k, 0));
+        let keys = [Notice::Setup, Notice::Upkeep, Notice::Schedule, Notice::Hand, Notice::Tabs, Notice::Inbox, Notice::Action, Notice::Renewal].map(|k| dismiss_key(k, 0));
         assert_eq!(
             keys,
-            ["notice-dismiss-setup-0", "notice-dismiss-supervise-0", "notice-dismiss-schedule-0", "notice-dismiss-hand-0",
+            ["notice-dismiss-setup-0", "notice-dismiss-upkeep-0", "notice-dismiss-schedule-0", "notice-dismiss-hand-0",
                 "notice-dismiss-tabs-0",
                 "notice-dismiss-inbox-0", "notice-dismiss-action-0", "notice-dismiss-renewal-0"]
         );

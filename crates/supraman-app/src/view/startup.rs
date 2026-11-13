@@ -12,9 +12,9 @@ use supraman_ui::nudge::Nudged;
 use supraman_ui::timeline;
 
 use super::{Cli, FleetView, Poller, REFRESH_EVERY, Refresh, any_exit};
-use crate::dismissed_messages::DismissedMessages;
+use crate::dismissed::Dismissed;
 use crate::stars::Stars;
-use crate::supervise::Report;
+use crate::upkeep::Report;
 use crate::work_view::WorkInbox;
 
 const RUNS_DISMISSED: &str = "schedules/dismissed.json";
@@ -22,23 +22,21 @@ const WAITING_DISMISSED: &str = "schedules/waiting-dismissed.json";
 
 struct Stores {
     stars: (Stars, Option<String>),
-    messages: (DismissedMessages, Option<String>),
-    runs: (DismissedMessages, Option<String>),
-    waiting: (DismissedMessages, Option<String>),
+    runs: (Dismissed, Option<String>),
+    waiting: (Dismissed, Option<String>),
 }
 
 impl Stores {
     fn load(home: &Path) -> Self {
         Self {
             stars: Stars::load(Some(home)),
-            messages: DismissedMessages::load(Some(home)),
-            runs: DismissedMessages::load_at(Some(home.join(RUNS_DISMISSED)), "every failed scheduled run shows"),
-            waiting: DismissedMessages::load_at(Some(home.join(WAITING_DISMISSED)), "every schedule that waits for approval shows"),
+            runs: Dismissed::load_at(Some(home.join(RUNS_DISMISSED)), "every failed scheduled run shows"),
+            waiting: Dismissed::load_at(Some(home.join(WAITING_DISMISSED)), "every schedule that waits for approval shows"),
         }
     }
 }
 
-fn absorbed(mine: &mut DismissedMessages, loaded: DismissedMessages) -> Option<Save> {
+fn absorbed(mine: &mut Dismissed, loaded: Dismissed) -> Option<Save> {
     let early = std::mem::replace(mine, loaded);
     mine.absorb(&early)
 }
@@ -73,18 +71,16 @@ impl FleetView {
     }
 
     fn stores_loaded(&mut self, loaded: Stores, cx: &mut Context<Self>) {
-        let Stores { stars, messages, runs, waiting } = loaded;
+        let Stores { stars, runs, waiting } = loaded;
         let early = std::mem::replace(&mut self.stars, stars.0);
         let absorbed_stars = self.stars.absorb(&early);
         let save = self.stars.follow(&self.transcripts.continued).or(absorbed_stars);
         self.save_off_thread(save, "Cannot save the starred sessions", cx);
-        let save = absorbed(&mut self.mail.dismissed_messages, messages.0);
-        self.save_off_thread(save, "Cannot save the dismissed messages", cx);
         let save = absorbed(&mut self.scheduling.runs_dismissed, runs.0);
         self.save_off_thread(save, "Cannot save the dismissed runs", cx);
         let save = absorbed(&mut self.scheduling.waiting_dismissed, waiting.0);
         self.save_off_thread(save, "Cannot save the dismissed approvals", cx);
-        self.action_error = stars.1.or(messages.1).or(runs.1).or(waiting.1).or(self.action_error.take());
+        self.action_error = stars.1.or(runs.1).or(waiting.1).or(self.action_error.take());
         if !self.stars.ids().is_empty() {
             self.polls.transcripts_nudge.wake();
         }
@@ -171,19 +167,14 @@ impl FleetView {
     // the interactive sessions' pids: an exit wakes the next poll
     fn ticked(&mut self, report: Option<Report>, asks: u64, cx: &mut Context<Self>) -> Vec<u32> {
         if let Some(report) = report {
-            self.apply_report(report, cx);
+            self.apply_report(report);
         }
         self.polls.refreshes += 1;
         self.polls.refreshes_answered = asks;
         self.check_loaded(cx);
-        let left = std::mem::take(&mut self.workman_state.left_pending);
-        self.leave_servers(left, cx);
         self.resolve_tabs(cx);
         self.reopen_tabs(cx);
         let pids: Vec<u32> = self.sessions.iter().filter(|s| s.kind == supraman_claude::Kind::Interactive).filter_map(|s| s.pid).collect();
-        if !self.removing.is_empty() {
-            self.finish_removals(cx);
-        }
         let named = self.workspaces.iter().map(|w| (w.name.clone(), w.folders.iter().map(|f| f.path.clone()).collect())).collect();
         self.work_inbox.update(cx, |inbox, cx| inbox.set_workspaces(named, cx));
         cx.notify();

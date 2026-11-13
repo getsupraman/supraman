@@ -23,7 +23,6 @@ pub struct Sidebar {
     pub(super) reveal_pending: Option<(PendingReveal, Instant)>,
     pub(super) left_rows: Rc<(Rc<Tree>, Vec<LeftRow>)>,
     pub(super) collapsed: HashSet<String>,
-    pub expanded: HashSet<String>,
     pub closed_expanded: HashSet<String>,
     pub(super) search_marks: HashMap<String, crate::search::Marks>,
     /// The sidebar's pane in [`supraman_ui::focus`].
@@ -51,7 +50,6 @@ impl Sidebar {
             reveal_pending: None,
             left_rows: Rc::new((Rc::new(Tree { workspaces: Vec::new(), hidden_stopped: 0 }), Vec::new())),
             collapsed: HashSet::new(),
-            expanded: HashSet::new(),
             closed_expanded: HashSet::new(),
             search_marks: HashMap::new(),
             focus: cx.focus_handle(),

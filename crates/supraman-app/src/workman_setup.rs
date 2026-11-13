@@ -79,7 +79,6 @@ mod tests {
         let out = detect(Some(&fresh));
         assert_eq!(out, WorkmanStatus::NotSignedIn { url: url.clone() });
         assert!(out.signed_out() && out.problem().unwrap().contains("Not signed in") && out.fix().unwrap().contains("Sign in"));
-        assert!(out.start_warning("demo").unwrap().contains("without Workman"));
 
         oauth.set_access_ttl(60);
         let auth = crate::test_auth::signed_in(&home, fake.base());
@@ -129,7 +128,7 @@ mod tests {
         let warning = Some("names the Workman MCP server \"ws\"".to_string());
         let ready = WorkmanStatus::Ready { url: "https://work.example".into(), who: None, warning: warning.clone() };
         assert_eq!(ready.problem(), warning);
-        assert_eq!((ready.fix(), ready.start_warning("demo")), (None, None));
+        assert_eq!(ready.fix(), None);
     }
 
     #[test]
@@ -141,8 +140,6 @@ mod tests {
         assert_eq!(down, WorkmanStatus::Unreachable { url: closed.clone(), error: "connection refused".into() });
         assert!(down.problem().unwrap().contains(&closed));
         assert!(down.fix().unwrap().contains("Settings → Workman"));
-        assert!(down.start_warning("demo").unwrap().contains("unreachable"));
-        assert_eq!(WorkmanStatus::Ready { url: closed, who: None, warning: None }.start_warning("demo"), None);
     }
 
     #[test]
@@ -156,7 +153,6 @@ mod tests {
         assert!(why.starts_with("Workman is not set up: run /workman:setup"), "{why}");
         assert_eq!(out.problem().as_deref(), Some(why.as_str()));
         assert!(!out.signed_out() && !out.unreachable() && out.checked_url().is_none());
-        assert!(out.start_warning("demo").unwrap().contains("/workman:setup"));
         assert!(matches!(detect(None), WorkmanStatus::NotSetUp { .. }));
         assert!(fake.seen().is_empty(), "no /health, no sign-in: {:?}", fake.seen().iter().map(|s| s.target.clone()).collect::<Vec<_>>());
     }

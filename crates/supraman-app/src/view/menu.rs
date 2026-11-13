@@ -12,8 +12,6 @@ use crate::schedules::{Primary, ScheduleRow};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuAction {
-    Start(String),
-    Stop(String),
     Work(String),
     /// The prompt tab; `folder` preselects one of the workspace's.
     NewTask { workspace: String, folder: Option<PathBuf>, scheduled: bool },
@@ -30,7 +28,6 @@ pub enum MenuAction {
     Attach { workspace: String, repo: String, session: Session },
     Resume { workspace: String, repo: String, session: Session },
     StopSession(Session),
-    Adopt { workspace: String, folder: String, session: Session, name: String },
     Copy(String),
     ShowInWork { workspace: String, item_id: String },
     ToggleStar(String),
@@ -59,11 +56,9 @@ pub enum MenuAction {
 pub enum Confirmed {
     Remove(String),
     StopSession(Session),
-    Adopt { workspace: String, folder: String, session: Session, name: String },
     /// `discard`: the `--discard-unpushed` value rm printed, only after its own second question.
     Delete { session: Session, discard: Option<String> },
     DeleteClosed { workspace: String, sessions: Vec<Session>, skipped: Vec<(String, String)> },
-    Edit { workspace: String, edits: Vec<supraman_core::Edit> },
     RemoveSchedule { workspace: String, id: String },
     /// The banner's Update, while sessions are attached in tabs.
     Update,
@@ -85,15 +80,9 @@ pub enum MenuTarget {
     OtherSchedule(String),
 }
 
-/// `own` and `relay` have no row of their own, so their items follow under a caption each.
-pub fn workspace_items(node: &WorkspaceNode, closed_background: bool, own: Vec<MenuItem>, relay: Vec<MenuItem>) -> Vec<MenuItem> {
+pub fn workspace_items(node: &WorkspaceNode, closed_background: bool) -> Vec<MenuItem> {
     let w = &node.name;
-    let mut items = vec![if node.started == Some(true) {
-        item("stop", "Stop", MenuAction::Stop(w.clone()))
-    } else {
-        item("start", "Start", MenuAction::Start(w.clone()))
-    }];
-    items.push(item("work", "Work", MenuAction::Work(w.clone())));
+    let mut items = vec![item("work", "Work", MenuAction::Work(w.clone()))];
     items.extend(new_task_items(w, None));
     items.push(item("rescan", "Rescan…", MenuAction::Rescan(w.clone())));
     items.push(item("edit-folders", "Edit folders…", MenuAction::EditFolders(w.clone())));
@@ -108,54 +97,7 @@ pub fn workspace_items(node: &WorkspaceNode, closed_background: bool, own: Vec<M
         items.push(item("delete-closed", "Delete closed background sessions…", MenuAction::DeleteClosed(w.clone())));
     }
     items.push(item("remove", "Remove…", MenuAction::Remove(w.clone())));
-    if let Some(row) = &node.own {
-        items.extend(section(own, Section::Own, format!("workspace session · {}", row.session.name)));
-    }
-    if let Some(row) = &node.relay {
-        items.extend(section(relay, Section::Relay, format!("relay · {}", row.session.name)));
-    }
     items
-}
-
-#[derive(Clone, Copy)]
-enum Section {
-    Own,
-    Relay,
-}
-
-fn section(items: Vec<MenuItem>, of: Section, caption: String) -> Vec<MenuItem> {
-    let mut items: Vec<MenuItem> = items.into_iter().map(|i| MenuItem { key: section_key(of, &i.key).into(), ..i }).collect();
-    if let Some(first) = items.first_mut() {
-        first.section = Some(caption);
-    }
-    items
-}
-
-/// A [`session_items`] key inside the workspace menu, where it must not clash with the workspace's own.
-fn section_key(of: Section, key: &str) -> &str {
-    match (of, key) {
-        (Section::Own, "attach") => "session-attach",
-        (Section::Own, "resume") => "session-resume",
-        (Section::Own, "stop-session") => "session-stop",
-        (Section::Own, "copy-send-name") => "session-copy-send-name",
-        (Section::Own, "copy-name") => "session-copy-name",
-        (Section::Own, "copy-id") => "session-copy-id",
-        (Section::Own, "show-in-work") => "session-show-in-work",
-        (Section::Own, "star") => "session-star",
-        (Section::Own, "delete") => "session-delete",
-        (Section::Own, "details") => "session-details",
-        (Section::Relay, "attach") => "relay-attach",
-        (Section::Relay, "resume") => "relay-resume",
-        (Section::Relay, "stop-session") => "relay-stop",
-        (Section::Relay, "copy-send-name") => "relay-copy-send-name",
-        (Section::Relay, "copy-name") => "relay-copy-name",
-        (Section::Relay, "copy-id") => "relay-copy-id",
-        (Section::Relay, "show-in-work") => "relay-show-in-work",
-        (Section::Relay, "star") => "relay-star",
-        (Section::Relay, "delete") => "relay-delete",
-        (Section::Relay, "details") => "relay-details",
-        (_, other) => other,
-    }
 }
 
 pub fn new_task_items(workspace: &str, folder: Option<&std::path::Path>) -> [MenuItem; 2] {
@@ -209,7 +151,6 @@ pub fn session_items(
     claimed: Option<String>,
     send_name: Option<String>,
     deletable: bool,
-    adopt: Option<String>,
 ) -> Vec<MenuItem> {
     let s = &row.session;
     let (w, r) = (workspace.to_string(), repo.to_string());
@@ -222,9 +163,6 @@ pub fn session_items(
     if fleet::is_alive(&row.health) && s.kind == Kind::Background && !s.id.is_empty() {
         let label = if is_foremans(s) { "Stop" } else { "Stop…" };
         items.push(item("stop-session", label, MenuAction::StopSession(s.clone())));
-    }
-    if let Some(name) = adopt {
-        items.push(item("adopt", "Adopt…", MenuAction::Adopt { workspace: w.clone(), folder: repo.to_string(), session: s.clone(), name }));
     }
     if let Some(name) = send_name {
         items.push(item("copy-send-name", "Copy SendMessage name", MenuAction::Copy(name)));
@@ -271,7 +209,7 @@ pub fn schedule_items(row: &ScheduleRow) -> Vec<MenuItem> {
     items
 }
 
-/// Named `fm-…`: launched by a Supraman supervisor (or its selftest), so Stop does not ask.
+/// Named `fm-…`: launched by Supraman (a scheduled run, a selftest's), so Stop does not ask.
 pub fn is_foremans(session: &Session) -> bool {
     session.name.starts_with("fm-")
 }
@@ -300,8 +238,8 @@ mod tests {
 
     use super::*;
 
-    fn node(started: Option<bool>) -> WorkspaceNode {
-        WorkspaceNode { name: "demo".into(), home: Some(r"C:\demo".into()), started, own: None, relay: None, supervised: vec![], scheduled: Default::default(), repos: vec![] }
+    fn node() -> WorkspaceNode {
+        WorkspaceNode { name: "demo".into(), home: Some(r"C:\demo".into()), scheduled: Default::default(), repos: vec![] }
     }
 
     fn keys(items: &[MenuItem]) -> Vec<&str> {
@@ -314,46 +252,15 @@ mod tests {
     }
 
     #[test]
-    fn workspace_menu_follows_its_state() {
-        let stopped = workspace_items(&node(None), false, vec![], vec![]);
-        assert_eq!(keys(&stopped), ["start", "work", "new-task", "new-scheduled-task", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "remove"]);
-        assert_eq!(stopped[2].label, "New task…");
-        assert_eq!(stopped[2].action, MenuAction::NewTask { workspace: "demo".into(), folder: None, scheduled: false });
-        assert_eq!(stopped[3].label, "New scheduled task…");
-        assert_eq!(stopped[3].action, MenuAction::NewTask { workspace: "demo".into(), folder: None, scheduled: true });
-        let started = workspace_items(&node(Some(true)), false, vec![], vec![]);
-        assert_eq!(keys(&started), ["stop", "work", "new-task", "new-scheduled-task", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "remove"]);
-        assert!(!started.iter().any(|i| i.label == "Task…"), "the relay's task box is not on the menu");
-        assert_eq!(started.last().unwrap().action, MenuAction::Remove("demo".into()));
-        assert_eq!(started[8].action, MenuAction::Details(MenuTarget::Workspace("demo".into())));
-    }
-
-    #[test]
-    fn the_workspace_menu_holds_every_item_of_its_workspace_session_and_relay_under_a_caption() {
-        let own = r#"{"id":"aaaa0010","sessionId":"aaaa0010-x","name":"fm-demo-workspace","cwd":"C:\\demo","kind":"background","startedAt":1,"state":"working","status":"busy","pid":1}"#;
-        let relay = own.replace("aaaa0010", "aaaa0011").replace("workspace\"", "relay\"");
-        let mut n = node(Some(true));
-        n.own = Some(row(own, Health::Running));
-        n.relay = Some(row(&relay, Health::Idle));
-        let own_items = session_items("demo", "workspace", n.own.as_ref().unwrap(), false, Some("item-1".into()), Some("ctrl [abc123]".into()), false, None);
-        let relay_items = session_items("demo", "relay", n.relay.as_ref().unwrap(), false, None, None, false, None);
-        let (own_n, relay_n) = (own_items.len(), relay_items.len());
-        let items = workspace_items(&n, false, own_items, relay_items);
-        assert_eq!(
-            keys(&items),
-            [
-                "stop", "work", "new-task", "new-scheduled-task", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "remove",
-                "session-attach", "session-stop", "session-copy-send-name", "session-copy-name", "session-copy-id", "session-show-in-work", "session-star", "session-details",
-                "relay-attach", "relay-stop", "relay-copy-name", "relay-copy-id", "relay-star", "relay-details",
-            ]
-        );
-        assert_eq!(items.len(), 10 + own_n + relay_n, "nothing dropped");
-        let captions: Vec<(&str, &str)> = items.iter().filter_map(|i| i.section.as_deref().map(|c| (&*i.key, c))).collect();
-        assert_eq!(captions, [("session-attach", "workspace session · fm-demo-workspace"), ("relay-attach", "relay · fm-demo-relay")]);
-        assert!(matches!(&items[10].action, MenuAction::Attach { repo, session, .. } if repo == "workspace" && session.id == "aaaa0010"));
-        assert_eq!(items[11].label, "Stop", "an fm- session stops without a question");
-        let keys = keys(&items);
-        assert_eq!(keys.iter().collect::<std::collections::HashSet<_>>().len(), keys.len(), "keys unique");
+    fn workspace_menu_lists_its_items() {
+        let items = workspace_items(&node(), false);
+        assert_eq!(keys(&items), ["work", "new-task", "new-scheduled-task", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "remove"]);
+        assert_eq!(items[1].label, "New task…");
+        assert_eq!(items[1].action, MenuAction::NewTask { workspace: "demo".into(), folder: None, scheduled: false });
+        assert_eq!(items[2].label, "New scheduled task…");
+        assert_eq!(items[2].action, MenuAction::NewTask { workspace: "demo".into(), folder: None, scheduled: true });
+        assert_eq!(items.last().unwrap().action, MenuAction::Remove("demo".into()));
+        assert_eq!(items[7].action, MenuAction::Details(MenuTarget::Workspace("demo".into())));
     }
 
     #[test]
@@ -423,7 +330,7 @@ mod tests {
     #[test]
     fn session_menu_asks_before_stopping_a_session_supraman_did_not_launch() {
         let live = r#"{"id":"aaaa0001","sessionId":"aaaa0001-x","name":"mine","cwd":"C:\\demo","kind":"background","startedAt":1,"state":"working","status":"busy","pid":1}"#;
-        let items = session_items("demo", "Alpha", &row(live, Health::Running), false, Some("item-1".into()), None, false, None);
+        let items = session_items("demo", "Alpha", &row(live, Health::Running), false, Some("item-1".into()), None, false);
         assert_eq!(keys(&items), ["attach", "stop-session", "copy-name", "copy-id", "show-in-work", "star", "details"]);
         assert_eq!(items[1].label, "Stop…");
         assert_eq!(items[3].action, MenuAction::Copy("aaaa0001".into()));
@@ -432,31 +339,26 @@ mod tests {
             MenuAction::Details(MenuTarget::Session { workspace: "demo".into(), repo: "Alpha".into(), session_id: "aaaa0001-x".into() })
         );
 
-        let adopt = session_items("demo", "Alpha", &row(live, Health::Running), false, None, None, false, Some("fm-demo-alpha".into()));
-        assert_eq!(keys(&adopt), ["attach", "stop-session", "adopt", "copy-name", "copy-id", "star", "details"]);
-        assert_eq!(adopt[2].label, "Adopt…");
-        assert!(matches!(&adopt[2].action, MenuAction::Adopt { workspace, folder, session, name } if workspace == "demo" && folder == "Alpha" && session.id == "aaaa0001" && name == "fm-demo-alpha"));
-
         let sm = live.replace("\"mine\"", "\"fm-demo-alpha\"");
-        assert_eq!(session_items("demo", "Alpha", &row(&sm, Health::Running), false, None, None, false, None)[1].label, "Stop");
+        assert_eq!(session_items("demo", "Alpha", &row(&sm, Health::Running), false, None, None, false)[1].label, "Stop");
 
         let stopped = r#"{"id":"aaaa0002","sessionId":"aaaa0002-x","name":"","cwd":"C:\\demo","kind":"background","startedAt":1,"state":"stopped"}"#;
-        assert_eq!(keys(&session_items("demo", "Alpha", &row(stopped, Health::Stopped), true, None, None, false, None)), ["resume", "copy-id", "star", "details"]);
+        assert_eq!(keys(&session_items("demo", "Alpha", &row(stopped, Health::Stopped), true, None, None, false)), ["resume", "copy-id", "star", "details"]);
 
         let interactive = r#"{"sessionId":"bbbb0005-x","name":"term","cwd":"C:\\demo","kind":"interactive","startedAt":1,"status":"idle","pid":5}"#;
-        let items = session_items("demo", "Alpha", &row(interactive, Health::Idle), false, None, None, false, None);
+        let items = session_items("demo", "Alpha", &row(interactive, Health::Idle), false, None, None, false);
         assert_eq!(keys(&items), ["copy-name", "copy-id", "star", "details"], "an interactive session is neither attached nor stopped from here");
         assert_eq!(items[1].action, MenuAction::Copy("bbbb0005".into()));
         assert_eq!(items[2].action, MenuAction::ToggleStar("bbbb0005-x".into()));
         let mut starred = row(interactive, Health::Idle);
         starred.starred = true;
-        assert_eq!(session_items("demo", "Alpha", &starred, false, None, None, false, None)[2].label, "Unstar");
+        assert_eq!(session_items("demo", "Alpha", &starred, false, None, None, false)[2].label, "Unstar");
     }
 
     #[test]
     fn a_live_session_offers_its_sendmessage_name_beside_name_and_id() {
         let interactive = r#"{"sessionId":"bbbb0005-x","name":"Fix the tree","cwd":"C:\\demo","kind":"interactive","startedAt":1,"status":"idle","pid":5}"#;
-        let items = session_items("demo", "Alpha", &row(interactive, Health::Unknown), false, None, Some("twin [d923d7]".into()), false, None);
+        let items = session_items("demo", "Alpha", &row(interactive, Health::Unknown), false, None, Some("twin [d923d7]".into()), false);
         assert_eq!(keys(&items), ["copy-send-name", "copy-name", "copy-id", "star", "details"]);
         assert_eq!(items[0].label, "Copy SendMessage name");
         assert_eq!(items[0].action, MenuAction::Copy("twin [d923d7]".into()));
@@ -466,14 +368,14 @@ mod tests {
     #[test]
     fn delete_comes_last_when_offered_and_the_workspace_offers_the_bulk_delete_before_remove() {
         let stopped = r#"{"id":"aaaa0002","sessionId":"aaaa0002-0000-4000-8000-000000000002","name":"old","cwd":"C:\\demo","kind":"background","startedAt":1,"state":"stopped"}"#;
-        let items = session_items("demo", "Alpha", &row(stopped, Health::Stopped), true, None, None, true, None);
+        let items = session_items("demo", "Alpha", &row(stopped, Health::Stopped), true, None, None, true);
         assert_eq!(keys(&items), ["resume", "copy-name", "copy-id", "star", "details", "delete"]);
         assert_eq!(items[5].label, "Delete…");
         assert!(matches!(&items[5].action, MenuAction::Delete(s) if s.id == "aaaa0002"));
-        let ws = workspace_items(&node(Some(false)), true, vec![], vec![]);
-        assert_eq!(keys(&ws), ["start", "work", "new-task", "new-scheduled-task", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "delete-closed", "remove"]);
-        assert_eq!(ws[9].label, "Delete closed background sessions…");
-        assert_eq!(ws[9].action, MenuAction::DeleteClosed("demo".into()));
+        let ws = workspace_items(&node(), true);
+        assert_eq!(keys(&ws), ["work", "new-task", "new-scheduled-task", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "delete-closed", "remove"]);
+        assert_eq!(ws[8].label, "Delete closed background sessions…");
+        assert_eq!(ws[8].action, MenuAction::DeleteClosed("demo".into()));
     }
 
     #[test]

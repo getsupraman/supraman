@@ -122,7 +122,7 @@ impl Workspace {
         }
     }
 
-    /// Where the workspace and relay sessions run: `home`, else the first folder.
+    /// Where the workspace's own sessions run: `home`, else the first folder.
     pub fn home(&self) -> Option<&Path> {
         self.home.as_deref().or_else(|| self.folders.first().map(|f| f.path.as_path()))
     }

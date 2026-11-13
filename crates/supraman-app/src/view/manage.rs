@@ -3,9 +3,8 @@ use std::{
     sync::atomic::Ordering,
 };
 
-use supraman_claude::{Claude, Session, now_ms};
+use supraman_claude::{Claude, Session};
 use supraman_core::{Registry, Workspace};
-use supraman_supervisor::remove_workspace;
 use gpui::{AppContext as _, ClipboardItem, Context, Entity, Pixels, Point, Window};
 
 use super::FleetView;
@@ -13,11 +12,6 @@ use super::menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuItem, MenuTar
 use crate::fleet::{self, SessionRow};
 use super::workspace_dialog::{DialogEvent, Mode, WorkspaceDialog, supervised_elsewhere};
 use crate::work_view;
-
-pub struct Removing {
-    pub requested_at: i64,
-    pub wanted: Vec<String>,
-}
 
 pub(super) fn send_name_of(session_id: &str) -> Option<String> {
     use supraman_claude::peer;
@@ -81,7 +75,7 @@ impl FleetView {
             DialogEvent::Cancel if self.dismiss_popup() => cx.notify(),
             DialogEvent::Cancel => self.close_add(window, cx),
             DialogEvent::Edit { edits, .. } if edits.is_empty() => self.close_add(window, cx),
-            DialogEvent::Edit { workspace, edits } => self.request_edits(workspace, edits.clone(), cx),
+            DialogEvent::Edit { workspace, edits } => self.apply_edits(workspace, edits.clone(), cx),
             DialogEvent::Saved { workspace, taken } => {
                 let name = workspace.name.clone();
                 self.close_add(window, cx);
@@ -125,8 +119,6 @@ impl FleetView {
             }
             Err(e) => self.listing.registry_error = Some(e),
         }
-        let names: Vec<String> = self.workspaces.iter().map(|w| w.name.clone()).collect();
-        self.removing.retain(|name, _| names.contains(name));
     }
 
     /// `workspace` as just saved, in the list at once; the reload behind it brings the registry's own.
@@ -147,8 +139,7 @@ impl FleetView {
         cx.notify();
         let session_id = match &target {
             MenuTarget::Session { session_id, .. } => Some(session_id.clone()),
-            MenuTarget::Workspace(w) => self.tree().workspaces.iter().find(|n| &n.name == w).and_then(|n| n.own.as_ref()).map(|r| r.session.session_id.clone()),
-            MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) | MenuTarget::OtherSchedule(_) => None,
+            MenuTarget::Workspace(_) | MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) | MenuTarget::OtherSchedule(_) => None,
         };
         let (Some(menu), Some(session_id)) = (&self.dialogs.menu, session_id) else {
             return;
@@ -178,14 +169,7 @@ impl FleetView {
     fn menu_for(&self, target: &MenuTarget, send_name: Option<String>, cx: &Context<Self>) -> Option<(String, Vec<MenuItem>)> {
         let tree = self.tree();
         match target {
-            MenuTarget::Workspace(w) => tree.workspaces.iter().find(|n| &n.name == w).map(|node| {
-                let items_of = |row: Option<&SessionRow>, repo: &str, send_name: Option<String>| {
-                    row.map(|r| self.session_menu(w, repo, r, send_name, cx)).unwrap_or_default()
-                };
-                let own = items_of(node.own.as_ref(), "workspace", send_name);
-                let relay = items_of(node.relay.as_ref(), "relay", None);
-                (w.clone(), workspace_items(node, self.has_closed_background(w), own, relay))
-            }),
+            MenuTarget::Workspace(w) => tree.workspaces.iter().find(|n| &n.name == w).map(|node| (w.clone(), workspace_items(node, self.has_closed_background(w)))),
             MenuTarget::Repo { workspace, repo } => tree
                 .workspaces
                 .iter()
@@ -209,15 +193,7 @@ impl FleetView {
 
     pub(super) fn session_menu(&self, workspace: &str, repo: &str, row: &SessionRow, send_name: Option<String>, cx: &gpui::App) -> Vec<MenuItem> {
         let claimed = self.claimed_item(workspace, &row.session.name, cx);
-        let adopt = match self.adoption(workspace, repo, row) {
-            Some(fleet::Adoption::Offer { name }) => Some(name),
-            _ => None,
-        };
-        session_items(workspace, repo, row, self.resumable(row), claimed, send_name, self.deletable(row), adopt)
-    }
-
-    pub(crate) fn adoption(&self, workspace: &str, folder: &str, row: &SessionRow) -> Option<fleet::Adoption> {
-        fleet::adoption(&self.workspaces, workspace, folder, row, &self.sessions, &self.supervising.desired)
+        session_items(workspace, repo, row, self.resumable(row), claimed, send_name, self.deletable(row))
     }
 
     pub(super) fn claimed_item(&self, workspace: &str, name: &str, cx: &gpui::App) -> Option<String> {
@@ -240,8 +216,6 @@ impl FleetView {
 
     pub fn run_action(&mut self, action: MenuAction, window: &mut Window, cx: &mut Context<Self>) {
         match action {
-            MenuAction::Start(w) => self.start_workspace(&w, cx),
-            MenuAction::Stop(w) => self.stop_workspace(&w, cx),
             MenuAction::Work(w) => {
                 self.open_work(&w, cx);
             }
@@ -264,7 +238,7 @@ impl FleetView {
             MenuAction::NewClaude { cwd, title } => {
                 self.new_claude(cwd, title, window, cx);
             }
-            MenuAction::SetRepoEnabled { workspace, repo, enabled } => self.request_edit(&workspace, supraman_core::Edit::SetEnabled { folder: repo, enabled }, cx),
+            MenuAction::SetRepoEnabled { workspace, repo, enabled } => self.apply_edit(&workspace, supraman_core::Edit::SetEnabled { folder: repo, enabled }, cx),
             MenuAction::Attach { workspace, repo, session } => {
                 self.attach(&workspace, &repo, &session, window, cx);
             }
@@ -273,7 +247,6 @@ impl FleetView {
             }
             MenuAction::StopSession(session) if is_foremans(&session) => self.stop_session(session, cx),
             MenuAction::StopSession(session) => self.ask_stop_foreign(session),
-            MenuAction::Adopt { workspace, folder, session, name } => self.ask_adopt(workspace, folder, session, name),
             MenuAction::ToggleStar(session_id) => self.toggle_star(&session_id, cx),
             MenuAction::Copy(text) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
@@ -320,12 +293,8 @@ impl FleetView {
     }
 
     fn ask_remove(&mut self, w: String) {
-        let started = self.supervising.desired.get(&w).is_some_and(|d| d.0);
-        let stop = if started { "Its supervision stops first (Stop), then " } else { "" };
         self.dialogs.confirm = Some(Confirm::ask(
-            format!(
-                "Remove workspace {w} from Supraman? {stop}its registry entry and desired state go. No files are deleted, and no session is stopped beyond what Stop does."
-            ),
+            format!("Remove workspace {w} from Supraman? Its registry entry goes. No files are deleted and no session is stopped."),
             "Remove",
             Confirmed::Remove(w),
         ));
@@ -343,20 +312,6 @@ impl FleetView {
         ));
     }
 
-    fn ask_adopt(&mut self, workspace: String, folder: String, session: Session, name: String) {
-        let label = if session.name.is_empty() { format!("session {}", session.id) } else { format!("{} ({})", session.name, session.id) };
-        let stop = if fleet::is_alive(&session.health(now_ms())) { "It is stopped (stop, never rm), then its" } else { "Its" };
-        let started = self.supervising.desired.get(&workspace).is_some_and(|d| d.0);
-        let later = if started { String::new() } else { format!(" Workspace {workspace} is not started: the copy starts when you Start it.") };
-        self.dialogs.confirm = Some(Confirm::ask(
-            format!(
-                "Adopt {label} into {workspace}? {stop} conversation continues as {name}, supervised: a copy under a new id with a fresh Workman token. The original stays stopped and listed.{later}"
-            ),
-            "Adopt",
-            Confirmed::Adopt { workspace, folder, session, name },
-        ));
-    }
-
     pub fn answer_confirm(&mut self, yes: bool, cx: &mut Context<Self>) {
         if let Some(Confirm { action: Some(action), .. }) = self.dialogs.confirm.take()
             && yes
@@ -364,10 +319,8 @@ impl FleetView {
             match action {
                 Confirmed::Remove(w) => self.remove_workspace(&w, cx),
                 Confirmed::StopSession(session) => self.stop_session(session, cx),
-                Confirmed::Adopt { workspace, folder, session, name } => self.adopt(workspace, folder, session, name, cx),
                 Confirmed::Delete { session, discard } => self.delete_now(session, discard, cx),
                 Confirmed::DeleteClosed { workspace, sessions, skipped } => self.delete_closed_now(workspace, sessions, skipped, cx),
-                Confirmed::Edit { workspace, edits } => self.apply_edits(&workspace, edits, cx),
                 Confirmed::RemoveSchedule { workspace, id } => self.remove_schedule(workspace, id, cx),
                 Confirmed::Update => self.update_confirmed(cx),
             }
@@ -377,53 +330,22 @@ impl FleetView {
 
     /// Nothing on disk outside the Supraman home is touched.
     pub fn remove_workspace(&mut self, name: &str, cx: &mut Context<Self>) {
-        let (started, wanted) = self.supervising.desired.get(name).cloned().unwrap_or_default();
-        if started {
-            self.stop_workspace(name, cx);
-        }
-        self.removing.insert(name.to_string(), Removing { requested_at: now_ms(), wanted });
-        self.finish_removals(cx);
-    }
-
-    /// Only a snapshot taken after the Remove was asked counts.
-    pub fn finish_removals(&mut self, cx: &mut Context<Self>) {
-        let now = now_ms();
-        let ready: Vec<String> = self
-            .removing
-            .iter()
-            .filter(|(_, r)| {
-                let alive = self.sessions.iter().any(|s| r.wanted.contains(&s.name) && fleet::is_alive(&s.health(now)));
-                r.wanted.is_empty() || (self.polls.polled_at > r.requested_at && !alive)
-            })
-            .map(|(name, _)| name.clone())
-            .collect();
-        for name in ready {
-            self.removing.remove(&name);
-            let home = self.home.clone();
-            let task = cx.background_executor().spawn(async move {
-                let home = home.ok_or_else(|| format!("{name}: no Supraman home"))?;
-                remove_workspace(&home, &name).map_err(|e| format!("{name}: {e}"))?;
-                Ok::<_, String>(name)
-            });
-            cx.spawn(async move |this, cx| {
-                let done = task.await;
-                this.update(cx, |this, cx| this.removed(done, cx)).ok();
-            })
-            .detach();
-        }
-        cx.notify();
+        let (home, name) = (self.home.clone(), name.to_string());
+        let task = cx.background_executor().spawn(async move {
+            registry(home.as_deref()).and_then(|r| r.remove(&name).map_err(|e| e.to_string())).map_err(|e| format!("{name}: {e}"))?;
+            Ok::<_, String>(name)
+        });
+        cx.spawn(async move |this, cx| {
+            let done = task.await;
+            this.update(cx, |this, cx| this.removed(done, cx)).ok();
+        })
+        .detach();
     }
 
     fn removed(&mut self, done: Result<String, String>, cx: &mut Context<Self>) {
         match done {
             Ok(name) => {
-                self.supervising.desired.remove(&name);
                 self.invalidate_tree();
-                self.mail.relays.remove(&name);
-                self.mail.messages.remove(&name);
-                if self.mail.compose.as_ref().is_some_and(|c| c.workspace == name) {
-                    self.mail.compose = None;
-                }
                 self.workspaces.retain(|w| w.name != name);
                 self.reload_workspaces(cx);
                 self.show_toast(format!("Removed workspace {name}; no files were deleted."), cx);
@@ -444,35 +366,6 @@ impl FleetView {
                 })
                 .ok();
             }
-        })
-        .detach();
-    }
-
-    /// The folder's session is wanted only once the original stopped: a copy of a live conversation goes on beside it.
-    fn adopt(&mut self, workspace: String, folder: String, session: Session, name: String, cx: &mut Context<Self>) {
-        let Some(home) = self.home.clone() else {
-            return;
-        };
-        let alive = fleet::is_alive(&session.health(now_ms()));
-        let (id, session_id) = (session.id.clone(), session.session_id.clone());
-        let ws = workspace.clone();
-        let task = cx.background_executor().spawn(async move {
-            if alive {
-                Claude::default().stop(&id).map_err(|e| anyhow::anyhow!("cannot stop {id}: {e}"))?;
-            }
-            crate::supervise::adopt(&home, &ws, &folder, &session_id)
-        });
-        cx.spawn(async move |this, cx| {
-            let done = task.await;
-            this.update(cx, |this, cx| {
-                match done {
-                    Ok(true) => this.show_toast(format!("{} stopped; it continues as {name} at the supervisor's next tick.", session.id), cx),
-                    Ok(false) => this.show_toast(format!("{} stopped; it continues as {name} when you Start {workspace}.", session.id), cx),
-                    Err(e) => this.action_error = Some(format!("Cannot adopt {}: {e:#}", session.id)),
-                }
-                cx.notify();
-            })
-            .ok();
         })
         .detach();
     }

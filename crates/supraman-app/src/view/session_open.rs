@@ -27,7 +27,7 @@ impl FleetView {
             Open::Resume => {
                 self.resume_titled(title(), s, cx);
             }
-            Open::Elsewhere | Open::Supervised => {
+            Open::Elsewhere => {
                 let text = format!("{}: {}", fleet::display_name(s), open.hint());
                 self.toast.show_why(text, |this: &mut Self| &mut this.toast, cx);
             }
@@ -62,13 +62,6 @@ impl FleetView {
     pub fn open_session(&mut self, session_id: &str, cx: &mut Context<Self>) {
         if let Some((workspace, repo, row)) = self.session_place(session_id) {
             self.open_row(&workspace, &repo, &row, cx);
-        }
-    }
-
-    /// [`Self::open_session`] of the session `claude attach` knows as `id`.
-    pub(super) fn open_by_id(&mut self, id: &str, cx: &mut Context<Self>) {
-        if let Some(sid) = self.sessions.iter().find(|s| s.id == id).map(|s| s.session_id.clone()) {
-            self.open_session(&sid, cx);
         }
     }
 }

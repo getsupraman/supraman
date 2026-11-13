@@ -305,29 +305,14 @@ async fn tab_overflow(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindow
     Ok(())
 }
 
-/// The Inbox with a session's need and a schedule's notice beside Workman's cards: the three owners of `supraman_ui::inbox_card`.
+/// The Inbox with a schedule's notice beside Workman's cards: the two owners of `supraman_ui::inbox_card`.
 async fn inbox(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
-    use supraman_supervisor::{NeedsKind, NeedsYou, Remedy};
     view.update(cx, |v, cx| {
-        v.supervising.needs.push(NeedsYou {
-            kind: NeedsKind::LaunchFailed,
-            workspace: WORKSPACE.to_string(),
-            name: "fm-demo-infra".to_string(),
-            since: fixture_now() - 25 * 60_000,
-            detail: "claude exited with code 1 before its first turn".to_string(),
-            action: Some(Remedy::Retry),
-        });
         v.scheduling.sync_errors.insert(format!("{WORKSPACE}/nightly"), "Task Scheduler refused the task: access is denied".to_string());
         cx.notify();
     });
-    let (need, sync) = (format!("inbox-need-{WORKSPACE}/fm-demo-infra"), format!("inbox-sync-card-{WORKSPACE}/nightly"));
-    let retry = "inbox-retry-fm-demo-infra";
-    crate::selftest::until(view, cx, Duration::from_secs(10), "a need's and a schedule's Inbox cards, the need's Retry a word", |v| {
-        let hits = v.hits.borrow();
-        let word = hits.get(retry).is_some_and(|w| w.bounds.size.width > w.bounds.size.height * 2.);
-        (hits.contains_key(&need) && hits.contains_key(&sync) && word).then_some(())
-    })
-    .await?;
+    let sync = format!("inbox-sync-card-{WORKSPACE}/nightly");
+    crate::selftest::until(view, cx, Duration::from_secs(10), "a schedule's Inbox card", |v| v.hits.borrow().contains_key(&sync).then_some(())).await?;
     let shot = capture(out.join("supraman-inbox.png"), None, cx).await?;
     println!("shot: {}", shot.display());
     view.update(cx, |v, cx| {
@@ -339,7 +324,6 @@ async fn inbox(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext
     println!("shot: {}", shot.display());
     view.update(cx, |v, cx| {
         v.work_inbox.read(cx).scroll.set_offset(gpui::Point::default());
-        v.supervising.needs.retain(|n| n.name != "fm-demo-infra");
         v.scheduling.sync_errors.clear();
         cx.notify();
     });

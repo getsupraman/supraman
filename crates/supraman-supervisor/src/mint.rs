@@ -32,7 +32,7 @@ pub struct MintRequest {
     /// One live token per name: `replace` revokes the old one and keeps the row and its `sessionId`.
     #[serde(default)]
     pub replace: bool,
-    /// The repository a repo session works in; `None` for the workspace session and the relay.
+    /// The repository the session works in; `None` outside a git checkout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<MintRepo>,
     /// The claude session uuid when known before claude starts; a `--bg` launch's comes later by [`Minter::bind`].
@@ -260,10 +260,6 @@ pub struct MintedSessions {
 }
 
 impl MintedSessions {
-    pub fn path(home: &Path, workspace: &str) -> PathBuf {
-        home.join("supervisor").join(format!("{workspace}.sessions.json"))
-    }
-
     pub fn hands_path(home: &Path) -> PathBuf {
         home.join("supervisor").join("hands.json")
     }
@@ -287,16 +283,7 @@ impl MintedSessions {
         Self { path, names: BTreeMap::new() }
     }
 
-    /// Moves a sessions file that cannot be read to `<file>.damaged`, so a save never overwrites its only record.
-    pub fn set_aside(path: &Path) -> std::io::Result<PathBuf> {
-        let mut aside = path.as_os_str().to_owned();
-        aside.push(".damaged");
-        let aside = PathBuf::from(aside);
-        std::fs::rename(path, &aside)?;
-        Ok(aside)
-    }
-
-    /// A missing file is an empty set; a damaged one is an error, for [`Self::set_aside`].
+    /// A missing file is an empty set; a damaged one is an error.
     pub fn load(path: PathBuf) -> std::io::Result<Self> {
         let names = match std::fs::read_to_string(&path) {
             Ok(text) => serde_json::from_str(&text).map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))?,
@@ -393,7 +380,7 @@ fn runs_dir(home: &Path) -> PathBuf {
 }
 
 /// `dir`'s files whose name ends with `suffix`, sorted; none when `dir` cannot be read.
-fn files_ending(dir: &Path, suffix: &str) -> Vec<PathBuf> {
+pub(crate) fn files_ending(dir: &Path, suffix: &str) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
     let mut files: Vec<PathBuf> = entries
         .flatten()
@@ -404,12 +391,9 @@ fn files_ending(dir: &Path, suffix: &str) -> Vec<PathBuf> {
     files
 }
 
-/// Every record file of `home`: each workspace's, the [+] sessions', each scheduled run's.
+/// Every record file of `home`: the [+] sessions', each scheduled run's.
 fn record_files(home: &Path) -> Vec<PathBuf> {
-    let mut files = files_ending(&home.join("supervisor"), ".sessions.json");
-    files.push(MintedSessions::hands_path(home));
-    files.extend(files_ending(&runs_dir(home), ".json"));
-    files
+    std::iter::once(MintedSessions::hands_path(home)).chain(files_ending(&runs_dir(home), ".json")).collect()
 }
 
 /// Keeps each session's Workman token in the secret store, never a file; its config runs `sm mcp-header` to print it.
@@ -445,6 +429,10 @@ impl Keeper {
 
     pub fn mcp_dir(&self) -> &Path {
         &self.mcp_dir
+    }
+
+    pub(crate) fn home(&self) -> &Path {
+        &self.home
     }
 
     pub fn store(&self) -> &dyn SecretStore {
@@ -731,7 +719,7 @@ mod tests {
 
     fn request() -> MintRequest {
         MintRequest {
-            name: "fm-demo-workspace".into(),
+            name: "fm-demo-tab".into(),
             role: "controller".into(),
             launched_by: "foreman/demo".into(),
             origin: "foreman/demo".into(),
@@ -749,7 +737,7 @@ mod tests {
         let ws = fake(&[(
             MINT,
             201,
-            r#"{"sessionId":"7f3c","name":"fm-demo-workspace","role":"controller","token":"wss_fake","expiresAt":"2026-10-29T00:00:00Z"}"#,
+            r#"{"sessionId":"7f3c","name":"fm-demo-tab","role":"controller","token":"wss_fake","expiresAt":"2026-10-29T00:00:00Z"}"#,
         )]);
         let minted = HttpMinter::default().mint(ws.base(), "fake-static", &request()).unwrap();
         assert_eq!(minted.session_id, "7f3c");
@@ -764,7 +752,7 @@ mod tests {
         assert_eq!(
             body,
             serde_json::json!({
-                "name": "fm-demo-workspace", "role": "controller", "launchedBy": "foreman/demo",
+                "name": "fm-demo-tab", "role": "controller", "launchedBy": "foreman/demo",
                 "origin": "foreman/demo", "cwd": r"C:\demo", "externalRole": "workspace", "replace": true
             })
         );
@@ -855,17 +843,17 @@ mod tests {
 
     #[test]
     fn mint_http_client_reports_status_and_reason_never_the_bearer() {
-        let ws = fake(&[(MINT, 409, r#"{"error":"a live token exists for fm-demo-workspace"}"#)]);
+        let ws = fake(&[(MINT, 409, r#"{"error":"a live token exists for fm-demo-tab"}"#)]);
         let m = HttpMinter::default();
         let e = m.mint(ws.base(), "fake-static", &request()).unwrap_err();
         assert_eq!(
             e,
             MintError::Refused {
                 status: 409,
-                reason: "a live token exists for fm-demo-workspace".into()
+                reason: "a live token exists for fm-demo-tab".into()
             }
         );
-        assert_eq!(e.to_string(), "Workman answered HTTP 409: a live token exists for fm-demo-workspace");
+        assert_eq!(e.to_string(), "Workman answered HTTP 409: a live token exists for fm-demo-tab");
         ws.set(MINT, Answer::status(201, r#"{"token":"wss_x"}"#));
         assert_eq!(m.mint(ws.base(), "fake-static", &request()).unwrap_err(), MintError::BadResponse("no sessionId".into()));
         let e = m.mint(&closed_base(), "fake-static", &request()).unwrap_err();
@@ -876,11 +864,10 @@ mod tests {
     #[test]
     fn minted_sessions_round_trip_through_their_file() {
         let home = tempfile::tempdir().unwrap();
-        let path = MintedSessions::path(home.path(), "demo");
-        assert_eq!(path, home.path().join("supervisor").join("demo.sessions.json"));
+        let path = MintedSessions::hands_path(home.path());
         let mut s = MintedSessions::load(path.clone()).unwrap();
         s.insert(
-            "fm-demo-workspace",
+            "fm-demo-tab",
             MintedSession {
                 session_id: "7".into(),
                 role: "workspace".into(),
@@ -891,7 +878,7 @@ mod tests {
         s.save().unwrap();
         let back = MintedSessions::load(path.clone()).unwrap();
         assert_eq!(back, s);
-        assert!(!home.path().join("supervisor").join("demo.sessions.json.tmp").exists());
+        assert!(!home.path().join("supervisor").join("hands.json.tmp").exists());
         std::fs::write(&path, "not json").unwrap();
         assert!(MintedSessions::load(path).is_err());
     }
@@ -899,12 +886,12 @@ mod tests {
     #[test]
     fn a_record_written_with_last_active_still_loads() {
         let home = tempfile::tempdir().unwrap();
-        let path = MintedSessions::path(home.path(), "demo");
+        let path = MintedSessions::hands_path(home.path());
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, r#"{"fm-demo-workspace":{"sessionId":"7","role":"workspace","lastActive":1800000000000,"origin":"http://127.0.0.1:1"}}"#).unwrap();
+        std::fs::write(&path, r#"{"fm-demo-tab":{"sessionId":"7","role":"workspace","lastActive":1800000000000,"origin":"http://127.0.0.1:1"}}"#).unwrap();
         let s = MintedSessions::load(path).unwrap();
         let session = MintedSession { session_id: "7".into(), role: "workspace".into(), claude_session_id: None, origin: Some("http://127.0.0.1:1".into()) };
-        assert_eq!(s.get("fm-demo-workspace"), Some(&session));
+        assert_eq!(s.get("fm-demo-tab"), Some(&session));
     }
 
     #[test]
@@ -935,30 +922,30 @@ mod tests {
     #[test]
     fn minted_sessions_of_unknown_origin_take_their_config_files_and_count_as_elsewhere_without_one() {
         let home = tempfile::tempdir().unwrap();
-        let (path, mcp) = (MintedSessions::path(home.path(), "demo"), home.path().join("mcp"));
+        let (path, mcp) = (MintedSessions::hands_path(home.path()), home.path().join("mcp"));
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
-            r#"{"fm-demo-workspace":{"sessionId":"7","role":"workspace"},"fm-demo-alpha":{"sessionId":"8","role":"repo"},
+            r#"{"fm-demo-tab":{"sessionId":"7","role":"workspace"},"fm-demo-alpha":{"sessionId":"8","role":"repo"},
                 "fm-demo-beta":{"sessionId":"9","role":"repo","origin":"https://b.example"}}"#,
         )
         .unwrap();
-        supraman_claude::write_mcp_config_helped(&mcp, "fm-demo-workspace", "http://127.0.0.1:1/mcp", "sm", &[]).unwrap();
+        supraman_claude::write_mcp_config_helped(&mcp, "fm-demo-tab", "http://127.0.0.1:1/mcp", "sm", &[]).unwrap();
         let mut s = MintedSessions::load(path.clone()).unwrap();
-        assert_eq!(s.get("fm-demo-workspace").unwrap().origin, None, "a file from before m5/48");
+        assert_eq!(s.get("fm-demo-tab").unwrap().origin, None, "a file from before m5/48");
         s.adopt_origins(&mcp).unwrap();
         let back = MintedSessions::load(path).unwrap();
-        assert_eq!(back.get("fm-demo-workspace").unwrap().origin.as_deref(), Some("http://127.0.0.1:1"), "saved");
+        assert_eq!(back.get("fm-demo-tab").unwrap().origin.as_deref(), Some("http://127.0.0.1:1"), "saved");
         assert_eq!(back.get("fm-demo-alpha").unwrap().origin, None, "no config file: unknown");
         assert_eq!(
             back.elsewhere("https://b.example/"),
-            [("fm-demo-alpha".to_string(), None), ("fm-demo-workspace".to_string(), Some("http://127.0.0.1:1".to_string()))]
+            [("fm-demo-alpha".to_string(), None), ("fm-demo-tab".to_string(), Some("http://127.0.0.1:1".to_string()))]
         );
         assert_eq!(back.elsewhere("http://127.0.0.1:1").len(), 2, "alpha unknown, beta on b");
     }
 
     const SID: &str = "aaaa0001-0000-4000-8000-000000000001";
-    const NAME: &str = "fm-demo-workspace";
+    const NAME: &str = "fm-demo-tab";
     const T0: crate::Millis = 1_800_000_000_000;
     const MINUTE: crate::Millis = 60_000;
 
@@ -1010,7 +997,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let fake = FakeWorkman::start(Vec::new());
         let sessions = fake.enable_sessions();
-        let (keeper, first) = kept_at(home.path(), &fake, MintedSessions::path(home.path(), "demo"));
+        let (keeper, first) = kept_at(home.path(), &fake, MintedSessions::hands_path(home.path()));
         let signed = || Bearer::Signed { url: fake.mcp_url(), token: "fake-static".into() };
 
         sessions.revoke_name(NAME);
@@ -1038,7 +1025,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let fake = FakeWorkman::start(Vec::new());
         let sessions = fake.enable_sessions();
-        let (keeper, _) = kept_at(home.path(), &fake, MintedSessions::path(home.path(), "demo"));
+        let (keeper, _) = kept_at(home.path(), &fake, MintedSessions::hands_path(home.path()));
         let signed = || Bearer::Signed { url: fake.mcp_url(), token: "fake-static".into() };
         let remint = || super::remint(&keeper, NAME, signed(), &HttpMinter::default());
 
@@ -1051,7 +1038,7 @@ mod tests {
         assert_eq!((&posted["launchedBy"], &posted["origin"], &posted["takeoverFrom"]), (&"supraman/demo".into(), &"supraman/demo".into(), &"foreman/demo".into()), "{posted}");
 
         let (_, recorded) = MintedSessions::find(home.path(), NAME).unwrap();
-        assert_eq!(recorded.launched_by, "foreman/demo", "the record is the workspace's, which relabels it on its own mint");
+        assert_eq!(recorded.launched_by, "foreman/demo", "the record keeps its label; kept.json holds the moved one");
         assert!(remint().is_ok());
         let posts = mints(&fake);
         assert_eq!(posts.len(), 3, "kept.json holds the moved label: one plain mint");

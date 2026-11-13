@@ -16,7 +16,7 @@ fn sections() -> Vec<Section> {
 
 /// The Details tab's page and the Git agent panel's, of one session placed alike.
 fn pages(row: &SessionRow, placed: Placed) -> (SessionView, SessionView) {
-    let items = || session_items("demo", "alpha", row, placed.resumable, None, None, false, None);
+    let items = || session_items("demo", "alpha", row, placed.resumable, None, None, false);
     let details = build(row, true, placed, sections(), items(), true, gpui::red());
     let git = build(row, true, placed, sections(), items(), false, gpui::red());
     (details, git)

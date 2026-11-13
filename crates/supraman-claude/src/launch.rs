@@ -444,7 +444,7 @@ mod tests {
             mcp_config: Some(PathBuf::from(r"C:\fm\ws.json")),
             strict_mcp_config: true,
             plugin_dirs: vec![PathBuf::from(r"C:\p1"), PathBuf::from(r"C:\p2")],
-            add_dirs: vec![PathBuf::from(r"C:\fm\relay\demo")],
+            add_dirs: vec![PathBuf::from(r"C:\fm\extra\demo")],
             env: vec![("A".into(), "1".into())],
             extra_args: vec!["--model".into(), "opus".into()],
             resume: None,
@@ -458,7 +458,7 @@ mod tests {
             [
                 "--bg", "--name", "fm-demo-a", "--permission-mode", "auto", "--mcp-config", r"C:\fm\ws.json",
                 "--strict-mcp-config", "--plugin-dir", r"C:\p1", "--plugin-dir", r"C:\p2", "--add-dir",
-                r"C:\fm\relay\demo", "--model", "opus", "--",
+                r"C:\fm\extra\demo", "--model", "opus", "--",
                 "--looks-like-a-flag but is the prompt",
             ]
         );

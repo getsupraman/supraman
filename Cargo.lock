@@ -8630,7 +8630,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "uuid",
- "windows 0.62.2",
 ]
 
 [[package]]
@@ -8756,7 +8755,6 @@ dependencies = [
  "supraman-workman",
  "tempfile",
  "thiserror 2.0.21",
- "toml 0.9.8",
  "ureq",
 ]
 

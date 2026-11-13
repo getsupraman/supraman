@@ -15,7 +15,6 @@ pub mod prune;
 pub mod pool;
 pub mod process;
 mod registry;
-mod relay;
 mod scan;
 pub mod schedule;
 pub mod secret;
@@ -42,11 +41,6 @@ pub use model::{Folder, FolderKind, Scan, Workspace, holder_of, owners};
 pub use plugin::{AGENTS_SERVER, AGENT_TOOLS, find_plugin_dir, hook_exe, sm_allowed_tools, install_hook_exe};
 pub use home::{HOME_VAR, env_home, home_from, home_from_env};
 pub use registry::Registry;
-pub use relay::{
-    ANSWERED_FILE, Ask, AskState, DEFAULT_RELAY_IDLE_MS, InboxWatcher, LAST_DROP_FILE, OutboxMessage, READY_FILE, REJECTED_DIR, RelayDrop,
-    SENT_DIR, ask_kind, ask_states, clear_ready, ensure_relay_dirs, inbox_dir, last_drop, mark_answered, pending_drops, read_answered,
-    outbox_dir, read_outbox, relay_demand, relay_dir, relay_ready, send, tell,
-};
 pub use scan::{DEFAULT_DEPTH, branch_at, scan};
 pub use settings::{
     AppearanceSettings, DEFAULT_MAX_WORKING, DEFAULT_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Section,

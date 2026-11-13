@@ -62,12 +62,12 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     click(view, "toggle-stopped", cx).await?;
     until(view, cx, WITHIN, "the stopped toggle flips back", |v| (v.show_stopped == shown).then_some(())).await?;
 
-    let busy = view.read_with(cx, |v, _| v.supervising.max_working);
+    let busy = view.read_with(cx, |v, _| v.polled.max_working);
     // the default is the upper bound (MAX_WORKING_LIMIT): lower first
     click(view, "busy-dec", cx).await?;
-    until(view, cx, WITHIN, "busy − lowers the limit", |v| (v.supervising.max_working + 1 == busy).then_some(())).await?;
+    until(view, cx, WITHIN, "busy − lowers the limit", |v| (v.polled.max_working + 1 == busy).then_some(())).await?;
     click(view, "busy-inc", cx).await?;
-    until(view, cx, WITHIN, "busy + raises it back", |v| (v.supervising.max_working == busy).then_some(())).await?;
+    until(view, cx, WITHIN, "busy + raises it back", |v| (v.polled.max_working == busy).then_some(())).await?;
 
     let position = view
         .read_with(cx, |v, _| bounds(v, "collapse-all"))
@@ -112,13 +112,13 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     ))
 }
 
-/// Nothing sits between the workspace row's home and its relay slot, nor between a folder row's branch and its room, where a session count would.
+/// Nothing sits between the workspace row's home and its first hover icon, nor between a folder row's branch and its room, where a session count would.
 async fn no_counts(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let gap = f32::from(crate::view::grid::gap());
     let span = |v: &FleetView, left: &str, right: &str| Some(f32::from(bounds(v, right)?.left()) - f32::from(bounds(v, left)?.right()));
-    let home = until(view, cx, WITHIN, "the workspace row's home and relay slot", |v| span(v, &format!("ws-root-{WORKSPACE}"), &format!("relay-slot-{WORKSPACE}"))).await?;
+    let home = until(view, cx, WITHIN, "the workspace row's home and Work icon", |v| span(v, &format!("ws-root-{WORKSPACE}"), &format!("work-{WORKSPACE}"))).await?;
     if (home - gap).abs() > 0.5 {
-        bail!("{home:.1} px between the workspace row's home and its relay slot, not the {gap} px gap: something is painted there");
+        bail!("{home:.1} px between the workspace row's home and its Work icon, not the {gap} px gap: something is painted there");
     }
     let folders = view.read_with(cx, |v, _| {
         let tree = v.tree();
@@ -208,7 +208,7 @@ pub async fn tree_clip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) ->
     let tree = until(view, cx, WITHIN, "the tree painted", |v| v.hits.borrow().get("tree-area").map(|h| h.visible)).await?;
     let sections: Pixels = view.read_with(cx, |v, _| {
         let hits = v.hits.borrow();
-        ["messages-area", "notices-area", "search-box"]
+        ["notices-area", "search-box"]
             .iter()
             .filter_map(|k| hits.get(*k).map(|h| h.bounds))
             .filter(|b| b.top() >= inbox.bottom() && b.bottom() <= tree.top())
@@ -221,7 +221,7 @@ pub async fn tree_clip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) ->
         });
         inside.sort();
         bail!(
-            "the tree starts at y {:.1}, {:.1} px under the Inbox ({:.1} px besides the Messages, notices and search box): something sits between them: {inside:?}",
+            "the tree starts at y {:.1}, {:.1} px under the Inbox ({:.1} px besides the notices and search box): something sits between them: {inside:?}",
             f32::from(tree.top()),
             f32::from(tree.top() - inbox.bottom()),
             f32::from(between)
@@ -292,6 +292,13 @@ pub async fn tree_clip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) ->
     ))
 }
 
+/// Off the panel and past the hold, so a row that arrives is drawn at once.
+pub(crate) async fn pointer_off(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let right = view.read_with(cx, |v, _| v.sidebar.left_width) + gpui::px(200.);
+    move_to(gpui::point(right, gpui::px(300.)), cx)?;
+    until(view, cx, Duration::from_secs(15), "the left panel's hold to end", |v| (!v.left_held()).then_some(())).await
+}
+
 pub(crate) fn move_to(position: gpui::Point<Pixels>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     cx.update(|window, cx| {
         window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: None, modifiers: Modifiers::default() }), cx);
@@ -354,9 +361,6 @@ fn tree_rows(v: &FleetView) -> Vec<(String, usize)> {
     let mut rows = Vec::new();
     for w in v.tree().workspaces.iter().filter(|w| w.name == WORKSPACE) {
         rows.extend(painted(&format!("ws-{}", w.name)).map(|k| (k, 0)));
-        for s in &w.supervised {
-            rows.extend(painted(&format!("session-{}{}", s.session.session_id, s.scope(&w.name))).map(|k| (k, 1)));
-        }
         for r in &w.repos {
             rows.extend(painted(&format!("repo-{}/{}", w.name, r.name)).map(|k| (k, 1)));
             for s in &r.sessions {

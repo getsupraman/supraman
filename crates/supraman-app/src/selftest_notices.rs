@@ -29,7 +29,7 @@ fn hand_x(v: &FleetView, text: &str) -> Option<String> {
 }
 
 pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    crate::selftest_messages::pointer_off(view, cx).await?;
+    crate::selftest_left::pointer_off(view, cx).await?;
     view.update(cx, |v, cx| {
         v.hand_notices.push(FIRST.into());
         v.hand_notices.push(SECOND.into());

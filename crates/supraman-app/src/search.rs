@@ -34,13 +34,14 @@ pub struct WorkspaceHit {
     pub name: String,
     pub home: Option<std::path::PathBuf>,
     pub name_marks: Vec<Range<usize>>,
-    pub supervised: Vec<SessionHit>,
+    /// Scheduled runs' sessions, under the workspace rather than a folder.
+    pub runs: Vec<SessionHit>,
     pub repos: Vec<RepoHit>,
 }
 
 impl WorkspaceHit {
     pub fn count(&self) -> usize {
-        self.supervised.len() + self.repos.iter().map(|r| r.sessions.len()).sum::<usize>()
+        self.runs.len() + self.repos.iter().map(|r| r.sessions.len()).sum::<usize>()
     }
 }
 
@@ -115,8 +116,8 @@ pub fn search(tree: &Tree, query: &str) -> Results {
                     (!repo.name_marks.is_empty() || !repo.sessions.is_empty()).then_some(repo)
                 })
                 .collect();
-            let hit = WorkspaceHit { name: w.name.clone(), home: w.home.clone(), name_marks: find_all(&w.name, needle), supervised: hits(&w.own.iter().chain(&w.relay).chain(&w.supervised).chain(w.scheduled.values().flatten()).cloned().collect::<Vec<_>>()), repos };
-            (!hit.name_marks.is_empty() || !hit.supervised.is_empty() || !hit.repos.is_empty()).then_some(hit)
+            let hit = WorkspaceHit { name: w.name.clone(), home: w.home.clone(), name_marks: find_all(&w.name, needle), runs: hits(&w.scheduled.values().flatten().cloned().collect::<Vec<_>>()), repos };
+            (!hit.name_marks.is_empty() || !hit.runs.is_empty() || !hit.repos.is_empty()).then_some(hit)
         })
         .collect();
     Results { workspaces }
@@ -168,11 +169,7 @@ mod tests {
                 WorkspaceNode {
                     name: "gaia".into(),
                     home: Some(PathBuf::from("G:/gaia")),
-                    started: Some(true),
-                    own: Some(row("fm-gaia-workspace", "cccc3333-0000", false)),
-                    relay: None,
-                    supervised: vec![row("fm-gaia-root", "aaaa1111-0000", false)],
-                    scheduled: Default::default(),
+                    scheduled: [("nightly".to_string(), vec![row("fm-gaia-sched-nightly-20261113-0900", "aaaa1111-0000", false)])].into(),
                     repos: vec![
                         repo("Web", vec![row("CI-CD-pipeline", "5e1f7e57-0001", true), row("docs", "01d05e1f-0002", false)]),
                         repo("api", vec![]),
@@ -182,10 +179,6 @@ mod tests {
                 WorkspaceNode {
                     name: "nomos".into(),
                     home: Some(PathBuf::from("N:/nomos")),
-                    started: None,
-                    own: None,
-                    relay: None,
-                    supervised: vec![],
                     scheduled: Default::default(),
                     repos: vec![repo("pipeline-tools", vec![row("Pipeline fix", "bbbb2222-0003", false)])],
                 },
@@ -198,7 +191,7 @@ mod tests {
         let mut out = Vec::new();
         for w in &r.workspaces {
             out.push(format!("{} ({})", w.name, w.count()));
-            out.extend(w.supervised.iter().map(|s| format!("  {}", s.row.session.name)));
+            out.extend(w.runs.iter().map(|s| format!("  {}", s.row.session.name)));
             for repo in &w.repos {
                 out.push(format!("  ./{} ({})", repo.name, repo.sessions.len()));
                 out.extend(repo.sessions.iter().map(|s| format!("    {}", s.row.session.name)));
@@ -230,9 +223,9 @@ mod tests {
         assert_eq!(names(&r), ["gaia (1)", "  ./Web (1)", "    CI-CD-pipeline"], "01d05e1f has 5e1f inside, not at its start");
         assert!(r.workspaces[0].repos[0].sessions[0].row.closed);
         let r = search(&tree(), "GAIA");
-        assert_eq!(names(&r), ["gaia (2)", "  fm-gaia-workspace", "  fm-gaia-root"], "the workspace session has no tree row, yet search finds it");
+        assert_eq!(names(&r), ["gaia (1)", "  fm-gaia-sched-nightly-20261113-0900"], "a scheduled run under the workspace");
         assert_eq!(r.workspaces[0].name_marks, [0..4]);
-        assert_eq!(r.summary(), "2 sessions in 1 workspace, 1 workspace or repo by name");
+        assert_eq!(r.summary(), "1 session in 1 workspace, 1 workspace or repo by name");
     }
 
     #[test]

@@ -53,8 +53,7 @@ pub fn bearer(auth: &Auth) -> Result<Option<(String, String)>, String> {
 
 pub fn workman_role(role: &str) -> Option<&'static str> {
     match role {
-        "workspace" => Some("controller"),
-        "repo" | "repo-controller" => Some("orchestrator"),
+        "repo" => Some("orchestrator"),
         _ => None,
     }
 }

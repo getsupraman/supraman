@@ -60,7 +60,7 @@ sha256 against the manifest.
 Supraman\
   supraman.exe
   supraman.pdb                 symbols and line tables: file:line of each frame of a panic's backtrace in supraman.log
-  sm.exe                       the CLI controllers and users run
+  sm.exe                       the CLI sessions and users run
   smw.exe                      sm with no console window: a schedule's task runs `smw.exe schedule fire …`
   VERSION                      version, commit, build time (UTC), claude tested / minimum
   SOURCE.txt                   where this build's source is: the tag's (or commit's) tree on GitHub
@@ -103,23 +103,21 @@ every folder above it (a dev build): sessions cannot be started from this build.
 
 Never block a newer claude (decision 2026-10-26): the CLI auto-updates, and blocking would stop every user on the
 day of a release. The minimum is the oldest version every CLI fact Supraman relies on was measured on
-(docs/LEARNINGS.md, docs/peer-messaging.md):
+(docs/LEARNINGS.md):
 
 - `claude --bg` (`--name`, `--permission-mode`, `--mcp-config`, `--plugin-dir`, `--add-dir`, `--resume`) — m0/2, m2;
 - the fields of `claude agents --json --all` — m0/2, m1;
 - `--plugin-dir` loading the hooks and skills — m0/3;
-- the peer registry's `peerProtocol 1` for direct messages — m5/4 (an unknown protocol falls back to the relay, so
-  a change there degrades, it does not break).
+- the peer registry's `<pid>.json` fields (`name`, `sessionId`, `messagingSocketPath`, `procStart`) for live names and
+  SendMessage names — m5/4.
 
 When a release passes the gate on a newer claude, raise `TESTED_VERSION` in the same commit. Raise `MIN_VERSION`
 only when Supraman starts depending on something an older CLI lacks, and say what in its doc comment.
 
 ## Release gate
 
-From the release folder **outside the repo** (e.g. copied to `C:\…\Supraman`): `supraman.exe --selftest` and
-`supraman.exe --selftest-supervise --release` both PASS, and `cargo test --workspace` passes in the repo.
-`--release` adds the supervise step only a release runs: Adopt forks a real session with
-`--resume <uuid> --fork-session` (step y); the merge gate runs `--selftest-supervise` without it.
+From the release folder **outside the repo** (e.g. copied to `C:\…\Supraman`): `supraman.exe --selftest` PASSes,
+and `cargo test --workspace` passes in the repo.
 `cargo deny check licenses` passes (`deny.toml`: only licences that allow shipping the whole as GPL-3.0-or-later)
 and `pwsh -File scripts/third-party.ps1 -Check` says `THIRD_PARTY.md is current`; `release.ps1` runs that check
 itself and stops on a stale file. After a dependency change, `pwsh -File scripts/third-party.ps1` regenerates it.

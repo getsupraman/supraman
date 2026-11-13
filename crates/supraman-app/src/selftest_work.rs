@@ -564,7 +564,7 @@ async fn inbox_cards(view: &Entity<FleetView>, tab: u64, work: &Entity<WorkView>
         bail!("the × click reached the row under it: the detail left sw2/2");
     }
     lines.push("× hid sw1/1's card, the click not reaching the row under it".into());
-    crate::selftest_messages::pointer_off(view, cx).await?;
+    crate::selftest_left::pointer_off(view, cx).await?;
     fake.set(inbox_target(), Answer::json(inbox(121, true)));
     fake.push(&json!({ "seq": 121, "runId": DONE_RUN, "itemId": SHIPPED, "kind": "transition" }).to_string());
     painted(view, &[&shipped], LIVE_WITHIN, "sw1/1's card back once it started over", cx).await?;

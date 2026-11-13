@@ -13,7 +13,7 @@ use supraman_ui::tabs::{LIST, LIST_BUTTON, STRIP, TAB_MIN, tab_width};
 use crate::{
     saved_tabs::SavedTab,
     selftest::{click, drawn, until},
-    selftest_supervise::type_text,
+    selftest::keys::type_text,
     selftest_tabs::press,
     view::FleetView,
 };

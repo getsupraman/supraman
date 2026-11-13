@@ -47,6 +47,15 @@ pub struct AsksSchedule {
     pub found: Option<(String, String)>,
 }
 
+/// A prompt's first non-blank line, cut at 80 characters: its tab's title.
+fn first_line(text: &str) -> String {
+    let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default();
+    match line.char_indices().nth(80) {
+        Some((i, _)) => format!("{}…", &line[..i]),
+        None => line.to_string(),
+    }
+}
+
 pub fn first_prompt(text: &str, scheduled: bool) -> String {
     if scheduled { format!("{SCHEDULE_ASK}\n{text}") } else { text.to_string() }
 }
@@ -174,7 +183,7 @@ impl FleetView {
                 match ready {
                     Ok(file) => {
                         let first = super::hand_tab::FirstPrompt { file, mode };
-                        this.hand_claude_in(Some(tab), folder, crate::compose::first_line(&text), claude, None, None, Some(first), cx);
+                        this.hand_claude_in(Some(tab), folder, first_line(&text), claude, None, None, Some(first), cx);
                         if scheduled && let Some(t) = this.tab_mut(tab) {
                             t.asks_schedule = Some(AsksSchedule { workspace, since, found: None });
                         }
@@ -333,6 +342,16 @@ impl FleetView {
 mod tests {
     use super::*;
     use supraman_core::{Folder, Workspace};
+
+    #[test]
+    fn first_line_is_the_first_non_blank_one_cut_at_80() {
+        assert_eq!(first_line("
+  use postgres  
+because"), "use postgres");
+        assert_eq!(first_line(""), "");
+        let long = "x".repeat(100);
+        assert_eq!(first_line(&long), format!("{}…", "x".repeat(80)));
+    }
 
     #[test]
     fn a_scheduled_task_asks_for_a_schedule_on_its_own_first_line() {

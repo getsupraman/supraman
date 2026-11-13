@@ -11,25 +11,16 @@ usage:
   sm workspace add <dir> [--name <slug>] [--depth N] [--dry-run] [--force]
       (a parent folder: depth 1 adds each direct subfolder, git or plain; a deeper scan adds its git repos)
   sm workspace new <name> [--home <dir>] [--folder <dir>]...   (a workspace of the folders given, or empty)
-  sm workspace add-folder <name> <dir> [--enable]   (git or plain; --enable: it may have a supervised session)
-  sm workspace remove-folder <name> <folder>       (stops its supervised session; stop, never rm)
+  sm workspace add-folder <name> <dir> [--enable]   (git or plain)
+  sm workspace remove-folder <name> <folder>
   sm workspace enable <name> <folder>   |   sm workspace disable <name> <folder>
-  sm workspace set-home <name> <dir>               (where the workspace and relay sessions run)
+  sm workspace set-home <name> <dir>               (where the workspace's own sessions run)
   sm workspace add-scan <name> <dir> [--depth N]   (adds the folders below <dir> as add does, now and on every rescan)
   sm workspace remove-scan <name> <dir>            (the folders only it found go too)
   sm workspace list
   sm workspace show <name>                         (home, scans, folders with kind and owner)
-  sm workspace remove <name>                       (stops its sessions; stop, never rm; no token is revoked)
+  sm workspace remove <name>                       (its sessions keep running)
   sm sessions [--workspace <name>] [--all]
-  sm want <workspace> <repo> [--prompt-file <path>]   (start the repo's session fm-<workspace>-<repo>)
-  sm unwant <workspace> <repo>         (stop it; stop, never rm)
-  sm roster <workspace> [--json]       (the workspace's sessions: name, role, health, id, cwd)
-  sm send <workspace> <to> <body>      (drop a message for the workspace's relay to send)
-  sm send <workspace> <to> --file <path>  (into the session's pipe, else through the relay)
-  sm tell <body>                       (inside a Supraman session: a message to the human)
-  sm tell --file <path>
-  sm messages <workspace>              (messages the relay received, newest last)
-  sm inbox --dir <inbox>               (the relay's watcher: one JSON line per drop, forever)
   sm schedule add [<workspace>] --name <text> --every <when> (--command /<name> | --prompt-file <path> | --prompt <text>)
       [--id <id>] [--folder <folder>] [--script <path> [--script-arg <a>]... [--script-timeout 10m]]
       [--profile read|edit|auto] [--allow-tools <rule>]... [--deny-tools <rule>]... [--add-dir <dir>]...
@@ -86,10 +77,7 @@ mod probe_isolation;
 mod probe_rm;
 #[cfg(feature = "probes")]
 mod probe_session_id;
-mod relay;
 mod release;
-pub mod remove;
-mod repos;
 pub mod run;
 mod schedule;
 mod update;
@@ -98,22 +86,12 @@ enum Failure {
     Usage(String),
     Core(CoreError),
     Claude(ClaudeError),
-    Supervisor(Box<supraman_supervisor::SupervisorError>),
     #[cfg(feature = "probes")]
     Probe(&'static str),
     /// Printed as is, exit 1.
     Refused(String),
     /// Already reported; the exit code alone.
     Exit(u8),
-}
-
-impl From<supraman_supervisor::SupervisorError> for Failure {
-    fn from(e: supraman_supervisor::SupervisorError) -> Self {
-        match e {
-            supraman_supervisor::SupervisorError::Core(e) => Self::Core(e),
-            e => Self::Supervisor(Box::new(e)),
-        }
-    }
 }
 
 impl From<CoreError> for Failure {
@@ -134,7 +112,6 @@ fn failure_text(f: Failure) -> String {
         Failure::Usage(m) => m,
         Failure::Core(e) => e.to_string(),
         Failure::Claude(e) => e.to_string(),
-        Failure::Supervisor(e) => e.to_string(),
         #[cfg(feature = "probes")]
         Failure::Probe(what) => what.to_string(),
         Failure::Refused(line) => line.trim_start_matches("error: ").to_string(),
@@ -181,10 +158,6 @@ pub fn cli(args: Vec<String>) -> ExitCode {
             ExitCode::from(if e.is_user_error() { 1 } else { 2 })
         }
         Err(Failure::Claude(e)) => {
-            eprintln!("error: {e}");
-            ExitCode::from(2)
-        }
-        Err(Failure::Supervisor(e)) => {
             eprintln!("error: {e}");
             ExitCode::from(2)
         }
@@ -259,16 +232,6 @@ fn run(args: &[String]) -> Result<(), Failure> {
         ["workspace", "show", name] => show(name),
         ["workspace", "remove", name] => remove(name),
         ["sessions", rest @ ..] => sessions(rest),
-        ["inbox", rest @ ..] => relay::inbox(rest),
-        ["send", rest @ ..] => {
-            relay::refuse_inside_supraman()?;
-            relay::send_cmd(registry()?.home(), rest)
-        }
-        ["tell", rest @ ..] => relay::tell_cmd(rest),
-        ["messages", rest @ ..] => relay::messages(&registry()?, rest),
-        ["want", rest @ ..] => repos::want(&registry()?, rest),
-        ["unwant", rest @ ..] => repos::unwant(&registry()?, rest),
-        ["roster", rest @ ..] => repos::roster_cmd(&registry()?, rest),
         ["schedule", "fire", rest @ ..] => match fire::fire_cmd(rest, true) {
             0 => Ok(()),
             code => Err(Failure::Exit(code)),
@@ -453,11 +416,7 @@ fn show(name: &str) -> Result<(), Failure> {
 
 fn remove(name: &str) -> Result<(), Failure> {
     let registry = registry()?;
-    registry.load(name)?;
-    let claude = supraman_claude::Claude::default();
-    for stopped in remove::remove(registry.home(), name, &claude).map_err(|e| Failure::Refused(format!("error: {e}")))? {
-        println!("stopped {stopped} (stop, never rm)");
-    }
+    registry.remove(name)?;
     println!("removed workspace {name}");
     Ok(())
 }
@@ -474,7 +433,7 @@ pub(crate) fn with_owners(registry: &Registry, workspace: &Workspace) -> Result<
     Ok(owners(&all))
 }
 
-/// `owner=` names the workspace that supervises the folder's session ([`owners`]), `-` for none.
+/// `owner=` names the workspace that owns the folder ([`owners`]), `-` for none.
 pub(crate) fn print_workspace(p: &Workspace, with_created: bool, owned: &HashMap<String, String>) {
     println!("name: {}", p.name);
     println!("home: {}", home_text(p));

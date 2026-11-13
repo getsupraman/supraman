@@ -60,10 +60,6 @@ pub fn selection(colors: &ThemeColors, focused: bool) -> Hsla {
     nearest_holding(blend, holds).unwrap_or(blend)
 }
 
-/// A Messages row's tint over the panel (its status colour at this alpha), and under the pointer.
-pub const MESSAGE_TINT: f32 = 0.10;
-pub const MESSAGE_TINT_HOVER: f32 = 0.16;
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TerminalColors {
     /// ANSI 0-15 from the theme.
@@ -874,7 +870,7 @@ mod tests {
         for mut theme in [dark_modern().theme, supraman_dark().theme] {
             let (c, s) = (theme.colors().clone(), theme.status().clone());
             let marked: Hsla = over(c.ghost_element_selected, c.panel_background).into();
-            let mut checks = vec![
+            let checks = vec![
                 ("search box text".to_string(), contrast(c.text, c.editor_background), NAME_FLOOR),
                 ("matched name".into(), on_background(&mut theme, "search.match_background", 1.), NAME_FLOOR),
                 ("marked row name".into(), contrast(c.text, marked), NAME_FLOOR),
@@ -882,14 +878,6 @@ mod tests {
                 ("marked row warning".into(), contrast(s.warning, marked), SECONDARY_FLOOR),
                 ("toast text".into(), contrast(c.text, c.elevated_surface_background), NAME_FLOOR),
             ];
-            for (tint, color) in [("info", s.info), ("warning", s.warning)] {
-                for alpha in [MESSAGE_TINT, MESSAGE_TINT_HOVER] {
-                    let row: Hsla = over(color.opacity(alpha), c.panel_background).into();
-                    checks.push((format!("message sender on {tint} {alpha}"), contrast(c.text, row), NAME_FLOOR));
-                    // its workspace and age are quiet, not secondary: secondary falls to 4.42 on the hover tint
-                    checks.push((format!("message workspace and age on {tint} {alpha}"), contrast(c.text.opacity(QUIET), row), SECONDARY_FLOOR));
-                }
-            }
             for (what, got, floor) in checks {
                 println!("{}: {what} {got:.2} (floor {floor})", theme.name);
                 assert!(got >= floor, "{}: {what} {got} < {floor}", theme.name);

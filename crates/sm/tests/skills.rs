@@ -7,44 +7,12 @@ fn plugin(path: &str) -> String {
 }
 
 #[test]
-fn the_roles_and_skills_name_the_skills_and_channels_they_rely_on() {
-    let repo = plugin("skills/repo-controller/SKILL.md");
-    assert!(repo.contains("`workman:controller` and `workman:agents` even when the skill listing does not show them"));
-    assert!(repo.contains("You never message `fm-<w>-relay` and never run `sm tell`"));
-    assert!(repo.contains("`work_brief(scope: \"<run ref>\")`") && !repo.contains("work_brief()"), "a repo-controller scopes its run");
-    for path in ["skills/repo-controller/SKILL.md", "skills/workspace-controller/SKILL.md", "roles/repo.md", "roles/workspace.md"] {
-        assert!(plugin(path).contains("Skill tool"), "{path}");
-    }
-    for path in ["skills/repo-controller/SKILL.md", "skills/workspace-controller/SKILL.md", "roles/repo.md"] {
-        assert!(plugin(path).contains("`done: waiting on <who> for <what>`"), "{path}");
-    }
-    for path in ["roles/workspace.md", "roles/repo.md", "roles/hand.md"] {
-        assert_eq!(plugin(path).matches("/supraman:supraman-scheduler").count(), 1, "{path}");
-    }
+fn the_hand_role_names_the_scheduler_skill_and_no_controller_duty() {
     let hand = plugin("roles/hand.md");
+    assert_eq!(hand.matches("/supraman:supraman-scheduler").count(), 1);
     for duty in ["sm tell", "relay", "work_brief", "controller", "done:"] {
         assert!(!hand.contains(duty), "the hand role names {duty}");
     }
-}
-
-#[test]
-fn the_workspace_controller_reaches_the_human_with_fm_tell_not_the_relay() {
-    let skill = plugin("skills/workspace-controller/SKILL.md");
-    let role = plugin("roles/workspace.md");
-    assert!(skill.contains("**The human is reached only with `sm tell`**"));
-    assert!(skill.contains("`sm tell --file <path>`"));
-    assert!(!skill.contains("SendMessage(to: \"fm-<w>-relay\""), "the relay is not the human's mailbox any more");
-    assert!(!skill.contains("Send the plan to the relay") && !skill.contains("Report to the relay"));
-    assert!(role.contains("you reach the human with `sm tell` (never SendMessage to the relay"));
-    assert!(role.contains("announce ready to the human with `sm tell` once"));
-    // both shapes of the human's message: Supraman's own frame, and the relay as fallback
-    assert!(skill.contains("<cross-session-message from-name=\"supraman\">` whose first line is `From the human (via Supraman, workspace <w>) [m-<id>]:`"));
-    assert!(skill.contains("from-name=\"fm-<w>-relay\">`: the relay carried it"));
-    assert!(skill.contains("**both are the human's voice**"));
-    let first_line = supraman_claude::human::framed("<w>", "", "m-<id>");
-    assert!(skill.contains(&format!("`{}`", first_line.trim_end())), "the skill quotes the first line Supraman writes: {first_line:?}");
-    assert!(skill.contains(&format!("from-name=\"{}\"", supraman_claude::peer::FROM_NAME)));
-    assert!(skill.contains("**Never run `sm send`.**"));
 }
 
 /// The scheduler skill runs only these `sm schedule` verbs, and pre-allows nothing else.
@@ -84,21 +52,4 @@ fn the_scheduler_skill_runs_only_the_allowed_fm_schedule_verbs() {
     let verb_table = body.split("| Verb | Use |").nth(1).and_then(|t| t.split("`<w>` is the workspace").next()).expect("a verb table");
     assert!(verb_table.contains("| `sm schedule edit [<w>] <id> <options>` | change a schedule **you added in this conversation at the human's request**"), "{verb_table}");
     assert!(body.contains("Only for a schedule **you added in this conversation at the human's request**: `sm schedule edit"));
-}
-
-/// A workspace's repos may sit in different Workman projects: mapped by a read, planned each in its own project.
-#[test]
-fn the_workspace_controller_plans_each_repo_in_its_own_project() {
-    let skill = plugin("skills/workspace-controller/SKILL.md");
-    let role = plugin("roles/workspace.md");
-    let repo = plugin("skills/repo-controller/SKILL.md");
-    assert!(skill.contains("`work_brief(repo: {root: \"<root>\", remote: \"<remote>\"})` reads its project, writing nothing"));
-    assert!(skill.contains("that is normal, never a problem to report"));
-    assert!(!skill.contains("`sm tell` the human which repo and which project"), "a repo bound elsewhere is not reported");
-    assert!(skill.contains("you are not a member of`: that repo cannot be planned from here. `sm tell` the human once"));
-    assert!(skill.contains("`parent: \"<the repo's project>\"`") && skill.contains("`<project>/<run>/<n>`"));
-    assert!(skill.contains("once per project that holds a run of this task"));
-    assert!(skill.contains("`Your run: <project>/<run> in Workman project <project>."));
-    assert!(role.contains("map the workspace's repos to their projects (the unbound ones to {workspace})"));
-    assert!(repo.contains("`Your run: <project>/<run> in Workman project <project>`"));
 }

@@ -156,7 +156,7 @@ mod tests {
     use super::super::{HttpMinter, MintRequest, MintedSession};
     use super::*;
 
-    const NAME: &str = "fm-demo-workspace";
+    const NAME: &str = "fm-demo-tab";
     const T0: Millis = 1_800_000_000_000;
     const MINUTE: Millis = 60_000;
 
@@ -179,7 +179,7 @@ mod tests {
     fn kept(home: &Path, fake: &FakeWorkman) -> (Keeper, String) {
         let keeper = Keeper::new(home, &home.join("mcp"), Arc::new(supraman_core::secret::MemoryStore::default()));
         let minted = HttpMinter::default().mint(fake.base(), "fake-static", &request()).unwrap();
-        let mut records = MintedSessions::empty(MintedSessions::path(home, "demo"));
+        let mut records = MintedSessions::empty(MintedSessions::hands_path(home));
         let session = MintedSession { session_id: minted.session_id.clone(), role: "workspace".into(), claude_session_id: None, origin: Some(fake.base().to_string()) };
         records.insert_minted(NAME, session, &request());
         records.save().unwrap();

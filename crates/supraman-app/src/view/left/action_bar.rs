@@ -77,7 +77,7 @@ impl FleetView {
     fn busy_limit(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         let colors = cx.theme().colors().clone();
         let hits = &self.hits;
-        let n = self.supervising.max_working;
+        let n = self.polled.max_working;
         let busy_tip: SharedString = format!(
             "At most {n} session(s) of this Supraman working at once, across its workspaces; launches wait while it is reached. 0 pauses them all. Another Supraman's sessions are not counted."
         )
@@ -96,7 +96,7 @@ impl FleetView {
                     .h(px(24.))
                     .min_w(px(22.))
                     .px(px(3.))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.set_max_working(this.supervising.max_working.saturating_sub(1), cx))),
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.set_max_working(this.polled.max_working.saturating_sub(1), cx))),
             )
             .child(
                 div()
@@ -113,7 +113,7 @@ impl FleetView {
                     .min_w(px(22.))
                     .px(px(3.))
                     .when(n >= MAX_WORKING_LIMIT, |d| d.opacity(0.4))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.set_max_working(this.supervising.max_working + 1, cx))),
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.set_max_working(this.polled.max_working + 1, cx))),
             )
     }
 }
