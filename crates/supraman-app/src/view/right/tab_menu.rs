@@ -104,7 +104,7 @@ pub fn with_workman(mut items: Vec<MenuItem>, folder: Option<&Path>, work: &Work
 /// The folder a session row is listed under, as the sidebar names it for its menu.
 pub(in crate::view) fn row_folder<'a>(node: &'a EntryNode, session_id: &str) -> &'a str {
     let is = |row: &crate::fleet::SessionRow| row.session.session_id == session_id;
-    if let Some((id, _)) = node.scheduled.iter().find(|(_, rows)| rows.iter().any(is)) {
+    if let Some(id) = node.folders.iter().find_map(|f| f.scheduled.iter().find(|(_, rows)| rows.iter().any(is)).map(|(id, _)| id)) {
         return id;
     }
     node.folders.iter().find(|r| r.sessions.iter().any(is)).map_or("", |r| &r.key)

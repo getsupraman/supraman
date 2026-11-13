@@ -65,9 +65,6 @@ pub fn prepare() -> anyhow::Result<()> {
         *e = Entries::new(entries);
         Ok(())
     })?;
-    // the schedules' bridge names this home's `fm-demo-…` sessions its own
-    let bridge = FOLDERS.iter().map(|(name, _)| supraman_core::Folder::new(*name, root.join(name))).collect();
-    supraman_core::Registry::at(&home).save(&supraman_core::Workspace::new(WORKSPACE, &root, bridge), true)?;
     let fake = workman();
     OAUTH.set(fake.enable_oauth()).map_err(|_| anyhow!("the fake OAuth server was started twice"))?;
     crate::selftest::set_workman(fake.base())?;
@@ -111,8 +108,8 @@ fn workman() -> FakeWorkman {
         "rows": [verified, row("2", "Login form validation", "blocked", (1, 4)), row("3", "Order summary page", "in_progress", (0, 2)),
                  row("4", "Receipt email", "open", (0, 0)), row("5", "Refunds from the admin view", "open", (0, 0))]
     });
-    let claim = json!({ "item": task("3", "Order summary page", "in_progress"), "run": run, "role": "worker", "agent": "fm-demo-web", "tree": r"C:\src\demo\web",
-                        "session": { "id": "s1", "name": "fm-demo-web", "role": "worker", "claudeSessionId": "d0000003-0000-4000-8000-00000000de00", "firstSeenAt": "x", "lastSeenAt": "x" },
+    let claim = json!({ "item": task("3", "Order summary page", "in_progress"), "run": run, "role": "worker", "agent": "demo-web", "tree": r"C:\src\demo\web",
+                        "session": { "id": "s1", "name": "demo-web", "role": "worker", "claudeSessionId": "d0000003-0000-4000-8000-00000000de00", "firstSeenAt": "x", "lastSeenAt": "x" },
                         "acquiredAt": "2026-11-02T09:30:00+00:00", "heartbeatAt": "2026-11-02T09:55:00+00:00", "expiresAt": "2026-11-02T10:26:00+00:00", "expired": false });
     let overview = json!({
         "asOf": "2026-11-02T10:00:00+00:00", "seq": 10, "workingNow": [claim],
@@ -139,13 +136,13 @@ fn workman() -> FakeWorkman {
     ];
     let inbox = json!({ "asOf": "2026-11-02T10:00:00+00:00", "seq": 10, "rows": rows }).to_string();
     let event = |seq: i64, at: &str, n: &str, title: &str, status: &str, kind: &str, summary: &str| {
-        json!({ "seq": seq, "at": at, "item": task(n, title, status), "run": run, "actor": "fm-demo-web", "role": "worker", "kind": kind, "summary": summary })
+        json!({ "seq": seq, "at": at, "item": task(n, title, status), "run": run, "actor": "demo-web", "role": "worker", "kind": kind, "summary": summary })
     };
     let journal = json!({ "asOf": "2026-11-02T10:00:00+00:00", "seq": 10, "cursor": 10, "hasMore": false, "events": [
         event(5, "2026-11-01T16:20:00+00:00", "1", "Payment provider adapter", "done", "verification", "checkout/1 green by orchestrator: 12 passed"),
         event(6, "2026-11-01T16:21:00+00:00", "1", "Payment provider adapter", "done", "transition", "checkout/1 review → done"),
         event(7, "2026-11-02T09:10:00+00:00", "2", "Login form validation", "blocked", "transition", "checkout/2 in_progress → blocked"),
-        event(8, "2026-11-02T09:30:00+00:00", "3", "Order summary page", "in_progress", "claim", "checkout/3 claimed by fm-demo-web for 30m"),
+        event(8, "2026-11-02T09:30:00+00:00", "3", "Order summary page", "in_progress", "claim", "checkout/3 claimed by demo-web for 30m"),
         event(9, "2026-11-02T09:40:00+00:00", "1", "Payment provider adapter", "in_progress", "note", "question: card or invoice first?")
     ] }).to_string();
     FakeWorkman::start(vec![
@@ -188,11 +185,11 @@ fn rows() -> anyhow::Result<Vec<supraman_claude::Session>> {
         v
     };
     let json = serde_json::Value::Array(vec![
-        row("d0000002", "fm-demo-api", "api", "background", "working", "busy", None, 42),
-        row("d0000003", "fm-demo-web", "web", "background", "blocked", "waiting", Some("permission prompt"), 17),
-        row("d0000004", "fm-demo-docs", "docs", "background", "working", "idle", None, 63),
+        row("d0000002", "demo-api", "api", "background", "working", "busy", None, 42),
+        row("d0000003", "demo-web", "web", "background", "blocked", "waiting", Some("permission prompt"), 17),
+        row("d0000004", "demo-docs", "docs", "background", "working", "idle", None, 63),
         row("d0000005", "refactor-auth", "api", "interactive", "working", "busy", None, 8),
-        row("d0000006", "fm-demo-infra", "infra", "background", "stopped", "idle", None, 240),
+        row("d0000006", "demo-infra", "infra", "background", "stopped", "idle", None, 240),
     ]);
     Ok(supraman_claude::parse(&json.to_string())?)
 }
@@ -212,6 +209,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let main = capture(out.join("supraman-main.png"), None, cx).await?;
     println!("shot: {}", main.display());
     inbox(view, &out, cx).await?;
+    schedules(view, &out, cx).await?;
     sidebar_shown(view, &out, cx).await?;
 
     let target = MenuTarget::Session {
@@ -221,7 +219,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     };
     let tab = view.update(cx, |v, cx| v.open_details(target, cx));
     if tab.is_none() {
-        bail!("no Details tab for fm-demo-api");
+        bail!("no Details tab for demo-api");
     }
     sleep(cx, Duration::from_millis(1500)).await;
     let details = capture(out.join("supraman-details.png"), None, cx).await?;
@@ -253,19 +251,19 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     settings_pages(view, &out, cx).await
 }
 
-/// fm-demo-api attached in its tab: its sidebar row in the selected fill with the focus colour's left edge.
+/// demo-api attached in its tab: its sidebar row in the selected fill with the focus colour's left edge.
 async fn sidebar_shown(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let session_id = "d0000002-0000-4000-8000-00000000de00";
     let saved = crate::saved_tabs::SavedTab::Attach {
-        title: "demo · api · fm-demo-api".into(),
+        title: "demo · api · demo-api".into(),
         cwd: root().join("api"),
         id: "d0000002".into(),
         session_id: Some(session_id.into()),
-        name: "fm-demo-api".into(),
+        name: "demo-api".into(),
     };
     let tab = view.update(cx, |v, cx| v.open_placeholder(saved, cx));
     let marked = format!("marked-{session_id}");
-    crate::selftest::until(view, cx, Duration::from_secs(10), "fm-demo-api's row shown", |v| v.hits.borrow().keys().any(|k| k.starts_with(&marked)).then_some(())).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "demo-api's row shown", |v| v.hits.borrow().keys().any(|k| k.starts_with(&marked)).then_some(())).await?;
     crate::selftest::drawn(cx).await?;
     let shot = capture(out.join("supraman-sidebar-shown.png"), None, cx).await?;
     println!("shot: {}", shot.display());
@@ -307,6 +305,30 @@ async fn tab_overflow(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindow
     let shot = capture(out.join("supraman-tabs-overflow.png"), None, cx).await?;
     println!("shot: {}", shot.display());
     view.update(cx, |v, cx| opened.into_iter().for_each(|id| v.close_tab(id, cx)));
+    Ok(())
+}
+
+/// A folder's Schedules under its row: a pending schedule of the api folder, saved as `sm schedule add` saves one.
+async fn schedules(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let api = root().join("api");
+    let s: supraman_core::schedule::Schedule = serde_json::from_value(json!({
+        "id": "nightly", "name": "Nightly gate", "trigger": {"kind": "daily", "at": "09:00"}, "action": {"kind": "session", "prompt": {"text": "Run the gate."}}
+    }))?;
+    supraman_core::schedule::edit(&home(), &api, |all| {
+        all.push(s);
+        Ok(())
+    })?;
+    let key = supraman_core::schedule::folder_key(&api);
+    let (group, row) = (format!("schedules-row-{key}"), format!("sched-row-{key}/nightly"));
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the api folder's Schedules under its row", |v| (v.shown(&group) && v.shown(&row)).then_some(())).await?;
+    sleep(cx, Duration::from_millis(500)).await;
+    let shot = capture(out.join("supraman-schedules.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    supraman_core::schedule::edit(&home(), &api, |all| {
+        all.clear();
+        Ok(())
+    })?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the schedule gone", |v| v.schedule_row(&key, "nightly").is_none().then_some(())).await?;
     Ok(())
 }
 
@@ -399,7 +421,7 @@ async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path
     let session = json!([{
         "id": "d0000007",
         "sessionId": "d0000007-0000-4000-8000-00000000de00",
-        "name": "fm-demo-shop",
+        "name": "demo-shop",
         "cwd": dir,
         "kind": "background",
         "startedAt": supraman_claude::now_ms() - 5 * 60_000,
@@ -409,7 +431,7 @@ async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path
     }, {
         "id": "d0000008",
         "sessionId": "d0000008-0000-4000-8000-00000000de00",
-        "name": "fm-demo-side",
+        "name": "demo-side",
         "cwd": side,
         "kind": "background",
         "startedAt": supraman_claude::now_ms() - 9 * 60_000,
@@ -419,7 +441,7 @@ async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path
     }, {
         "id": "d0000009",
         "sessionId": "d0000009-0000-4000-8000-00000000de00",
-        "name": "fm-demo-review",
+        "name": "demo-review",
         "cwd": side,
         "kind": "background",
         "startedAt": supraman_claude::now_ms() - 12 * 60_000,
@@ -429,7 +451,7 @@ async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path
     }]);
     let sessions = supraman_claude::parse(&session.to_string())?;
     view.read_with(cx, |v, _| v.polls.injected.lock().unwrap_or_else(|e| e.into_inner()).extend(sessions));
-    crate::selftest::until(view, cx, Duration::from_secs(20), "the session's row in the tree", |v| v.tree().entry(WORKSPACE)?.rows().any(|r| r.session.name == "fm-demo-shop").then_some(())).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(20), "the session's row in the tree", |v| v.tree().entry(WORKSPACE)?.rows().any(|r| r.session.name == "demo-shop").then_some(())).await?;
     crate::selftest::until(view, cx, Duration::from_secs(20), "the session's agent row", |v| v.hits.borrow().contains_key("git-agent-0").then_some(())).await?;
     crate::selftest::click(view, "git-agent-0", cx).await?;
     crate::selftest::until(view, cx, Duration::from_secs(10), "the agent row's page with its Open", |v| {
@@ -462,7 +484,7 @@ async fn git_agent(view: &Entity<FleetView>, dir: &Path, side: &Path, out: &Path
     println!("shot: {}", shot.display());
     crate::selftest_git::resize(view, window, cx).await?;
     crate::selftest::press(view, "git-agent-0", MouseButton::Right, cx).await?;
-    crate::selftest::until(view, cx, Duration::from_secs(10), "the session's menu over the Git tab", |v| v.dialogs.menu.as_ref().filter(|m| m.title == "fm-demo-shop").map(|_| ())).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the session's menu over the Git tab", |v| v.dialogs.menu.as_ref().filter(|m| m.title == "demo-shop").map(|_| ())).await?;
     view.update(cx, |v, cx| {
         v.dialogs.menu = None;
         cx.notify();

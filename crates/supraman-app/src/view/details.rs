@@ -41,8 +41,8 @@ impl DetailsPage {
             MenuTarget::Session { session_id, .. } => format!("session-{session_id}"),
             MenuTarget::Group(name) => format!("group-{name}"),
             MenuTarget::Folder(key) => format!("repo-{key}"),
-            MenuTarget::Schedule { workspace, id } => format!("schedule-{workspace}/{id}"),
-            MenuTarget::Schedules(workspace) => format!("schedules-{workspace}"),
+            MenuTarget::Schedule { folder_key, id } => format!("schedule-{folder_key}/{id}"),
+            MenuTarget::Schedules { folder, .. } => format!("schedules-{}", supraman_core::schedule::folder_key(folder)),
             MenuTarget::OtherSchedule(path) => format!("other-{path}"),
         }
     }
@@ -84,7 +84,7 @@ impl FleetView {
                 let first = self.tree().entry(name)?.folders.first().map(|f| f.path.clone());
                 (format!("Details · {name}"), first, None, None)
             }
-            MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) | MenuTarget::OtherSchedule(_) => return None,
+            MenuTarget::Schedule { .. } | MenuTarget::Schedules { .. } | MenuTarget::OtherSchedule(_) => return None,
         };
         let tab = self.next_tab_id;
         self.next_tab_id += 1;
@@ -163,7 +163,7 @@ impl FleetView {
 
     fn started_by(&self, row: &SessionRow) -> StartedBy {
         let name = &row.session.name;
-        if let Some(id) = self.listed.schedule_workspaces.iter().find_map(|w| supraman_core::schedule::schedule_of_session(&w.name, name)) {
+        if let Some((_, id)) = supraman_core::schedule::schedule_of_session(name).filter(|(key, _)| self.own_names().iter().any(|k| k == key)) {
             return StartedBy::Schedule(id.to_string());
         }
         if super::menu::is_foremans(&row.session) {
@@ -237,7 +237,7 @@ impl FleetView {
         match &page.target {
             MenuTarget::Session { .. } => self.session_sections(page, cx).map(|(title, s)| details::text(&title, &s)),
             MenuTarget::Group(name) | MenuTarget::Folder(name) => self.entry_sections(name, cx).map(|(_, s)| details::text(name, &s)),
-            MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) | MenuTarget::OtherSchedule(_) => None,
+            MenuTarget::Schedule { .. } | MenuTarget::Schedules { .. } | MenuTarget::OtherSchedule(_) => None,
         }
     }
 
@@ -286,7 +286,7 @@ impl FleetView {
                 let items = if node.group { group_items(&node, closed) } else { folder_items(&node, &node.folders[0], closed) };
                 (name.clone(), None, sections, items)
             }
-            MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) | MenuTarget::OtherSchedule(_) => return None,
+            MenuTarget::Schedule { .. } | MenuTarget::Schedules { .. } | MenuTarget::OtherSchedule(_) => return None,
         };
         let actions = opener.into_iter().chain(self.action_buttons(page, items, cx)).collect();
         let entry = match &page.target {

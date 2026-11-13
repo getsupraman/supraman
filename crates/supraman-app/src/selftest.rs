@@ -9,7 +9,7 @@ use std::{
 use anyhow::{Context as _, anyhow, bail};
 use supraman_claude::{Claude, Removal, Session, WRITE_TIMEOUT, check_supported, list_sessions, main_repo, main_repo_walks, now_ms};
 use supraman_core::folders::{Entries, Entry, FolderEntry};
-use supraman_core::{Folder, Registry, Workspace, process};
+use supraman_core::process;
 use supraman_term::Terminal;
 use supraman_core::platform::process::memory;
 use supraman_ui::mib;
@@ -188,7 +188,7 @@ fn clear_scratch(mode: Mode) -> anyhow::Result<(PathBuf, PathBuf, PathBuf, PathB
     Ok((home, cwd, work, fixture))
 }
 
-/// The group `WORKSPACE` in folders.toml, and the same folders as the schedules' bridge workspace of that name.
+/// The group `WORKSPACE` in folders.toml.
 fn register_workspace(home: &Path, cwd: &Path, fixture: &Path) -> anyhow::Result<PathBuf> {
     // Still single-threaded apart from the watchdog, which never reads the environment.
     unsafe { std::env::set_var(supraman_core::HOME_VAR, home) };
@@ -209,8 +209,7 @@ fn register_workspace(home: &Path, cwd: &Path, fixture: &Path) -> anyhow::Result
         *e = Entries::new(vec![group]);
         Ok(())
     })?;
-    let bridge = paths.iter().map(|p| Folder::new(supraman_core::paths::folder_name(p), p)).collect();
-    Registry::at(home).save(&Workspace::new(WORKSPACE, fixture, bridge), true)?;
+
     REPO.set(repo_name).ok();
     println!(
         "step 1: SUPRAMAN_HOME={} ; group {WORKSPACE} = two fixture repos in {} and {}, in {}",

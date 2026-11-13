@@ -42,9 +42,10 @@ pub fn working<'a>(observed: impl IntoIterator<Item = &'a Session>, now: Millis)
     observed.into_iter().filter(|s| s.name.starts_with(FM_PREFIX) && mid_turn(s, now)).count()
 }
 
-/// An `fm-` session that names none of `workspaces` (`fm-<workspace>-…`): another `SUPRAMAN_HOME`'s, e.g. a selftest's.
-pub fn is_foreign<'a>(name: &str, mut workspaces: impl Iterator<Item = &'a str>) -> bool {
-    name.starts_with(FM_PREFIX) && !workspaces.any(|w| name.starts_with(&format!("{FM_PREFIX}{w}-")))
+/// An `fm-` session that names none of `own` (`fm-<own>-…`, a folder key of this home's schedules): another
+/// `SUPRAMAN_HOME`'s, e.g. a selftest's.
+pub fn is_foreign<'a>(name: &str, mut own: impl Iterator<Item = &'a str>) -> bool {
+    name.starts_with(FM_PREFIX) && !own.any(|w| name.starts_with(&format!("{FM_PREFIX}{w}-")))
 }
 
 /// The `claude` writes of a scheduled run.

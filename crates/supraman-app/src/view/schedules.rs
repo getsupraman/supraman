@@ -1,12 +1,12 @@
-//! The Schedules group's actions; every change of a schedule's task goes through `schedule::sync`.
+//! Each folder's Schedules and their actions; every change of a schedule's task goes through `schedule::sync_all`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use supraman_core::schedule::{self, Clock, Day, ForeignTask, Overlap, Profile, Registrar, Schedule, Span, Status, SyncTarget, Trigger};
 use supraman_core::secret::default_store;
-use supraman_core::{Workspace, process};
+use supraman_core::process;
 use supraman_ui::button;
 use supraman_ui::details::{self, Section};
 use supraman_ui::hit::hit_target;
@@ -21,7 +21,7 @@ use super::left::{REPO_ROW, SESSION_LINE, disclosure, grid, icon_slot, secondary
 use super::menu::{Confirm, Confirmed, MenuTarget};
 use supraman_ui::clipped::clipped;
 use supraman_ui::tooltip::Tooltip;
-use crate::fleet::EntryNode;
+use crate::fleet::{EntryNode, FolderNode};
 use crate::schedules::{self, Primary, ScheduleRow, Waiting};
 
 const DRY_RUN_WITHIN: Duration = Duration::from_secs(60);
@@ -29,9 +29,9 @@ const DRY_RUN_WITHIN: Duration = Duration::from_secs(60);
 /// The real Task Scheduler, or the selftest's fake (see C101).
 pub type SharedRegistrar = Arc<dyn Registrar + Send + Sync>;
 
-/// `<ws>/<id>`: a schedule's key in hit keys and maps.
-pub fn key(workspace: &str, id: &str) -> String {
-    format!("{workspace}/{id}")
+/// `<folder key>/<id>`: a schedule's key in hit keys and maps.
+pub fn key(folder_key: &str, id: &str) -> String {
+    format!("{folder_key}/{id}")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,7 +43,7 @@ pub enum TriggerKind {
 
 /// A schedule's Details tab: the page renders its row as of the last poll.
 pub struct SchedulePage {
-    pub workspace: String,
+    pub folder_key: String,
     pub id: String,
     pub scroll: ScrollHandle,
     /// The last Dry run's output, or why it failed.
@@ -121,7 +121,7 @@ impl Form {
 }
 
 pub struct ScheduleEdit {
-    pub workspace: String,
+    pub folder_key: String,
     pub id: String,
     pub kind: TriggerKind,
     pub days: Vec<Day>,
@@ -154,12 +154,19 @@ impl ScheduleEdit {
     }
 }
 
-fn sync_now(home: &Path, registrar: &dyn Registrar, workspace: &Workspace) -> Result<schedule::Synced, String> {
-    let schedules = schedule::load(home, &workspace.name).map_err(|e| e.to_string())?;
+/// Every folder's tasks as its schedules say, the tasks of folders without schedules gone, and the migration's
+/// request for a sync answered.
+pub fn sync_now(home: &Path, registrar: &dyn Registrar) -> Result<(), String> {
+    let (all, _) = schedule::load_all(home);
     let smw = schedule::smw_exe();
     let store = default_store(home);
     let target = SyncTarget { home, store: &*store, level: supraman_claude::task_run_level(), smw: &smw, now_ms: supraman_core::time::now_ms() };
-    schedule::sync(registrar, &target, workspace, &schedules).map_err(|e| format!("Task Scheduler refused the sync of {}: {e}", workspace.name))
+    schedule::sync_all(registrar, &target, &all).map_err(|e| format!("Task Scheduler refused the sync: {e}"))?;
+    let resync = schedule::schedules_dir(home).join(schedule::RESYNC);
+    match std::fs::remove_file(&resync) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("Cannot remove {}: {e}", resync.display())),
+        _ => Ok(()),
+    }
 }
 
 /// Why a step failed: the edit (nothing changed) or the sync after it (the schedule changed, its task did not).
@@ -169,35 +176,58 @@ enum Failed {
 }
 
 impl FleetView {
-    pub fn schedule_row(&self, workspace: &str, id: &str) -> Option<&ScheduleRow> {
-        self.scheduling.schedules.get(workspace)?.iter().find(|r| r.schedule.id == id)
+    pub fn schedule_row(&self, folder_key: &str, id: &str) -> Option<&ScheduleRow> {
+        self.scheduling.schedules.get(folder_key)?.iter().find(|r| r.schedule.id == id)
     }
 
-    fn registered_workspace(&self, workspace: &str) -> Option<Workspace> {
-        self.listed.schedule_workspaces.iter().find(|w| w.name == workspace).cloned()
+    /// The sync a migration of the earlier schedule files asks for: their former task folders go, off the UI thread.
+    pub(super) fn resync_schedules(&mut self, cx: &mut Context<Self>) {
+        let Some(home) = self.home.clone() else { return };
+        if std::mem::replace(&mut self.scheduling.resyncing, true) {
+            return;
+        }
+        let registrar = self.scheduling.registrar.clone();
+        let task = cx.background_executor().spawn(async move { sync_now(&home, &*registrar) });
+        cx.spawn(async move |this, cx| {
+            let synced = task.await;
+            this.update(cx, |this, cx| {
+                this.scheduling.resyncing = false;
+                if let Err(e) = synced {
+                    this.scheduling.sync_errors.insert("tasks/sync".into(), e);
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The folder filed under `folder_key`, as the last poll read it.
+    fn schedule_folder(&self, folder_key: &str) -> Option<PathBuf> {
+        self.scheduling.schedules.get(folder_key)?.first().map(|r| r.folder.clone())
     }
 
     /// The row's one action, also its double-click; Approve opens the Details tab on what it approves.
-    pub fn schedule_primary(&mut self, workspace: &str, id: &str, cx: &mut Context<Self>) {
-        match self.schedule_row(workspace, id).map(ScheduleRow::primary) {
+    pub fn schedule_primary(&mut self, folder_key: &str, id: &str, cx: &mut Context<Self>) {
+        match self.schedule_row(folder_key, id).map(ScheduleRow::primary) {
             Some(Primary::Approve) => {
-                self.open_schedule(workspace, id, At::Approve, cx);
+                self.open_schedule(folder_key, id, At::Approve, cx);
             }
-            Some(Primary::RunNow) => self.run_schedule_now(workspace, id, cx),
+            Some(Primary::RunNow) => self.run_schedule_now(folder_key, id, cx),
             None => {}
         }
     }
 
-    pub fn schedule_page(&self, workspace: &str, id: &str) -> Option<(u64, &SchedulePage)> {
+    pub fn schedule_page(&self, folder_key: &str, id: &str) -> Option<(u64, &SchedulePage)> {
         self.tabs.iter().find_map(|t| match &t.kind {
-            TabKind::Schedule(p) if p.workspace == workspace && p.id == id => Some((t.id, p)),
+            TabKind::Schedule(p) if p.folder_key == folder_key && p.id == id => Some((t.id, p)),
             _ => None,
         })
     }
 
-    fn schedule_page_mut(&mut self, workspace: &str, id: &str) -> Option<&mut SchedulePage> {
+    fn schedule_page_mut(&mut self, folder_key: &str, id: &str) -> Option<&mut SchedulePage> {
         self.tabs.iter_mut().find_map(|t| match &mut t.kind {
-            TabKind::Schedule(p) if p.workspace == workspace && p.id == id => Some(p),
+            TabKind::Schedule(p) if p.folder_key == folder_key && p.id == id => Some(p),
             _ => None,
         })
     }
@@ -207,16 +237,16 @@ impl FleetView {
         schedules::sections(row, &schedules::zone_words(now), page.and_then(|p| p.dry_run.as_deref()), now)
     }
 
-    pub fn open_schedule(&mut self, workspace: &str, id: &str, at: At, cx: &mut Context<Self>) -> Option<u64> {
-        let row = self.schedule_row(workspace, id)?.clone();
+    pub fn open_schedule(&mut self, folder_key: &str, id: &str, at: At, cx: &mut Context<Self>) -> Option<u64> {
+        let row = self.schedule_row(folder_key, id)?.clone();
         self.dialogs.menu = None;
-        let tab = match self.schedule_page(workspace, id) {
+        let tab = match self.schedule_page(folder_key, id) {
             Some((tab, _)) => tab,
             None => {
-                let page = SchedulePage { workspace: workspace.to_string(), id: id.to_string(), scroll: ScrollHandle::new(), dry_run: None, dry_running: false };
+                let page = SchedulePage { folder_key: folder_key.to_string(), id: id.to_string(), scroll: ScrollHandle::new(), dry_run: None, dry_running: false };
                 let tab = self.next_tab_id;
                 self.next_tab_id += 1;
-                self.tabs.push(Tab::new(tab, format!("Schedule · {}", row.title()), TabKind::Schedule(page), row.folder_path.clone()));
+                self.tabs.push(Tab::new(tab, format!("Schedule · {}", row.title()), TabKind::Schedule(page), Some(row.folder.clone())));
                 tab
             }
         };
@@ -226,7 +256,7 @@ impl FleetView {
             At::Runs => Some("runs"),
         };
         if let Some(key) = key
-            && let Some((_, page)) = self.schedule_page(workspace, id)
+            && let Some((_, page)) = self.schedule_page(folder_key, id)
             && let Some(ix) = details::index_of(&self.page_sections(&row, Some(page)), key)
         {
             page.scroll.scroll_to_item(ix);
@@ -237,19 +267,19 @@ impl FleetView {
     }
 
     /// The fingerprint the page shows, which [`Self::approve_schedule`] refuses once the file holds another.
-    pub fn approve_shown(&mut self, workspace: &str, id: &str, cx: &mut Context<Self>) {
-        match self.schedule_row(workspace, id).map(|r| r.approvable.clone()) {
-            Some(Some(Ok(covered))) => self.approve_schedule(workspace.to_string(), id.to_string(), covered.fingerprint, cx),
-            Some(Some(Err(why))) => self.action_error = Some(format!("Cannot approve {workspace}/{id}: {why}")),
+    pub fn approve_shown(&mut self, folder_key: &str, id: &str, cx: &mut Context<Self>) {
+        match self.schedule_row(folder_key, id).map(|r| r.approvable.clone()) {
+            Some(Some(Ok(covered))) => self.approve_schedule(folder_key.to_string(), id.to_string(), covered.fingerprint, cx),
+            Some(Some(Err(why))) => self.action_error = Some(format!("Cannot approve schedule {id}: {why}")),
             _ => {}
         }
         cx.notify();
     }
 
     /// The app's only approval (see C100).
-    pub fn approve_schedule(&mut self, workspace: String, id: String, fingerprint: String, cx: &mut Context<Self>) {
-        self.change_schedule(workspace, id, "approved; its task is registered", cx, move |home, w, id| {
-            let s = schedule::load(home, &w.name).map_err(|e| e.to_string())?.into_iter().find(|s| s.id == id).ok_or("the schedule is gone")?;
+    pub fn approve_schedule(&mut self, folder_key: String, id: String, fingerprint: String, cx: &mut Context<Self>) {
+        self.change_schedule(folder_key, id, "approved; its task is registered", cx, move |home, w, id| {
+            let s = schedule::load(home, w).map_err(|e| e.to_string())?.into_iter().find(|s| s.id == id).ok_or("the schedule is gone")?;
             let now = schedule::covered(w, &s).map_err(|e| e.to_string())?;
             if now.fingerprint != fingerprint {
                 return Err("it changed after the page showed it: read the page again, then Approve".into());
@@ -258,11 +288,11 @@ impl FleetView {
         });
     }
 
-    pub fn set_schedule_paused(&mut self, workspace: String, id: String, paused: bool, cx: &mut Context<Self>) {
+    pub fn set_schedule_paused(&mut self, folder_key: String, id: String, paused: bool, cx: &mut Context<Self>) {
         let done = if paused { "paused; its task is removed" } else { "resumed" };
-        self.change_schedule(workspace, id, done, cx, move |home, w, id| {
+        self.change_schedule(folder_key, id, done, cx, move |home, w, id| {
             schedule::edit(home, w, |all| {
-                let s = all.iter_mut().find(|s| s.id == id).ok_or_else(|| supraman_core::CoreError::NoSchedule { workspace: w.name.clone(), id: id.to_string() })?;
+                let s = all.iter_mut().find(|s| s.id == id).ok_or_else(|| supraman_core::CoreError::NoSchedule { folder: w.display().to_string(), id: id.to_string() })?;
                 s.status = if paused { Status::Paused } else { Status::Active };
                 Ok(())
             })
@@ -270,22 +300,23 @@ impl FleetView {
         });
     }
 
-    pub fn ask_remove_schedule(&mut self, workspace: &str, id: &str, cx: &mut Context<Self>) {
+    pub fn ask_remove_schedule(&mut self, folder_key: &str, id: &str, cx: &mut Context<Self>) {
+        let place = self.schedule_row(folder_key, id).map(ScheduleRow::place).unwrap_or_default();
         self.dialogs.confirm = Some(Confirm::ask(
-            format!("Remove schedule {id} from {workspace}? Its task and its entry go. Its run records stay, and nothing in any folder is touched."),
+            format!("Remove schedule {id} from {place}? Its task and its entry go. Its run records stay, and nothing in any folder is touched."),
             "Remove",
-            Confirmed::RemoveSchedule { workspace: workspace.to_string(), id: id.to_string() },
+            Confirmed::RemoveSchedule { folder_key: folder_key.to_string(), id: id.to_string() },
         ));
         cx.notify();
     }
 
-    pub fn remove_schedule(&mut self, workspace: String, id: String, cx: &mut Context<Self>) {
-        self.change_schedule(workspace, id, "removed with its task", cx, |home, w, id| {
+    pub fn remove_schedule(&mut self, folder_key: String, id: String, cx: &mut Context<Self>) {
+        self.change_schedule(folder_key, id, "removed with its task", cx, |home, w, id| {
             schedule::edit(home, w, |all| {
                 let before = all.len();
                 all.retain(|s| s.id != id);
                 if all.len() == before {
-                    return Err(supraman_core::CoreError::NoSchedule { workspace: w.name.clone(), id: id.to_string() });
+                    return Err(supraman_core::CoreError::NoSchedule { folder: w.display().to_string(), id: id.to_string() });
                 }
                 Ok(())
             })
@@ -293,35 +324,35 @@ impl FleetView {
         });
     }
 
-    /// A sync failure stays on the row and in the Inbox until a sync of the workspace succeeds.
+    /// A sync failure stays on the row and in the Inbox until a sync of the folder succeeds.
     fn change_schedule(
         &mut self,
-        workspace: String,
+        folder_key: String,
         id: String,
         done: &'static str,
         cx: &mut Context<Self>,
-        edit: impl FnOnce(&Path, &Workspace, &str) -> Result<(), String> + Send + 'static,
+        edit: impl FnOnce(&Path, &Path, &str) -> Result<(), String> + Send + 'static,
     ) {
-        let (Some(home), Some(w)) = (self.home.clone(), self.registered_workspace(&workspace)) else {
+        let (Some(home), Some(w)) = (self.home.clone(), self.schedule_folder(&folder_key)) else {
             return;
         };
         let registrar = self.scheduling.registrar.clone();
-        let row = key(&workspace, &id);
+        let row = key(&folder_key, &id);
+        let place = supraman_core::paths::folder_name(&w);
         let task = cx.background_executor().spawn(async move {
             edit(&home, &w, &id).map_err(Failed::Edit)?;
-            sync_now(&home, &*registrar, &w).map_err(Failed::Sync)?;
+            sync_now(&home, &*registrar).map_err(Failed::Sync)?;
             Ok::<_, Failed>(id)
         });
-        let ws = workspace;
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(id) => {
-                        this.scheduling.sync_errors.retain(|k, _| !k.starts_with(&format!("{ws}/")));
-                        this.show_toast(format!("Schedule {id} of {ws} {done}."), cx);
+                        this.scheduling.sync_errors.clear();
+                        this.show_toast(format!("Schedule {id} of {place} {done}."), cx);
                     }
-                    Err(Failed::Edit(e)) => this.action_error = Some(format!("Cannot change schedule of {ws}: {e}")),
+                    Err(Failed::Edit(e)) => this.action_error = Some(format!("Cannot change a schedule of {place}: {e}")),
                     Err(Failed::Sync(e)) => {
                         this.scheduling.sync_errors.insert(row, e);
                     }
@@ -336,11 +367,11 @@ impl FleetView {
     }
 
     /// Detached and off the UI thread; the row shows the run from its live file.
-    pub fn run_schedule_now(&mut self, workspace: &str, id: &str, cx: &mut Context<Self>) {
+    pub fn run_schedule_now(&mut self, folder_key: &str, id: &str, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
             return;
         };
-        let (ws, id) = (workspace.to_string(), id.to_string());
+        let (ws, id) = (folder_key.to_string(), id.to_string());
         let args = (ws.clone(), id.clone());
         let task = cx.background_executor().spawn(async move {
             let smw = schedule::smw_exe();
@@ -351,8 +382,8 @@ impl FleetView {
             let started = task.await;
             this.update(cx, |this, cx| {
                 match started {
-                    Ok(_) => this.show_toast(format!("Run now: {ws}/{id} started."), cx),
-                    Err(e) => this.action_error = Some(format!("Cannot run {ws}/{id}: {e}")),
+                    Ok(_) => this.show_toast(format!("Run now: {id} started."), cx),
+                    Err(e) => this.action_error = Some(format!("Cannot run {id}: {e}")),
                 }
                 this.polls.poll_nudge.wake();
                 cx.notify();
@@ -362,20 +393,20 @@ impl FleetView {
         .detach();
     }
 
-    pub fn dry_run_schedule(&mut self, workspace: &str, id: &str, cx: &mut Context<Self>) {
-        let Some(home) = self.home.clone() else {
+    pub fn dry_run_schedule(&mut self, folder_key: &str, id: &str, cx: &mut Context<Self>) {
+        let (Some(home), Some(folder)) = (self.home.clone(), self.schedule_folder(folder_key)) else {
             return;
         };
-        self.open_schedule(workspace, id, At::Top, cx);
-        if let Some(page) = self.schedule_page_mut(workspace, id) {
+        self.open_schedule(folder_key, id, At::Top, cx);
+        if let Some(page) = self.schedule_page_mut(folder_key, id) {
             page.dry_running = true;
         }
-        let (ws, id) = (workspace.to_string(), id.to_string());
+        let (ws, id) = (folder_key.to_string(), id.to_string());
         let args = (ws.clone(), id.clone());
         let task = cx.background_executor().spawn(async move {
             let sm = supraman_core::install::sm_exe().map_err(|e| e.to_string())?;
             let out = process::run(
-                process::command(&sm).args(["schedule", "dry-run", &args.0, &args.1]).env(supraman_core::HOME_VAR, &home),
+                process::command(&sm).args(["schedule", "dry-run", &args.1, "--folder"]).arg(&folder).env(supraman_core::HOME_VAR, &home),
                 DRY_RUN_WITHIN,
                 process::Kill::Tree,
             )
@@ -401,12 +432,12 @@ impl FleetView {
         .detach();
     }
 
-    pub fn schedule_history(&mut self, workspace: &str, id: &str, cx: &mut Context<Self>) {
-        self.open_schedule(workspace, id, At::Runs, cx);
+    pub fn schedule_history(&mut self, folder_key: &str, id: &str, cx: &mut Context<Self>) {
+        self.open_schedule(folder_key, id, At::Runs, cx);
     }
 
-    pub fn open_schedule_edit(&mut self, workspace: &str, id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(row) = self.schedule_row(workspace, id) else {
+    pub fn open_schedule_edit(&mut self, folder_key: &str, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(row) = self.schedule_row(folder_key, id) else {
             return;
         };
         let form = Form::of(&row.schedule);
@@ -428,7 +459,7 @@ impl FleetView {
         name.update(cx, |n, cx| n.focus_all(window, cx));
         self.dialogs.menu = None;
         self.scheduling.schedule_edit = Some(ScheduleEdit {
-            workspace: workspace.to_string(),
+            folder_key: folder_key.to_string(),
             id: id.to_string(),
             kind: form.kind,
             days: form.days,
@@ -470,9 +501,10 @@ impl FleetView {
         if edit.saving {
             return;
         }
-        let (Some(home), Some(w)) = (self.home.clone(), self.registered_workspace(&edit.workspace)) else {
+        let (Some(home), Some(w)) = (self.home.clone(), self.schedule_folder(&edit.folder_key)) else {
             return;
         };
+        let fkey = edit.folder_key.clone();
         let (form, id) = (edit.form(cx), edit.id.clone());
         if let Some(edit) = &mut self.scheduling.schedule_edit {
             edit.saving = true;
@@ -482,27 +514,27 @@ impl FleetView {
             let (w, id) = (w.clone(), id.clone());
             cx.background_executor().spawn(async move {
                 let status = schedule::edit(&home, &w, |all| {
-                    let s = all.iter_mut().find(|s| s.id == id).ok_or_else(|| supraman_core::CoreError::NoSchedule { workspace: w.name.clone(), id: id.clone() })?;
+                    let s = all.iter_mut().find(|s| s.id == id).ok_or_else(|| supraman_core::CoreError::NoSchedule { folder: w.display().to_string(), id: id.clone() })?;
                     form.apply(s).map_err(|why| supraman_core::CoreError::InvalidSchedule { id: id.clone(), why })?;
                     Ok(s.status)
                 })
                 .map_err(|e| e.to_string())?;
-                Ok::<_, String>((status, sync_now(&home, &*registrar, &w)))
+                Ok::<_, String>((status, sync_now(&home, &*registrar)))
             })
         };
         cx.spawn(async move |this, cx| {
             let saved = task.await;
             this.update(cx, |this, cx| {
-                let editing = this.scheduling.schedule_edit.as_ref().is_some_and(|e| e.workspace == w.name && e.id == id);
+                let editing = this.scheduling.schedule_edit.as_ref().is_some_and(|e| e.folder_key == fkey && e.id == id);
                 match saved {
                     Ok((status, synced)) => {
                         if editing {
                             this.scheduling.schedule_edit = None;
                         }
                         let pending = if status == Status::Pending { "; it is pending until you Approve it" } else { "" };
-                        this.show_toast(format!("Saved schedule {id} of {}{pending}.", w.name), cx);
+                        this.show_toast(format!("Saved schedule {id} of {}{pending}.", supraman_core::paths::folder_name(&w)), cx);
                         if let Err(e) = synced {
-                            this.scheduling.sync_errors.insert(key(&w.name, &id), e);
+                            this.scheduling.sync_errors.insert(key(&fkey, &id), e);
                         }
                         this.polls.poll_nudge.wake();
                     }
@@ -521,15 +553,15 @@ impl FleetView {
         cx.notify();
     }
 
-    pub fn dismiss_schedule_notice(&mut self, workspace: &str, run: &str, cx: &mut Context<Self>) {
-        let save = self.scheduling.runs_dismissed.dismiss(workspace, run);
+    pub fn dismiss_schedule_notice(&mut self, folder_key: &str, run: &str, cx: &mut Context<Self>) {
+        let save = self.scheduling.runs_dismissed.dismiss(folder_key, run);
         self.save_off_thread(save, "Cannot save the dismissed run", cx);
         cx.notify();
     }
 
     /// The Details tab of `page`'s schedule; `None` once the schedule is gone.
     pub(super) fn render_schedule_page(&self, page: &SchedulePage, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let row = self.schedule_row(&page.workspace, &page.id)?.clone();
+        let row = self.schedule_row(&page.folder_key, &page.id)?.clone();
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let sections = self.page_sections(&row, Some(page));
@@ -539,8 +571,8 @@ impl FleetView {
             (false, Status::Paused) => colors.text_muted,
             (false, _) => status.success,
         };
-        let k = key(&page.workspace, &page.id);
-        let (w, id) = (page.workspace.clone(), page.id.clone());
+        let k = key(&page.folder_key, &page.id);
+        let (w, id) = (page.folder_key.clone(), page.id.clone());
         let act = |f: fn(&mut Self, &str, &str, &mut Window, &mut Context<Self>)| {
             let (w, id) = (w.clone(), id.clone());
             cx.listener(move |this: &mut Self, _: &ClickEvent, window, cx| {
@@ -667,7 +699,7 @@ impl FleetView {
                 .border_color(colors.border_focused)
                 .bg(colors.editor_background)
                 .child(hit_target(&self.hits, "sched-edit".into()))
-                .child(clipped("sched-edit-title", format!("EDIT SCHEDULE · {} · {}", edit.workspace, edit.id), false).text_xs().text_color(colors.text_muted))
+                .child(clipped("sched-edit-title", format!("EDIT SCHEDULE · {} · {}", self.schedule_row(&edit.folder_key, &edit.id).map(ScheduleRow::place).unwrap_or_default(), edit.id), false).text_xs().text_color(colors.text_muted))
                 .child(line("Name").child(field("sched-edit-name", &edit.name)))
                 .child(kinds)
                 .when(edit.kind == TriggerKind::Weekly, |d| d.child(days))
@@ -696,39 +728,42 @@ impl FleetView {
 }
 
 impl FleetView {
-    /// A run whose schedule is gone stays under the workspace.
-    pub(super) fn render_schedules(&self, node: &EntryNode, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let rows = self.scheduling.schedules.get(&node.name).cloned().unwrap_or_default();
+    /// A folder's Schedules row, its schedules with their runs and the other schedules it holds, at `level`;
+    /// a run whose schedule is gone stays under the folder.
+    pub(super) fn render_schedules(&self, entry: &EntryNode, folder: &FolderNode, level: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let fkey = schedule::folder_key(&folder.path);
+        let rows = self.scheduling.schedules.get(&fkey).cloned().unwrap_or_default();
         let others = self.others();
-        let others = others.of_workspace(&node.name);
+        let others = others.of_folder(&fkey);
         let mut out = Vec::new();
         if !rows.is_empty() || !others.is_empty() {
-            let gkey = format!("schedules:{}", node.name);
+            let gkey = format!("schedules:{fkey}");
             let open = !self.sidebar.collapsed.contains(&gkey);
-            out.push(self.render_schedules_row(&node.name, rows.len() + others.len(), open, cx));
+            out.push(self.render_schedules_row(&entry.name, folder, level, rows.len() + others.len(), open, cx));
             if open {
                 for row in &rows {
-                    let runs = node.scheduled.get(&row.schedule.id).map(Vec::as_slice).unwrap_or_default();
-                    let skey = format!("schedule:{}", key(&node.name, &row.schedule.id));
+                    let runs = folder.scheduled.get(&row.schedule.id).map(Vec::as_slice).unwrap_or_default();
+                    let skey = format!("schedule:{}", key(&fkey, &row.schedule.id));
                     let sopen = !self.sidebar.collapsed.contains(&skey);
-                    out.push(self.render_schedule_row(row, runs.len(), sopen, cx));
+                    out.push(self.render_schedule_row(row, level + 1, runs.len(), sopen, cx));
                     if sopen {
-                        out.extend(runs.iter().map(|r| self.render_session(&node.name, &row.schedule.id, r, grid::indent(3), cx)));
+                        out.extend(runs.iter().map(|r| self.render_session(&entry.name, &row.schedule.id, r, grid::indent(level + 2), cx)));
                     }
                 }
-                out.extend(self.render_others(Some(&node.name), others, 2, cx));
+                out.extend(self.render_others(Some(&fkey), others, level + 1, cx));
             }
         }
-        for (id, runs) in node.scheduled.iter().filter(|(id, _)| !rows.iter().any(|r| &r.schedule.id == *id)) {
-            out.extend(runs.iter().map(|r| self.render_session(&node.name, id, r, grid::indent(1), cx)));
+        for (id, runs) in folder.scheduled.iter().filter(|(id, _)| !rows.iter().any(|r| &r.schedule.id == *id)) {
+            out.extend(runs.iter().map(|r| self.render_session(&entry.name, id, r, grid::indent(level), cx)));
         }
         out
     }
 
-    fn render_schedules_row(&self, workspace: &str, count: usize, open: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn render_schedules_row(&self, entry: &str, folder: &FolderNode, level: usize, count: usize, open: bool, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
-        let gkey = format!("schedules:{workspace}");
-        let tree_key = format!("schedules-{workspace}");
+        let folder_key = schedule::folder_key(&folder.path);
+        let gkey = format!("schedules:{folder_key}");
+        let tree_key = format!("schedules-{folder_key}");
         div()
             .id(SharedString::from(gkey.clone()))
             .relative()
@@ -737,7 +772,7 @@ impl FleetView {
             .items_center()
             .gap(grid::gap())
             .h(px(REPO_ROW))
-            .pl(grid::indent(1))
+            .pl(grid::indent(level))
             .pr_2()
             .text_sm()
             .cursor_pointer()
@@ -747,9 +782,9 @@ impl FleetView {
             .child(icon_slot(&self.hits, &tree_key, Some(Icon::Clock.slotted(grid::ICON, secondary(cx)).into_any_element())))
             .child(tree_label(&self.hits, &tree_key, div().flex_none().whitespace_nowrap().child("Schedules")))
             .child(div().flex_none().text_xs().text_color(secondary(cx)).child(SharedString::from(count.to_string())))
-            .child(hit_target(&self.hits, format!("schedules-row-{workspace}")))
+            .child(hit_target(&self.hits, format!("schedules-row-{folder_key}")))
             .on_mouse_down(MouseButton::Right, {
-                let target = MenuTarget::Schedules(workspace.to_string());
+                let target = MenuTarget::Schedules { entry: entry.to_string(), folder: folder.path.clone() };
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
                     this.open_menu(target.clone(), e.position, cx);
@@ -786,21 +821,21 @@ impl FleetView {
     }
 
     pub fn others(&self) -> schedules::Others {
-        self.scheduling.other_schedules.as_ref().map(|f| schedules::Others::of(f, &self.listed.schedule_workspaces)).unwrap_or_default()
+        self.scheduling.other_schedules.as_ref().map(|f| schedules::Others::of(f, &self.listed.entries)).unwrap_or_default()
     }
 
-    /// The top-level Other schedules: tasks that run claude in no workspace's folder.
+    /// The top-level Other schedules: tasks that run claude in no listed folder.
     pub(super) fn render_unowned_others(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let others = self.others();
         self.render_others(None, &others.unowned, 0, cx)
     }
 
-    fn render_others(&self, workspace: Option<&str>, tasks: &[ForeignTask], level: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    fn render_others(&self, folder_key: Option<&str>, tasks: &[ForeignTask], level: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
         if tasks.is_empty() {
             return vec![];
         }
         let colors = cx.theme().colors().clone();
-        let scope = workspace.unwrap_or_default();
+        let scope = folder_key.unwrap_or_default();
         let gkey = format!("others:{scope}");
         let open = !self.sidebar.collapsed.contains(&gkey);
         let (hit, tree_key) = if scope.is_empty() { ("others-row".to_string(), "others".to_string()) } else { (format!("others-row-{scope}"), format!("others-{scope}")) };
@@ -874,10 +909,10 @@ impl FleetView {
             .into_any_element()
     }
 
-    pub(super) fn render_schedule_row(&self, row: &ScheduleRow, runs: usize, open: bool, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_schedule_row(&self, row: &ScheduleRow, level: usize, runs: usize, open: bool, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
-        let (w, id) = (row.workspace.clone(), row.schedule.id.clone());
+        let (w, id) = (row.key.clone(), row.schedule.id.clone());
         let k = key(&w, &id);
         let tree_key = format!("schedule-{k}");
         let group = SharedString::from(format!("schedule-group-{k}"));
@@ -959,7 +994,7 @@ impl FleetView {
             .child(div().flex_1())
             .child(div().flex().flex_none().items_center().child(action));
         let error = self.scheduling.sync_errors.get(&k).cloned();
-        let target = MenuTarget::Schedule { workspace: w.clone(), id: id.clone() };
+        let target = MenuTarget::Schedule { folder_key: w.clone(), id: id.clone() };
         div()
             .id(SharedString::from(format!("sched-row-{k}")))
             .group(group)
@@ -967,7 +1002,7 @@ impl FleetView {
             .flex()
             .flex_none()
             .flex_col()
-            .pl(grid::indent(2))
+            .pl(grid::indent(level))
             .pr_2()
             .py(px(1.))
             .text_sm()
@@ -996,13 +1031,13 @@ impl FleetView {
 
     /// The runs whose Inbox notice is not dismissed, and the failed syncs.
     pub fn schedule_attention(&self) -> (Vec<schedules::Attention>, Vec<(String, String)>) {
-        let runs = schedules::attention(&self.scheduling.schedules).into_iter().filter(|a| !self.scheduling.runs_dismissed.hides(&a.workspace, &a.run)).collect();
+        let runs = schedules::attention(&self.scheduling.schedules).into_iter().filter(|a| !self.scheduling.runs_dismissed.hides(&a.folder_key, &a.run)).collect();
         (runs, self.scheduling.sync_errors.iter().map(|(k, e)| (k.clone(), e.clone())).collect())
     }
 
     /// The pending schedules whose Inbox entry is not dismissed for what they cover now.
     pub fn schedules_waiting(&self) -> Vec<Waiting> {
-        schedules::waiting(&self.scheduling.schedules).into_iter().filter(|w| !self.scheduling.waiting_dismissed.hides(&w.workspace, &w.key)).collect()
+        schedules::waiting(&self.scheduling.schedules).into_iter().filter(|w| !self.scheduling.waiting_dismissed.hides(&w.folder_key, &w.key)).collect()
     }
 
     pub fn tray_tooltip(&self) -> String {
@@ -1019,17 +1054,17 @@ impl FleetView {
         };
         let mut out = Vec::new();
         for w in waiting {
-            let k = key(&w.workspace, &w.id);
+            let k = key(&w.folder_key, &w.id);
             let card = format!("inbox-sched-card-{k}");
             let open = inbox_card::primary(&self.hits, format!("inbox-sched-open-{k}"), "Review", cx).tooltip(Tooltip::text("Open to review and approve")).on_click(cx.listener({
-                let (ws, id) = (w.workspace.clone(), w.id.clone());
+                let (ws, id) = (w.folder_key.clone(), w.id.clone());
                 move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     this.open_schedule(&ws, &id, At::Approve, cx);
                 }
             }));
             let dismiss = act(format!("inbox-sched-later-{k}"), &card, Icon::Close, "Dismiss").on_click(cx.listener({
-                let (ws, dismissed) = (w.workspace.clone(), w.key.clone());
+                let (ws, dismissed) = (w.folder_key.clone(), w.key.clone());
                 move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     let save = this.scheduling.waiting_dismissed.dismiss(&ws, &dismissed);
@@ -1040,18 +1075,18 @@ impl FleetView {
             let (title, detail) = if w.command_changed {
                 (
                     format!("{}: its slash command changed", w.title),
-                    format!("Schedule {} of {} runs the changed file; Approve makes it the approved one.", w.id, w.workspace),
+                    format!("Schedule {} of {} runs the changed file; Approve makes it the approved one.", w.id, w.place),
                 )
             } else {
-                (format!("{} waits for your approval", w.title), format!("Schedule {} of {}: nothing runs until you approve it.", w.id, w.workspace))
+                (format!("{} waits for your approval", w.title), format!("Schedule {} of {}: nothing runs until you approve it.", w.id, w.place))
             };
-            out.push(InboxCard::new(card, "approve", "approve", title).context(w.workspace.clone()).line("detail", detail, false).action(dismiss).primary(open).render(&self.hits, cx));
+            out.push(InboxCard::new(card, "approve", "approve", title).context(w.place.clone()).line("detail", detail, false).action(dismiss).primary(open).render(&self.hits, cx));
         }
         for a in runs {
             let needs_you = a.outcome == schedule::Outcome::NeedsYou;
             let kind = if needs_you { "needs you" } else { "run failed" };
             let detail = if a.why.is_empty() { schedules::outcome_text(a.outcome).to_string() } else { format!("{}: {}", schedules::outcome_text(a.outcome), a.why) };
-            let (w, id, run) = (a.workspace.clone(), a.id.clone(), a.run.clone());
+            let (w, id, run) = (a.folder_key.clone(), a.id.clone(), a.run.clone());
             let card = format!("inbox-sched-run-{}", a.run);
             let history = inbox_card::primary(&self.hits, format!("inbox-sched-history-{}", a.run), "Open", cx).tooltip(Tooltip::text("Details")).on_click(cx.listener({
                 let (w, id) = (w.clone(), id.clone());
@@ -1064,7 +1099,7 @@ impl FleetView {
                 cx.stop_propagation();
                 this.dismiss_schedule_notice(&w, &run, cx);
             }));
-            out.push(InboxCard::new(card, kind, kind, a.id.clone()).context(a.workspace.clone()).when(Some(a.at), now).line("detail", detail, false).action(dismiss).primary(history).render(&self.hits, cx));
+            out.push(InboxCard::new(card, kind, kind, a.id.clone()).context(a.place.clone()).when(Some(a.at), now).line("detail", detail, false).action(dismiss).primary(history).render(&self.hits, cx));
         }
         for (k, e) in syncs {
             let card = format!("inbox-sync-card-{k}");
@@ -1085,6 +1120,35 @@ impl FleetView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn approving_a_moved_schedule_registers_its_task_and_the_earlier_workspaces_task_folder_goes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (home, folder) = (tmp.path().join("home"), tmp.path().join("Alpha"));
+        std::fs::create_dir_all(home.join("workspaces")).unwrap();
+        std::fs::create_dir_all(home.join("schedules")).unwrap();
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("gate.cmd"), "@exit /b 0\r\n").unwrap();
+        let workspace = format!("name = \"demo\"\ncreated_at = \"2026-10-28T07:07:16Z\"\n\n[[folders]]\nname = \"Alpha\"\npath = '{}'\n", folder.display());
+        std::fs::write(home.join("workspaces").join("demo.toml"), workspace).unwrap();
+        let old = "[[schedule]]\nid = \"nightly\"\nfolder = \"Alpha\"\nstatus = \"active\"\ntrigger = { kind = \"daily\", at = \"09:00\" }\naction = { kind = \"script\", script = \"gate.cmd\" }\n";
+        std::fs::write(home.join("schedules").join("demo.toml"), old).unwrap();
+        let store = default_store(&home);
+        assert_eq!(schedule::migrate(&home, &*store).unwrap().moved.len(), 1);
+
+        let fake = schedule::FakeRegistrar::default();
+        let root = schedule::task_root(&home);
+        fake.plant(&format!(r"{root}\demo"), "nightly", "<Task>an earlier release's</Task>");
+        fake.plant(r"\Other", "nightly", "<Task>someone else's</Task>");
+        sync_now(&home, &fake).unwrap();
+        assert_eq!(fake.paths(), [r"\Other\nightly"], "pending: no task of its own, and the earlier workspace's gone");
+        assert!(!schedule::schedules_dir(&home).join(schedule::RESYNC).exists(), "the migration's request is answered");
+
+        schedule::approve(&home, &*store, &folder, "nightly", 1).unwrap();
+        sync_now(&home, &fake).unwrap();
+        let mine = format!(r"{root}\{}\nightly", schedule::folder_key(&folder));
+        assert_eq!(fake.paths(), [r"\Other\nightly".to_string(), mine]);
+    }
 
     fn schedule() -> Schedule {
         toml::from_str::<schedule::ScheduleFile>(

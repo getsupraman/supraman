@@ -99,7 +99,7 @@ pub fn search(tree: &Tree, query: &str) -> Results {
                 })
                 .collect();
             let name_marks = if w.group { find_all(&w.name, needle) } else { Vec::new() };
-            let runs = hits(&w.scheduled.values().flatten().cloned().collect::<Vec<_>>());
+            let runs = hits(&w.folders.iter().flat_map(|f| f.scheduled.values().flatten()).cloned().collect::<Vec<_>>());
             let hit = EntryHit { name: w.name.clone(), group: w.group, name_marks, runs, folders };
             (!hit.name_marks.is_empty() || !hit.runs.is_empty() || !hit.folders.is_empty()).then_some(hit)
         })
@@ -134,7 +134,7 @@ mod tests {
 
     fn folder(key: &str, sessions: Vec<SessionRow>) -> FolderNode {
         let name = key.rsplit('/').next().unwrap().to_string();
-        FolderNode { key: key.into(), path: PathBuf::from(&name), name, kind: supraman_core::FolderKind::Git, branch: None, sessions, more: 0 }
+        FolderNode { key: key.into(), path: PathBuf::from(&name), name, kind: supraman_core::FolderKind::Git, branch: None, sessions, more: 0, scheduled: Default::default() }
     }
 
     fn tree() -> Tree {
@@ -143,10 +143,15 @@ mod tests {
                 EntryNode {
                     name: "gaia".into(),
                     group: true,
-                    scheduled: [("nightly".to_string(), vec![row("fm-gaia-sched-nightly-20261113-0900", "aaaa1111-0000", false)])].into(),
-                    folders: vec![folder("gaia/Web", vec![row("CI-CD-pipeline", "5e1f7e57-0001", true), row("docs", "01d05e1f-0002", false)]), folder("gaia/api", vec![])],
+                    folders: vec![
+                        FolderNode {
+                            scheduled: [("nightly".to_string(), vec![row("fm-gaia-1a2b3c4d-sched-nightly-20261113-0900", "aaaa1111-0000", false)])].into(),
+                            ..folder("gaia/Web", vec![row("CI-CD-pipeline", "5e1f7e57-0001", true), row("docs", "01d05e1f-0002", false)])
+                        },
+                        folder("gaia/api", vec![]),
+                    ],
                 },
-                EntryNode { name: "pipeline-tools".into(), group: false, scheduled: Default::default(), folders: vec![folder("pipeline-tools", vec![row("Pipeline fix", "bbbb2222-0003", false)])] },
+                EntryNode { name: "pipeline-tools".into(), group: false, folders: vec![folder("pipeline-tools", vec![row("Pipeline fix", "bbbb2222-0003", false)])] },
             ],
             hidden_stopped: 0,
         }
@@ -190,7 +195,7 @@ mod tests {
         assert_eq!(names(&r), ["gaia (1)", "  gaia/Web (1)", "    CI-CD-pipeline"], "01d05e1f has 5e1f inside, not at its start");
         assert!(r.entries[0].folders[0].sessions[0].row.closed);
         let r = search(&tree(), "GAIA");
-        assert_eq!(names(&r), ["gaia (1)", "  fm-gaia-sched-nightly-20261113-0900"], "a scheduled run under the group");
+        assert_eq!(names(&r), ["gaia (1)", "  fm-gaia-1a2b3c4d-sched-nightly-20261113-0900"], "a scheduled run under the group");
         assert_eq!(r.entries[0].name_marks, [0..4]);
         assert_eq!(r.summary(), "1 session, 1 group or folder by name");
     }

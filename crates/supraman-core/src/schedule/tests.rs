@@ -5,7 +5,7 @@ use chrono::{DateTime, Datelike, FixedOffset, LocalResult, NaiveDate, NaiveDateT
 
 use super::*;
 use crate::secret::{MemoryStore, SecretStore};
-use crate::{CoreError, Folder, Registry};
+use crate::CoreError;
 
 const DOC_EXAMPLE: &str = r#"
 version = 1
@@ -54,7 +54,6 @@ struct Fixture {
     _tmp: tempfile::TempDir,
     home: PathBuf,
     folder: PathBuf,
-    ws: Workspace,
 }
 
 fn fixture() -> Fixture {
@@ -67,8 +66,7 @@ fn fixture() -> Fixture {
     fs::write(folder.join("scripts").join("gate.ps1"), "exit 10").unwrap();
     fs::write(folder.join(".claude").join("commands").join("autofix-prod-bugs.md"), "Fix the bugs.").unwrap();
     fs::write(folder.join("prompts").join("x.md"), "Look around.").unwrap();
-    let ws = Workspace::new("demo", tmp.path(), vec![Folder::new("Nomos", &folder)]);
-    Fixture { _tmp: tmp, home, folder, ws }
+    Fixture { _tmp: tmp, home, folder }
 }
 
 fn example() -> Schedule {
@@ -76,7 +74,7 @@ fn example() -> Schedule {
 }
 
 fn add(f: &Fixture, s: Schedule) {
-    edit(&f.home, &f.ws, |all| {
+    edit(&f.home, &f.folder, |all| {
         all.push(s);
         Ok(())
     })
@@ -84,11 +82,11 @@ fn add(f: &Fixture, s: Schedule) {
 }
 
 fn one(f: &Fixture, id: &str) -> Schedule {
-    load(&f.home, "demo").unwrap().into_iter().find(|s| s.id == id).unwrap()
+    load(&f.home, &f.folder).unwrap().into_iter().find(|s| s.id == id).unwrap()
 }
 
 fn change(f: &Fixture, id: &str, how: impl FnOnce(&mut Schedule)) -> Schedule {
-    edit(&f.home, &f.ws, |all| {
+    edit(&f.home, &f.folder, |all| {
         how(all.iter_mut().find(|s| s.id == id).unwrap());
         Ok(())
     })
@@ -98,7 +96,7 @@ fn change(f: &Fixture, id: &str, how: impl FnOnce(&mut Schedule)) -> Schedule {
 
 fn approved(f: &Fixture, store: &MemoryStore) -> Schedule {
     add(f, example());
-    approve(&f.home, store, &f.ws, "autofix-prod-bugs", 1_793_341_200_000).unwrap()
+    approve(&f.home, store, &f.folder, "autofix-prod-bugs", 1_793_341_200_000).unwrap()
 }
 
 #[test]
@@ -108,14 +106,9 @@ fn the_doc_example_loads_and_saves_unchanged() {
     assert_eq!(s.action.prompt, Some(Prompt::Command("/autofix-prod-bugs".into())));
     assert_eq!((s.action.script_timeout, s.caps.max_runtime, s.caps.max_tokens), (Span(600), Span(3600), 3_000_000));
     assert_eq!((s.permissions.profile, s.policy.overlap, s.policy.catch_up), (Profile::Edit, Overlap::Skip, CatchUp::Once));
-    let file = ScheduleFile { version: 1, schedule: vec![s] };
+    let file = ScheduleFile { version: FILE_VERSION, folder: PathBuf::from(r"C:\r\Nomos"), schedule: vec![s] };
     assert_eq!(toml::from_str::<ScheduleFile>(&toml::to_string(&file).unwrap()).unwrap(), file);
-    let f = fixture();
-    assert_eq!(s_valid(&f, &file.schedule[0]), Ok(()));
-}
-
-fn s_valid(f: &Fixture, s: &Schedule) -> Result<(), String> {
-    s.validate(&f.ws)
+    assert_eq!(file.schedule[0].validate(), Ok(()));
 }
 
 #[test]
@@ -162,15 +155,13 @@ fn clocks_and_spans_parse_their_forms_and_refuse_others() {
 
 #[test]
 fn validate_refuses_what_the_doc_forbids() {
-    let f = fixture();
     let refused = |how: fn(&mut Schedule)| {
         let mut s = example();
         how(&mut s);
-        s.validate(&f.ws).unwrap_err()
+        s.validate().unwrap_err()
     };
     assert!(refused(|s| s.id = "Bad".into()).contains("lowercase"));
     assert!(refused(|s| s.id = "a".repeat(33)).contains("32"));
-    assert!(refused(|s| s.folder = "Gaia".into()).contains("no folder"));
     assert!(refused(|s| s.trigger = Trigger::Interval { at: Clock::default(), every: Span(600) }).contains("15m"));
     assert!(refused(|s| s.trigger = Trigger::Weekly { days: vec![], at: Clock::default() }).contains("day"));
     assert!(refused(|s| s.action.script = Some("gate.py".into())).contains(".ps1"));
@@ -188,30 +179,30 @@ fn validate_refuses_what_the_doc_forbids() {
 #[test]
 fn edit_saves_under_the_lock_and_a_refused_edit_writes_nothing() {
     let f = fixture();
-    assert!(load(&f.home, "demo").unwrap().is_empty(), "no file: no schedules");
+    assert!(load(&f.home, &f.folder).unwrap().is_empty(), "no file: no schedules");
     add(&f, example());
     let saved = one(&f, "autofix-prod-bugs");
     assert_eq!(saved, example(), "created_at was set, so it stays");
-    assert!(f.home.join("schedules").join("demo.lock").exists());
+    assert!(f.home.join("schedules").join(format!("{}.lock", folder_key(&f.folder))).exists());
 
-    let dup = edit(&f.home, &f.ws, |all| {
+    let dup = edit(&f.home, &f.folder, |all| {
         all.push(example());
         Ok(())
     });
     assert!(matches!(dup, Err(CoreError::InvalidSchedule { why, .. }) if why.contains("taken")));
-    let bad = edit(&f.home, &f.ws, |all| {
-        all[0].folder = "Gaia".into();
+    let bad = edit(&f.home, &f.folder, |all| {
+        all[0].id = "Bad".into();
         Ok(())
     });
     assert!(bad.as_ref().is_err_and(CoreError::is_user_error), "{bad:?}");
-    assert_eq!(load(&f.home, "demo").unwrap(), [saved]);
+    assert_eq!(load(&f.home, &f.folder).unwrap(), [saved]);
 
-    edit(&f.home, &f.ws, |all| {
+    edit(&f.home, &f.folder, |all| {
         all.clear();
         Ok(())
     })
     .unwrap();
-    assert!(load(&f.home, "demo").unwrap().is_empty(), "removing a schedule removes its table");
+    assert!(load(&f.home, &f.folder).unwrap().is_empty(), "removing a schedule removes its table");
     assert!(matches!(file_path(&f.home, "../x"), Err(CoreError::InvalidName(_))));
 }
 
@@ -227,7 +218,7 @@ fn concurrent_writers_lose_no_edit() {
             let f = &f;
             scope.spawn(move || {
                 for r in 0..rounds {
-                    edit(&f.home, &f.ws, |all| {
+                    edit(&f.home, &f.folder, |all| {
                         all.iter_mut().find(|s| s.id == "shared").unwrap().description.push('x');
                         let mut own = example();
                         own.id = format!("t{t}-r{r}");
@@ -239,7 +230,7 @@ fn concurrent_writers_lose_no_edit() {
             });
         }
     });
-    let all = load(&f.home, "demo").unwrap();
+    let all = load(&f.home, &f.folder).unwrap();
     assert_eq!(all.iter().find(|s| s.id == "shared").unwrap().description.len(), threads * rounds);
     assert_eq!(all.len(), 1 + threads * rounds);
     let leftovers: Vec<_> = fs::read_dir(f.home.join("schedules")).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".tmp")).collect();
@@ -255,32 +246,33 @@ fn approve_activates_and_verifies_with_its_key_only() {
     let a = s.approval.clone().unwrap();
     assert_eq!(a.approved_at, 1_793_341_200_000);
     assert_eq!(a.fingerprint.len(), 64);
-    assert!(a.covered.starts_with(r#"{"v":1,"workspace":"demo","id":"autofix-prod-bugs","folder":"Nomos","trigger":"#), "{}", a.covered);
+    let head = format!(r#"{{"v":2,"folder":"{}","id":"autofix-prod-bugs","trigger":"#, crate::paths::normalize(&f.folder));
+    assert!(a.covered.starts_with(&head), "{}", a.covered);
     assert!(a.covered.contains(r#""command":{"name":"/autofix-prod-bugs","path":".claude/commands/autofix-prod-bugs.md"}"#), "{}", a.covered);
     assert!(a.covered.contains(r#""files":{"scripts/gate.ps1":""#), "{}", a.covered);
     assert!(a.command_sha256.is_some());
     assert_eq!(one(&f, "autofix-prod-bugs"), s);
-    assert_eq!(verify_approval(&store, &f.ws, &s).unwrap().fingerprint, a.fingerprint);
-    assert_eq!(effective_status(&store, &f.ws, &s), Status::Active);
+    assert_eq!(verify_approval(&store, &f.folder, &s).unwrap().fingerprint, a.fingerprint);
+    assert_eq!(effective_status(&store, &f.folder, &s), Status::Active);
 
     let key = store.get(APPROVAL_KEY).unwrap().unwrap();
     assert_eq!(key.len(), 64, "32 bytes as hex");
-    let again = approve(&f.home, &store, &f.ws, "autofix-prod-bugs", 2).unwrap();
+    let again = approve(&f.home, &store, &f.folder, "autofix-prod-bugs", 2).unwrap();
     assert_eq!(store.get(APPROVAL_KEY).unwrap().unwrap(), key, "the key is created once");
     assert_eq!(again.approval.unwrap().mac, a.mac);
 
     let other = MemoryStore::default();
     other.set(APPROVAL_KEY, &"ab".repeat(32)).unwrap();
-    assert_eq!(verify_approval(&other, &f.ws, &s), Err(Refusal::BadMac), "the wrong key");
-    assert_eq!(effective_status(&other, &f.ws, &s), Status::Pending);
-    assert_eq!(verify_approval(&MemoryStore::default(), &f.ws, &s), Err(Refusal::NoKey));
+    assert_eq!(verify_approval(&other, &f.folder, &s), Err(Refusal::BadMac), "the wrong key");
+    assert_eq!(effective_status(&other, &f.folder, &s), Status::Pending);
+    assert_eq!(verify_approval(&MemoryStore::default(), &f.folder, &s), Err(Refusal::NoKey));
     let mut forged = s.clone();
     forged.approval.as_mut().unwrap().mac = "00".repeat(32);
-    assert_eq!(verify_approval(&store, &f.ws, &forged), Err(Refusal::BadMac));
+    assert_eq!(verify_approval(&store, &f.folder, &forged), Err(Refusal::BadMac));
     let mut never = s.clone();
     never.approval = None;
-    assert_eq!(verify_approval(&store, &f.ws, &never), Err(Refusal::NotApproved));
-    assert!(matches!(approve(&f.home, &store, &f.ws, "nope", 0), Err(CoreError::NoSchedule { .. })));
+    assert_eq!(verify_approval(&store, &f.folder, &never), Err(Refusal::NotApproved));
+    assert!(matches!(approve(&f.home, &store, &f.folder, "nope", 0), Err(CoreError::NoSchedule { .. })));
 }
 
 #[test]
@@ -289,18 +281,18 @@ fn approval_fails_after_a_covered_change_in_the_file_or_its_script() {
     let store = MemoryStore::default();
     let s = approved(&f, &store);
     fs::write(f.folder.join("scripts").join("gate.ps1"), "exit 0").unwrap();
-    assert_eq!(verify_approval(&store, &f.ws, &s), Err(Refusal::Changed), "the script's content is covered");
-    assert_eq!(effective_status(&store, &f.ws, &s), Status::Pending);
+    assert_eq!(verify_approval(&store, &f.folder, &s), Err(Refusal::Changed), "the script's content is covered");
+    assert_eq!(effective_status(&store, &f.folder, &s), Status::Pending);
     fs::write(f.folder.join("scripts").join("gate.ps1"), "exit 10").unwrap();
-    assert!(verify_approval(&store, &f.ws, &s).is_ok());
+    assert!(verify_approval(&store, &f.folder, &s).is_ok());
 
     let mut edited_behind = s.clone();
     edited_behind.caps.max_tokens = 20_000_000;
-    assert_eq!(verify_approval(&store, &f.ws, &edited_behind), Err(Refusal::Changed), "a TOML edit behind the app's back");
+    assert_eq!(verify_approval(&store, &f.folder, &edited_behind), Err(Refusal::Changed), "a TOML edit behind the app's back");
     let mut renamed = s.clone();
     renamed.name = "Something else".into();
     renamed.description = "now described".into();
-    assert!(verify_approval(&store, &f.ws, &renamed).is_ok(), "name and description are not covered");
+    assert!(verify_approval(&store, &f.folder, &renamed).is_ok(), "name and description are not covered");
 }
 
 #[test]
@@ -310,15 +302,15 @@ fn a_slash_command_is_covered_by_name_and_path_not_content() {
     let s = approved(&f, &store);
     let command = f.folder.join(".claude").join("commands").join("autofix-prod-bugs.md");
     fs::write(&command, "Fix every bug, differently.").unwrap();
-    let now = verify_approval(&store, &f.ws, &s).expect("the command's content is not covered");
+    let now = verify_approval(&store, &f.folder, &s).expect("the command's content is not covered");
     assert_ne!(now.command_sha256, s.approval.as_ref().unwrap().command_sha256, "but its change shows");
 
     fs::write(f.folder.join(".claude").join("commands").join("other.md"), "x").unwrap();
     let mut other = s.clone();
     other.action.prompt = Some(Prompt::Command("/other".into()));
-    assert_eq!(verify_approval(&store, &f.ws, &other), Err(Refusal::Changed), "another command");
+    assert_eq!(verify_approval(&store, &f.folder, &other), Err(Refusal::Changed), "another command");
     fs::remove_file(&command).unwrap();
-    assert_ne!(covered(&f.ws, &s).unwrap().command_sha256, now.command_sha256, "a vanished command shows too");
+    assert_ne!(covered(&f.folder, &s).unwrap().command_sha256, now.command_sha256, "a vanished command shows too");
 }
 
 #[test]
@@ -328,10 +320,10 @@ fn the_prompt_files_content_is_covered() {
     let mut s = example();
     s.action.prompt = Some(Prompt::File("prompts/x.md".into()));
     add(&f, s);
-    let s = approve(&f.home, &store, &f.ws, "autofix-prod-bugs", 1).unwrap();
+    let s = approve(&f.home, &store, &f.folder, "autofix-prod-bugs", 1).unwrap();
     assert!(s.approval.as_ref().unwrap().command_sha256.is_none());
     fs::write(f.folder.join("prompts").join("x.md"), "Delete everything.").unwrap();
-    assert_eq!(verify_approval(&store, &f.ws, &s), Err(Refusal::Changed));
+    assert_eq!(verify_approval(&store, &f.folder, &s), Err(Refusal::Changed));
 }
 
 #[test]
@@ -339,7 +331,7 @@ fn a_covered_edit_makes_the_schedule_pending_and_a_name_or_description_edit_does
     let f = fixture();
     let store = MemoryStore::default();
     type Change = (&'static str, fn(&mut Schedule));
-    let edits: [Change; 9] = [
+    let edits: [Change; 8] = [
         ("trigger", |s| s.trigger = Trigger::Daily { at: Clock::new(9, 0).unwrap() }),
         ("action", |s| s.action.kind = ActionKind::Session),
         ("script", |s| s.action.script = Some("scripts/other.ps1".into())),
@@ -347,14 +339,10 @@ fn a_covered_edit_makes_the_schedule_pending_and_a_name_or_description_edit_does
         ("permissions", |s| s.permissions.allow_tools.push("Bash(rm:*)".into())),
         ("caps", |s| s.caps.max_runtime = Span(7200)),
         ("policy", |s| s.policy.wake = true),
-        ("folder", |s| s.folder = "Gaia".into()),
         ("model", |s| s.action.model = "opus".into()),
     ];
-    let mut ws = f.ws.clone();
-    ws.folders.push(Folder::new("Gaia", &f.folder));
-    let f = Fixture { ws, ..f };
     for (what, how) in edits {
-        let _ = edit(&f.home, &f.ws, |all| {
+        let _ = edit(&f.home, &f.folder, |all| {
             all.clear();
             Ok(())
         });
@@ -367,10 +355,10 @@ fn a_covered_edit_makes_the_schedule_pending_and_a_name_or_description_edit_does
         });
         assert_eq!(after.status, Status::Pending, "{what}");
         assert_eq!(after.approval, s.approval, "{what}: the approval stays for Approve to diff against");
-        assert_eq!(effective_status(&store, &f.ws, &after), Status::Pending, "{what}");
+        assert_eq!(effective_status(&store, &f.folder, &after), Status::Pending, "{what}");
     }
     let s = one(&f, "autofix-prod-bugs");
-    let s = approve(&f.home, &store, &f.ws, &s.id, 3).unwrap();
+    let s = approve(&f.home, &store, &f.folder, &s.id, 3).unwrap();
     let after = change(&f, &s.id, |s| {
         s.name = "Renamed".into();
         s.description = "Described".into();
@@ -389,7 +377,7 @@ fn an_edit_never_writes_the_approval_nor_activates_by_itself() {
     let s = one(&f, "autofix-prod-bugs");
     assert_eq!((s.status, s.approval), (Status::Pending, None), "a new schedule brings no approval and no activation");
 
-    let s = approve(&f.home, &store, &f.ws, &s.id, 1).unwrap();
+    let s = approve(&f.home, &store, &f.folder, &s.id, 1).unwrap();
     let paused = change(&f, &s.id, |s| s.status = Status::Paused);
     assert_eq!(paused.status, Status::Paused);
     let forged = change(&f, &s.id, |s| s.approval.as_mut().unwrap().fingerprint = "0".repeat(64));
@@ -409,17 +397,20 @@ fn an_edit_never_writes_the_approval_nor_activates_by_itself() {
 }
 
 #[test]
-fn mac_binds_the_workspace_the_id_and_the_fingerprint() {
+fn mac_binds_the_folders_path_the_id_and_the_fingerprint() {
     let key = [7u8; 32];
-    let a = mac(&key, "demo", "x", "ff");
+    let (demo, other) = (Path::new(r"C:\r\demo"), Path::new(r"C:\s\demo"));
+    let a = mac(&key, demo, "x", "ff");
     assert_eq!(a.len(), 64);
-    assert_ne!(a, mac(&key, "demo2", "x", "ff"));
-    assert_ne!(a, mac(&key, "demo", "y", "ff"));
-    assert_ne!(a, mac(&key, "demo", "x", "fe"));
+    assert_ne!(a, mac(&key, other, "x", "ff"), "a folder of the same name elsewhere");
+    assert_ne!(a, mac(&key, demo, "y", "ff"));
+    assert_ne!(a, mac(&key, demo, "x", "fe"));
     let approval = Approval { fingerprint: "ff".into(), mac: a, approved_at: 0, covered: String::new(), command_sha256: None };
-    assert_eq!(verify(&approval, "demo", "x", "ff", &key), Ok(()));
-    assert_eq!(verify(&approval, "demo", "y", "ff", &key), Err(Refusal::BadMac));
-    assert_eq!(verify(&approval, "demo", "x", "fe", &key), Err(Refusal::Changed));
+    assert_eq!(verify(&approval, demo, "x", "ff", &key), Ok(()));
+    assert_eq!(verify(&approval, Path::new("c:/r/demo/"), "x", "ff", &key), Ok(()), "the same folder written otherwise");
+    assert_eq!(verify(&approval, other, "x", "ff", &key), Err(Refusal::BadMac));
+    assert_eq!(verify(&approval, demo, "y", "ff", &key), Err(Refusal::BadMac));
+    assert_eq!(verify(&approval, demo, "x", "fe", &key), Err(Refusal::Changed));
 }
 
 /// Europe/Berlin: CEST from the last Sunday of March to the last Sunday of October, at 01:00 UTC.
@@ -683,13 +674,14 @@ fn a_run_worktree_is_spent_when_clean_and_without_a_commit_of_its_own() {
 fn prune_takes_old_rotated_runs_the_state_of_removed_schedules_and_spent_worktrees() {
     let f = fixture();
     add(&f, example());
-    Registry::at(&f.home).save(&f.ws, false).unwrap();
+    let key = folder_key(&f.folder);
     let runs = f.home.join("schedules").join("runs");
     fs::create_dir_all(&runs).unwrap();
-    for name in ["demo.jsonl", "demo.jsonl.1"] {
+    let (current, rotated) = (format!("{key}.jsonl"), format!("{key}.jsonl.1"));
+    for name in [&current, &rotated] {
         fs::write(runs.join(name), "{}\n").unwrap();
     }
-    let state = f.home.join("schedules").join("state").join("demo");
+    let state = f.home.join("schedules").join("state").join(&key);
     for id in ["autofix-prod-bugs", "removed"] {
         fs::create_dir_all(state.join(id)).unwrap();
         fs::write(state.join(id).join("seen.txt"), "1").unwrap();
@@ -703,13 +695,13 @@ fn prune_takes_old_rotated_runs_the_state_of_removed_schedules_and_spent_worktre
 
     let now = crate::time::now_ms();
     assert_eq!(prune_settled(&f.home, now), Vec::<String>::new());
-    assert!(runs.join("demo.jsonl.1").exists() && wt("clean").exists(), "nothing is old yet");
+    assert!(runs.join(&rotated).exists() && wt("clean").exists(), "nothing is old yet");
     assert!(!state.join("removed").exists(), "the state of a removed schedule goes");
     assert!(state.join("autofix-prod-bugs").exists() && unreadable.join("x").exists(), "kept, and kept when unsure");
 
     let later = now + crate::prune::KEEP_MS + 24 * 3600 * 1000;
     assert_eq!(prune_settled(&f.home, later), Vec::<String>::new());
-    assert!(!runs.join("demo.jsonl.1").exists() && runs.join("demo.jsonl").exists(), "only the rotated file ages out");
+    assert!(!runs.join(&rotated).exists() && runs.join(&current).exists(), "only the rotated file ages out");
     assert!(!wt("clean").exists(), "a clean worktree with nothing of its own goes");
     let branches = crate::process::git(&f.folder, &["branch", "--list", "sched/*"]).unwrap().stdout;
     assert!(!branches.contains("sched/x/clean") && branches.contains("sched/x/dirty") && branches.contains("sched/x/ahead"), "{branches}");
@@ -719,14 +711,15 @@ fn prune_takes_old_rotated_runs_the_state_of_removed_schedules_and_spent_worktre
 }
 
 mod foreign;
+mod migrate;
 mod registrar;
 
 #[test]
 fn a_runs_session_name_is_a_valid_name_and_profiles_map_onto_claudes_flags() {
     let stamp = run_stamp(&chrono::Utc.with_ymd_and_hms(2026, 11, 2, 9, 0, 0).unwrap());
     assert_eq!(stamp, "20261102-090000");
-    let name = session_name("nomos", "autofix-prod-bugs", &stamp);
-    assert_eq!(name, "fm-nomos-sched-autofix-prod-bugs-20261102-090000");
+    let name = session_name("nomos-1a2b3c4d", "autofix-prod-bugs", &stamp);
+    assert_eq!(name, "fm-nomos-1a2b3c4d-sched-autofix-prod-bugs-20261102-090000");
     crate::validate_name(&name).unwrap();
     assert_eq!(run_id("autofix-prod-bugs", &stamp), "autofix-prod-bugs-20261102-090000");
 
@@ -760,22 +753,50 @@ fn a_stderr_tail_is_masked_before_it_is_cut() {
 }
 
 #[test]
-fn the_live_and_state_dirs_and_secret_keys_are_per_workspace_and_schedule() {
+fn the_live_and_state_dirs_and_secret_keys_are_per_folder_key_and_schedule() {
     let home = Path::new(r"C:\h");
-    assert_eq!(live_dir(home, "demo").unwrap(), home.join("schedules").join("live").join("demo"));
-    assert_eq!(state_dir(home, "demo", "fix").unwrap(), home.join("schedules").join("state").join("demo").join("fix"));
-    assert!(state_dir(home, "demo", "../x").is_err() && live_dir(home, "..").is_err());
+    assert_eq!(live_dir(home, "demo-1a2b3c4d").unwrap(), home.join("schedules").join("live").join("demo-1a2b3c4d"));
+    assert_eq!(state_dir(home, "demo-1a2b3c4d", "fix").unwrap(), home.join("schedules").join("state").join("demo-1a2b3c4d").join("fix"));
+    assert!(state_dir(home, "demo-1a2b3c4d", "../x").is_err() && live_dir(home, "..").is_err());
     assert_eq!(fire_log(home), home.join("schedules").join("fire.log"));
-    assert_eq!(secret_key("demo", "fix", "API_TOKEN"), "supraman/schedule/demo/fix/API_TOKEN");
+    assert_eq!(secret_key("demo-1a2b3c4d", "fix", "API_TOKEN"), "supraman/schedule/demo-1a2b3c4d/fix/API_TOKEN");
 }
 
 #[test]
-fn a_runs_session_name_gives_back_its_schedule_id() {
-    assert_eq!(schedule_of_session("nomos", "fm-nomos-sched-autofix-prod-bugs-20261102-090000"), Some("autofix-prod-bugs"));
-    assert_eq!(schedule_of_session("nomos", "fm-nomos-sched-fix-20261102-090000-2"), Some("fix"), "a second run in the same second");
-    assert_eq!(schedule_of_session("nomos", &session_name("nomos", "a-1", "20261102-090000")), Some("a-1"));
-    for other in ["fm-nomos-sched-fix", "fm-nomos-sched--20261102-090000", "fm-nomos-alpha", "fm-other-sched-fix-20261102-090000", "fm-nomos-sched-fix-2026110-090000", "nomos-sched-fix-20261102-090000"] {
-        assert_eq!(schedule_of_session("nomos", other), None, "{other}");
+fn a_folders_key_is_stable_distinct_for_two_folders_of_one_name_and_a_safe_name() {
+    let gaia = Path::new(r"P:\Projects\Gaia");
+    let key = folder_key(gaia);
+    assert_eq!(key, folder_key(Path::new("p:/projects/gaia/")), "the same folder written otherwise");
+    assert!(key.starts_with("gaia-") && key.len() == "gaia-".len() + 8, "{key}");
+    assert_ne!(key, folder_key(Path::new(r"Q:\Gaia")), "another folder of the same name");
+    for path in [r"C:\", r"C:\My Repo (old)", r"C:\..\x", r"C:\Ünïcødé", r"C:\a-very-long-folder-name-that-goes-on-and-on"] {
+        let key = folder_key(Path::new(path));
+        crate::validate_name(&key).unwrap_or_else(|_| panic!("{path}: {key}"));
+        assert!(is_folder_key(&key) && key.len() <= 29, "{path}: {key}");
+    }
+    assert_eq!(folder_key(Path::new(r"C:\Ünïcødé")).rsplit_once('-').map(|(slug, _)| slug), Some("n-c-d"));
+    for not in ["demo", "demo-1a2b3c4", "demo-1A2B3C4D", "-1a2b3c4d", "demo-1a2b3c4g"] {
+        assert!(!is_folder_key(not), "{not}");
+    }
+}
+
+#[test]
+fn a_runs_session_name_gives_back_its_folder_key_and_schedule_id() {
+    let key = "nomos-1a2b3c4d";
+    assert_eq!(schedule_of_session("fm-nomos-1a2b3c4d-sched-autofix-prod-bugs-20261102-090000"), Some((key, "autofix-prod-bugs")));
+    assert_eq!(schedule_of_session("fm-nomos-1a2b3c4d-sched-fix-20261102-090000-2"), Some((key, "fix")), "a second run in the same second");
+    assert_eq!(schedule_of_session(&session_name(key, "a-1", "20261102-090000")), Some((key, "a-1")));
+    let odd = folder_key(Path::new(r"C:\sched-x-sched"));
+    assert_eq!(schedule_of_session(&session_name(&odd, "sched-y", "20261102-090000")), Some((odd.as_str(), "sched-y")), "sched in the folder's name and the id");
+    for other in [
+        "fm-nomos-1a2b3c4d-sched-fix",
+        "fm-nomos-1a2b3c4d-sched--20261102-090000",
+        "fm-nomos-1a2b3c4d-alpha",
+        "fm-nomos-sched-fix-20261102-090000",
+        "fm-nomos-1a2b3c4d-sched-fix-2026110-090000",
+        "nomos-1a2b3c4d-sched-fix-20261102-090000",
+    ] {
+        assert_eq!(schedule_of_session(other), None, "{other}");
     }
 }
 
@@ -785,7 +806,7 @@ fn the_diff_names_each_covered_field_that_changed_since_the_approval() {
     let store = MemoryStore::default();
     let s = approved(&f, &store);
     let approval = s.approval.clone().unwrap();
-    let now = |s: &Schedule| covered(&f.ws, s).unwrap().json;
+    let now = |s: &Schedule| covered(&f.folder, s).unwrap().json;
     assert!(covered_diff(&approval.covered, &now(&s)).is_empty(), "nothing changed");
     let fields = covered_fields(&approval.covered);
     assert!(fields.contains(&("trigger.at".into(), "09:00".into())), "{fields:?}");
@@ -812,23 +833,20 @@ fn the_diff_names_each_covered_field_that_changed_since_the_approval() {
 }
 
 
-const GOLDEN_FINGERPRINT: &str = "52cd87cf1e7c3ce22ccc64f9ea094dfeecbf02c6aa9b3510351505d88ab0061e";
-
 #[test]
-fn a_schedule_approved_by_the_earlier_release_keeps_its_fingerprint_and_its_worktree() {
+fn a_worktree_schedule_is_fingerprinted_under_its_earlier_profile_name() {
     let f = fixture();
     let store = MemoryStore::default();
     let s = approved(&f, &store);
     let a = s.approval.clone().unwrap();
-    assert_eq!(a.fingerprint, GOLDEN_FINGERPRINT, "{}", a.covered);
     assert!(a.covered.contains(r#""profile":"worktree-edit""#) && a.covered.contains(r#""worktree":true"#), "{}", a.covered);
 
     let renamed = change(&f, &s.id, |s| s.name = "Renamed".into());
     assert_eq!((renamed.status, renamed.action.worktree), (Status::Active, true), "an uncovered edit keeps both");
-    assert!(verify_approval(&store, &f.ws, &renamed).is_ok());
-    let text = fs::read_to_string(file_path(&f.home, "demo").unwrap()).unwrap();
+    assert!(verify_approval(&store, &f.folder, &renamed).is_ok());
+    let text = fs::read_to_string(file_path(&f.home, &folder_key(&f.folder)).unwrap()).unwrap();
     assert!(text.contains(r#"profile = "edit""#) && text.contains("worktree = true"), "{text}");
-    assert_eq!(covered(&f.ws, &one(&f, &s.id)).unwrap().fingerprint, GOLDEN_FINGERPRINT, "saved as edit, fingerprinted as before");
+    assert_eq!(covered(&f.folder, &one(&f, &s.id)).unwrap().fingerprint, a.fingerprint, "saved as edit, fingerprinted as approved");
 }
 
 #[test]
@@ -839,18 +857,18 @@ fn a_covered_edit_of_a_worktree_schedule_drops_the_worktree_and_goes_pending() {
     let after = change(&f, &s.id, |s| s.caps.max_tokens = 1_000_000);
     assert_eq!((after.status, after.action.worktree), (Status::Pending, false));
     assert_eq!(after.approval, s.approval);
-    let fields: Vec<String> = covered_diff(&s.approval.unwrap().covered, &covered(&f.ws, &after).unwrap().json).into_iter().map(|c| c.field).collect();
+    let fields: Vec<String> = covered_diff(&s.approval.unwrap().covered, &covered(&f.folder, &after).unwrap().json).into_iter().map(|c| c.field).collect();
     assert_eq!(fields, ["action.worktree", "caps.max_tokens"]);
 }
 
 #[test]
 fn a_schedule_above_read_without_a_worktree_is_valid() {
-    let f = fixture();
+
     for profile in [Profile::Edit, Profile::Auto] {
         let mut s = example();
         s.action.worktree = false;
         s.permissions.profile = profile;
-        assert_eq!(s.validate(&f.ws), Ok(()), "{profile:?}");
+        assert_eq!(s.validate(), Ok(()), "{profile:?}");
     }
 }
 

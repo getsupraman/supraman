@@ -2,8 +2,8 @@
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Source>Supraman</Source>
-    <Version>39c126082f88ca3e</Version>
-    <Description>Supraman schedule demo/autofix-prod-bugs; Supraman rewrites this task.</Description>
+    <Version>c8cbc9da74e951c2</Version>
+    <Description>Supraman schedule autofix-prod-bugs in C:/Projects/Nomos; Supraman rewrites this task.</Description>
   </RegistrationInfo>
   <Triggers>
     <CalendarTrigger>
@@ -33,7 +33,7 @@
   <Actions Context="Author">
     <Exec>
       <Command>C:\Program Files\Supraman\smw.exe</Command>
-      <Arguments>schedule fire --home &quot;C:\Users\rene\AppData\Roaming\Supraman&quot; demo autofix-prod-bugs --fingerprint 9f2c00000000000000000000000000000000000000000000000000000000beef</Arguments>
+      <Arguments>schedule fire --home &quot;C:\Users\rene\AppData\Roaming\Supraman&quot; nomos-1a2b3c4d autofix-prod-bugs --fingerprint 9f2c00000000000000000000000000000000000000000000000000000000beef</Arguments>
       <WorkingDirectory>C:\Users\rene\AppData\Roaming\Supraman</WorkingDirectory>
     </Exec>
   </Actions>

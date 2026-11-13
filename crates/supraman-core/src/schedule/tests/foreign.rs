@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 
 use super::*;
-use crate::{Folder, FolderKind};
 
 fn task_xml(triggers: &str, execs: &[(&str, &str, &str)]) -> String {
     let actions: String = execs
@@ -156,24 +155,6 @@ fn own_roots_are_supramans_of_any_home() {
     for other in [r"\", r"\Microsoft\Windows", r"\Mine\Supraman", r"\Claude"] {
         assert!(!is_own_root(other), "{other}");
     }
-}
-
-#[test]
-fn a_task_belongs_to_the_workspace_holding_its_working_dir_or_script() {
-    let app = PathBuf::from(r"C:\code\app");
-    let code = PathBuf::from(r"C:\code");
-    let parent = Workspace::new("code", &code, vec![Folder { kind: FolderKind::Plain, ..Folder::new("code", &code) }]);
-    let ws = Workspace::new("app", &app, vec![Folder { kind: FolderKind::Plain, ..Folder::new("app", &app) }]);
-    let workspaces = [parent, ws];
-    let read = |_: &Path| Some("claude".to_string());
-    let task = |cmd: &str, args: &str, wd: &str| {
-        of_task(&planted(r"\", "t", task_xml(DAILY, &[(cmd, args, wd)])), &read).unwrap()
-    };
-    assert_eq!(owner(&task("claude", "", r"C:\code\app\sub"), &workspaces).map(|w| w.name.as_str()), Some("app"));
-    assert_eq!(owner(&task("pwsh", r"-File C:\code\app\scripts\job.ps1", ""), &workspaces).map(|w| w.name.as_str()), Some("app"));
-    assert_eq!(owner(&task("claude", "", r"C:\code\other"), &workspaces).map(|w| w.name.as_str()), Some("code"), "the deepest workspace wins");
-    assert_eq!(owner(&task("claude", "", r"C:\elsewhere"), &workspaces), None);
-    assert_eq!(owner(&task("claude", "", ""), &workspaces), None);
 }
 
 #[test]

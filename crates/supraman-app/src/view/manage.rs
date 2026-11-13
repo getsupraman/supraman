@@ -34,7 +34,7 @@ impl FleetView {
         cx.notify();
         let session_id = match &target {
             MenuTarget::Session { session_id, .. } => Some(session_id.clone()),
-            MenuTarget::Group(_) | MenuTarget::Folder(_) | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) | MenuTarget::OtherSchedule(_) => None,
+            MenuTarget::Group(_) | MenuTarget::Folder(_) | MenuTarget::Schedule { .. } | MenuTarget::Schedules { .. } | MenuTarget::OtherSchedule(_) => None,
         };
         let (Some(menu), Some(session_id)) = (&self.dialogs.menu, session_id) else {
             return;
@@ -73,10 +73,10 @@ impl FleetView {
                 .rows()
                 .find(|r| &r.session.session_id == session_id)
                 .map(|row| (fleet::display_name(&row.session).to_string(), self.session_menu(entry, place, row, send_name, cx))),
-            MenuTarget::Schedule { workspace, id } => {
-                self.schedule_row(workspace, id).map(|row| (format!("{workspace} · {}", row.title()), schedule_items(row)))
+            MenuTarget::Schedule { folder_key, id } => {
+                self.schedule_row(folder_key, id).map(|row| (format!("{} · {}", row.place(), row.title()), schedule_items(row)))
             }
-            MenuTarget::Schedules(workspace) => Some((format!("{workspace} · Schedules"), schedules_items(workspace))),
+            MenuTarget::Schedules { entry, folder } => Some((format!("{} · Schedules", supraman_core::paths::folder_name(folder)), schedules_items(entry, folder))),
             MenuTarget::OtherSchedule(path) => self.others().find(path).map(|t| (t.path(), other_schedule_items(t))),
         }
     }
@@ -141,8 +141,8 @@ impl FleetView {
             }
             MenuAction::Delete(session) => self.ask_delete(session),
             MenuAction::DeleteClosed(entry) => self.ask_delete_closed(entry, cx),
-            MenuAction::Details(MenuTarget::Schedule { workspace, id }) => {
-                self.open_schedule(&workspace, &id, super::schedules::At::Top, cx);
+            MenuAction::Details(MenuTarget::Schedule { folder_key, id }) => {
+                self.open_schedule(&folder_key, &id, super::schedules::At::Top, cx);
             }
             MenuAction::Details(target) => {
                 self.open_details(target, cx);
@@ -163,15 +163,15 @@ impl FleetView {
 
     fn run_schedule_action(&mut self, action: MenuAction, window: &mut Window, cx: &mut Context<Self>) {
         match action {
-            MenuAction::Approve { workspace, id } => {
-                self.open_schedule(&workspace, &id, super::schedules::At::Approve, cx);
+            MenuAction::Approve { folder_key, id } => {
+                self.open_schedule(&folder_key, &id, super::schedules::At::Approve, cx);
             }
-            MenuAction::RunNow { workspace, id } => self.run_schedule_now(&workspace, &id, cx),
-            MenuAction::EditSchedule { workspace, id } => self.open_schedule_edit(&workspace, &id, window, cx),
-            MenuAction::DryRun { workspace, id } => self.dry_run_schedule(&workspace, &id, cx),
-            MenuAction::SetPaused { workspace, id, paused } => self.set_schedule_paused(workspace, id, paused, cx),
-            MenuAction::History { workspace, id } => self.schedule_history(&workspace, &id, cx),
-            MenuAction::RemoveSchedule { workspace, id } => self.ask_remove_schedule(&workspace, &id, cx),
+            MenuAction::RunNow { folder_key, id } => self.run_schedule_now(&folder_key, &id, cx),
+            MenuAction::EditSchedule { folder_key, id } => self.open_schedule_edit(&folder_key, &id, window, cx),
+            MenuAction::DryRun { folder_key, id } => self.dry_run_schedule(&folder_key, &id, cx),
+            MenuAction::SetPaused { folder_key, id, paused } => self.set_schedule_paused(folder_key, id, paused, cx),
+            MenuAction::History { folder_key, id } => self.schedule_history(&folder_key, &id, cx),
+            MenuAction::RemoveSchedule { folder_key, id } => self.ask_remove_schedule(&folder_key, &id, cx),
             _ => {}
         }
     }
@@ -196,7 +196,7 @@ impl FleetView {
                 Confirmed::StopSession(session) => self.stop_session(session, cx),
                 Confirmed::Delete { session, discard } => self.delete_now(session, discard, cx),
                 Confirmed::DeleteClosed { entry, sessions, skipped } => self.delete_closed_now(entry, sessions, skipped, cx),
-                Confirmed::RemoveSchedule { workspace, id } => self.remove_schedule(workspace, id, cx),
+                Confirmed::RemoveSchedule { folder_key, id } => self.remove_schedule(folder_key, id, cx),
                 Confirmed::Update => self.update_confirmed(cx),
             }
         }

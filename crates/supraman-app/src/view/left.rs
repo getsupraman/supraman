@@ -35,8 +35,9 @@ pub(super) enum PendingReveal {
 #[derive(Clone, Copy)]
 pub(super) enum LeftRow {
     Group(usize),
-    Schedules(usize),
     Folder(usize, usize),
+    /// A folder's Schedules, under the first row of its path.
+    Schedules(usize, usize),
     Session(usize, usize, usize),
     More(usize, usize),
     Others,
@@ -264,9 +265,7 @@ impl FleetView {
         if let Some(error) = &self.listed.error {
             notices.push(notice(format!("Cannot read the folders: {error}"), banner::tinted(status.error)));
         }
-        for skipped in &self.listed.skipped {
-            notices.push(notice(format!("Some schedules are left out, the others run: {skipped}"), banner::tinted(status.error)));
-        }
+
         if let Some(error) = &self.listing.sessions_error {
             notices.push(notice(
                 format!("Session list is stale, the last read failed (nothing is started or stopped meanwhile): {error}"),
@@ -321,6 +320,7 @@ impl FleetView {
     /// The sidebar's rows in order: a key each and the tokens its hit keys contain (supraman_ui::keyed_list).
     fn set_left_rows(&mut self, tree: &Rc<fleet::Tree>) {
         let mut rows = Vec::new();
+        let mut scheduled = std::collections::HashSet::new();
         for (e, entry) in tree.entries.iter().enumerate() {
             let name = &entry.name;
             if entry.group {
@@ -328,13 +328,17 @@ impl FleetView {
                 if self.sidebar.collapsed.contains(&format!("group:{name}")) {
                     continue;
                 }
-                rows.push((LeftRow::Schedules(e), format!("sched:{name}"), ["schedules-row-", "sched-row-", "sched-state-", "sched-error-"].iter().map(|p| format!("{p}{name}")).collect()));
             }
             for (f, folder) in entry.folders.iter().enumerate() {
                 let key = &folder.key;
                 rows.push((LeftRow::Folder(e, f), format!("repo:{key}"), vec![key.clone()]));
                 if self.sidebar.collapsed.contains(&format!("repo:{key}")) {
                     continue;
+                }
+                let fkey = supraman_core::schedule::folder_key(&folder.path);
+                if scheduled.insert(fkey.clone()) {
+                    let tokens = ["schedules-row-", "sched-row-", "sched-state-", "sched-error-", "others-row-"].iter().map(|p| format!("{p}{fkey}")).collect();
+                    rows.push((LeftRow::Schedules(e, f), format!("sched:{fkey}"), tokens));
                 }
                 for (i, row) in folder.sessions.iter().enumerate() {
                     rows.push((LeftRow::Session(e, f, i), format!("s:{key}/{}{}", row.session.session_id, row.scope), vec![row.session.session_id.clone(), row.session.id.clone()]));
@@ -405,7 +409,10 @@ impl FleetView {
                 let open = !self.sidebar.collapsed.contains(&format!("group:{}", entry.name));
                 self.render_group_row(entry, open, cx)
             }
-            LeftRow::Schedules(e) => div().flex().flex_col().children(self.render_schedules(&tree.entries[e], cx)).into_any_element(),
+            LeftRow::Schedules(e, f) => {
+                let entry = &tree.entries[e];
+                div().flex().flex_col().children(self.render_schedules(entry, &entry.folders[f], level(entry) + 1, cx)).into_any_element()
+            }
             LeftRow::Folder(e, f) => {
                 let (entry, folder) = (&tree.entries[e], &tree.entries[e].folders[f]);
                 let open = !self.sidebar.collapsed.contains(&format!("repo:{}", folder.key));

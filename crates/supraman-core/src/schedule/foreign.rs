@@ -8,7 +8,7 @@ use roxmltree::{Document, Node};
 
 use super::registrar::{Registrar, TaskState};
 use crate::platform::shell::expand_env;
-use crate::{Result, Workspace, holder_of};
+use crate::Result;
 
 /// A script is read this far for the word `claude`.
 pub const SCRIPT_CAP: u64 = 256 * 1024;
@@ -212,10 +212,7 @@ fn child_text<'a>(n: Node<'a, '_>, name: &str) -> Option<&'a str> {
     child(n, name).and_then(|c| c.text()).map(str::trim).filter(|s| !s.is_empty())
 }
 
-/// The workspace holding the first of [`ForeignTask::dirs`] that one holds ([`holder_of`]).
-pub fn owner<'w>(task: &ForeignTask, workspaces: &'w [Workspace]) -> Option<&'w Workspace> {
-    task.dirs().find_map(|d| holder_of(d, workspaces))
-}
+
 
 /// An OLE automation date as epoch ms; `None` for Task Scheduler's never (`0` or a date before 2000).
 pub fn ole_date_ms(days: f64) -> Option<i64> {

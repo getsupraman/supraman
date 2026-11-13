@@ -14,14 +14,10 @@ pub enum CoreError {
     NoEntry(String),
     #[error("{} is listed there already", .0.display())]
     FolderListed(PathBuf),
-    #[error("workspace '{0}' not found")]
-    NotFound(String),
     #[error("not a directory: {}", .0.display())]
     NotADirectory(PathBuf),
-    #[error("workspace '{workspace}' has no folder '{folder}'; known: {known}")]
-    NoFolder { workspace: String, folder: String, known: String },
-    #[error("workspace '{workspace}' has no schedule '{id}'")]
-    NoSchedule { workspace: String, id: String },
+    #[error("{folder} has no schedule '{id}'")]
+    NoSchedule { folder: String, id: String },
     #[error("schedule '{id}': {why}")]
     InvalidSchedule { id: String, why: String },
     /// A slash command or prompt file a schedule names is not in its folder.
@@ -43,12 +39,13 @@ pub enum CoreError {
         path: PathBuf,
         source: toml::de::Error,
     },
-    #[error("cannot serialize the schedules of workspace '{workspace}': {source}")]
+    #[error("cannot serialize the schedules of {folder}: {source}")]
     SerializeSchedules {
-        workspace: String,
+        folder: String,
+
         source: toml::ser::Error,
     },
-    #[error("cannot serialize workspace '{name}': {source}")]
+    #[error("cannot serialize {name}: {source}")]
     Serialize {
         name: String,
         source: toml::ser::Error,
@@ -65,9 +62,7 @@ impl CoreError {
                 | Self::NoGroup(_)
                 | Self::NoEntry(_)
                 | Self::FolderListed(_)
-                | Self::NotFound(_)
                 | Self::NotADirectory(_)
-                | Self::NoFolder { .. }
                 | Self::NoSchedule { .. }
                 | Self::InvalidSchedule { .. }
                 | Self::NoPrompt(_)

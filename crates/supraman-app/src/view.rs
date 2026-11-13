@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap as StdHashMap},
+    collections::HashMap as StdHashMap,
     path::{Path, PathBuf},
     rc::Rc,
     sync::atomic::Ordering,
@@ -8,7 +8,7 @@ use std::{
 
 use futures::FutureExt as _;
 use supraman_claude::{ClaudeVersion, Session, now_ms};
-use supraman_core::{Event, FM_PREFIX, Registry, Settings};
+use supraman_core::{Event, FM_PREFIX, Settings};
 use supraman_term::{
     MouseInputMode, Terminal, TerminalBuilder, TerminalMode,
     terminal_settings::{AlternateScroll, CursorShape},
@@ -301,7 +301,7 @@ struct Refresh {
     polled_at: i64,
     events: Vec<Event>,
     /// The schedules by workspace and the errors reading them; `None` without a home.
-    schedules: Option<(BTreeMap<String, Vec<crate::schedules::ScheduleRow>>, Vec<String>)>,
+    schedules: Option<crate::schedules::Read>,
     took: Duration,
 }
 
@@ -310,7 +310,7 @@ impl FleetView {
         let focus = cx.focus_handle();
         focus.focus(window, cx);
         Self::ask_before_close(window, cx);
-        let home = Registry::from_env().ok().map(|r| r.home().to_path_buf());
+        let home = supraman_core::home_from_env();
         let defaults = Settings::default();
         let hands = home.as_deref().map(|home| Self::open_hands(home, cx));
         let (polls, transcripts_nudged) = polls::Polls::start(home.clone(), hands.clone(), cx);
@@ -601,9 +601,12 @@ impl FleetView {
             HookSignal::record(&mut self.polled.hooks, event);
         }
         self.occupancy.set_sessions(fleet::live_sessions(&self.sessions, now_ms(), &self.polled.hooks, self.polls.polled_at));
-        if let Some((schedules, errors)) = refresh.schedules {
-            self.scheduling.schedules = schedules;
-            self.scheduling.schedule_errors = errors;
+        if let Some(read) = refresh.schedules {
+            if read.resync {
+                self.resync_schedules(cx);
+            }
+            self.scheduling.schedules = read.rows;
+            self.scheduling.schedule_errors = read.errors;
             supraman_ui::notices::keep_dismissed(&mut self.scheduling.schedule_errors_dismissed, &self.scheduling.schedule_errors);
             let (_, save) = self.scheduling.waiting_dismissed.prune_keys(&crate::schedules::waiting_keys(&self.scheduling.schedules));
             self.save_pruned(save, "Cannot save the dismissed approvals", cx);

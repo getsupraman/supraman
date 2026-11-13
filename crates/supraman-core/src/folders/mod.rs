@@ -1,7 +1,7 @@
 //! `<home>/folders.toml`: the sidebar's ordered folders and named groups, and their one reader and writer.
 
 mod edits;
-mod migrate;
+pub(crate) mod migrate;
 
 use std::fs;
 use std::io::ErrorKind;
@@ -10,11 +10,20 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::paths::path_key;
-use crate::{CoreError, FolderKind, Result};
+use crate::{CoreError, Result};
 
 pub use edits::{Place, Pos};
 
 pub const FILE: &str = "folders.toml";
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FolderKind {
+    #[default]
+    Git,
+    Plain,
+}
+
 const LOCK: &str = "folders.lock";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -155,7 +164,7 @@ pub fn edit<T>(home: &Path, change: impl FnOnce(&mut Entries) -> Result<T>) -> R
     let _held = crate::fs::lock_file(&lock).map_err(|e| CoreError::io(&lock, e))?;
     let mut entries = match read(home)? {
         Some(entries) => entries,
-        None => migrate::from_workspaces(&crate::Registry::at(home)),
+        None => migrate::from_workspaces(home),
     };
     let out = change(&mut entries)?;
     let file = path(home);

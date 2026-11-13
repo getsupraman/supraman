@@ -5,13 +5,13 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::store::{load, schedules_dir};
-use crate::{CoreError, Registry, Result, validate_name};
+use super::store::{load_all, load_key, schedules_dir};
+use crate::{CoreError, Result, validate_name};
 
-/// Where [`append_run`] rotates a workspace's run records.
+/// Where [`append_run`] rotates a folder's run records.
 pub const RUNS_CAP: u64 = 1024 * 1024;
 
-/// One line of `schedules/runs/<workspace>.jsonl`; never a token, never stdout, stderr only masked.
+/// One line of `schedules/runs/<key>.jsonl`; never a token, never stdout, stderr only masked.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunRecord {
     pub ts: i64,
@@ -127,13 +127,13 @@ pub struct Run {
     pub tokens: Option<Tokens>,
 }
 
-pub fn runs_path(home: &Path, workspace: &str) -> Result<PathBuf> {
-    validate_name(workspace)?;
-    Ok(schedules_dir(home).join("runs").join(format!("{workspace}.jsonl")))
+pub fn runs_path(home: &Path, key: &str) -> Result<PathBuf> {
+    validate_name(key)?;
+    Ok(schedules_dir(home).join("runs").join(format!("{key}.jsonl")))
 }
 
-pub fn append_run(home: &Path, workspace: &str, record: &RunRecord) -> Result<()> {
-    let path = runs_path(home, workspace)?;
+pub fn append_run(home: &Path, key: &str, record: &RunRecord) -> Result<()> {
+    let path = runs_path(home, key)?;
     let dir = path.parent().expect("under the home");
     fs::create_dir_all(dir).map_err(|e| CoreError::io(dir, e))?;
     let mut line = serde_json::to_vec(record).expect("plain data serializes");
@@ -142,8 +142,8 @@ pub fn append_run(home: &Path, workspace: &str, record: &RunRecord) -> Result<()
 }
 
 /// The rotated file's lines, then the current file's, oldest first; a line that does not parse is skipped.
-pub fn read_runs(home: &Path, workspace: &str) -> Result<Vec<RunRecord>> {
-    let path = runs_path(home, workspace)?;
+pub fn read_runs(home: &Path, key: &str) -> Result<Vec<RunRecord>> {
+    let path = runs_path(home, key)?;
     let mut out = Vec::new();
     for file in [crate::fs::rotated(&path), path] {
         match fs::read_to_string(&file) {
@@ -156,9 +156,9 @@ pub fn read_runs(home: &Path, workspace: &str) -> Result<Vec<RunRecord>> {
 }
 
 /// [`read_runs`] folded by run, in the order each run first appears.
-pub fn runs(home: &Path, workspace: &str) -> Result<Vec<Run>> {
+pub fn runs(home: &Path, key: &str) -> Result<Vec<Run>> {
     let mut out: Vec<Run> = Vec::new();
-    for r in read_runs(home, workspace)? {
+    for r in read_runs(home, key)? {
         let i = match out.iter().position(|x| x.run == r.run) {
             Some(i) => i,
             None => {
@@ -179,13 +179,13 @@ pub fn runs(home: &Path, workspace: &str) -> Result<Vec<Run>> {
     Ok(out)
 }
 
-/// Every `<folder>/.claude/worktrees/fm-sched-*` of the registered workspaces: the runs' worktrees still on disk.
+/// Every `<folder>/.claude/worktrees/fm-sched-*` of the folders with schedules: the runs' worktrees still on disk.
 pub fn run_worktrees(home: &Path) -> Vec<PathBuf> {
-    let Ok((workspaces, _)) = Registry::at(home).load_all() else { return Vec::new() };
+    let (scheduled, _) = load_all(home);
     let mut seen = HashSet::new();
     let mut out = Vec::new();
-    for folder in workspaces.iter().flat_map(|w| &w.folders) {
-        let Ok(entries) = fs::read_dir(folder.path.join(".claude").join("worktrees")) else { continue };
+    for folder in scheduled.iter().map(|s| &s.folder) {
+        let Ok(entries) = fs::read_dir(folder.join(".claude").join("worktrees")) else { continue };
         for e in entries.flatten() {
             let path = e.path();
             if e.file_name().to_string_lossy().starts_with("fm-sched-") && e.file_type().is_ok_and(|t| t.is_dir()) && seen.insert(crate::paths::path_key(&path)) {
@@ -200,11 +200,15 @@ pub fn run_worktrees(home: &Path) -> Vec<PathBuf> {
 pub(crate) fn prune(home: &Path, cutoff: i64, errors: &mut Vec<String>) {
     let dir = schedules_dir(home);
     crate::prune::remove_older(&dir.join("runs"), cutoff, |n| n.ends_with(".jsonl.1"), errors);
-    if let Ok(workspaces) = fs::read_dir(dir.join("state")) {
-        for ws in workspaces.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())) {
-            let name = ws.file_name().to_string_lossy().into_owned();
-            let Ok(kept) = load(home, &name) else { continue };
-            let Ok(ids) = fs::read_dir(ws.path()) else { continue };
+    if let Ok(keys) = fs::read_dir(dir.join("state")) {
+        for key in keys.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())) {
+            let name = key.file_name().to_string_lossy().into_owned();
+            let kept = match load_key(home, &name) {
+                Ok(found) => found.map(|s| s.schedules).unwrap_or_default(),
+                Err(_) => continue,
+            };
+            let Ok(ids) = fs::read_dir(key.path()) else { continue };
+
             for id in ids.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())) {
                 if !kept.iter().any(|s| *s.id == *id.file_name().to_string_lossy())
                     && let Err(e) = fs::remove_dir_all(id.path())

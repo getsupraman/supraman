@@ -278,25 +278,30 @@ fn rows(list: &[(&str, &str, &str)]) -> Vec<Session> {
 }
 
 #[test]
-fn a_scheduled_runs_session_sits_under_its_schedule_in_the_group_of_that_name() {
+fn a_scheduled_runs_session_sits_under_its_schedule_in_the_folder_of_its_key() {
+    let (gaia, skills) = (supraman_core::schedule::folder_key(Path::new(r"P:\L\Gaia")), supraman_core::schedule::folder_key(Path::new(r"P:\L\Skills")));
+    let names = [format!("fm-{gaia}-sched-nightly-20261102-090000"), format!("fm-{gaia}-sched-nightly-20261101-090000"), format!("fm-{skills}-sched-weekly-fix-20261102-090000-2")];
     let mut list = rows(&[
-        ("eeee0001", "fm-larchsys-sched-nightly-20261102-090000", r"P:\L\Gaia\.claude\worktrees\fm-sched-nightly-20261102-090000"),
-        ("eeee0002", "fm-larchsys-sched-nightly-20261101-090000", r"P:\L\Gaia"),
-        ("eeee0003", "fm-larchsys-sched-weekly-fix-20261102-090000-2", r"P:\L\Skills"),
+        ("eeee0001", names[0].as_str(), r"P:\L\Gaia\.claude\worktrees\fm-sched-nightly-20261102-090000"),
+        ("eeee0002", names[1].as_str(), r"P:\L\Gaia"),
+        ("eeee0003", names[2].as_str(), r"P:\L\Elsewhere"),
         ("eeee0004", "mine", r"P:\L\Gaia"),
+        ("eeee0005", "fm-other-1a2b3c4d-sched-x-20261102-090000", r"P:\L\Gaia"),
     ]);
     list[1].state = Some(supraman_claude::SessionState::Stopped);
     list[1].pid = None;
     let entries = Entries::new(vec![group("larchsys", &[r"P:\L\Gaia", r"P:\L\Skills"])]);
     let tree = build(&entries, &list, NOW, false, &TreeInputs::default());
     let w = demo(&tree);
-    let ids: Vec<(&str, Vec<&str>)> = w.scheduled.iter().map(|(id, r)| (id.as_str(), r.iter().map(|r| r.session.id.as_str()).collect())).collect();
-    assert_eq!(ids, [("nightly", vec!["eeee0001"]), ("weekly-fix", vec!["eeee0003"])], "the stopped run is hidden with stopped rows");
+    let ids = |f: &FolderNode| f.scheduled.iter().map(|(id, r)| (id.clone(), r.iter().map(|r| r.session.id.clone()).collect::<Vec<_>>())).collect::<Vec<_>>();
+    assert_eq!(ids(&w.folders[0]), [("nightly".to_string(), vec!["eeee0001".to_string()])], "the stopped run is hidden with stopped rows");
+    assert_eq!(ids(&w.folders[1]), [("weekly-fix".to_string(), vec!["eeee0003".to_string()])], "by its key, wherever its cwd");
     assert_eq!(tree.hidden_stopped, 1);
-    assert!(w.folders.iter().all(|r| r.sessions.iter().all(|s| !s.session.name.contains("-sched-"))), "not under a folder too");
-    assert_eq!(w.session_count(), 3);
+    let plain: Vec<&str> = w.folders[0].sessions.iter().map(|s| s.session.id.as_str()).collect();
+    assert_eq!(plain, ["eeee0004", "eeee0005"], "another home's run sits by its cwd");
+    assert_eq!(w.session_count(), 4);
     let shown = build(&entries, &list, NOW, true, &TreeInputs::default());
-    assert_eq!(demo(&shown).scheduled["nightly"].len(), 2);
+    assert_eq!(demo(&shown).folders[0].scheduled["nightly"].len(), 2);
 }
 
 #[test]

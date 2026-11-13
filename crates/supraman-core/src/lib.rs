@@ -7,14 +7,12 @@ pub mod fs;
 pub mod hex;
 pub mod install;
 pub mod home;
-mod model;
 pub mod paths;
 pub mod platform;
 mod plugin;
 pub mod prune;
 pub mod pool;
 pub mod process;
-mod registry;
 pub mod schedule;
 pub mod secret;
 pub mod shells;
@@ -34,11 +32,10 @@ pub use error::{CoreError, Result};
 pub use events::{
     Event, EventReader, ROTATE_AT, append as append_event, events_dir, log_path, role_injection, role_tag,
 };
-pub use model::{Folder, FolderKind, Workspace, holder_of};
+pub use folders::FolderKind;
 pub use plugin::{AGENTS_SERVER, AGENT_TOOLS, find_plugin_dir, hook_exe, sm_allowed_tools, install_hook_exe};
 pub use home::{HOME_VAR, env_home, home_from, home_from_env};
 pub use branch::branch_at;
-pub use registry::Registry;
 pub use settings::{
     AppearanceSettings, DEFAULT_MAX_WORKING, DEFAULT_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Section,
     SessionSettings, Settings, TERMINAL_FONT_PREFERENCE, TabKeys, TerminalSettings, UpdateSettings, WindowSettings, clamp_terminal_font_size,
