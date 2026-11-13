@@ -21,6 +21,7 @@ supraman-core = { path = "../supraman-core" }
 supraman-editor = { path = "../supraman-editor" }
 supraman-gitman = { path = "../supraman-gitman" }
 supraman-ui = { path = "../supraman-ui" }
+usvg = { version = "0.46.0", default-features = false }
 theme = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c" }
 
 [dev-dependencies]

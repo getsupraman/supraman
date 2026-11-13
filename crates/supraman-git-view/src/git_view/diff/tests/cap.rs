@@ -80,3 +80,45 @@ fn a_file_over_the_cap_shows_its_sizes_and_an_image_over_the_pixel_cap_its_dimen
     let d = show(&view, Target { of: Of::Untracked, path: "loose.txt".into(), change: None }, cx);
     assert_eq!(d.read_with(cx, |d, _| d.shown()), format!("too large none → {size}"), "a worktree file is capped by its metadata");
 }
+
+#[gpui::test]
+fn a_binary_that_is_no_image_shows_its_sizes_from_its_heads_alone(cx: &mut TestAppContext) {
+    use supraman_core::text::{BINARY_PROBE, byte_size};
+    let f = Fixture::copy();
+    let data = |shift: u32| (0..1024 * 1024u32).map(|i| ((i + shift) % 251) as u8).collect::<Vec<_>>();
+    std::fs::write(f.worktree.join("big.dat"), data(0)).unwrap();
+    let base = commit(&f, "Base");
+    std::fs::write(f.worktree.join("big.dat"), data(1)).unwrap();
+    let change = commit(&f, "Change");
+    let changed = supraman_gitman::changed_files(&f.repo(), &change).unwrap().into_iter().find(|c| c.path == "big.dat");
+    let target = Target::commit(change, Some(base), "big.dat".into(), changed);
+
+    let (old, new) = super::super::load::read_sides(&f.side(), &target).unwrap();
+    let read = |blob: Option<supraman_gitman::Blob>| blob.map(|b| (b.bytes.len(), b.binary));
+    assert_eq!((read(old), read(new)), (Some((BINARY_PROBE, true)), Some((BINARY_PROBE, true))), "only the heads are read");
+
+    cx.update(|cx| supraman_editor::init(supraman_ui::fonts::MONO, 13., cx));
+    let (view, cx) = open_tab(&f.dir, Opts::default(), cx);
+    let d = show(&view, target, cx);
+    let size = byte_size(1024 * 1024);
+    assert_eq!(d.read_with(cx, |d, _| d.shown()), format!("binary {size} → {size}"), "the sizes are the files' own");
+}
+
+#[gpui::test]
+fn an_svg_whose_canvas_is_over_the_pixel_cap_is_not_rasterised(cx: &mut TestAppContext) {
+    let svg = |w: u32, h: u32| format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}"><rect width="{w}" height="{h}"/></svg>"#);
+    let f = Fixture::copy();
+    std::fs::write(f.worktree.join("logo.svg"), svg(20, 10)).unwrap();
+    let base = commit(&f, "Base");
+    std::fs::write(f.worktree.join("logo.svg"), svg(5000, 5000)).unwrap();
+    let change = commit(&f, "Change");
+    cx.update(|cx| supraman_editor::init(supraman_ui::fonts::MONO, 13., cx));
+    let (view, cx) = open_tab(&f.dir, Opts::default(), cx);
+    let changed = |sha: &str| supraman_gitman::changed_files(&f.repo(), sha).unwrap().into_iter().find(|c| c.path == "logo.svg");
+
+    let d = show(&view, Target::commit(change.clone(), Some(base.clone()), "logo.svg".into(), changed(&change)), cx);
+    assert_eq!(d.read_with(cx, |d, _| d.shown()), "too large 20×10 → 5000×5000", "the canvas is read before any rasterising");
+
+    let d = show(&view, Target::commit(base.clone(), None, "logo.svg".into(), changed(&base)), cx);
+    assert_eq!(d.read_with(cx, |d, _| d.shown()), "image none → 20×10", "an SVG under the cap still shows");
+}

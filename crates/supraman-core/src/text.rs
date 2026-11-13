@@ -63,7 +63,7 @@ pub fn utf16(bytes: &[u8], le: bool) -> String {
 }
 
 /// How far git looks for a NUL to call a file binary (`buffer_is_binary`).
-const BINARY_PROBE: usize = 8000;
+pub const BINARY_PROBE: usize = 8000;
 
 /// What a file's bytes hold, as [`classify`] reads them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

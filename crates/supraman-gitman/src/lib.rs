@@ -20,7 +20,7 @@ pub mod write;
 #[cfg(feature = "test-support")]
 pub mod fixture;
 
-pub use blob::{Blob, blob, object_sizes, staged_blob, worktree_file, worktree_size};
+pub use blob::{Blob, blob, blob_head, object_sizes, staged_blob, staged_blob_head, worktree_file, worktree_head, worktree_size};
 pub use changes::{ChangeKind, FileChange, TreeFile, changed_between, changed_files, tree};
 pub use compose::{Amendable, amendable, commit_hooks, head_message, pushed, rewordable};
 pub use dirs::{Dirs, dirs, ignored};

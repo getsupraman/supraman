@@ -47,9 +47,10 @@ pub(crate) fn format_of(path: &str) -> Option<ImageFormat> {
     })
 }
 
-/// A raster image's `width × height` from its header alone; `None` for an SVG or a header that does not read.
+/// An image's `width × height` before it is decoded: a raster's header, an SVG's canvas; `None` when neither reads.
 pub(crate) fn dimensions(format: ImageFormat, bytes: &[u8]) -> Option<(u32, u32)> {
     let format = match format {
+        ImageFormat::Svg => return svg_canvas(bytes),
         ImageFormat::Png => ::image::ImageFormat::Png,
         ImageFormat::Jpeg => ::image::ImageFormat::Jpeg,
         ImageFormat::Gif => ::image::ImageFormat::Gif,
@@ -59,6 +60,20 @@ pub(crate) fn dimensions(format: ImageFormat, bytes: &[u8]) -> Option<(u32, u32)
         _ => return None,
     };
     ::image::ImageReader::with_format(std::io::Cursor::new(bytes), format).into_dimensions().ok()
+}
+
+/// Parsed with no `<image>` loaded, which the canvas's size does not need.
+fn svg_canvas(bytes: &[u8]) -> Option<(u32, u32)> {
+    let resolver = usvg::ImageHrefResolver { resolve_data: Box::new(|_, _, _| None), resolve_string: Box::new(|_, _| None) };
+    let options = usvg::Options { image_href_resolver: resolver, ..usvg::Options::default() };
+    let size = usvg::Tree::from_data(bytes, &options).ok()?.size();
+    Some((size.width().ceil() as u32, size.height().ceil() as u32))
+}
+
+/// The pixels [`decode`] makes of a `width × height` image: an SVG's at [`SMOOTH_SVG_SCALE_FACTOR`].
+pub(crate) fn decoded_pixels(format: ImageFormat, (width, height): (u32, u32)) -> u64 {
+    let scale = if format == ImageFormat::Svg { SMOOTH_SVG_SCALE_FACTOR.ceil() as u64 } else { 1 };
+    (u64::from(width) * scale).saturating_mul(u64::from(height) * scale)
 }
 
 /// `bytes` decoded, blocking; `None` when they do not decode or have no pixels.

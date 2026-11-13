@@ -141,6 +141,22 @@ impl Repo {
         }
     }
 
+    /// [`Repo::output`]'s first `limit` bytes; git's tree is killed once they came, before it wrote the rest.
+    pub(crate) fn output_head(&self, args: &[&str], limit: usize) -> Result<Vec<u8>, GitError> {
+        let run = |source| GitError::Run { args: args.join(" "), source };
+        let mut git = self.stream(args, None)?;
+        let mut head = Vec::new();
+        while let Some(chunk) = git.next(GIT_TIMEOUT).map_err(run)? {
+            head.extend_from_slice(&chunk);
+            if head.len() >= limit {
+                head.truncate(limit);
+                return Ok(head);
+            }
+        }
+        let out = git.finish(GIT_TIMEOUT).map_err(run)?;
+        if out.success() { Ok(head) } else { Err(failed(args.join(" "), &self.dir, &out)) }
+    }
+
     /// [`Repo::read`] without `--no-optional-locks`: git may write the index's stat cache.
     pub(crate) fn read_locking<T>(&self, args: &[&str], parse: impl FnOnce(&[u8]) -> Result<T, String>) -> Result<T, GitError> {
         let out = self.run_with(READ_ONLY.iter().filter(|a| **a != "--no-optional-locks"), args, None)?;
