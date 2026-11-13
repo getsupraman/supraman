@@ -76,7 +76,6 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     let home_line = format!("SUPRAMAN_HOME={}", home.display());
     let env = [
         "SUPRAMAN_ROLE=hand".to_string(),
-        format!("SUPRAMAN_WORKSPACE={WORKSPACE}"),
         format!("SUPRAMAN_SESSION={session}"),
         format!("SUPRAMAN_REPO={repo}"),
         home_line,
@@ -86,6 +85,9 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
             bail!("the [+] claude's env has no {want}: {text}");
         }
     }
+    if lines.iter().any(|l| l.to_ascii_uppercase().starts_with("SUPRAMAN_WORKSPACE=")) {
+        bail!("the [+] claude's env still names a workspace: {text}");
+    }
     let sm = supraman_core::install::sm_exe()?;
     let found = lines.iter().find(|l| l.to_ascii_lowercase().ends_with("sm.exe")).copied().unwrap_or_default();
     if !found.eq_ignore_ascii_case(&sm.display().to_string()) {
@@ -93,8 +95,8 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     }
     let version = lines.iter().find(|l| l.starts_with("sm ")).copied().ok_or_else(|| anyhow!("`sm --version` printed nothing: {text}"))?;
     let tag = lines.iter().find(|l| l.starts_with("SUPRAMAN-ROLE hand v")).copied().ok_or_else(|| anyhow!("SessionStart injected no hand role: {text}"))?;
-    if !text.contains(&format!("Supraman workspace {WORKSPACE}")) || !text.contains("/supraman:supraman-scheduler") {
-        bail!("the hand role is not rendered for {WORKSPACE}: {text}");
+    if !text.contains(&format!("in its folder {repo};")) || !text.contains("/supraman:supraman-scheduler") {
+        bail!("the hand role is not rendered for {repo}: {text}");
     }
     let notices = view.read_with(cx, |v, _| v.hand_notices.clone());
     if notices.iter().any(|n| n.contains("plugins/supraman")) {
