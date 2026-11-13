@@ -1,6 +1,6 @@
 use crate::{CoreError, Result};
 
-/// What every Supraman session name starts with: `fm-<workspace>-<role or repo slug>`.
+/// What every Supraman session name starts with: `fm-<folder key>-…`.
 pub const FM_PREFIX: &str = "fm-";
 
 /// `"Nomos.Extract"` → `"nomos-extract"`. Runs of other characters collapse to one `-`.

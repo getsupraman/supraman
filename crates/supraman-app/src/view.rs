@@ -301,7 +301,7 @@ struct Refresh {
     main_repos: StdHashMap<PathBuf, Option<PathBuf>>,
     polled_at: i64,
     events: Vec<Event>,
-    /// The schedules by workspace and the errors reading them; `None` without a home.
+    /// The schedules by folder key and the errors reading them; `None` without a home.
     schedules: Option<crate::schedules::Read>,
     took: Duration,
 }

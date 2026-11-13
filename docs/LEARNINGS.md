@@ -6102,3 +6102,25 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **Compat to remove in 0.1.19** with `end_controllers` (backlog/end-controllers-removal): `folders::migrate`
   (folders.toml's first entries and `workspace_folders`), `schedule::migrate` with `RESYNC` and `schedules/unplaced/`,
   and the `"workspace"` label of Approve's diff.
+
+## 2026-11-13 — the Work tab is a folder's or a group's, and no workspace word is left (folders/work-names, fwork)
+
+- **One Work tab per `work_view::Target`:** a folder by its `path_key`, a group by its name, compared by an enum
+  so a group and a top-level folder of one name are two tabs (the string key made them share one). Open Work is on
+  every folder row (top level, in a group, a shown sub folder) and opens that folder's bound projects; a group's
+  opens its listed folders' projects. The title is `Work · ` and the one bound project's name, else the folder's or
+  group's; `WorkEvent::Bound` retitles the tab once the view has bound its projects, and a folder's tab starts with
+  the Inbox's binding so it rarely changes.
+- **Open Work dimmed with why** reads `WorkInbox::folder_binding`, synchronous: the Inbox now reads each folder
+  row's repo keys (git, off the UI thread, kept by `path_key`) beside its targets', and binds them against the
+  overview it keeps. `None` until both are read ("Reading Workman…"); the hub's or the read's words when Workman
+  is unavailable. The menu is built when it opens, so it shows what the Inbox knew then.
+- **The Inbox's rows carry their project** (`cards::Row`), so a card's context is the project's name (the folder's
+  when the project has none), and a row bound by two entries shows once. Dismissals are keyed by project id; the
+  earlier per-workspace keys are dropped by the first full read (each such card shows once more), no compat read.
+- **Saved Work tabs** store the target (`{"folder": …}` or `{"group": …}`); a tab saved by workspace name reads
+  as the group of that name and is refused, as a gone target is, when none exists. That read (`saved_target`) and
+  the schedule dismissals' `workspaces` alias go in 0.1.19 with `end_controllers` (backlog/end-controllers-removal).
+- **What keeps the word:** the dated migration code (`folders::migrate`, `schedule::migrate`, `sm schedule`'s
+  moved line, Approve's `"workspace"` label, the task prune's earlier folders), `end_controllers`, the old role
+  strings in mint tests, cargo's own workspace, and claude's `Workspace not trusted` line it parses.

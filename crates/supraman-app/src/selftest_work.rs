@@ -16,8 +16,8 @@ use serde_json::{Value, json};
 
 use crate::{
     selftest::{click, close_attach, frames, open_attach, scrolled_into_view, sleep},
-    view::{FleetView, TabKind},
-    work_view::{HOUSEKEEPING_KEY, WorkView},
+    view::{FleetView, MenuAction, TabKind},
+    work_view::{HOUSEKEEPING_KEY, Target, WorkView},
 };
 
 pub const GROUP: &str = "selftest-work";
@@ -364,6 +364,7 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
 
     let (tab, work, opened) = open_board(view, cx).await?;
     lines.push(opened);
+    lines.push(folder_work(view, tab, cx).await.context("a folder's Open Work")?);
     click(view, "work-filter-all", cx).await?;
 
     lines.push(stream_events(view, &work, fake, cx).await?);
@@ -398,6 +399,36 @@ async fn open_board(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> an
         loaded.as_millis()
     );
     Ok((tab, work, line))
+}
+
+/// The group's folder row opens a Work tab of its own beside the group's, titled by its project; a gate folder no project
+/// binds offers Open Work dimmed with why. FleetView has no unit-test harness, so the menu and `open_work` are tried here.
+async fn folder_work(view: &Entity<FleetView>, group_tab: u64, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let key = view.read_with(cx, |v, _| v.tree().entry(GROUP).and_then(|e| e.folders.first()).map(|f| f.key.clone())).ok_or_else(|| anyhow!("{GROUP} has no folder row"))?;
+    let item = |v: &FleetView, key: &str, cx: &gpui::App| v.folder_menu(key, cx).and_then(|(_, items)| items.into_iter().find(|i| i.key == "work"));
+    let work = crate::selftest::until_app(view, cx, LOADED_WITHIN, "the folder's Open Work bound", |v, cx| item(v, &key, cx).filter(|i| i.dimmed.is_none())).await?;
+    let MenuAction::Work(target @ Target::Folder(_)) = work.action.clone() else { bail!("{key}'s Open Work is {:?}, not its folder's", work.action) };
+    cx.update(|window, cx| view.update(cx, |v, cx| v.run_action(work.action, window, cx)))?;
+    let title = "Work · Supraman selftest project";
+    let folder_tab = crate::selftest::until_app(view, cx, LOADED_WITHIN, "the folder's Work tab titled by its project", |v, cx| {
+        let tab = v.active.and_then(|id| v.tab(id)).filter(|t| matches!(&t.kind, TabKind::Work(w) if w.read(cx).target == target))?;
+        (tab.title == title).then_some(tab.id)
+    })
+    .await?;
+    if folder_tab == group_tab {
+        bail!("the folder's Open Work activated the group's Work tab {group_tab}");
+    }
+    let again = view.update(cx, |v, cx| v.open_work(target, cx));
+    if again != folder_tab {
+        bail!("opening the folder's Work again opened tab {again}, not {folder_tab}");
+    }
+    view.update(cx, |v, cx| {
+        v.close_tab(folder_tab, cx);
+        v.activate_tab(group_tab, cx);
+    });
+    let gate = format!("{}/{}", crate::selftest::GROUP, crate::selftest::repo());
+    let why = view.read_with(cx, |v, cx| item(v, &gate, cx).and_then(|i| i.dimmed)).ok_or_else(|| anyhow!("{gate}'s Open Work is not dimmed, though no project binds it"))?;
+    Ok(format!("{key}'s Open Work opened \"{title}\" beside the group's tab and again activated it; {gate}'s Open Work dimmed: {why}"))
 }
 
 async fn stream_events(view: &Entity<FleetView>, work: &Entity<WorkView>, fake: &FakeWorkman, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {

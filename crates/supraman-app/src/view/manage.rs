@@ -70,7 +70,7 @@ impl FleetView {
     }
 
     /// A folder row's title and items, with its place in folders.toml.
-    pub(super) fn folder_menu(&self, key: &str, cx: &gpui::App) -> Option<(String, Vec<MenuItem>)> {
+    pub(crate) fn folder_menu(&self, key: &str, cx: &gpui::App) -> Option<(String, Vec<MenuItem>)> {
         let tree = self.tree();
         let (entry, folder) = tree.folders().find(|(_, f)| f.key == key)?;
         Some((folder.place(), folder_items(entry, folder, self.has_closed_background(&entry.name), self.work_why_not(&folder.path, cx))))

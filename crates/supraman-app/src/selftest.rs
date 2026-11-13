@@ -87,7 +87,7 @@ static SCRATCH: Mutex<Option<Scratch>> = Mutex::new(None);
 static SESSION_NAME: Mutex<Option<String>> = Mutex::new(None);
 static REPO: OnceLock<String> = OnceLock::new();
 
-fn repo() -> &'static str {
+pub(crate) fn repo() -> &'static str {
     REPO.get().map_or("", String::as_str)
 }
 
