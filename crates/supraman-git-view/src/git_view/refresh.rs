@@ -162,17 +162,23 @@ impl GitView {
     }
 
     pub(crate) fn live_refresh(&mut self, refresh: Refresh, cx: &mut Context<Self>) {
-        if self.follow.hidden {
-            self.follow.pending = Some(match self.follow.pending.take() {
-                Some(pending) => merge(pending, refresh),
-                None => refresh,
-            });
-            return;
+        match self.held(refresh) {
+            None => {}
+            Some(Refresh::Graph) => self.refresh_graph(None, cx),
+            Some(Refresh::Wip { files }) => self.refresh_wip(files, cx),
         }
-        match refresh {
-            Refresh::Graph => self.refresh_graph(None, cx),
-            Refresh::Wip { files } => self.refresh_wip(files, cx),
+    }
+
+    /// `refresh` kept for when a hidden tab is shown, else handed back to run now.
+    fn held(&mut self, refresh: Refresh) -> Option<Refresh> {
+        if !self.follow.hidden {
+            return Some(refresh);
         }
+        self.follow.pending = Some(match self.follow.pending.take() {
+            Some(pending) => merge(pending, refresh),
+            None => refresh,
+        });
+        None
     }
 
     /// After a write of the tab's own: the watchers refresh once it settles, else this does.
@@ -356,7 +362,10 @@ impl GitView {
         };
         self.follow.wip_failed = None;
         if wip.is_some() != self.wip_row(cx).is_some() {
-            return self.refresh_graph(files, cx);
+            if self.held(Refresh::Graph).is_some() {
+                self.refresh_graph(files, cx);
+            }
+            return;
         }
         let before = std::mem::replace(&mut self.wip, wip);
         if self.selected(cx) == Some(Selected::Wip) {

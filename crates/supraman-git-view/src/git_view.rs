@@ -935,12 +935,8 @@ impl GitView {
 
     /// Why the tab shows no graph, with a Retry that loads it again.
     fn problem(&self, problem: &Problem, cx: &mut Context<Self>) -> AnyElement {
-        let (title, why) = match problem {
-            Problem::Git(why) => ("Git is missing or too old", why),
-            Problem::Failed(why) => ("Cannot read this repository", why),
-        };
         let retry = button::action(&self.hits, "git-retry", "Retry", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| this.reload(cx)));
-        notice(title, why.clone(), cx).child(div().pt_2().child(retry)).into_any_element()
+        notice(problem.title(), problem.why().to_string(), cx).child(div().pt_2().child(retry)).into_any_element()
     }
 
     /// A warning over the tab whose × under `key` runs `dismiss`.
