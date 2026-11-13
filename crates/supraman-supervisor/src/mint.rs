@@ -11,9 +11,11 @@ use serde::{Deserialize, Serialize};
 use supraman_claude::Session;
 use supraman_core::secret::SecretStore;
 
+mod gone;
 mod keeping;
 mod unminted;
 
+pub use gone::{Gone, UNLISTED_LAPSE};
 pub use keeping::{CHECK_EVERY, Checked, Keeping, PING_TIMEOUT, RENEW_MARGIN};
 pub use unminted::Unlisted;
 
@@ -463,7 +465,7 @@ impl Keeper {
 
     /// Records `name`'s `expiresAt` and re-mint label for [`Keeping`], while [`keeping::lock`] is held.
     fn note_locked(&self, name: &str, expires_at: Option<&str>, launched_by: Option<&str>) {
-        let kept = keeping::Kept { expires_at: expires_at.and_then(supraman_core::time::rfc3339_ms), signed_out: false, launched_by: launched_by.map(str::to_string) };
+        let kept = keeping::Kept { expires_at: expires_at.and_then(supraman_core::time::rfc3339_ms), launched_by: launched_by.map(str::to_string), ..Default::default() };
         if let Err(e) = keeping::edit_locked(&self.home, |t| drop(t.insert(name.to_string(), kept))) {
             log::warn!("{name}: {e}; its token is renewed once Workman refuses it");
         }
@@ -507,8 +509,8 @@ impl Keeper {
         .map_err(|e| format!("cannot write the mcp config of {name}: {e}"))
     }
 
-    /// Deletes `name`'s config and kept token; what failed.
-    fn forget(&self, name: &str) -> Vec<String> {
+    /// Deletes `name`'s config and kept token, no revoke: [`revoke`]'s end, and an unlisted record's once its token lapsed ([`Gone::lapsed`]); what failed.
+    pub fn forget(&self, name: &str) -> Vec<String> {
         let mut failed = Vec::new();
         if let Err(e) = remove_mcp_config(&self.mcp_dir, name) {
             failed.push(format!("{}{}", e[..1].to_uppercase(), &e[1..]));
@@ -653,30 +655,39 @@ pub fn still_has_transcript(claude_dir: Option<&Path>, claude_session: &str) -> 
     claude_dir.is_some_and(|dir| supraman_claude::find_transcript(dir, claude_session, None).is_some())
 }
 
-/// Revokes each scheduled run whose claude session and transcript are gone, and drops its record; what failed.
-pub fn revoke_deleted_runs(keeper: &Keeper, minter: &dyn Minter, bearer: impl FnOnce() -> Bearer, absent: &mut Absent, observed: &[Session]) -> Vec<String> {
+/// Revokes each scheduled run whose claude session and transcript are gone, and drops an unlisted one whose token lapsed ([`Keeper::gone`]); what failed.
+pub fn revoke_deleted_runs(keeper: &Keeper, minter: &dyn Minter, bearer: impl FnOnce() -> Bearer, absent: &mut Absent, observed: &[Session], now: crate::Millis) -> Vec<String> {
     let runs = runs_of(&keeper.home);
     let bound: Vec<(String, String)> = runs.iter().flat_map(|(_, r)| r.bound()).collect();
-    let mut deleted = absent.deleted(&bound, observed);
-    deleted.retain(|sid| !still_has_transcript(keeper.claude_dir.as_deref(), sid));
-    if deleted.is_empty() {
-        return Vec::new();
+    let Gone { deleted, lapsed, mut notices } = keeper.gone(absent, &bound, observed, now);
+    if deleted.is_empty() && lapsed.is_empty() {
+        return notices;
     }
-    let bearer = bearer();
-    let mut notices = Vec::new();
-    for (path, _) in runs.iter().filter(|(_, r)| r.bound().iter().any(|(_, sid)| deleted.contains(sid))) {
+    let bearer = (!deleted.is_empty()).then(bearer);
+    for (path, _) in runs.iter().filter(|(_, r)| r.bound().iter().any(|b| deleted.contains(b) || lapsed.contains(b))) {
         let removed = MintedSessions::edit_run(path, |records| {
-            let gone: Vec<String> = records.bound().into_iter().filter(|(_, sid)| deleted.contains(sid)).map(|(name, _)| name).collect();
-            gone.into_iter().filter_map(|name| Some((records.remove(&name)?, name))).collect::<Vec<_>>()
+            let ending: Vec<String> = records.bound().into_iter().filter(|b| deleted.contains(b) || lapsed.contains(b)).map(|(name, _)| name).collect();
+            ending.into_iter().filter_map(|name| Some((records.remove(&name)?, name))).collect::<Vec<_>>()
         });
-        match removed {
-            Ok(removed) => {
-                for (m, name) in removed {
-                    log::info!("scheduled run {name}: its claude session {} is deleted, so its Workman token is revoked", m.claude_session_id.as_deref().unwrap_or_default());
-                    notices.extend(revoke(keeper, minter, &bearer, &name, &m).notices);
+        let removed = match removed {
+            Ok(removed) => removed,
+            Err(e) => {
+                notices.push(format!("Cannot update {}: {e}", path.display()));
+                continue;
+            }
+        };
+        for (m, name) in removed {
+            let sid = m.claude_session_id.clone().unwrap_or_default();
+            match &bearer {
+                Some(bearer) if deleted.contains(&(name.clone(), sid.clone())) => {
+                    log::info!("scheduled run {name}: its claude session {sid} is deleted, so its Workman token is revoked");
+                    notices.extend(revoke(keeper, minter, bearer, &name, &m).notices);
+                }
+                _ => {
+                    log::info!("scheduled run {name}: its claude session {sid} stayed unlisted until its Workman token lapsed, so its record goes");
+                    notices.extend(keeper.forget(&name));
                 }
             }
-            Err(e) => notices.push(format!("Cannot update {}: {e}", path.display())),
         }
     }
     notices
@@ -948,6 +959,8 @@ mod tests {
 
     const SID: &str = "aaaa0001-0000-4000-8000-000000000001";
     const NAME: &str = "fm-demo-workspace";
+    const T0: crate::Millis = 1_800_000_000_000;
+    const MINUTE: crate::Millis = 60_000;
 
     fn listed(session_id: &str) -> Session {
         Session {
@@ -980,7 +993,7 @@ mod tests {
         };
         records.insert_minted(NAME, session, &req);
         records.save().unwrap();
-        keeper.write(NAME, &fake.mcp_url(), &minted.token, None, &[]).unwrap();
+        keeper.write(NAME, &fake.mcp_url(), &minted.token, minted.expires_at.as_deref(), &[]).unwrap();
         (keeper, minted.token)
     }
 
@@ -1134,7 +1147,7 @@ mod tests {
         let signed = || Bearer::Signed { url: fake.mcp_url(), token: "fake-static".into() };
         let other = listed("bbbb0002-0000-4000-8000-000000000002");
         let mut absent = Absent::default();
-        let mut look = |observed: &[Session]| revoke_deleted_runs(&keeper, &HttpMinter::default(), signed, &mut absent, observed);
+        let mut look = |observed: &[Session]| revoke_deleted_runs(&keeper, &HttpMinter::default(), signed, &mut absent, observed, T0);
         assert!(look(&[]).is_empty());
         assert!(look(std::slice::from_ref(&other)).is_empty());
         assert!(sessions.live(&token) && record.exists(), "one snapshot is not a delete");
@@ -1159,7 +1172,7 @@ mod tests {
         let signed = || Bearer::Signed { url: fake.mcp_url(), token: "fake-static".into() };
         let mut absent = Absent::default();
         for _ in 0..2 {
-            assert!(revoke_deleted_runs(&keeper, &HttpMinter::default(), signed, &mut absent, &[listed(other)]).is_empty());
+            assert!(revoke_deleted_runs(&keeper, &HttpMinter::default(), signed, &mut absent, &[listed(other)], T0).is_empty());
         }
         assert!(!sessions.live(&token) && keeper.kept(NAME).is_none(), "the gone name is revoked");
         let left = MintedSessions::load(record).unwrap();
@@ -1167,10 +1180,11 @@ mod tests {
     }
 
     #[test]
-    fn a_run_missing_from_the_listing_whose_transcript_remains_is_not_revoked() {
+    fn a_run_missing_from_the_listing_whose_transcript_remains_is_not_revoked_and_lapses() {
         let home = tempfile::tempdir().unwrap();
         let fake = FakeWorkman::start(Vec::new());
         let sessions = fake.enable_sessions();
+        sessions.set_idle_window(10 * MINUTE, T0);
         let record = MintedSessions::run_path(home.path(), NAME);
         let (keeper, token) = kept_at(home.path(), &fake, record.clone());
         let claude = home.path().join("claude");
@@ -1182,10 +1196,16 @@ mod tests {
         let signed = || Bearer::Signed { url: fake.mcp_url(), token: "fake-static".into() };
         let other = listed("bbbb0002-0000-4000-8000-000000000002");
         let mut absent = Absent::default();
-        for _ in 0..4 {
-            assert!(revoke_deleted_runs(&keeper, &HttpMinter::default(), signed, &mut absent, std::slice::from_ref(&other)).is_empty());
+        let mut look = |at: crate::Millis| revoke_deleted_runs(&keeper, &HttpMinter::default(), signed, &mut absent, std::slice::from_ref(&other), at);
+        for at in [T0, T0 + MINUTE, T0 + 2 * MINUTE, T0 + 9 * MINUTE] {
+            assert!(look(at).is_empty());
         }
         assert!(sessions.live(&token) && record.exists() && keeper.kept(NAME).is_some(), "its transcript says it is not deleted");
+        assert_eq!(keeping::read(home.path()).unwrap()[NAME].unlisted_since, Some(T0 + MINUTE), "unlisted from the second listing without it");
+        assert!(look(T0 + 10 * MINUTE).is_empty(), "no notice");
+        assert!(!record.exists() && keeper.kept(NAME).is_none(), "past its expiresAt, its record and kept token go");
+        assert!(!supraman_claude::mcp_config_path(keeper.mcp_dir(), NAME).unwrap().exists(), "its config goes");
+        assert!(fake.seen().iter().all(|s| s.method != "DELETE"), "never revoked: it lapsed");
     }
 
     #[test]

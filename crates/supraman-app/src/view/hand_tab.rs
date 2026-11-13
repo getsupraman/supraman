@@ -50,7 +50,7 @@ impl FleetView {
         cx.spawn(async move |this, cx| {
             let mut notices = cx
                 .background_executor()
-                .spawn(async move { stale.lock().unwrap_or_else(|e| e.into_inner()).release_last_run() })
+                .spawn(async move { crate::hand::release_last_run(&stale) })
                 .await;
             notices.extend(notice);
             this.update(cx, |this, cx| {
@@ -245,7 +245,7 @@ impl FleetView {
                     continue;
                 }
             }
-            let notice = executor.spawn(async move { hands.lock().unwrap_or_else(|e| e.into_inner()).release(&name) }).await;
+            let notice = executor.spawn(async move { crate::hand::release(&hands, &name) }).await;
             if let Some(notice) = notice {
                 this.update(cx, |this, cx| {
                     this.hand_notices.push(notice);

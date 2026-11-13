@@ -714,7 +714,7 @@ fn a_deleted_claude_session_revokes_once_two_snapshots_miss_it() {
 }
 
 #[test]
-fn a_claude_session_missing_from_the_listing_whose_transcript_remains_is_not_revoked() {
+fn a_claude_session_missing_from_the_listing_whose_transcript_remains_is_not_revoked_or_renewed_and_lapses() {
     let dir = tempfile::tempdir().unwrap();
     let (mut sup, minter) = minted_and_stopped(dir.path());
     let claude = dir.path().join("claude");
@@ -729,6 +729,24 @@ fn a_claude_session_missing_from_the_listing_whose_transcript_remains_is_not_rev
     assert_eq!(minter.take(), [], "its transcript says it is not deleted");
     assert_helped(dir.path(), "fm-demo-workspace");
     assert_eq!(kept(&sup, "fm-demo-workspace"), "wss_fake1");
+
+    let mut keeping = crate::Keeping::default();
+    keeping.signed_in();
+    let signed = || crate::Bearer::Signed { url: static_token().unwrap().url, token: STATIC.into() };
+    let never = |_: &str, _: &str| -> bool { panic!("no ping of an unlisted token") };
+    let checked = keeping.check(sup.keeper(), &minter, signed, NOW + 7 * SECOND, never);
+    assert!(checked.renewed.is_empty() && checked.notices.is_empty(), "{checked:?}");
+    assert_eq!(minter.take(), [], "an unlisted token is never minted afresh");
+
+    let marked = NOW + 4 * SECOND;
+    sup.tick(&[another()], &mut free(), marked + crate::UNLISTED_LAPSE - 1);
+    assert!(sup.minted().get("fm-demo-workspace").is_some(), "its expiresAt unknown: kept until UNLISTED_LAPSE after its mark");
+    sup.tick(&[another()], &mut free(), marked + crate::UNLISTED_LAPSE);
+    assert_eq!(minter.take(), [], "no revoke: it lapsed");
+    assert_eq!(sup.minted().get("fm-demo-workspace"), None, "its record goes");
+    assert_eq!(sup.keeper().kept("fm-demo-workspace"), None, "its kept token goes");
+    assert!(!dir.path().join("workstate-fm-demo-workspace.json").exists(), "its config goes");
+    assert!(sup.take_notices().is_empty());
 }
 
 #[test]
