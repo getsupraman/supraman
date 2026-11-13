@@ -162,7 +162,7 @@ enabled = true
         let all = [outer, inner];
         assert_eq!(holder_of(Path::new(r"P:\Projects\Gaia\src"), &all).map(|w| w.name.as_str()), Some("inner"));
         assert_eq!(holder_of(Path::new(r"Q:\Api\x"), &all).map(|w| w.name.as_str()), Some("inner"));
-        assert_eq!(holder_of(Path::new(r"P:\Other"), &all).map(|w| w.name.as_str()), Some("outer"));
+        assert_eq!(holder_of(Path::new(r"P:\Projects\Other"), &all).map(|w| w.name.as_str()), Some("outer"));
         assert!(holder_of(Path::new(r"D:\x"), &all).is_none());
     }
 }
