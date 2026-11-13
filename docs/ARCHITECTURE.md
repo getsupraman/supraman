@@ -126,7 +126,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `proc_tree` — which claude session runs under a tab's shell.
 - `transcript` (`Transcripts`: `scan_with` with progress, `with_cache`, `cached`; `first_prompt`; `Usage`, a session's input/output/cache tokens, each message once) — closed sessions from the transcript files, read only: head and tail of a new file, the grown part of a known one, on parallel readers; the file cache persists at `<home>/cache/transcripts.json` so a start shows its rows before any file is read.
 - `forget::forget_transcript` — the one write under the claude dir (see delete confinement).
-- `assign` (`place`, `place_with`, `holding`) — the one placement rule: a session shows under the deepest listed folder holding its cwd or its linked worktree's main checkout, across every group and the top level.
+- `assign` (`place`, `place_with`, `holding`) — the one placement rule: a session shows under the deepest listed folder or shown child holding its cwd or its linked worktree's main checkout, across every group and the top level.
 
 ### supraman-supervisor (`crates/supraman-supervisor/src/`)
 
@@ -163,7 +163,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 ### A tab starting a session
 1. `crates/supraman-app/src/view/hand_tab.rs` `FleetView::new_claude` → `hand_claude_in`: pushes a shell tab (or turns a prompt tab into it), then `hand::launch_locked` off the UI thread.
 2. `crates/supraman-app/src/hand.rs` `launch_locked` picks the name under the lock (`Hands::pick`: `session_name`, `next_name`), mints a token outside it (below) and records it (`Hands::finish`), writing the config through `mcp_config_path`.
-3. `view/hand_tab.rs` `extras_from` → `hand.rs` `extras`: from `upkeep::launch_config`, the plugin flags and `sm_allowed_tools`, the hook env (`SUPRAMAN_ROLE=hand`, `SUPRAMAN_SESSION`, `SUPRAMAN_REPO` the listed folder `holding` the cwd, the home vars) and the folder of `sm.exe`; with no plugin found, nothing and a notice.
+3. `view/hand_tab.rs` `extras_from` → `hand.rs` `extras`: from `upkeep::launch_config`, the plugin flags and `sm_allowed_tools`, the hook env (`SUPRAMAN_ROLE=hand`, `SUPRAMAN_SESSION`, `SUPRAMAN_REPO` the folder `holding` the cwd, a shown child inside one, the home vars) and the folder of `sm.exe`; with no plugin found, nothing and a notice.
 4. `hand.rs` `Launch::script_with` builds `$env:Path = '<sm dir>;' + $env:Path; claude [--session-id <uuid>] --mcp-config <path> <plugin flags>` in a try/finally that deletes the config when claude exits; `shell_args_with` gives it as `-NoExit -EncodedCommand`, and `view/shells.rs` `powershell` runs those under `-ExecutionPolicy Bypass` in `supraman_core::platform::shell::terminal_powershell()`: `pwsh` from the first `PATH` folder holding it, else Windows PowerShell, by absolute path, looked up once per run.
 5. `view.rs` `start_terminal_env` builds the PTY with `supraman_term::TerminalBuilder` and the hook env; `supraman_ui::term_element::terminal_grid` paints it. The session's hooks (`sm hook`) append to the home and its SessionStart injects `roles/hand.md`; the tree reads its events by session id (`HookSignal`). It is not `fm-`: the busy count leaves it out.
 6. When the config file is gone (`Hands::ended`), `Hands::release` revokes the token.

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use supraman_core::folders::{Entries, Entry};
+use supraman_core::folders::{Entries, Entry, Shown};
 use supraman_core::paths::{folder_name, path_key};
 use supraman_ui::hover_card::HoverCard;
 
@@ -65,14 +65,14 @@ pub fn session_label(name: &str, id: &str) -> String {
     if name.is_empty() { id.to_string() } else { format!("{name} · {id}") }
 }
 
-/// The group and the listed folder a session in `cwd` shows under ([`supraman_claude::holding`]), without a disk walk.
-pub fn place(cwd: &Path, entries: &Entries) -> (Option<String>, Option<String>) {
-    let Some(folder) = supraman_claude::holding(cwd, entries, |_| None) else {
+/// The group and the folder a session in `cwd` shows under ([`supraman_claude::holding`]), without a disk walk.
+pub fn place(cwd: &Path, entries: &Entries, shown: &Shown) -> (Option<String>, Option<String>) {
+    let Some(at) = supraman_claude::holding(cwd, entries, shown, |_| None) else {
         return (None, None);
     };
-    let key = path_key(&folder.path);
+    let key = path_key(&at.listed.path);
     let group = entries.list.iter().find(|e| e.folders().iter().any(|f| path_key(&f.path) == key)).and_then(Entry::group_name);
-    (group.map(str::to_string), Some(folder_name(&folder.path)))
+    (group.map(str::to_string), Some(folder_name(&at.folder)))
 }
 
 #[cfg(test)]
@@ -106,7 +106,7 @@ mod tests {
             Entry::Folder(FolderEntry::new("P:/Projects")),
             Entry::Group { name: "autowork".into(), folders: vec![FolderEntry::new(r"P:\Projects\AutoWork"), FolderEntry::new(r"P:\Projects\AutoWork\.repos\zed")] },
         ]);
-        let at = |p: &str| place(Path::new(p), &entries);
+        let at = |p: &str| place(Path::new(p), &entries, &Shown::new());
         assert_eq!(at(r"p:\projects\autowork\.repos\zed\crates"), (Some("autowork".into()), Some("zed".into())));
         assert_eq!(at(r"P:\Projects\AutoWork\docs"), (Some("autowork".into()), Some("AutoWork".into())));
         assert_eq!(at(r"P:\Projects\Other"), (None, Some("Projects".into())));

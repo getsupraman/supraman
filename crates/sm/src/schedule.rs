@@ -71,7 +71,7 @@ fn folder_of(home: &Path, given: Option<&str>) -> Result<PathBuf, Failure> {
         None => std::env::current_dir().map_err(|e| Failure::Usage(format!("cannot read the current folder: {e}")))?,
     };
     let entries = folders::load(home)?;
-    supraman_claude::holding(&dir, &entries, supraman_claude::main_repo).map(|f| f.path.clone()).ok_or_else(|| {
+    supraman_claude::holding(&dir, &entries, &folders::Shown::new(), supraman_claude::main_repo).map(|h| h.listed.path.clone()).ok_or_else(|| {
         Failure::Refused(format!("error: no listed folder holds {}; give --folder <dir> of a listed folder, or list it with sm folder add <dir>", dir.display()))
     })
 }

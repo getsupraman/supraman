@@ -204,6 +204,15 @@ impl Tree {
         self.folders().map(|(_, f)| f).find(|f| f.key == key)
     }
 
+    /// The entry a session in `cwd` belongs to, its listed folder's, and the folder it shows under
+    /// ([`supraman_claude::holding`]).
+    pub fn holding(&self, entries: &Entries, shown: &Shown, cwd: &Path) -> Option<(String, PathBuf)> {
+        let at = supraman_claude::holding(cwd, entries, shown, |_| None)?;
+        let key = path_key(&at.listed.path);
+        let (entry, _) = self.folders().find(|(_, f)| f.listed() && path_key(&f.path) == key)?;
+        Some((entry.name.clone(), at.folder))
+    }
+
     pub fn entry(&self, name: &str) -> Option<&EntryNode> {
         self.entries.iter().find(|e| e.name == name)
     }
@@ -631,10 +640,10 @@ pub fn display_name(session: &Session) -> &str {
     if session.name.is_empty() { short_id(session) } else { &session.name }
 }
 
-/// The listed folder holding `active` (the deepest), else the first listed folder, else `home`.
-pub fn shell_cwd(active: Option<&Path>, entries: &Entries, home: Option<PathBuf>) -> Option<PathBuf> {
-    let holder = active.and_then(|cwd| supraman_claude::holding(cwd, entries, |_| None));
-    holder.or(entries.folders().next()).map(|f| f.path.clone()).or(home)
+/// The folder holding `active` ([`supraman_claude::holding`]), else the first listed folder, else `home`.
+pub fn shell_cwd(active: Option<&Path>, entries: &Entries, shown: &Shown, home: Option<PathBuf>) -> Option<PathBuf> {
+    let holder = active.and_then(|cwd| supraman_claude::holding(cwd, entries, shown, |_| None)).map(|at| at.folder);
+    holder.or_else(|| entries.folders().next().map(|f| f.path.clone())).or(home)
 }
 
 #[cfg(test)]

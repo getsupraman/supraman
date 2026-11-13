@@ -15,7 +15,7 @@ fn top(path: &str) -> Entry {
 fn shell_cwd_is_the_deepest_listed_folder_then_the_first_then_home() {
     let entries = Entries::new(vec![top("P:/Projects/A"), group("b", &[r"P:\Projects\B", r"P:\Projects\B\inner"])]);
     let home = Some(PathBuf::from(r"C:\Users\me"));
-    let cwd = |active: Option<&str>, entries: &Entries| shell_cwd(active.map(Path::new), entries, home.clone());
+    let cwd = |active: Option<&str>, entries: &Entries| shell_cwd(active.map(Path::new), entries, &Shown::new(), home.clone());
     let p = |s: &str| Some(PathBuf::from(s));
     assert_eq!(cwd(Some(r"p:\projects\b\repo\src"), &entries), p(r"P:\Projects\B"), "another drive-letter case");
     assert_eq!(cwd(Some(r"P:\Projects\A\x"), &entries), p("P:/Projects/A"), "forward-slash path");
@@ -401,4 +401,29 @@ fn a_shown_child_is_a_row_after_its_parent_and_takes_the_sessions_below_it() {
     let hidden = Entries::new(vec![top(r"P:\L")]);
     let tree = build(&hidden, &list, NOW, false, &TreeInputs { disk: Some(&disk), ..TreeInputs::default() });
     assert_eq!(folders(&tree), [f("L", &["ui", "top", "ed"])], "a parent that does not show them keeps them");
+}
+
+#[test]
+fn a_session_in_a_shown_child_holds_the_child_as_its_folder_and_its_parents_entry() {
+    let mut infra = FolderEntry::new(r"P:\ops\infra");
+    infra.show_subfolders = true;
+    let entries = Entries::new(vec![Entry::Group { name: "ops".into(), folders: vec![infra] }, top(r"P:\web")]);
+    let shown = Shown::from([(path_key(Path::new(r"P:\ops\infra")), vec![PathBuf::from(r"P:\ops\infra\terraform")])]);
+    let disk = Disk { shown: shown.clone(), ..Disk::default() };
+    let tree = build(&entries, &[], NOW, false, &TreeInputs { disk: Some(&disk), ..TreeInputs::default() });
+    let at = |cwd: &str| tree.holding(&entries, &shown, Path::new(cwd));
+    let terraform = Some(("ops".to_string(), PathBuf::from(r"P:\ops\infra\terraform")));
+    assert_eq!(at(r"P:\ops\infra\terraform\modules"), terraform, "the child, in the group its parent sits in");
+    assert_eq!(at(r"P:\ops\infra\docs"), Some(("ops".to_string(), PathBuf::from(r"P:\ops\infra"))));
+    assert_eq!(at(r"P:\web\src"), Some(("web".to_string(), PathBuf::from(r"P:\web"))));
+    assert_eq!(at(r"P:\elsewhere"), None);
+    assert_eq!(shell_cwd(Some(Path::new(r"P:\ops\infra\terraform\modules")), &entries, &shown, None).as_deref(), Some(Path::new(r"P:\ops\infra\terraform")), "a new shell starts in the child");
+
+    let (entry, folder) = at(r"P:\ops\infra\terraform").unwrap();
+    let ops = tree.entry(&entry).unwrap();
+    let names = |chosen: Option<&Path>| crate::view::start::folders(ops, chosen).into_iter().map(|(n, _)| n).collect::<Vec<_>>();
+    assert_eq!(names(Some(&folder)), ["infra", "terraform"], "the Start page offers the preselected child");
+    assert_eq!(names(None), ["infra"], "and only the listed folders otherwise");
+    let (group, name) = crate::tab_card::place(Path::new(r"P:\ops\infra\terraform\modules"), &entries, &shown);
+    assert_eq!((group.as_deref(), name.as_deref()), (Some("ops"), Some("terraform")), "the tab's card names the child");
 }

@@ -14,7 +14,7 @@ pub mod proc_tree;
 mod session;
 pub mod transcript;
 
-pub use assign::{Placement, holding, main_repo, main_repo_walks, place, place_with};
+pub use assign::{Holding, Placement, holding, main_repo, main_repo_walks, place, place_with};
 pub use cli::{
     ClaudeVersion, LIST_TIMEOUT, MIN_VERSION, TESTED_VERSION, check_supported, check_version, cli_version,
     list_sessions, parse_version,

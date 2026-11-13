@@ -32,12 +32,25 @@ pub fn place_with(sessions: &[Session], entries: &Entries, shown: &Shown, main_o
     out
 }
 
-/// The listed folder holding `cwd` by [`place_with`]'s rule over the listed folders alone (the entry a session
-/// belongs to); a path listed twice is its first.
-pub fn holding<'a>(cwd: &Path, entries: &'a Entries, main_of: impl Fn(&Path) -> Option<PathBuf>) -> Option<&'a FolderEntry> {
-    let keys: Vec<String> = entries.folders().map(|f| path_key(&f.path)).collect();
+/// The folder a session in `cwd` shows under, by [`place_with`]'s rule, and the listed folder it sits in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Holding<'a> {
+    /// The deepest listed folder or shown child holding `cwd`: the session's folder.
+    pub folder: PathBuf,
+    /// `folder` itself when listed, else the listed folder showing it: the entry's and the schedules' folder.
+    pub listed: &'a FolderEntry,
+}
+
+/// The folder holding `cwd` among `entries` and their `shown` children ([`Entries::placed`]); a path listed twice
+/// is its first. `sm` has no shown children and passes an empty [`Shown`].
+pub fn holding<'a>(cwd: &Path, entries: &'a Entries, shown: &Shown, main_of: impl Fn(&Path) -> Option<PathBuf>) -> Option<Holding<'a>> {
+    let placed: Vec<&Path> = entries.placed(shown).collect();
+    let keys: Vec<String> = placed.iter().map(|p| path_key(p)).collect();
     let key = folder_key(cwd, &keys, main_of)?;
-    entries.folders().find(|f| path_key(&f.path) == key)
+    let folder = placed[keys.iter().position(|k| *k == key)?].to_path_buf();
+    let shows = |f: &FolderEntry| f.show_subfolders && shown.get(&path_key(&f.path)).is_some_and(|c| c.iter().any(|c| path_key(c) == key));
+    let listed = entries.folders().find(|f| path_key(&f.path) == key).or_else(|| entries.folders().find(|f| shows(f)))?;
+    Some(Holding { folder, listed })
 }
 
 /// The deepest of `folders` holding `cwd` or the main checkout of the linked worktree `cwd` lies in.

@@ -92,7 +92,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
 
     click(view, &format!("task-{WORKSPACE}"), cx).await?;
     let tab = start_tab(view, cx).await?;
-    let choices = view.read_with(cx, |v, _| v.tree().entry(WORKSPACE).map(crate::view::start::folders)).unwrap_or_default();
+    let choices = view.read_with(cx, |v, _| v.tree().entry(WORKSPACE).map(|e| crate::view::start::folders(e, None))).unwrap_or_default();
     let index = choices
         .iter()
         .position(|(_, p)| supraman_core::paths::path_key(p) == supraman_core::paths::path_key(&folder))

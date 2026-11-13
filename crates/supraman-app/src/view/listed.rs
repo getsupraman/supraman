@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use supraman_core::folders::{self, Entries};
 
@@ -53,11 +53,13 @@ impl Listed {
 }
 
 impl FleetView {
-    /// The entry (a group, or a top-level folder) whose folder a session in `cwd` shows under.
+    /// The entry (a group, or a top-level folder) a session in `cwd` belongs to ([`fleet::Tree::holding`]).
     pub(super) fn entry_of(&self, cwd: &Path) -> Option<String> {
-        let folder = supraman_claude::holding(cwd, &self.listed.entries, |_| None)?;
-        let key = supraman_core::paths::path_key(&folder.path);
-        self.tree().folders().find(|(_, f)| supraman_core::paths::path_key(&f.path) == key).map(|(e, _)| e.name.clone())
+        self.entry_and_folder(cwd).map(|(entry, _)| entry)
+    }
+
+    pub(super) fn entry_and_folder(&self, cwd: &Path) -> Option<(String, PathBuf)> {
+        self.tree().holding(&self.listed.entries, &self.listed.disk.shown, cwd)
     }
 
     /// Every entry's name in the tree's order: a group's, a top-level folder's key.
