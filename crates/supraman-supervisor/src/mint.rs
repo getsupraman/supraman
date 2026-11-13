@@ -12,8 +12,10 @@ use supraman_claude::Session;
 use supraman_core::secret::SecretStore;
 
 mod keeping;
+mod unminted;
 
 pub use keeping::{CHECK_EVERY, Checked, Keeping, PING_TIMEOUT, RENEW_MARGIN};
+pub use unminted::Unlisted;
 
 /// `POST /api/agent-sessions`; `role` is the Workman role (never above the bearer's), `external_role` Supraman's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

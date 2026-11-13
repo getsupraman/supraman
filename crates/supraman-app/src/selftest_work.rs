@@ -287,7 +287,7 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
     // signed in to the fake's own OAuth server, so the Workman notice has nothing to say during the gate; step 7d signs out and in again through the UI
     let oauth = fake.enable_oauth();
     crate::selftest::set_workman(fake.base())?;
-    crate::signin::sign_in(home, fake.base()).map_err(|e| anyhow!("signing in to the fake Workman: {e}"))?;
+    crate::signin::sign_in(home, fake.base(), None).map_err(|e| anyhow!("signing in to the fake Workman: {e}"))?;
     println!(
         "step 1w: workspace {WORKSPACE} = {} (folder repo, origin {REMOTE}); fake Workman at {} (project {WORKSPACE} bound to that remote, runs sw2 live, sw1 done), signed in through its fake OAuth server",
         root.display(),

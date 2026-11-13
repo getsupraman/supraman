@@ -28,15 +28,16 @@ pub fn browser() -> Box<dyn Fn(&str) -> Result<(), String> + Send + Sync> {
     Box::new(open_system_browser)
 }
 
-pub fn sign_in(home: &Path, origin: &str) -> Result<supraman_workman::AuthStatus, supraman_workman::AuthError> {
+/// Blocks; the [+] tabs started signed out get their tokens after it ([`crate::hand::mint_helped`]).
+pub fn sign_in(home: &Path, origin: &str, hands: Option<&Mutex<crate::hand::Hands>>) -> Result<crate::hand::HelpedMinted, supraman_workman::AuthError> {
     let auth = auth(home);
     supraman_supervisor::signing_in();
-    let status = auth.sign_in(origin, &browser())?;
+    auth.sign_in(origin, &browser())?;
     crate::keeping::signed_in();
     if let Some(issuer) = auth.issuer_of(origin) {
         ISSUERS.lock().unwrap_or_else(|e| e.into_inner()).push((home.to_path_buf(), issuer));
     }
-    Ok(status)
+    Ok(hands.map(crate::hand::mint_helped).unwrap_or_default())
 }
 
 #[cfg(feature = "selftest")]

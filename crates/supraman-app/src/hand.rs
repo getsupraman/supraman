@@ -27,8 +27,8 @@ pub enum Launch {
     Plain,
     /// `name` keys the file and `hands.json`; `session` is the Workman session's name.
     Minted { name: String, session: String, config: PathBuf, notice: Option<String>, new_session: Option<String> },
-    /// No token of its own (signed out, or the mint failed, said in `notice`): its config's helper prints the placeholder.
-    Helped { name: String, config: PathBuf, notice: Option<String> },
+    /// No token of its own (signed out, or the mint failed, said in `notice`): its helper prints the placeholder until [`mint_helped`].
+    Helped { name: String, config: PathBuf, notice: Option<String>, new_session: Option<String> },
     Unminted(String),
 }
 
@@ -54,7 +54,7 @@ impl Launch {
         let script = match self {
             Launch::Minted { config, .. } | Launch::Helped { config, .. } => {
                 let new_session = match self {
-                    Launch::Minted { new_session, .. } => new_session.as_ref(),
+                    Launch::Minted { new_session, .. } | Launch::Helped { new_session, .. } => new_session.as_ref(),
                     _ => None,
                 };
                 let path = quote(&config.to_string_lossy());
@@ -148,8 +148,8 @@ pub struct Hands {
     sessions: std::collections::HashMap<String, String>,
     /// Names a launch holds while its mint runs outside the lock, with their Workman session names.
     picked: std::collections::HashMap<String, String>,
-    /// Names of [`Launch::Helped`] tabs, held while their config exists.
-    helped: std::collections::HashSet<String>,
+    /// [`Launch::Helped`] tabs by name, held while their config exists.
+    helped: std::collections::HashMap<String, HelpedTab>,
     /// Servers of released tokens that were not revoked here: their grants go ([`Self::take_left`]).
     left: Vec<String>,
     /// Where `continued-in` chains and claude's live sessions are read; without it a session is its own newest.
@@ -180,12 +180,63 @@ pub fn launch_locked(hands: &Mutex<Hands>, cwd: &Path, own: Option<&str>, claude
 }
 
 fn launch_with<G: std::ops::DerefMut<Target = Hands>>(lock: impl Fn() -> G, cwd: &Path, own: Option<&str>, claude_session: Option<&str>) -> Launch {
-    let mut pending = match lock().pick(cwd, own, claude_session) {
-        Ok(p) => p,
-        Err(launch) => return launch,
-    };
-    let minted = pending.mint(|wanted, tried, held| lock().next_fresh(cwd, wanted, tried, held));
+    let picked = lock().pick(cwd, own, claude_session);
+    match picked {
+        Ok(pending) => mint_picked(&lock, pending),
+        Err(launch) => launch,
+    }
+}
+
+/// The one mint of a [+] tab, a launch's or a [`mint_helped`] one's: the lock is held only around the mint.
+fn mint_picked<G: std::ops::DerefMut<Target = Hands>>(lock: &impl Fn() -> G, mut pending: Pending) -> Launch {
+    let (cwd, keep) = (PathBuf::from(&pending.request.cwd), pending.keep_name);
+    let minted = pending.mint(|wanted, tried, held| lock().next_fresh(&cwd, wanted, tried, held, keep));
     lock().finish(pending, minted)
+}
+
+/// What [`mint_helped`] did: each tab now minted, by its key with its Workman session's name, and what failed.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct HelpedMinted {
+    pub minted: Vec<(String, String)>,
+    pub notices: Vec<String>,
+}
+
+/// After a sign-in, each [`Launch::Helped`] tab whose claude runs is minted in place: its helper hands claude the token at its next connect.
+pub fn mint_helped(hands: &Mutex<Hands>) -> HelpedMinted {
+    mint_helped_with(|| hands.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
+fn mint_helped_with<G: std::ops::DerefMut<Target = Hands>>(lock: impl Fn() -> G) -> HelpedMinted {
+    let mut done = HelpedMinted::default();
+    let due = lock().helped_running();
+    for (name, tab) in due {
+        let picked = lock().pick_helped(name, tab);
+        let pending = match picked {
+            Ok(pending) => pending,
+            Err(notice) => {
+                done.notices.extend(notice);
+                continue;
+            }
+        };
+        match mint_picked(&lock, pending) {
+            Launch::Minted { name, session, notice, .. } => {
+                done.minted.push((name, session));
+                done.notices.extend(notice);
+            }
+            Launch::Helped { notice, .. } => done.notices.extend(notice),
+            Launch::Unminted(notice) => done.notices.extend((!notice.is_empty()).then_some(notice)),
+            Launch::Plain => {}
+        }
+    }
+    done
+}
+
+/// What a [`Launch::Helped`] tab is minted from after a sign-in.
+#[derive(Debug, Clone)]
+struct HelpedTab {
+    cwd: PathBuf,
+    own: Option<String>,
+    claude_session: Option<String>,
 }
 
 /// A launch between [`Hands::pick`] and [`Hands::finish`]: `name` keys the file and is held for it meanwhile.
@@ -201,6 +252,9 @@ struct Pending {
     notice: Option<String>,
     new_session: Option<String>,
     claude_session: Option<String>,
+    own: Option<String>,
+    /// A helped tab's: its config's name stays, as its claude reads that file; a 409 changes the Workman session's only.
+    keep_name: bool,
 }
 
 impl Pending {
@@ -235,7 +289,9 @@ impl Pending {
                     };
                     log::info!("hand mint {}: Workman session {next}, not {wanted}: {reason}", self.name);
                     tried.push(next.clone());
-                    self.name = next.clone();
+                    if !self.keep_name {
+                        self.name = next.clone();
+                    }
                     self.request.name = next;
                     self.request.replace = false;
                     self.request.takeover_from = None;
@@ -325,15 +381,17 @@ impl Hands {
         let folder = folder_slug(cwd);
         (1..)
             .map(move |n| format!("hand-{folder}-{n}"))
-            .filter(move |n| self.minted.get(n).is_none() && !self.helped.contains(n) && (n == held || !self.picked.contains_key(n)))
+            .filter(move |n| {
+                self.minted.get(n).is_none() && !self.helped.contains_key(n) && !self.sessions.values().any(|s| s == n) && (n == held || !self.picked.contains_key(n))
+            })
     }
 
     /// A tab without a token of its own gets its helped config under a free name, never the user's `workman` entry.
-    fn helped(&mut self, name: String, notice: Option<String>) -> Launch {
+    fn helped(&mut self, name: String, tab: HelpedTab, new_session: Option<String>, notice: Option<String>) -> Launch {
         match supraman_supervisor::mcp_url(&self.auth).and_then(|url| self.keeper().write_unminted(&name, &url, &[])) {
             Ok(config) => {
-                self.helped.insert(name.clone());
-                Launch::Helped { name, config, notice }
+                self.helped.insert(name.clone(), tab);
+                Launch::Helped { name, config, notice, new_session }
             }
             Err(e) => Launch::Unminted(format!("{}This claude session runs without Workman: {e}", notice.map(|n| format!("{n}; ")).unwrap_or_default())),
         }
@@ -403,34 +461,73 @@ impl Hands {
     /// The name of a launch, held for it until [`Self::finish`], and the mint to make.
     fn pick(&mut self, cwd: &Path, own: Option<&str>, claude_session: Option<&str>) -> Result<Pending, Launch> {
         let dir = self.mcp_dir();
-        self.helped.retain(|n| supraman_claude::mcp_config_path(&dir, n).is_ok_and(|p| p.exists()));
-        let (url, bearer) = match self.bearer() {
-            Ok(Some(b)) => b,
-            Ok(None) => return Err(self.helped(self.next_name(cwd), None)),
-            Err(e) => return Err(self.helped(self.next_name(cwd), Some(format!("This claude session runs without its own Workman token: {e}")))),
-        };
-        let notice = self.follow_chains();
+        self.helped.retain(|n, _| supraman_claude::mcp_config_path(&dir, n).is_ok_and(|p| p.exists()));
         let new_session = claude_session.is_none().then(supraman_claude::new_session_id);
         let claude_session = claude_session
             .filter(|s| supraman_claude::is_session_id(s))
             .map(str::to_string)
             .or_else(|| new_session.clone());
-        let mut name = self.next_name(cwd);
+        let tab = HelpedTab { cwd: cwd.to_path_buf(), own: own.map(str::to_string), claude_session };
+        let (url, bearer) = match self.bearer() {
+            Ok(Some(b)) => b,
+            Ok(None) => return Err(self.helped(self.next_name(cwd), tab, new_session, None)),
+            Err(e) => return Err(self.helped(self.next_name(cwd), tab, new_session, Some(format!("This claude session runs without its own Workman token: {e}")))),
+        };
+        let notice = self.follow_chains();
+        Ok(self.pending(url, bearer, tab, None, new_session, notice))
+    }
+
+    /// Each helped tab whose claude session (the newest of its chain) runs; one with none known is skipped.
+    fn helped_running(&self) -> Vec<(String, HelpedTab)> {
+        let mut due = Vec::new();
+        for (name, tab) in &self.helped {
+            let Some(sid) = tab.claude_session.as_deref() else {
+                log::info!("hand {name}: no claude session is known, so the sign-in mints it no token");
+                continue;
+            };
+            let newest = self.newest(sid);
+            if self.runs(&newest) {
+                due.push((name.clone(), HelpedTab { claude_session: Some(newest), ..tab.clone() }));
+            }
+        }
+        due
+    }
+
+    /// The mint of helped tab `name`, its name held as a launch's; `Err` while it is gone or there is no sign-in.
+    fn pick_helped(&mut self, name: String, tab: HelpedTab) -> Result<Pending, Option<String>> {
+        if !self.helped.contains_key(&name) {
+            return Err(None);
+        }
+        let (url, bearer) = match self.bearer() {
+            Ok(Some(b)) => b,
+            Ok(None) => return Err(None),
+            Err(e) => return Err(Some(format!("{name} runs without its own Workman token after the sign-in: {e}"))),
+        };
+        let notice = self.follow_chains();
+        Ok(self.pending(url, bearer, tab, Some(name), None, notice))
+    }
+
+    /// `keep` is a helped tab's name, which its mint keeps; else the next free name, or an exited holder's.
+    fn pending(&mut self, url: String, bearer: String, tab: HelpedTab, keep: Option<String>, new_session: Option<String>, notice: Option<String>) -> Pending {
+        let HelpedTab { cwd, own, claude_session } = tab;
+        let keep_name = keep.is_some();
+        let mut name = keep.unwrap_or_else(|| self.next_name(&cwd));
         let folder = cwd.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
         let mut request = MintRequest {
-            name: own.and_then(session_name).unwrap_or_else(|| name.clone()),
+            name: own.as_deref().and_then(session_name).unwrap_or_else(|| name.clone()),
             role: ROLE.into(),
             launched_by: launched_by(HAND_LAUNCHER),
             origin: launched_by(&format!("{HAND_LAUNCHER}/{folder}")),
             cwd: cwd.to_string_lossy().into_owned(),
             external_role: EXTERNAL_ROLE.into(),
             replace: self.holder_exited(claude_session.as_deref()),
-            repo: (self.repo_of)(cwd),
+            repo: (self.repo_of)(&cwd),
             claude_session_id: claude_session.clone(),
             takeover_from: None,
         };
         // the exited holder's own name: its config and kept token are rewritten in place
-        if request.replace
+        if !keep_name
+            && request.replace
             && let Some(held) = self.minted.names().find(|n| self.minted.get(n).is_some_and(|m| m.claude_session_id == claude_session) && self.ended(n))
         {
             name = held.clone();
@@ -441,25 +538,31 @@ impl Hands {
         }
         self.picked.insert(name.clone(), request.name.clone());
         let former = self.minted.launched_by(&request.name).map(str::to_string);
-        Ok(Pending { base: supraman_core::url::origin(&url), url, bearer, minter: self.minter.clone(), request, former, name, notice, new_session, claude_session })
+        let base = supraman_core::url::origin(&url);
+        Pending { base, url, bearer, minter: self.minter.clone(), request, former, name, notice, new_session, claude_session, own, keep_name }
     }
 
-    /// The next free name after a 409 for the launch holding `held`, held for it instead; never `wanted` or one `tried`.
-    fn next_fresh(&mut self, cwd: &Path, wanted: &str, tried: &[String], held: &str) -> Option<String> {
+    /// The next free name after a 409 for the launch holding `held`, held for it (its Workman session's only while it `keep`s its name); never `wanted` or one `tried`.
+    fn next_fresh(&mut self, cwd: &Path, wanted: &str, tried: &[String], held: &str, keep: bool) -> Option<String> {
         let next = self.free_names(cwd, held).find(|n| n != wanted && !tried.contains(n))?;
-        let session = self.picked.remove(held).unwrap_or_default();
-        self.picked.insert(next.clone(), session);
+        if keep {
+            self.picked.insert(held.to_string(), next.clone());
+        } else {
+            let session = self.picked.remove(held).unwrap_or_default();
+            self.picked.insert(next.clone(), session);
+        }
         Some(next)
     }
 
     fn finish(&mut self, pending: Pending, minted: Result<Minted, MintError>) -> Launch {
-        let Pending { url, base, request, name, mut notice, new_session, claude_session, .. } = pending;
+        let Pending { url, base, request, name, mut notice, new_session, claude_session, own, keep_name, .. } = pending;
         self.picked.remove(&name);
         let minted = match minted {
             Ok(m) => m,
             Err(e) => {
-                let name = if self.minted.get(&name).is_some() { self.next_name(Path::new(&request.cwd)) } else { name };
-                return self.helped(name, Some(format!("This claude session runs without its own Workman token: cannot mint an {ROLE} one ({e})")));
+                let name = if !keep_name && self.minted.get(&name).is_some() { self.next_name(Path::new(&request.cwd)) } else { name };
+                let tab = HelpedTab { cwd: PathBuf::from(&request.cwd), own, claude_session };
+                return self.helped(name, tab, new_session, Some(format!("This claude session runs without its own Workman token: cannot mint an {ROLE} one ({e})")));
             }
         };
         let session = MintedSession { session_id: minted.session_id.clone(), role: EXTERNAL_ROLE.into(), claude_session_id: claude_session, origin: Some(base) };
@@ -468,6 +571,10 @@ impl Hands {
             notice = Some(notice.map_or(unsaved.clone(), |n| format!("{n}; {unsaved}")));
         }
         self.sessions.insert(name.clone(), request.name.clone());
+        if keep_name && self.helped.remove(&name).is_none() {
+            log::info!("hand {name}: its tab closed while its token was minted, so the token is revoked");
+            return Launch::Unminted(self.end(&name).unwrap_or_default());
+        }
         match self.write_config(&name, &url, &minted.token, minted.expires_at.as_deref()) {
             Ok(config) => Launch::Minted { name, session: request.name, config, notice, new_session },
             Err(e) => {
@@ -481,11 +588,14 @@ impl Hands {
     }
 
     pub fn ended(&self, name: &str) -> bool {
-        self.minted.get(name).is_some() && self.config_path(name).is_ok_and(|p| !p.exists())
+        (self.minted.get(name).is_some() || self.helped.contains_key(name)) && self.config_path(name).is_ok_and(|p| !p.exists())
     }
 
-    /// Revokes `name`'s token unless its claude session or a continuation of it still holds it ([`Self::follow`]).
+    /// Revokes `name`'s token unless its claude session or a continuation of it still holds it ([`Self::follow`]); a helped tab's config goes.
     pub fn release(&mut self, name: &str) -> Option<String> {
+        if self.helped.remove(name).is_some() {
+            return self.keeper().forget_unminted(name);
+        }
         if self.minted.get(name).is_some() && (self.follow(name) || self.carried.contains(name) || self.holder_runs(name)) {
             log::info!("hand {name} kept: the claude session holding its token runs");
             self.sessions.remove(name);
@@ -554,6 +664,11 @@ impl Hands {
 
     pub fn take_left(&mut self) -> Vec<String> {
         std::mem::take(&mut self.left)
+    }
+
+    /// The helped tabs' names, whose token-less configs only their tab ends ([`Keeper::sweep_unminted`]).
+    pub fn held(&self) -> Vec<String> {
+        self.helped.keys().cloned().collect()
     }
 
     #[cfg(test)]
@@ -1104,7 +1219,7 @@ mod tests {
 
     /// `launch` is a [`Launch::Helped`] whose config names `url`, runs the helper and holds no token, with none kept.
     fn assert_helped_tab(hands: &Hands, launch: &Launch, url: &str) -> (String, Option<String>) {
-        let Launch::Helped { name, config, notice } = launch else { panic!("{launch:?}") };
+        let Launch::Helped { name, config, notice, .. } = launch else { panic!("{launch:?}") };
         assert_eq!(config, &supraman_claude::mcp_config_path(&hands.mcp_dir(), name).unwrap());
         let text = std::fs::read_to_string(config).unwrap();
         let workman = &serde_json::from_str::<serde_json::Value>(&text).unwrap()["mcpServers"]["workman"];
@@ -1113,7 +1228,7 @@ mod tests {
         assert!(!text.contains("Bearer") && !text.contains("wss_"), "no token in the config: {text}");
         assert_eq!(hands.helper.1.get(&supraman_claude::mcp_token_key(name)).unwrap(), None, "no token kept");
         let script = launch.script();
-        assert!(script.contains(&format!("supramanClaude @('--mcp-config', {})", quote(&config.to_string_lossy()))), "{script}");
+        assert!(script.contains(&format!("'--mcp-config', {})", quote(&config.to_string_lossy()))), "{script}");
         assert!(!script.contains("--strict-mcp-config"), "the user's other servers stay: {script}");
         (name.clone(), notice.clone())
     }
@@ -1135,6 +1250,60 @@ mod tests {
         assert_eq!(assert_helped_tab(&hands, &third, &url).0, "hand-alpha-1", "an exited tab's name is free again");
         assert!(seen.recv_timeout(std::time::Duration::from_millis(200)).is_err(), "no request");
         assert!(hands.names().is_empty() && hands.release_all().is_empty());
+    }
+
+    /// `claude`'s session registry lists `sid` running as this process.
+    fn registered(claude: &Path, sid: &str) {
+        std::fs::create_dir_all(claude.join("sessions")).unwrap();
+        let pid = std::process::id();
+        std::fs::write(claude.join("sessions").join(format!("{pid}.json")), format!(r#"{{"pid":{pid},"sessionId":"{sid}","name":"supraman","kind":"interactive"}}"#)).unwrap();
+    }
+
+    #[test]
+    fn a_tab_started_signed_out_gets_its_token_after_a_sign_in_in_its_config_without_a_relaunch() {
+        let dir = tempfile::tempdir().unwrap();
+        let (fake, sessions) = session_workman();
+        let (home, auth) = home_with(dir.path(), None);
+        let (hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo, memory());
+        let hands = Mutex::new(hands);
+        let claude = dir.path().join("claude");
+        hands.lock().unwrap().claude_dir = Some(claude.clone());
+        let alpha = Path::new(r"C:\demo\alpha");
+        let running = launch_locked(&hands, alpha, None, None);
+        let Launch::Helped { name, config, new_session: Some(sid), .. } = running.clone() else { panic!("{running:?}") };
+        assert!(running.script().contains(&format!("'--session-id', '{sid}', '--mcp-config'")), "its claude session is known: {}", running.script());
+        let Launch::Helped { name: exited, config: exited_config, .. } = launch_locked(&hands, alpha, None, None) else { panic!() };
+        registered(&claude, &sid);
+        let before: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
+        assert_eq!(mint_helped(&hands), HelpedMinted::default(), "still signed out: nothing");
+
+        crate::test_auth::server_json(&home, fake.base());
+        auth.sign_in(fake.base(), &supraman_workman::auth::http_browser()).unwrap();
+        let done = mint_helped(&hands);
+        assert_eq!(done, HelpedMinted { minted: vec![(name.clone(), name.clone())], notices: Vec::new() });
+        let hands = hands.into_inner().unwrap();
+        let token = sessions.token_of(&name).expect("minted under its own name");
+        assert_eq!(hands.helper.1.get(&supraman_claude::mcp_token_key(&name)).unwrap(), Some(token), "its token is kept for its helper");
+        let record = hands.minted.get(&name).expect("recorded");
+        assert_eq!(record.claude_session_id.as_deref(), Some(sid.as_str()));
+        let after: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
+        let (was, now) = (&before["mcpServers"]["workman"], &after["mcpServers"]["workman"]);
+        assert_eq!(now["headersHelper"], was["headersHelper"], "the same helper, so claude reads the token at its next connect");
+        assert_eq!(now["url"].as_str(), Some(format!("{}/mcp", fake.base()).as_str()));
+        assert!(!after.to_string().contains("wss_"), "no token in the config");
+        assert!(hands.held() == [exited.clone()] && exited_config.exists(), "a tab whose claude does not run stays helped");
+        assert!(sessions.token_of(&exited).is_none());
+    }
+
+    #[test]
+    fn a_closed_helped_tab_takes_its_config_with_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (home, auth) = home_with(dir.path(), None);
+        let (mut hands, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo, memory());
+        let Launch::Helped { name, config, .. } = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!() };
+        assert!(!hands.ended(&name));
+        assert_eq!(hands.release(&name), None);
+        assert!(!config.exists() && hands.held().is_empty());
     }
 
     #[test]

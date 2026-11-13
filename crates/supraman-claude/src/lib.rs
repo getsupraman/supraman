@@ -29,7 +29,7 @@ pub use forget::{ForgetError, Forgotten, find_transcript, forget_transcript, is_
 pub use human::{Route, SendError, Sent, Sender, send_from_human};
 pub use launch::{
     Claude, LaunchSpec, Removal, RmRefusal, SessionIdentity, WRITE_TIMEOUT, classify, name_taken, new_session_id, resume_argv,
-    MCP_SERVER, mcp_config_path, mcp_config_url, mcp_header, mcp_header_command, mcp_header_home, mcp_token_key, write_mcp_config_helped, write_mcp_config_servers,
+    MCP_SERVER, mcp_config_names, mcp_config_path, mcp_config_url, mcp_header, mcp_header_command, mcp_header_home, mcp_token_key, write_mcp_config_helped, write_mcp_config_servers,
 };
 pub use plugin_server::plugin_server;
 pub use session::{

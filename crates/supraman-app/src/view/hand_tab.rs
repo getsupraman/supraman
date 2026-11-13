@@ -176,14 +176,16 @@ impl FleetView {
         cx.spawn(async move |this, cx| {
             let (extras, launch) = ready.await;
             this.update(cx, |this, cx| {
-                if let Launch::Minted { name, session, notice, new_session, .. } = &launch {
-                    if let Some(tab) = this.tab_mut(id) {
-                        tab.workman = Some(format!("Supraman token · {} · {session}", crate::hand::ROLE));
-                        tab.hand_key = Some(name.clone());
-                        if new_session.is_some() {
-                            tab.launched_session = new_session.clone();
-                        }
+                if let Launch::Minted { name, new_session, .. } | Launch::Helped { name, new_session, .. } = &launch
+                    && let Some(tab) = this.tab_mut(id)
+                {
+                    tab.hand_key = Some(name.clone());
+                    if new_session.is_some() {
+                        tab.launched_session = new_session.clone();
                     }
+                }
+                if let Launch::Minted { name, session, notice, .. } = &launch {
+                    this.hand_minted(name, session);
                     this.hand_notices.extend(notice.clone());
                 }
                 if this.tab(id).is_some() {
@@ -193,25 +195,43 @@ impl FleetView {
             })
             .ok();
             let Some(hands) = hands else { return };
-            let name = match launch {
-                Launch::Minted { name, .. } => name,
-                Launch::Unminted(notice) | Launch::Helped { notice: Some(notice), .. } => {
-                    this.update(cx, |this, cx| {
-                        this.hand_notices.push(notice);
-                        cx.notify();
-                    })
-                    .ok();
-                    return;
-                }
-                Launch::Plain | Launch::Helped { .. } => return,
+            let (name, notice) = match launch {
+                Launch::Minted { name, .. } => (name, None),
+                Launch::Helped { name, notice, .. } => (name, notice),
+                Launch::Unminted(notice) => (String::new(), Some(notice)),
+                Launch::Plain => return,
             };
-            Self::release_on_exit(this, id, hands, name, changed, cx).await;
+            if let Some(notice) = notice {
+                this.update(cx, |this, cx| {
+                    this.hand_notices.push(notice);
+                    cx.notify();
+                })
+                .ok();
+            }
+            if !name.is_empty() {
+                Self::release_on_exit(this, id, hands, name, changed, cx).await;
+            }
         })
         .detach();
         id
     }
 
-    /// The hand's token goes once its claude has exited or its tab is closed.
+    /// The tab keyed `name` holds a token of its own, minted as Workman session `session`.
+    fn hand_minted(&mut self, name: &str, session: &str) {
+        for tab in self.tabs.iter_mut().filter(|t| t.hand_key.as_deref() == Some(name)) {
+            tab.workman = Some(format!("Supraman token · {} · {session}", crate::hand::ROLE));
+        }
+    }
+
+    /// A sign-in finished: the helped tabs [`crate::hand::mint_helped`] minted say so; what failed is a notice.
+    pub(super) fn helped_minted(&mut self, done: crate::hand::HelpedMinted) {
+        for (name, session) in &done.minted {
+            self.hand_minted(name, session);
+        }
+        self.hand_notices.extend(done.notices);
+    }
+
+    /// The hand's token, or a helped tab's config, goes once its claude has exited or its tab is closed.
     async fn release_on_exit(this: gpui::WeakEntity<Self>, id: u64, hands: Arc<Mutex<Hands>>, name: String, mut changed: Nudged, cx: &mut gpui::AsyncApp) {
         let executor = cx.background_executor().clone();
         // claude's exit deletes the token file, then the shell prints its prompt: a wakeup

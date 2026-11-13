@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context as _, anyhow};
@@ -16,7 +16,7 @@ use supraman_supervisor::{
 
 pub use supraman_core::sm_allowed_tools;
 
-use supraman_supervisor::{Absent, AppTokens, Bearer, HttpMinter, Keeper, bearer, revoke_deleted_runs, runs_signed_out, sign_in_generation};
+use supraman_supervisor::{Absent, AppTokens, Bearer, HttpMinter, Keeper, Unlisted, bearer, revoke_deleted_runs, runs_signed_out, sign_in_generation};
 
 /// The selftest's cleanup turns this off and takes [`TICK`], so nothing it removes is resumed.
 pub static ENABLED: AtomicBool = AtomicBool::new(true);
@@ -270,6 +270,8 @@ pub struct Supervision {
     pruned_at: Option<Millis>,
     /// The scheduled runs' claude sessions missing from the snapshots.
     runs_absent: Absent,
+    unlisted: Unlisted,
+    hands: Option<Arc<Mutex<crate::hand::Hands>>>,
 }
 
 pub const NOTICES_KEPT: usize = 5;
@@ -308,11 +310,21 @@ impl Supervision {
         notices
     }
 
-    /// A scheduled run whose claude session is deleted is revoked. `observed` was read without error.
-    fn end_deleted_runs(&mut self, observed: &[Session]) -> Vec<String> {
+    /// Revokes deleted scheduled runs and deletes token-less configs whose session is gone, none without the hands; `observed` was read without error.
+    fn end_deleted(&mut self, observed: &[Session], now: Millis) -> Vec<String> {
         let keeper = Keeper::open(&self.home).with_claude_dir(supraman_core::paths::claude_dir());
         let auth = crate::signin::auth(&self.home);
-        revoke_deleted_runs(&keeper, &HttpMinter::default(), || Bearer::of(bearer(&auth)), &mut self.runs_absent, observed)
+        let mut failed = revoke_deleted_runs(&keeper, &HttpMinter::default(), || Bearer::of(bearer(&auth)), &mut self.runs_absent, observed);
+        if let Some(hands) = &self.hands {
+            let held = hands.lock().unwrap_or_else(|e| e.into_inner()).held();
+            failed.extend(keeper.sweep_unminted(&mut self.unlisted, observed, &held, now));
+        }
+        failed
+    }
+
+    /// The [+] tabs whose token-less configs [`Self::end_deleted`] leaves alone.
+    pub fn with_hands(self, hands: Option<Arc<Mutex<crate::hand::Hands>>>) -> Self {
+        Self { hands, ..self }
     }
 
     pub fn new(home: PathBuf, plugin_dir: Option<PathBuf>) -> Self {
@@ -327,6 +339,8 @@ impl Supervision {
             daemon_logged: None,
             pruned_at: None,
             runs_absent: Absent::default(),
+            unlisted: Unlisted::default(),
+            hands: None,
         }
     }
 
@@ -336,7 +350,7 @@ impl Supervision {
         self.read_desired(workspaces, &settings, &mut report, now);
         self.follow_server(&mut report);
         self.run_supervisors(workspaces, observed, retries, &settings, &mut report, now);
-        for ended in self.end_deleted_runs(observed) {
+        for ended in self.end_deleted(observed, now) {
             log::warn!("{ended}");
         }
         for s in self.supervisors.values_mut() {

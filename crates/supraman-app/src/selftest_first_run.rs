@@ -94,7 +94,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
 
     auth.sign_out(other.base()).map_err(|e| anyhow!("signing out of the other fake: {e}"))?;
     crate::selftest::set_workman(&base)?;
-    crate::signin::sign_in(&home, &base).map_err(|e| anyhow!("signing in to the gate's fake again: {e}"))?;
+    crate::signin::sign_in(&home, &base, None).map_err(|e| anyhow!("signing in to the gate's fake again: {e}"))?;
     view.update(cx, |v, cx| {
         v.recheck_workman();
         crate::work_view::WorkHub::reconfigure(Some(home.clone()), cx);
