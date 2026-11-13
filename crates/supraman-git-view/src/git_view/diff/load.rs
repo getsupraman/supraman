@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use gpui::SvgRenderer;
-use supraman_core::text::{Encoding, decode};
+use gpui::{ImageFormat, SvgRenderer};
+use supraman_core::text::{BINARY_PROBE, Encoding, decode};
 use supraman_gitman::{Blob, ChangeKind, FileChange, Repo};
 use supraman_editor::language_for;
 
@@ -117,14 +117,42 @@ fn sides(target: &Target) -> (Side<'_>, Side<'_>) {
     }
 }
 
-fn read(repo: &Repo, side: Side<'_>) -> Result<Option<Blob>, String> {
-    let blob = match side {
-        Side::Absent | Side::SameAsNew => return Ok(None),
-        Side::Rev(rev, path) => supraman_gitman::blob(repo, rev, path),
-        Side::Index(path) => supraman_gitman::staged_blob(repo, path),
-        Side::Worktree(path) => supraman_gitman::worktree_file(repo, path),
+/// A side whole, or with `head` its first [`BINARY_PROBE`] bytes, all `classify` needs to call it binary.
+fn read(repo: &Repo, side: Side<'_>, head: bool) -> Result<Option<Blob>, String> {
+    use supraman_gitman::{blob, blob_head, staged_blob, staged_blob_head, worktree_file, worktree_head};
+    let blob = match (side, head) {
+        (Side::Absent | Side::SameAsNew, _) => return Ok(None),
+        (Side::Rev(rev, path), false) => blob(repo, rev, path),
+        (Side::Rev(rev, path), true) => blob_head(repo, rev, path),
+        (Side::Index(path), false) => staged_blob(repo, path),
+        (Side::Index(path), true) => staged_blob_head(repo, path),
+        (Side::Worktree(path), false) => worktree_file(repo, path),
+        (Side::Worktree(path), true) => worktree_head(repo, path),
     };
     blob.map(Some).map_err(|e| e.to_string())
+}
+
+/// The side whole: its head when that was all of it, else read again.
+fn read_rest(repo: &Repo, side: Side<'_>, head: Option<Blob>) -> Result<Option<Blob>, String> {
+    match head {
+        Some(head) if head.bytes.len() < BINARY_PROBE => Ok(Some(head)),
+        _ => read(repo, side, false),
+    }
+}
+
+/// Both sides whole, but only their heads once a head says a file that is no image is binary.
+pub(super) fn read_sides(repo: &Repo, target: &Target) -> Result<(Option<Blob>, Option<Blob>), String> {
+    let (old_side, new_side) = sides(target);
+    let (old, new) = if image::format_of(&target.path).is_some() {
+        (read(repo, old_side, false)?, read(repo, new_side, false)?)
+    } else {
+        let (old, new) = (read(repo, old_side, true)?, read(repo, new_side, true)?);
+        if [&old, &new].into_iter().flatten().any(|b| b.binary) {
+            return Ok((old, new));
+        }
+        (read_rest(repo, old_side, old)?, read_rest(repo, new_side, new)?)
+    };
+    Ok((if old_side == Side::SameAsNew { new.clone() } else { old }, new))
 }
 
 /// Each side's size in bytes, asked before either is read: one `cat-file --batch-check` for the git sides.
@@ -160,8 +188,11 @@ fn images(target: &Target, old: Option<&Blob>, new: Option<&Blob>, svg: &SvgRend
     let format = image::format_of(&target.path)?;
     let dimensions = |blob: Option<&Blob>| blob.and_then(|b| image::dimensions(format, &b.bytes));
     let (old_px, new_px) = (dimensions(old), dimensions(new));
-    if [old_px, new_px].into_iter().flatten().any(|(w, h)| u64::from(w) * u64::from(h) > image::MAX_PIXELS) {
+    if [old_px, new_px].into_iter().flatten().any(|px| image::decoded_pixels(format, px) > image::MAX_PIXELS) {
         return Some(Loaded::TooLarge(TooLarge::Pixels { old: old_px, new: new_px }));
+    }
+    if format == ImageFormat::Svg && [(old, old_px), (new, new_px)].into_iter().any(|(blob, px)| blob.is_some() && px.is_none()) {
+        return None;
     }
     let decoded = |blob: Option<&Blob>| blob.map(|b| image::decode(format, &b.bytes, svg).ok_or(())).transpose();
     let images = decoded(old).and_then(|old| decoded(new).map(|new| Images { format, old, new }));
@@ -174,11 +205,9 @@ pub(crate) fn load(repo: &Repo, target: &Target, svg: &SvgRenderer) -> Result<Lo
     if [sizes.old, sizes.new].into_iter().flatten().any(|b| b as u64 > MAX_SHOWN_BYTES) {
         return Ok(Loaded::TooLarge(TooLarge::Bytes(sizes)));
     }
-    let new = read(repo, new_side)?;
-    let old = if old_side == Side::SameAsNew { new.clone() } else { read(repo, old_side)? };
-    let image_file = image::format_of(&target.path).is_some();
-    if image_file || [&old, &new].into_iter().flatten().any(|b| b.binary) {
-        return Ok(images(target, old.as_ref(), new.as_ref(), svg).unwrap_or(Loaded::Binary(Sizes { old: old.map(|b| b.bytes.len()), new: new.map(|b| b.bytes.len()) })));
+    let (old, new) = read_sides(repo, target)?;
+    if image::format_of(&target.path).is_some() || [&old, &new].into_iter().flatten().any(|b| b.binary) {
+        return Ok(images(target, old.as_ref(), new.as_ref(), svg).unwrap_or(Loaded::Binary(sizes)));
     }
     let (new_text, new_enc) = new.as_ref().map(text_of).unzip();
     let (old_text, old_enc) = old.as_ref().map(text_of).unzip();

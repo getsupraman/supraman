@@ -212,3 +212,34 @@ fn a_repo_that_knows_its_dirs_reads_them_instead_of_asking() {
     std::fs::write(theirs.top.join("a.txt"), b"theirs\n").unwrap();
     assert_eq!(worktree_file(&told, "a.txt").unwrap().bytes, b"theirs\n", "the file under the top it was told");
 }
+
+#[test]
+fn a_head_read_takes_the_classify_window_and_ends_its_git() {
+    use std::time::Duration;
+    use supraman_core::platform::process::snapshot;
+    use supraman_core::process::alive;
+    use supraman_core::testing::{eventually, polled};
+    use supraman_core::text::BINARY_PROBE;
+
+    let f = Fixture::copy();
+    let repo = f.repo();
+    let big: Vec<u8> = (0..4 * 1024 * 1024u32).map(|i| (i % 251) as u8).collect();
+    let prose = "a line of text\n".repeat(2000);
+    f.write("big.bin", &big);
+    f.write("prose.txt", prose.as_bytes());
+    f.git(&["add", "big.bin", "prose.txt"]);
+
+    let head = staged_blob_head(&repo, "big.bin").unwrap();
+    let ours = std::process::id();
+    let gits: Vec<u32> = snapshot().into_iter().filter(|p| p.parent == ours && p.exe.starts_with("git")).map(|p| p.pid).collect();
+    assert_eq!((head.bytes.as_slice(), head.binary), (&big[..BINARY_PROBE], true));
+    eventually(Duration::from_secs(20), "the head read's git is gone", polled(Duration::from_millis(20)), || gits.iter().all(|p| !alive(*p)).then_some(()));
+
+    let text = staged_blob_head(&repo, "prose.txt").unwrap();
+    assert_eq!((text.bytes.as_slice(), text.binary), (&prose.as_bytes()[..BINARY_PROBE], false));
+    assert_eq!(staged_blob(&repo, "prose.txt").unwrap().bytes, prose.as_bytes(), "a text blob still reads whole");
+    let small = blob_head(&repo, f.sha("second"), "a.txt").unwrap();
+    assert_eq!((small.bytes.as_slice(), small.binary), (&b"one\ntwo\n"[..], false), "a blob under the window is read to its end");
+    let file = worktree_head(&repo, "big.bin").unwrap();
+    assert_eq!((file.bytes.len(), file.binary), (BINARY_PROBE, true));
+}

@@ -8727,6 +8727,7 @@ dependencies = [
  "supraman-ui",
  "tempfile",
  "theme",
+ "usvg",
 ]
 
 [[package]]
