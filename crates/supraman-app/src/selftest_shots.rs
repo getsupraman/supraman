@@ -212,6 +212,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     schedules(view, &out, cx).await?;
     sidebar_shown(view, &out, cx).await?;
     group_dialogs(view, &out, cx).await?;
+    subfolders(view, &out, cx).await?;
 
     let target = MenuTarget::Session {
         entry: WORKSPACE.to_string(),
@@ -288,6 +289,44 @@ async fn group_dialogs(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindo
     println!("shot: {}", shot.display());
     crate::selftest::click(view, "confirm-cancel", cx).await?;
     crate::selftest::until(view, cx, Duration::from_secs(10), "the question gone", |v| (v.dialogs.confirm.is_none() && v.dialogs.group_name.is_none()).then_some(())).await?;
+    Ok(())
+}
+
+/// infra showing its sub folders: a repo with its branch, plain folders by name, one holding a session; no dot or build folder.
+async fn subfolders(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let infra = root().join("infra");
+    for dir in ["terraform", "scripts", "node_modules", ".cache"] {
+        std::fs::create_dir_all(infra.join(dir))?;
+    }
+    let charts = infra.join("charts").join(".git");
+    std::fs::create_dir_all(&charts)?;
+    std::fs::write(charts.join("HEAD"), "ref: refs/heads/release/1.4
+")?;
+    let session_id = "d0000007-0000-4000-8000-00000000de00";
+    let session = serde_json::json!([{ "id": "d0000007", "sessionId": session_id, "name": "infra-plan", "cwd": infra.join("terraform"), "kind": "background",
+                                        "startedAt": supraman_claude::now_ms() - 5 * 60_000, "state": "working", "status": "busy", "pid": std::process::id() }]);
+    let injected = supraman_claude::parse(&session.to_string())?;
+    view.read_with(cx, |v, _| v.polls.injected.lock().unwrap_or_else(|e| e.into_inner()).extend(injected));
+    let pos = view.read_with(cx, |v, _| v.tree().folder("infra").and_then(|f| f.pos)).ok_or_else(|| anyhow!("no listed infra row"))?;
+    let run = |show: bool, cx: &mut AsyncWindowContext| {
+        let action = crate::view::MenuAction::ShowSubfolders { pos, path: infra.clone(), show };
+        cx.update(|window, cx| view.update(cx, |v, cx| v.run_action(action, window, cx)))
+    };
+    run(true, cx)?;
+    view.update(cx, |v, _| v.polls.poll_nudge.wake());
+    let row = format!("session-row-{session_id}");
+    crate::selftest::until(view, cx, Duration::from_secs(15), "infra's sub folders and infra-plan under terraform", |v| {
+        let hits = v.hits.borrow();
+        (hits.contains_key("repo-row-infra/charts") && hits.contains_key("repo-row-infra/terraform") && hits.contains_key(&row)).then_some(())
+    })
+    .await?;
+    crate::selftest::drawn(cx).await?;
+    let shot = capture(out.join("supraman-subfolders.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    run(false, cx)?;
+    view.read_with(cx, |v, _| v.polls.injected.lock().unwrap_or_else(|e| e.into_inner()).retain(|s| s.session_id != session_id));
+    view.update(cx, |v, _| v.polls.poll_nudge.wake());
+    crate::selftest::until(view, cx, Duration::from_secs(15), "infra's sub folders hidden", |v| (!v.hits.borrow().contains_key("repo-row-infra/terraform")).then_some(())).await?;
     Ok(())
 }
 

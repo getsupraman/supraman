@@ -396,6 +396,8 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     let refused = until(view, cx, WITHIN, "the second Add Folder of it refused", |v| v.toast.text().filter(|t| t.contains("listed there already")).map(str::to_string)).await?;
     out.push(format!("the same folder again: toast {refused:?}"));
     out.push(groups(view, &root, &home, cx).await?);
+    out.push(crate::selftest_folders::drags(view, &root, FOLDER, &home, cx).await?);
+    out.push(crate::selftest_folders::subfolders(view, &root, FOLDER, cx).await?);
 
     out.push(row_details(view, own, &root, cx).await?);
 
