@@ -17,7 +17,6 @@ use crate::selftest_tabs::drag_between;
 use crate::view::{FleetView, MIN_LEFT_WIDTH, TabKind};
 
 pub(crate) const WS: &str = "selftest-git";
-pub(crate) const FOLDER: &str = "gitman";
 pub(crate) const WITHIN: Duration = Duration::from_secs(10);
 /// The narrowest window the layout allows: the sidebar's minimum and the tab area's.
 const MIN_WINDOW: f32 = 600.;
@@ -116,7 +115,8 @@ async fn check(view: &Entity<FleetView>, f: &Arc<Fixture>, cx: &mut AsyncWindowC
 }
 
 async fn open(view: &Entity<FleetView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<(Entity<GitView>, String)> {
-    let icon = format!("git-graph-{WS}/{FOLDER}");
+    let name = supraman_core::paths::folder_name(&f.dir);
+    let icon = format!("git-graph-{WS}/{name}");
     until(view, cx, WITHIN, "the fixture's git-graph icon", |v| v.shown(&icon).then_some(())).await?;
     tap(view, &icon, cx).await?;
     let git = until_app(view, cx, WITHIN, "the Git tab open and active", |v, cx| {
@@ -125,7 +125,7 @@ async fn open(view: &Entity<FleetView>, f: &Fixture, cx: &mut AsyncWindowContext
     })
     .await?;
     let rows = until_probe(view, &git, "the graph's rows painted", cx, |p, v| (p.rows.len() >= 7 && painted(v, "git-row-0")).then_some(p.rows.len())).await?;
-    Ok((git, format!("{icon} opens Git · {FOLDER} with {rows} rows")))
+    Ok((git, format!("{icon} opens Git · {name} with {rows} rows")))
 }
 
 async fn show(view: &Entity<FleetView>, git: &Entity<GitView>, sha: &str, parents: usize, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
