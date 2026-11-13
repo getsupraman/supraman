@@ -321,7 +321,7 @@ async fn schedules(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowCon
     let key = supraman_core::schedule::folder_key(&api);
     let (group, row) = (format!("schedules-row-{key}"), format!("sched-row-{key}/nightly"));
     crate::selftest::until(view, cx, Duration::from_secs(10), "the api folder's Schedules under its row", |v| (v.shown(&group) && v.shown(&row)).then_some(())).await?;
-    sleep(cx, Duration::from_millis(500)).await;
+    crate::selftest::drawn(cx).await?;
     let shot = capture(out.join("supraman-schedules.png"), None, cx).await?;
     println!("shot: {}", shot.display());
     supraman_core::schedule::edit(&home(), &api, |all| {
