@@ -373,9 +373,7 @@ fn git_tab_titles_a_bad_setting_apart_from_a_missing_git(cx: &mut TestAppContext
     let f = Fixture::shared();
     let home = tempfile::tempdir().unwrap();
     let settings = home.path().join("settings.toml");
-    std::fs::write(&settings, "[gitman]
-git = 5
-").unwrap();
+    std::fs::write(&settings, "[gitman]\ngit = 5\n").unwrap();
     let (view, cx) = open_unchecked(&f.dir, Opts::default().home(home.path()), cx);
     assert_eq!(problem_title(&view, cx), Some("Git is not set right"), "a [gitman] git that does not parse");
     std::fs::write(&settings, "not toml [").unwrap();
@@ -383,9 +381,7 @@ git = 5
     cx.run_until_parked();
     assert_eq!(problem_title(&view, cx), Some("Git is not set right"), "an unreadable settings.toml");
     let missing = home.path().join("no-git").join(supraman_core::platform::fs::exe_name("git"));
-    std::fs::write(&settings, format!("[gitman]
-git = '{}'
-", missing.display())).unwrap();
+    std::fs::write(&settings, format!("[gitman]\ngit = '{}'\n", missing.display())).unwrap();
     super::test_support::click(&view, "git-retry", cx);
     cx.run_until_parked();
     assert_eq!(problem_title(&view, cx), Some("Git is missing or too old"), "a git that is not there");
