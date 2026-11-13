@@ -830,4 +830,59 @@ mod tests {
         assert_eq!(CHECKS.load(Ordering::SeqCst), 3, "Retry checks at once");
         assert_eq!(report.needs.len(), 1, "still held: {report:?}");
     }
+
+    fn live(name: &str, session_id: &str) -> Session {
+        Session {
+            id: session_id[..8].into(),
+            session_id: session_id.into(),
+            name: name.into(),
+            cwd: PathBuf::from(r"C:\demo"),
+            kind: supraman_claude::Kind::Background,
+            state: Some(supraman_claude::SessionState::Working),
+            status: Some(supraman_claude::Status::Busy),
+            waiting_for: None,
+            pid: Some(1),
+            started_at: None,
+        }
+    }
+
+    /// The names `kept.json` under `home` marks signed out.
+    fn signed_out_marks(home: &Path) -> Vec<String> {
+        let text = std::fs::read_to_string(home.join("supervisor").join("kept.json")).unwrap_or_default();
+        let table: BTreeMap<String, serde_json::Value> = serde_json::from_str(&text).unwrap_or_default();
+        table.into_iter().filter(|(_, k)| k["signedOut"] == true).map(|(n, _)| n).collect()
+    }
+
+    #[test]
+    fn a_sign_out_and_a_sign_in_queued_before_one_tick_mark_only_what_the_old_grant_minted() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let fake = supraman_workman::fake::FakeWorkman::start(vec![]);
+        fake.enable_oauth();
+        let sessions = fake.enable_sessions();
+        let auth = crate::test_auth::signed_in(&home, fake.base());
+        let mut desired = DesiredState::workspace_controller("demo", r"C:\demo", "p");
+        desired.started = true;
+        desired.want(supraman_supervisor::repo_session("demo", "Alpha", r"C:\demo\Alpha", "p").unwrap());
+        desired.save(&home).unwrap();
+        let (old, old_sid, alpha_sid) = ("fm-demo-workspace", "aaaa0001-0000-4000-8000-000000000001", "bbbb0002-0000-4000-8000-000000000002");
+        let mut records = supraman_supervisor::MintedSessions::empty(supraman_supervisor::MintedSessions::path(&home, "demo"));
+        let session = supraman_supervisor::MintedSession { session_id: "w0".into(), role: WORKSPACE_ROLE.into(), claude_session_id: Some(old_sid.into()), origin: Some(fake.base().into()) };
+        records.insert(old, session);
+        records.save().unwrap();
+        Keeper::open(&home).write_unminted("fm-demo-alpha", &fake.mcp_url(), &[]).unwrap();
+
+        let mut s = Supervision::new(home.clone(), None).with_auth(auth.clone());
+        s.config.claude_dir = None;
+        s.daemon = DaemonWatch::new(|| Some("no launch in a test".into()));
+        signed_out(&home, fake.base());
+        supraman_supervisor::signing_in();
+        let workspaces = [Workspace::new("demo", r"C:\demo", vec![supraman_core::Folder::new("Alpha", r"C:\demo\Alpha")])];
+        let observed = [live(old, old_sid), live("fm-demo-alpha", alpha_sid)];
+        let report = s.tick(&workspaces, &observed, Vec::new(), supraman_claude::now_ms());
+
+        assert!(sessions.token_of("fm-demo-alpha").is_some(), "the tick minted alpha on the new grant: {report:?}");
+        assert_eq!(signed_out_marks(&home), [old], "only the old grant's session is marked for a fresh token");
+        assert_eq!(sessions.token_of(old), None, "the old one is left for Keeping to mint");
+    }
 }
