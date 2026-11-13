@@ -48,6 +48,7 @@ mod delete;
 pub(crate) mod details;
 mod dialogs;
 mod drop;
+pub(crate) mod folder_edits;
 pub(crate) mod git_tab;
 mod hand_tab;
 mod left;

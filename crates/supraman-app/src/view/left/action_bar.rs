@@ -23,8 +23,8 @@ impl FleetView {
             .border_b_1()
             .border_color(colors.border)
             .child(
-                icon_button(hits, "add-folder", Icon::FolderAdd, "Add Folder…", false, cx)
-                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.add_folder(window, cx))),
+                icon_button(hits, "add-folder", Icon::FolderAdd, "Add Folder or Group…", false, cx)
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_add_menu(cx))),
             )
             .child(separator())
             .child(
@@ -51,6 +51,13 @@ impl FleetView {
                 icon_button(hits, "bar-settings", Icon::Settings, "Settings (Ctrl+,)", false, cx)
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_settings(cx))),
             )
+    }
+
+    /// The add button's menu, under the button.
+    fn open_add_menu(&mut self, cx: &mut Context<Self>) {
+        let position = self.hits.borrow().get("add-folder").map(|h| h.bounds.bottom_left()).unwrap_or_default();
+        self.dialogs.menu = Some(super::super::menu::ContextMenu::new("Add", position, super::super::menu::add_items()));
+        cx.notify();
     }
 
     fn stopped_toggle(&self, hidden_stopped: usize, cx: &mut Context<Self>) -> Stateful<Div> {

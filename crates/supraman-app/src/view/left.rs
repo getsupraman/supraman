@@ -54,6 +54,21 @@ pub(crate) struct Hold {
     moved: Instant,
 }
 
+impl Hold {
+    fn new(keys: HashSet<String>, now: Instant) -> Self {
+        Self { keys, moved: now }
+    }
+
+    fn shows(&self, key: &str) -> bool {
+        self.keys.contains(key)
+    }
+
+    /// How long the pointer has been still, while short of [`HOLD_STILL`]; `None` releases the hold.
+    fn still_for(&self, now: Instant) -> Option<Duration> {
+        Some(now.duration_since(self.moved)).filter(|still| *still < HOLD_STILL)
+    }
+}
+
 fn work_key(workspace: &str, row: &supraman_workman::InboxRow) -> String {
     format!("work:{workspace}/{}", row.key)
 }
@@ -150,14 +165,14 @@ impl FleetView {
             return;
         }
         let keys: HashSet<String> = self.work_inbox.read(cx).rows().into_iter().map(|(w, r)| work_key(w, r)).collect();
-        self.sidebar.left_hold = Some(Hold { keys, moved: Instant::now() });
+        self.sidebar.left_hold = Some(Hold::new(keys, Instant::now()));
         self.sidebar.left_holds += 1;
         self.sidebar.left_hold_timer = Some(cx.spawn(async move |this, cx| {
             let mut wait = HOLD_STILL;
             loop {
                 cx.background_executor().timer(wait).await;
                 let still_for = this.update(cx, |this, cx| {
-                    let still = this.sidebar.left_hold.as_ref().map(|h| h.moved.elapsed()).filter(|still| *still < HOLD_STILL);
+                    let still = this.sidebar.left_hold.as_ref().and_then(|h| h.still_for(Instant::now()));
                     if still.is_none() {
                         this.release_left(cx);
                     }
@@ -184,7 +199,7 @@ impl FleetView {
     }
 
     fn shown_now(&self, key: &str) -> bool {
-        self.sidebar.left_hold.as_ref().is_none_or(|h| h.keys.contains(key))
+        self.sidebar.left_hold.as_ref().is_none_or(|h| h.shows(key))
     }
 
     pub fn collapse_all(&mut self, collapse: bool, cx: &mut Context<Self>) {
@@ -288,6 +303,9 @@ impl FleetView {
             notices.push(notice(e.clone(), banner::tinted(status.warning)));
         }
         notices.extend(self.render_confirm(cx));
+        notices.extend(self.group_name_form().map(|form| {
+            div().mx_3().my_2().rounded_md().border_1().border_color(cx.theme().colors().border).overflow_hidden().child(form.clone()).into_any_element()
+        }));
         notices.extend(self.render_schedule_edit(cx));
         if self.listed.error.is_none() && self.polls.refreshes > 0 && tree.entries.is_empty() {
             notices.push(notice("No folders yet. Add one with the folder button above, or:  sm folder add <dir>".into(), banner::plain(cx)));
@@ -650,14 +668,24 @@ impl FleetView {
         let name = entry.name.clone();
         let pkey = format!("group:{name}");
         let group = SharedString::from(format!("group-hover-{name}"));
-        let buttons = self.entry_buttons(entry, &group, self.entry_selected(entry, cx), cx);
+        let shown = self.entry_selected(entry, cx);
+        let add = {
+            let name = name.clone();
+            self.hover_icon(format!("group-add-folder-{name}"), Icon::FolderAdd, "Add Folder… to this group", &group, false, cx).on_click(cx.listener(
+                move |this, _: &ClickEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.add_folder(Some(name.clone()), window, cx);
+                },
+            ))
+        };
+        let buttons = div().flex().flex_none().items_center().gap(px(2.)).child(add).child(self.work_button(entry, &group, shown, cx)).child(self.task_button(entry, &group, shown, cx));
         let line = div()
             .flex()
             .items_center()
             .gap(grid::gap())
             .h(px(GROUP_ROW))
             .child(disclosure(Some(open), colors.text_muted))
-            .child(icon_slot(&self.hits, &format!("group-{name}"), None))
+            .child(icon_slot(&self.hits, &format!("group-{name}"), Some(Icon::Group.slotted(grid::ICON, colors.text_muted).into_any_element())))
             .child(tree_label(&self.hits, &format!("group-{name}"), div().flex_none().font_weight(FontWeight::BOLD).whitespace_nowrap().child(SharedString::from(name.clone()))))
             .child(div().flex_1())
             .child(buttons);
@@ -687,25 +715,26 @@ impl FleetView {
             .into_any_element()
     }
 
-    /// An entry's Work and New task…, on its group's row or its top-level folder's.
-    fn entry_buttons(&self, entry: &EntryNode, group: &SharedString, shown: bool, cx: &mut Context<Self>) -> Div {
+    /// An entry's Work, on its group's row or its top-level folder's.
+    fn work_button(&self, entry: &EntryNode, group: &SharedString, shown: bool, cx: &mut Context<Self>) -> Stateful<Div> {
         let name = entry.name.clone();
-        let work = {
-            let name = name.clone();
-            self.hover_icon(format!("work-{name}"), Icon::Work, "Work: the Workman board of its folders' projects", group, shown, cx).on_click(cx.listener(
-                move |this, _: &ClickEvent, _, cx| {
-                    cx.stop_propagation();
-                    this.open_work(&name, cx);
-                },
-            ))
-        };
-        let task = self.hover_icon(format!("task-{name}"), Icon::Task, "New task…: start a session with a first prompt", group, shown, cx).on_click(cx.listener(
+        self.hover_icon(format!("work-{name}"), Icon::Work, "Work: the Workman board of its folders' projects", group, shown, cx).on_click(cx.listener(
+            move |this, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                this.open_work(&name, cx);
+            },
+        ))
+    }
+
+    /// A group's New task…, its folder picked on the Start page.
+    fn task_button(&self, entry: &EntryNode, group: &SharedString, shown: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+        let name = entry.name.clone();
+        self.hover_icon(format!("task-{name}"), Icon::Task, "New task…: start a session with a first prompt", group, shown, cx).on_click(cx.listener(
             move |this, _: &ClickEvent, window, cx| {
                 cx.stop_propagation();
                 this.open_start(&name, None, false, window, cx);
             },
-        ));
-        div().flex().flex_none().items_center().gap(px(2.)).child(work).child(task)
+        ))
     }
 
     fn render_folder_row(&self, entry: &EntryNode, repo: &FolderNode, open: bool, cx: &mut Context<Self>) -> AnyElement {
@@ -745,7 +774,7 @@ impl FleetView {
                 },
             ))
         });
-        let entry_buttons = (!entry.group).then(|| self.entry_buttons(entry, &group, self.entry_selected(entry, cx), cx));
+        let work = (!entry.group).then(|| self.work_button(entry, &group, self.entry_selected(entry, cx), cx));
         div()
             .id(SharedString::from(rkey.clone()))
             .group(group)
@@ -767,7 +796,7 @@ impl FleetView {
             .child(tree_label(&self.hits, &tree_key, div().flex_none().whitespace_nowrap().child(SharedString::from(repo.name.clone()))))
             .child(clipped(format!("branch-{key}"), branch, false).text_xs().text_color(secondary(cx)).child(hit_target(&self.hits, format!("branch-{key}"))))
             .child(div().relative().flex_1().child(hit_target(&self.hits, format!("repo-room-{key}"))))
-            .child(div().flex().flex_none().items_center().gap(px(2.)).children(history).child(new_claude).child(terminal).children(entry_buttons))
+            .child(div().flex().flex_none().items_center().gap(px(2.)).children(history).child(new_claude).child(terminal).children(work))
             .child(hit_target(&self.hits, format!("repo-row-{key}")))
             .on_mouse_down(MouseButton::Right, {
                 let key = key.clone();
@@ -972,7 +1001,7 @@ impl FleetView {
 
     fn render_confirm(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let confirm = self.dialogs.confirm.as_ref()?;
-        Some(confirm.render(&self.hits, "confirm", |this: &mut Self, yes, _, cx| this.answer_confirm(yes, cx), cx).mx_3().my_2().into_any_element())
+        Some(confirm.render_answer(&self.hits, "confirm", |this: &mut Self, answer, _, cx| this.answer_confirm(answer, cx), cx).mx_3().my_2().into_any_element())
     }
 }
 
@@ -984,6 +1013,15 @@ pub(super) fn level(entry: &EntryNode) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_hold_shows_only_the_cards_it_began_with_until_the_pointer_is_still() {
+        let start = Instant::now();
+        let hold = Hold::new(HashSet::from(["work:demo/a".to_string()]), start);
+        assert!(hold.shows("work:demo/a") && !hold.shows("work:demo/b"), "a card arriving under the pointer waits");
+        assert_eq!(hold.still_for(start + Duration::from_millis(500)), Some(Duration::from_millis(500)));
+        assert_eq!(hold.still_for(start + HOLD_STILL), None, "still for HOLD_STILL releases it");
+    }
 
     #[test]
     fn a_childs_icon_starts_under_its_parents_label() {

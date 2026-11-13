@@ -211,6 +211,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     inbox(view, &out, cx).await?;
     schedules(view, &out, cx).await?;
     sidebar_shown(view, &out, cx).await?;
+    group_dialogs(view, &out, cx).await?;
 
     let target = MenuTarget::Session {
         entry: WORKSPACE.to_string(),
@@ -268,6 +269,25 @@ async fn sidebar_shown(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindo
     let shot = capture(out.join("supraman-sidebar-shown.png"), None, cx).await?;
     println!("shot: {}", shot.display());
     view.update(cx, |v, cx| v.close_tab(tab, cx));
+    Ok(())
+}
+
+/// Add Group's form and Remove Group's question over the tree, each closed again.
+async fn group_dialogs(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let run = |action: crate::view::MenuAction, cx: &mut AsyncWindowContext| cx.update(|window, cx| view.update(cx, |v, cx| v.run_action(action, window, cx)));
+    run(crate::view::MenuAction::AddGroup, cx)?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "Add Group's form", |v| v.hits.borrow().contains_key("group-name-field").then_some(())).await?;
+    crate::selftest::drawn(cx).await?;
+    let shot = capture(out.join("supraman-add-group.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    crate::selftest::click(view, "group-name-close", cx).await?;
+    run(crate::view::MenuAction::RemoveGroup(WORKSPACE.into()), cx)?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "Remove Group's question", |v| v.hits.borrow().contains_key("confirm-alt").then_some(())).await?;
+    crate::selftest::drawn(cx).await?;
+    let shot = capture(out.join("supraman-remove-group.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    crate::selftest::click(view, "confirm-cancel", cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the question gone", |v| (v.dialogs.confirm.is_none() && v.dialogs.group_name.is_none()).then_some(())).await?;
     Ok(())
 }
 

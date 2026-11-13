@@ -6,7 +6,10 @@ use gpui::{AnyElement, Context};
 
 use supraman_core::schedule::{ForeignTask, Status};
 
+use supraman_core::folders::Pos;
+
 use super::FleetView;
+use super::folder_edits::FolderEdit;
 use crate::fleet::{self, EntryNode, FolderNode, SessionRow};
 use crate::schedules::{Primary, ScheduleRow};
 
@@ -45,6 +48,12 @@ pub enum MenuAction {
     CloseOtherTabs(u64),
     CloseTabsRight(u64),
     ReopenClosed,
+    /// A folder picked, then added at the end of the top level or of the group named.
+    AddFolder(Option<String>),
+    AddGroup,
+    RenameGroup(String),
+    RemoveFolder { pos: Pos, path: PathBuf },
+    RemoveGroup(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +63,7 @@ pub enum Confirmed {
     Delete { session: Session, discard: Option<String> },
     DeleteClosed { entry: String, sessions: Vec<Session>, skipped: Vec<(String, String)> },
     RemoveSchedule { folder_key: String, id: String },
+    EditFolders(FolderEdit),
     /// The banner's Update, while sessions are attached in tabs.
     Update,
 }
@@ -78,16 +88,26 @@ pub enum MenuTarget {
     OtherSchedule(String),
 }
 
-/// A group's row: what reaches all its folders.
+/// A group's row: its folders' list and what reaches all of them.
 pub fn group_items(node: &EntryNode, closed_background: bool) -> Vec<MenuItem> {
     let name = &node.name;
-    let mut items = vec![item("work", "Work", MenuAction::Work(name.clone()))];
+    let mut items = vec![item("add-folder", "Add Folder…", MenuAction::AddFolder(Some(name.clone())))];
     items.extend(new_task_items(name, None));
-    items.push(item("details", "Details", MenuAction::Details(MenuTarget::Group(name.clone()))));
+    items.extend([
+        item("work", "Open Work", MenuAction::Work(name.clone())),
+        item("rename-group", "Rename…", MenuAction::RenameGroup(name.clone())),
+        item("details", "Details", MenuAction::Details(MenuTarget::Group(name.clone()))),
+    ]);
     if closed_background {
         items.push(item("delete-closed", "Delete closed background sessions…", MenuAction::DeleteClosed(name.clone())));
     }
+    items.push(item("remove-group", "Remove Group…", MenuAction::RemoveGroup(name.clone())));
     items
+}
+
+/// The action bar's add button.
+pub fn add_items() -> Vec<MenuItem> {
+    vec![item("add-folder", "Add Folder…", MenuAction::AddFolder(None)), item("add-group", "Add Group…", MenuAction::AddGroup)]
 }
 
 pub fn new_task_items(entry: &str, folder: Option<&std::path::Path>) -> [MenuItem; 2] {
@@ -107,24 +127,26 @@ pub fn other_schedule_items(task: &ForeignTask) -> Vec<MenuItem> {
     ]
 }
 
-/// A folder's row; a top-level folder's also has its entry's Work, Details and bulk delete.
-pub fn folder_items(entry: &EntryNode, folder: &FolderNode, closed_background: bool) -> Vec<MenuItem> {
+/// A folder's row at `pos`; a top-level folder's also has its entry's Work and bulk delete.
+pub fn folder_items(entry: &EntryNode, folder: &FolderNode, pos: Pos, closed_background: bool) -> Vec<MenuItem> {
     let place = folder.place();
     let mut items = vec![item("new-claude", "New claude here", MenuAction::NewClaude { cwd: folder.path.clone(), title: format!("{place} · claude") })];
-    if !entry.group {
-        items.push(item("work", "Work", MenuAction::Work(entry.name.clone())));
-    }
     items.extend(new_task_items(&entry.name, Some(&folder.path)));
+    if folder.kind == supraman_core::FolderKind::Git {
+        items.push(item("open-git", "Open Git", MenuAction::OpenGit(folder.path.clone())));
+    }
+    if !entry.group {
+        items.push(item("work", "Open Work", MenuAction::Work(entry.name.clone())));
+    }
     items.extend([
         item("open-terminal", "Open terminal here", MenuAction::OpenTerminal { cwd: folder.path.clone(), place }),
         item("open-folder", "Open folder", MenuAction::OpenFolder(folder.path.clone())),
+        item("details", "Details", MenuAction::Details(MenuTarget::Folder(folder.key.clone()))),
     ]);
-    if !entry.group {
-        items.push(item("details", "Details", MenuAction::Details(MenuTarget::Folder(folder.key.clone()))));
-        if closed_background {
-            items.push(item("delete-closed", "Delete closed background sessions…", MenuAction::DeleteClosed(entry.name.clone())));
-        }
+    if !entry.group && closed_background {
+        items.push(item("delete-closed", "Delete closed background sessions…", MenuAction::DeleteClosed(entry.name.clone())));
     }
+    items.push(item("remove-folder", "Remove Folder", MenuAction::RemoveFolder { pos, path: folder.path.clone() }));
     items
 }
 
@@ -246,12 +268,24 @@ mod tests {
     #[test]
     fn group_menu_lists_its_items() {
         let items = group_items(&node(true), false);
-        assert_eq!(keys(&items), ["work", "new-task", "new-scheduled-task", "details"]);
+        assert_eq!(keys(&items), ["add-folder", "new-task", "new-scheduled-task", "work", "rename-group", "details", "remove-group"]);
+        assert_eq!((items[0].label.as_str(), &items[0].action), ("Add Folder…", &MenuAction::AddFolder(Some("demo".into()))));
         assert_eq!(items[1].label, "New task…");
         assert_eq!(items[1].action, MenuAction::NewTask { entry: "demo".into(), folder: None, scheduled: false });
         assert_eq!(items[2].label, "New scheduled task…");
         assert_eq!(items[2].action, MenuAction::NewTask { entry: "demo".into(), folder: None, scheduled: true });
-        assert_eq!(items[3].action, MenuAction::Details(MenuTarget::Group("demo".into())));
+        assert_eq!((items[3].label.as_str(), &items[3].action), ("Open Work", &MenuAction::Work("demo".into())));
+        assert_eq!((items[4].label.as_str(), &items[4].action), ("Rename…", &MenuAction::RenameGroup("demo".into())));
+        assert_eq!(items[5].action, MenuAction::Details(MenuTarget::Group("demo".into())));
+        assert_eq!((items[6].label.as_str(), &items[6].action), ("Remove Group…", &MenuAction::RemoveGroup("demo".into())));
+    }
+
+    #[test]
+    fn the_add_button_offers_a_folder_or_a_group() {
+        let items = add_items();
+        assert_eq!(items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(), ["Add Folder…", "Add Group…"]);
+        assert_eq!(items[0].action, MenuAction::AddFolder(None), "at the top level");
+        assert_eq!(items[1].action, MenuAction::AddGroup);
     }
 
     #[test]
@@ -285,16 +319,24 @@ mod tests {
     #[test]
     fn a_folder_menu_preselects_its_folder_and_a_top_level_one_holds_its_entrys_items() {
         let group = node(true);
-        let items = folder_items(&group, &group.folders[0], true);
-        assert_eq!(keys(&items), ["new-claude", "new-task", "new-scheduled-task", "open-terminal", "open-folder"]);
+        let items = folder_items(&group, &group.folders[0], Pos::member(2, 0), true);
+        assert_eq!(keys(&items), ["new-claude", "new-task", "new-scheduled-task", "open-git", "open-terminal", "open-folder", "details", "remove-folder"]);
         assert_eq!(items[0].action, MenuAction::NewClaude { cwd: r"C:\demo\Alpha".into(), title: "demo · Alpha · claude".into() });
         assert_eq!(items[1].action, MenuAction::NewTask { entry: "demo".into(), folder: Some(r"C:\demo\Alpha".into()), scheduled: false }, "the folder is preselected");
         assert_eq!(items[2].action, MenuAction::NewTask { entry: "demo".into(), folder: Some(r"C:\demo\Alpha".into()), scheduled: true });
+        assert_eq!(items[3].action, MenuAction::OpenGit(r"C:\demo\Alpha".into()));
+        assert_eq!(items[6].action, MenuAction::Details(MenuTarget::Folder("demo/Alpha".into())), "a group's folder has its own Details");
+        assert_eq!((items[7].label.as_str(), &items[7].action), ("Remove Folder", &MenuAction::RemoveFolder { pos: Pos::member(2, 0), path: r"C:\demo\Alpha".into() }));
         let top = node(false);
-        let items = folder_items(&top, &top.folders[0], true);
-        assert_eq!(keys(&items), ["new-claude", "work", "new-task", "new-scheduled-task", "open-terminal", "open-folder", "details", "delete-closed"]);
-        assert_eq!(items[6].action, MenuAction::Details(MenuTarget::Folder("Alpha".into())));
-        assert_eq!(items[7].action, MenuAction::DeleteClosed("Alpha".into()));
+        let items = folder_items(&top, &top.folders[0], Pos::top(1), true);
+        assert_eq!(keys(&items), ["new-claude", "new-task", "new-scheduled-task", "open-git", "work", "open-terminal", "open-folder", "details", "delete-closed", "remove-folder"]);
+        assert_eq!((items[4].label.as_str(), &items[4].action), ("Open Work", &MenuAction::Work("Alpha".into())));
+        assert_eq!(items[7].action, MenuAction::Details(MenuTarget::Folder("Alpha".into())));
+        assert_eq!(items[8].action, MenuAction::DeleteClosed("Alpha".into()));
+        assert_eq!(items[9].action, MenuAction::RemoveFolder { pos: Pos::top(1), path: r"C:\demo\Alpha".into() });
+        let mut plain = top.clone();
+        plain.folders[0].kind = supraman_core::FolderKind::Plain;
+        assert!(!keys(&folder_items(&plain, &plain.folders[0], Pos::top(1), false)).contains(&"open-git"), "Open Git only for a repo");
         let schedules = schedules_items("demo", Path::new(r"C:\demo\Alpha"));
         assert_eq!(keys(&schedules), ["new-scheduled-task"]);
         assert_eq!(schedules[0].action, MenuAction::NewTask { entry: "demo".into(), folder: Some(r"C:\demo\Alpha".into()), scheduled: true }, "in its folder");
@@ -346,9 +388,9 @@ mod tests {
         assert_eq!(items[5].label, "Delete…");
         assert!(matches!(&items[5].action, MenuAction::Delete(s) if s.id == "aaaa0002"));
         let group = group_items(&node(true), true);
-        assert_eq!(keys(&group), ["work", "new-task", "new-scheduled-task", "details", "delete-closed"]);
-        assert_eq!(group[4].label, "Delete closed background sessions…");
-        assert_eq!(group[4].action, MenuAction::DeleteClosed("demo".into()));
+        assert_eq!(keys(&group)[5..], ["details", "delete-closed", "remove-group"]);
+        assert_eq!(group[6].label, "Delete closed background sessions…");
+        assert_eq!(group[6].action, MenuAction::DeleteClosed("demo".into()));
     }
 
     #[test]
