@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use gpui::{AnyElement, ClickEvent, Context, SharedString, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
-use super::{TOP_ROW, disclosure, grid, icon_slot, secondary, tree_label};
+use super::{TOP_ROW, disclosure, grid, icon_slot, secondary, top_text, tree_label};
 use crate::fleet::UNLISTED_TITLE;
 use crate::view::FleetView;
 use supraman_ui::hit::hit_target;
@@ -26,7 +26,7 @@ impl FleetView {
             .h(px(TOP_ROW))
             .pl(grid::indent(0))
             .pr_2()
-            .text_sm()
+            .map(top_text)
             .text_color(secondary(cx))
             .cursor_pointer()
             .hover(|s| s.bg(colors.ghost_element_hover))

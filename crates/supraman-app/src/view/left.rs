@@ -159,6 +159,11 @@ pub(super) fn icon_slot(hits: &HitTargets, key: &str, icon: Option<AnyElement>) 
 }
 
 /// A row's label, painted under `tree-label-<key>`.
+/// Every top-level row's text size: a group's, a top-level folder's, Other sessions'.
+pub(super) fn top_text<E: Styled>(row: E) -> E {
+    row.text_base()
+}
+
 pub(super) fn tree_label<E: Styled + ParentElement>(hits: &HitTargets, key: &str, label: E) -> E {
     label.relative().child(hit_target(hits, format!("tree-label-{key}")))
 }
@@ -721,6 +726,7 @@ impl FleetView {
             .flex_none()
             .pl(grid::indent(0))
             .pr_2()
+            .map(top_text)
             .cursor_pointer()
             .hover(|s| s.bg(colors.ghost_element_hover))
             .active(|s| s.bg(colors.ghost_element_active));
@@ -816,7 +822,7 @@ impl FleetView {
             .h(px(if top { TOP_ROW } else { REPO_ROW }))
             .pl(grid::indent(folder_level(entry, repo)))
             .pr_2()
-            .text_sm()
+            .map(|d| if top { top_text(d) } else { d.text_sm() })
             .cursor_pointer()
             .hover(|s| s.bg(colors.ghost_element_hover))
             .active(|s| s.bg(colors.ghost_element_active));
