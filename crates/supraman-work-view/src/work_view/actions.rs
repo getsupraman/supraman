@@ -16,15 +16,16 @@ pub(crate) enum RowAction {
 }
 
 pub(crate) fn web_url(base: &str, item: &ItemRef) -> String {
-    format!("{}/r/{}", base.trim_end_matches('/'), item.qualified_ref)
+    let path: Vec<String> = item.full().split('/').map(supraman_workman::pct_encode).collect();
+    format!("{}/r/{}", base.trim_end_matches('/'), path.join("/"))
 }
 
 pub(crate) const COPY_SIDE: f32 = 20.;
 
 impl WorkView {
     pub(crate) fn copy_ref(&mut self, item: &ItemRef, cx: &mut Context<Self>) {
-        cx.write_to_clipboard(ClipboardItem::new_string(item.qualified_ref.clone()));
-        self.toast.show(format!("Copied {}", item.qualified_ref), |this: &mut WorkView| &mut this.toast, cx);
+        cx.write_to_clipboard(ClipboardItem::new_string(item.full().to_string()));
+        self.toast.show(format!("Copied {}", item.full()), |this: &mut WorkView| &mut this.toast, cx);
     }
 
     pub(crate) fn open_web(&mut self, item: &ItemRef, cx: &mut Context<Self>) {
@@ -46,13 +47,13 @@ impl WorkView {
             RowAction::CopyLink(item) => match self.web_base(cx) {
                 Some(base) => {
                     cx.write_to_clipboard(ClipboardItem::new_string(web_url(&base, &item)));
-                    self.toast.show(format!("Copied the link to {}", item.qualified_ref), |this: &mut WorkView| &mut this.toast, cx);
+                    self.toast.show(format!("Copied the link to {}", item.full()), |this: &mut WorkView| &mut this.toast, cx);
                 }
                 None => self.toast.show_why("Workman is not connected, so there is no link.".into(), |this: &mut WorkView| &mut this.toast, cx),
             },
             RowAction::CopyTitle(item) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(item.title.clone()));
-                self.toast.show(format!("Copied the title of {}", item.qualified_ref), |this: &mut WorkView| &mut this.toast, cx);
+                self.toast.show(format!("Copied the title of {}", item.full()), |this: &mut WorkView| &mut this.toast, cx);
             }
         }
         cx.notify();
@@ -105,8 +106,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_web_link_is_the_qualified_ref_on_the_server() {
-        let item = ItemRef { qualified_ref: "supraman/refactor3/13".into(), ..Default::default() };
+    fn the_web_link_is_the_full_ref_on_the_server() {
+        let item = ItemRef { qualified_ref: "refactor3/13".into(), full_ref: "supraman/refactor3/13".into(), ..Default::default() };
         assert_eq!(web_url("https://work.example/", &item), "https://work.example/r/supraman/refactor3/13");
+        let odd = ItemRef { full_ref: "p/a b/1".into(), ..Default::default() };
+        assert_eq!(web_url("https://work.example", &odd), "https://work.example/r/p/a%20b/1", "each part encoded, its slashes kept");
     }
 }

@@ -7,7 +7,7 @@ use supraman_core::time;
 use theme::ActiveTheme as _;
 
 use crate::button;
-use crate::clipped::{clamped, clipped};
+use crate::clipped::{clamped, clipped, clipped_with};
 use crate::hit::{HitTargets, hit_target};
 use crate::tooltip::Tooltip;
 
@@ -68,6 +68,7 @@ pub struct InboxCard {
     part: Rc<dyn Fn(&str) -> String>,
     mark: Option<AnyElement>,
     context: Option<SharedString>,
+    context_tip: Option<SharedString>,
     when: Option<(i64, i64)>,
     lines: Vec<(String, SharedString, bool)>,
     actions: Vec<Stateful<Div>>,
@@ -88,6 +89,7 @@ impl InboxCard {
             part: Rc::new(move |part| format!("{prefix}-{part}")),
             mark: None,
             context: None,
+            context_tip: None,
             when: None,
             lines: Vec::new(),
             actions: Vec::new(),
@@ -109,6 +111,12 @@ impl InboxCard {
     /// The muted words before the time: the project or folder the card is of.
     pub fn context(mut self, text: impl Into<SharedString>) -> Self {
         self.context = Some(text.into()).filter(|t| !t.is_empty());
+        self
+    }
+
+    /// The context's tooltip in place of its own whole text (a project's title under its ref).
+    pub fn context_tip(mut self, tip: Option<impl Into<SharedString>>) -> Self {
+        self.context_tip = tip.map(Into::into).filter(|t| !t.is_empty());
         self
     }
 
@@ -154,7 +162,13 @@ impl InboxCard {
             .gap_2()
             .text_xs()
             .children(self.mark)
-            .children(self.context.map(|text| clipped(part("context"), text, false).flex_shrink(1.).text_color(muted)))
+            .children(self.context.map(|text| {
+                let context = match self.context_tip {
+                    Some(tip) => clipped_with(part("context"), text, false, false).tooltip(Tooltip::text(tip)),
+                    None => clipped(part("context"), text, false),
+                };
+                context.flex_shrink(1.).text_color(muted)
+            }))
             .children(self.when.and_then(|(at, now)| when(part("when"), at, now, cx)))
             .child(div().flex_none().px_1().rounded_sm().bg(color.opacity(BADGE_TINT)).text_color(color).font_weight(FontWeight::BOLD).child(self.badge))
             .child(div().flex_1())

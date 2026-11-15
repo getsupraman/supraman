@@ -64,6 +64,16 @@ pub struct ItemRef {
     pub kind: String,
     pub title: String,
     pub status: ItemStatus,
+    /// `project/run/ref`; read it through [`ItemRef::full`].
+    pub full_ref: String,
+}
+
+impl ItemRef {
+    /// The ref a person pastes into a session and `/r/` resolves: `project/run/ref` (a run's `project/run`, a project's its ref),
+    /// the qualified ref from a server that sends none.
+    pub fn full(&self) -> &str {
+        if self.full_ref.is_empty() { &self.qualified_ref } else { &self.full_ref }
+    }
 }
 
 /// Leaf counts below a container; `total` includes cancelled and superseded.
@@ -442,7 +452,7 @@ pub struct InboxRow {
     pub run: Option<ItemRef>,
     pub what: String,
     pub since: String,
-    /// The resolving MCP call, qualified.
+    /// The resolving MCP call, qualified; never shown or copied.
     pub call: String,
     /// `human` (question, blocked) or `controller`; absent from a server before 3.0.1.
     pub audience: Option<String>,
@@ -536,6 +546,14 @@ mod tests {
 
     const ITEM: &str = r#"{"id":"33333333-0000-4000-8000-000000000001","ref":"6","qualifiedRef":"m4/6","kind":"task","title":"E2E","status":"done"}"#;
     const SESSION: &str = r#"{"id":"44444444-0000-4000-8000-000000000001","name":"aw-m4-6","role":"worker","externalRole":null,"origin":null,"launchedBy":null,"claudeSessionId":null,"cwd":null,"tree":null,"client":null,"firstSeenAt":"2026-10-26T10:00:00+00:00","lastSeenAt":"2026-10-26T12:00:00+00:00"}"#;
+
+    #[test]
+    fn the_full_ref_is_the_servers_and_the_qualified_ref_without_one() {
+        let served: ItemRef = serde_json::from_str(r#"{"ref":"6","qualifiedRef":"m4/6","fullRef":"supraman/m4/6"}"#).unwrap();
+        assert_eq!(served.full(), "supraman/m4/6");
+        let older: ItemRef = serde_json::from_str(ITEM).unwrap();
+        assert_eq!(older.full(), "m4/6");
+    }
 
     #[test]
     fn item_page_takes_the_real_servers_nulls() {

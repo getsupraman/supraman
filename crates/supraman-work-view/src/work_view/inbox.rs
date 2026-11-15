@@ -346,7 +346,7 @@ impl WorkInbox {
         self.flash.is_some()
     }
 
-    /// Every row shown, once per project, with the target first binding it; its context the project's name, else the target's.
+    /// Every row shown, once per project, with the target first binding it; its context the project's ref, else the target's name.
     pub fn rows(&self) -> Vec<Row> {
         let mut out: Vec<Row> = Vec::new();
         for target in &self.targets {
@@ -358,8 +358,9 @@ impl WorkInbox {
                 if out.iter().any(|r| r.project == project.id && r.row.key == row.key) {
                     continue;
                 }
-                let context = if project.title.is_empty() { target.name() } else { project.title.clone() };
-                out.push(Row { target: target.clone(), project: project.id.clone(), context, row: row.clone() });
+                let context = if project.full().is_empty() { target.name() } else { project.full().to_string() };
+                let context_tip = Some(project.title.clone()).filter(|t| !t.is_empty() && *t != context);
+                out.push(Row { target: target.clone(), project: project.id.clone(), context, context_tip, row: row.clone() });
             }
         }
         out

@@ -24,7 +24,7 @@ impl FleetView {
                 Some(Err(scheme)) => self.toast.show_why(supraman_ui::open::refused(&scheme), |this: &mut Self| &mut this.toast, cx),
                 None => {}
             },
-            CardAction::Copied => self.toast.show("Copied".into(), |this: &mut Self| &mut this.toast, cx),
+            CardAction::Copied => self.toast.show(format!("Copied {}", card.full_ref), |this: &mut Self| &mut this.toast, cx),
             CardAction::Dismiss => {
                 let (project, key) = (card.project.clone(), card.key.clone());
                 self.work_inbox.update(cx, |inbox, cx| inbox.dismiss(&project, &key, cx));

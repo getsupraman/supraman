@@ -7,6 +7,7 @@ use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
 use supraman_ui::marks::{dot, squares};
 use supraman_ui::segmented::{Segment, segmented};
+use supraman_ui::tooltip::Tooltip;
 use supraman_ui::{button, fonts};
 use supraman_workman::BoardRow;
 
@@ -22,6 +23,11 @@ pub(crate) fn dot_key(qualified_ref: &str, key: StateKey) -> String {
 
 pub(crate) fn done_line(done: usize, total: usize) -> String {
     format!("{done} of {total} done.")
+}
+
+/// The breadcrumb's first part: the run's project's ref, and its title as the tooltip.
+pub(crate) fn crumb_project(board: &Board) -> Option<(String, String)> {
+    board.project.as_ref().filter(|p| !p.full().is_empty()).map(|p| (p.full().to_string(), p.title.clone()))
 }
 
 /// Every text a row paints, in order; the row paints nothing else.
@@ -46,14 +52,16 @@ impl WorkView {
             Some(BoardState::Failed(message)) => return root.child(placeholder("Cannot show this run", [message.clone()], cx).size_full()).into_any_element(),
             _ => return root.child(placeholder("Reading the run…", Vec::<SharedString>::new(), cx).size_full()).into_any_element(),
         };
-        let project = board.project.as_ref().map(|p| p.title.clone()).unwrap_or_default();
         let crumb = div()
             .flex()
             .items_center()
             .gap_1()
             .text_xs()
             .text_color(colors.text_muted)
-            .when(!project.is_empty(), |d| d.child(SharedString::from(format!("{project} /"))))
+            .children(crumb_project(board).map(|(r, title)| {
+                let ref_ = div().id("work-crumb-project").relative().font_family(fonts::MONO).child(SharedString::from(r)).child(hit_target(&self.hits, "work-crumb-project".into()));
+                div().flex().gap_1().child(if title.is_empty() { ref_ } else { ref_.tooltip(Tooltip::text(title)) }).child("/")
+            }))
             .child(div().font_family(fonts::MONO).child(SharedString::from(board.run.ref_.clone())))
             .child(self.ref_actions("work-crumb", &board.run, cx));
         let title = div().text_xl().font_weight(FontWeight::SEMIBOLD).whitespace_normal().child(SharedString::from(board.run.title.clone()));

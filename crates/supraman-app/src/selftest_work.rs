@@ -21,6 +21,8 @@ use crate::{
 };
 
 pub const GROUP: &str = "selftest-work";
+/// The Workman project's ref, apart from the group's name so a title tells them apart.
+const PROJECT_REF: &str = "selftest-proj";
 const PROJECT: &str = "5e1f0000-0000-4000-8000-000000000001";
 const LIVE_RUN: &str = "5e1f0000-0000-4000-8000-0000000000a2";
 const DONE_RUN: &str = "5e1f0000-0000-4000-8000-0000000000a1";
@@ -48,7 +50,8 @@ pub fn fake() -> Option<(&'static FakeWorkman, &'static supraman_workman::fake::
 
 fn item(id: &str, qref: &str, kind: &str, title: &str, status: &str) -> Value {
     let ref_ = qref.rsplit('/').next().unwrap_or(qref);
-    json!({ "id": id, "ref": ref_, "qualifiedRef": qref, "kind": kind, "title": title, "status": status })
+    let full = if kind == "project" { qref.to_string() } else { format!("{PROJECT_REF}/{qref}") };
+    json!({ "id": id, "ref": ref_, "qualifiedRef": qref, "fullRef": full, "kind": kind, "title": title, "status": status })
 }
 
 fn rollup(total: u32, done: u32, in_progress: u32, open: u32, cancelled: u32) -> Value {
@@ -56,7 +59,7 @@ fn rollup(total: u32, done: u32, in_progress: u32, open: u32, cancelled: u32) ->
 }
 
 fn project() -> Value {
-    item(PROJECT, GROUP, "project", "Supraman selftest project", "in_progress")
+    item(PROJECT, PROJECT_REF, "project", "Supraman selftest project", "in_progress")
 }
 
 fn live_run() -> Value {
@@ -214,13 +217,13 @@ fn inbox(seq: i64, restarted: bool) -> String {
     let rows = vec![
         json!({ "key": format!("blocked:{TASK_2}"), "kind": "blocked", "item": item(TASK_2, "sw2/2", "task", "Render the board", "blocked"),
                 "run": live_run(), "what": "Blocked: waits for the board API", "since": "2026-10-26T11:30:00+00:00",
-                "call": "work_status(ref:\"selftest-work/sw2/2\", to:\"in_progress\")",
+                "call": "work_status(ref:\"selftest-proj/sw2/2\", to:\"in_progress\")",
                 "audience": "human", "detail": "waits on: the board API", "actor": "aw-selftest", "tree": null, "target": null, "count": 1,
-                "url": "/r/selftest-work/sw2/2" }),
+                "url": "/r/selftest-proj/sw2/2" }),
         json!({ "key": format!("done_unverified:{SHIPPED}"), "kind": "done_unverified", "item": item(SHIPPED, "sw1/1", "task", "Ship it", "done"),
                 "run": done_run(), "what": "Done, but only the worker's verification says so",
                 "since": if restarted { "2026-10-26T12:30:00+00:00" } else { "2026-10-25T17:55:00+00:00" },
-                "call": "work_verify(ref:\"selftest-work/sw1/1\", …)",
+                "call": "work_verify(ref:\"selftest-proj/sw1/1\", …)",
                 "audience": "controller", "detail": null, "actor": "aw-selftest", "tree": null, "target": null, "count": 1, "url": null }),
     ];
     json!({ "asOf": "2026-10-26T12:00:00+00:00", "seq": seq, "rows": rows }).to_string()
@@ -253,7 +256,7 @@ fn prompts_target(scope: &str) -> String {
 }
 
 fn prompts(scope: Value, list: &[(&str, &str, Option<u32>)]) -> String {
-    let prompts: Vec<Value> = list.iter().map(|(key, label, count)| json!({ "key": key, "label": label, "count": count, "text": format!("{label} `selftest-work`.") })).collect();
+    let prompts: Vec<Value> = list.iter().map(|(key, label, count)| json!({ "key": key, "label": label, "count": count, "text": format!("{label} `{PROJECT_REF}`.") })).collect();
     json!({ "asOf": "2026-10-26T12:00:00+00:00", "seq": 100, "scope": scope, "prompts": prompts }).to_string()
 }
 
@@ -293,7 +296,7 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
     crate::selftest::set_workman(fake.base())?;
     crate::signin::sign_in(home, fake.base(), None).map_err(|e| anyhow!("signing in to the fake Workman: {e}"))?;
     println!(
-        "step 1w: group {GROUP} = {} (folder repo, origin {REMOTE}); fake Workman at {} (project {GROUP} bound to that remote, runs sw2 live, sw1 done), signed in through its fake OAuth server",
+        "step 1w: group {GROUP} = {} (folder repo, origin {REMOTE}); fake Workman at {} (project {PROJECT_REF} bound to that remote, runs sw2 live, sw1 done), signed in through its fake OAuth server",
         root.display(),
         fake.base()
     );
@@ -409,7 +412,7 @@ async fn folder_work(view: &Entity<FleetView>, group_tab: u64, cx: &mut AsyncWin
     let work = crate::selftest::until_app(view, cx, LOADED_WITHIN, "the folder's Open Work bound", |v, cx| item(v, &key, cx).filter(|i| i.dimmed.is_none())).await?;
     let MenuAction::Work(target @ Target::Folder(_)) = work.action.clone() else { bail!("{key}'s Open Work is {:?}, not its folder's", work.action) };
     cx.update(|window, cx| view.update(cx, |v, cx| v.run_action(work.action, window, cx)))?;
-    let title = "Work · Supraman selftest project";
+    let title = format!("Work · {PROJECT_REF}");
     let folder_tab = crate::selftest::until_app(view, cx, LOADED_WITHIN, "the folder's Work tab titled by its project", |v, cx| {
         let tab = v.active.and_then(|id| v.tab(id)).filter(|t| matches!(&t.kind, TabKind::Work(w) if w.read(cx).target == target))?;
         (tab.title == title).then_some(tab.id)

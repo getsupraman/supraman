@@ -17,7 +17,7 @@ use crate::work_view::{self, HOUSEKEEPING_KEY, WorkInbox};
 pub enum CardAction {
     Open,
     Web,
-    /// The call is on the clipboard already.
+    /// The card's full ref is on the clipboard already.
     Copied,
     Dismiss,
 }
@@ -36,23 +36,24 @@ fn action_button(hits: &HitTargets, card: &Card, part: &str, icon: Icon, tip: &'
 }
 
 fn acting(button: Stateful<Div>, card: &Card, on: &OnCard, does: CardAction) -> Stateful<Div> {
-    let (on, call) = (on.clone(), card.call.clone());
+    let (on, full_ref) = (on.clone(), card.full_ref.clone());
     button.on_click(move |_: &ClickEvent, window, cx| {
         cx.stop_propagation();
         if does == CardAction::Copied {
-            cx.write_to_clipboard(ClipboardItem::new_string(call.clone()));
+            cx.write_to_clipboard(ClipboardItem::new_string(full_ref.clone()));
         }
         on(does, window, cx);
     })
 }
 
-/// Paints [`Card::texts`] and nothing else; the call only reaches the clipboard, through Copy.
+/// Paints [`Card::texts`] and nothing else; Copy puts the card's full ref on the clipboard.
 pub fn render(card: &Card, hits: &HitTargets, now: i64, mark: Mark, on: OnCard, cx: &App) -> AnyElement {
     let item = card.clone();
     let mut shown = InboxCard::new(work_view::row_key_of(&card.key), card.kind.clone(), card.badge.clone(), card.title.clone())
         .parts(move |part| part_key(part, &item))
         .mark(mark, cx)
         .context(card.context.clone())
+        .context_tip(card.context_tip.clone())
         .when(card.since, now)
         .line("ref", card.ref_.clone(), true)
         .line("detail", card.detail.clone().unwrap_or_default(), false)
@@ -60,8 +61,8 @@ pub fn render(card: &Card, hits: &HitTargets, now: i64, mark: Mark, on: OnCard, 
     if card.url.is_some() {
         shown = shown.action(action_button(hits, card, "web", Icon::ArrowUpRight, "Open in Workman's web page", &on, CardAction::Web, cx));
     }
-    if !card.call.is_empty() {
-        shown = shown.action(action_button(hits, card, "copy", Icon::Copy, "Copy the call that resolves it", &on, CardAction::Copied, cx));
+    if !card.full_ref.is_empty() {
+        shown = shown.action(action_button(hits, card, "copy", Icon::Copy, "Copy ref", &on, CardAction::Copied, cx));
     }
     shown
         .action(action_button(hits, card, "dismiss", Icon::Close, "Dismiss here (Workman is not changed)", &on, CardAction::Dismiss, cx))

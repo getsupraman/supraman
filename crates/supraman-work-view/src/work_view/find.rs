@@ -26,7 +26,7 @@ impl Entry for Found {
     }
 
     fn text(&self) -> String {
-        format!("{} {}", self.item.qualified_ref, self.item.title)
+        format!("{} {}", self.item.full(), self.item.title)
     }
 }
 
@@ -38,15 +38,15 @@ pub(crate) fn loaded(projects: &[OverviewProject], boards: &HashMap<String, Boar
         }
     };
     for p in projects {
-        push(&p.item, &p.item.title);
+        push(&p.item, p.item.full());
         for r in &p.runs {
-            push(&r.item, &p.item.title);
+            push(&r.item, p.item.full());
         }
     }
     let mut runs: Vec<&Board> = boards.values().filter_map(|b| if let BoardState::Ready(b) = b { Some(b) } else { None }).collect();
     runs.sort_by(|a, b| a.run.qualified_ref.cmp(&b.run.qualified_ref));
     for board in runs {
-        let project = board.project.as_ref().map(|p| p.title.clone()).unwrap_or_default();
+        let project = board.project.as_ref().map(|p| p.full().to_string()).unwrap_or_default();
         for row in &board.rows {
             push(&row.item, &project);
         }
@@ -58,7 +58,7 @@ pub(crate) fn remote(hits: Vec<SearchHit>, projects: &[OverviewProject]) -> Vec<
     hits.into_iter()
         .filter_map(|h| {
             let project = projects.iter().find(|p| h.project.as_ref().is_some_and(|hp| hp.id == p.item.id))?;
-            Some(Found { item: h.item, project: project.item.title.clone(), snippet: h.snippet })
+            Some(Found { item: h.item, project: project.item.full().to_string(), snippet: h.snippet })
         })
         .collect()
 }
@@ -75,7 +75,7 @@ fn status_color(status: ItemStatus, cx: &App) -> Hsla {
 
 fn paint(found: &Found, marks: &[Range<usize>], on: bool, cx: &mut App) -> AnyElement {
     let colors = cx.theme().colors().clone();
-    let qref = found.item.qualified_ref.clone();
+    let qref = found.item.full().to_string();
     let split = qref.len() + 1;
     let ref_marks = marks_in(marks, 0..qref.len());
     let title_marks = marks_in(marks, split..split + found.item.title.len());
@@ -178,7 +178,7 @@ mod tests {
         let bound = OverviewProject { item: ItemRef { title: "Alpha".into(), ..iref("pa", "pa", "project") }, repos: vec![ProjectRepo::default()], ..Default::default() };
         let hit = |id: &str, project: Option<&str>| SearchHit { item: iref(id, id, "task"), project: project.map(|p| iref(p, p, "project")), snippet: Some("s".into()), ..Default::default() };
         let found = remote(vec![hit("a1", Some("pa")), hit("c1", Some("pc")), hit("x", None)], &[bound]);
-        assert_eq!(found, [Found { item: iref("a1", "a1", "task"), project: "Alpha".into(), snippet: Some("s".into()) }]);
+        assert_eq!(found, [Found { item: iref("a1", "a1", "task"), project: "pa".into(), snippet: Some("s".into()) }], "the project's ref, never its title");
         assert_eq!(found[0].text(), "a1 T a1");
     }
 }
