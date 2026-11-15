@@ -823,7 +823,7 @@ impl FleetView {
         self.folder_drag(row, repo, cx)
             .when(empty, |d| d.text_color(quiet(cx)))
             .child(disclosure((!empty).then_some(open), secondary(cx)))
-            .child(icon_slot(&self.hits, &tree_key, Some(if git { Icon::GitBranch } else { Icon::Folder }.slotted(grid::ICON, secondary(cx)).into_any_element())))
+            .child(icon_slot(&self.hits, &tree_key, Some(if git { Icon::GitFolder } else { Icon::Folder }.slotted(grid::ICON, secondary(cx)).into_any_element())))
             .child(tree_label(&self.hits, &tree_key, div().flex_none().whitespace_nowrap().when(top, |d| d.font_weight(FontWeight::BOLD)).child(SharedString::from(repo.name.clone()))))
             .child(clipped(format!("branch-{key}"), branch, false).text_xs().text_color(secondary(cx)).child(hit_target(&self.hits, format!("branch-{key}"))))
             .child(div().relative().flex_1().child(hit_target(&self.hits, format!("repo-room-{key}"))))
