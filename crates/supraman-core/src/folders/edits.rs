@@ -118,6 +118,15 @@ impl Entries {
         Ok(())
     }
 
+    /// The group `name` moved to `to` among the top-level entries, counted with the group already taken out.
+    pub fn move_group(&mut self, name: &str, to: usize) -> Result<()> {
+        let g = self.group_index(name)?;
+        let group = self.list.remove(g);
+        let at = to.min(self.list.len());
+        self.list.insert(at, group);
+        Ok(())
+    }
+
     pub fn add_group(&mut self, name: &str, index: usize) -> Result<()> {
         self.check_new_group_name(name)?;
         let at = index.min(self.list.len());
