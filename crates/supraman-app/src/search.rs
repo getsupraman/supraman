@@ -93,7 +93,7 @@ pub fn search(tree: &Tree, query: &str) -> Results {
                 .folders
                 .iter()
                 .filter_map(|r| {
-                    let name_marks = if w.unlisted() { Vec::new() } else { find_all(&r.name, needle) };
+                    let name_marks = if w.apart() { Vec::new() } else { find_all(&r.name, needle) };
                     let folder = FolderHit { key: r.key.clone(), name: r.name.clone(), kind: r.kind, name_marks, sessions: hits(&r.sessions) };
                     (!folder.name_marks.is_empty() || !folder.sessions.is_empty()).then_some(folder)
                 })
@@ -153,8 +153,7 @@ mod tests {
                 },
                 EntryNode { name: "pipeline-tools".into(), group: false, folders: vec![folder("pipeline-tools", vec![row("Pipeline fix", "bbbb2222-0003", false)])] },
             ],
-            unlisted: None,
-            hidden_stopped: 0,
+            ..Tree::default()
         }
     }
 

@@ -53,8 +53,7 @@ mod tests {
                 EntryNode { name: "g".into(), group: true, folders: vec![node("g/a", None), node("g/a/c", Some("g/a"))] },
                 EntryNode { name: "top".into(), group: false, folders: vec![node("top", None)] },
             ],
-            unlisted: None,
-            hidden_stopped: 0,
+            ..Tree::default()
         };
         let all = all(&tree);
         for key in [group("g"), folder("g/a"), folder("g/a/c"), folder("top"), unlisted::KEY.to_string()] {

@@ -37,7 +37,7 @@ pub fn place_with(sessions: &[Session], entries: &Entries, shown: &Shown, main_o
 pub struct Holding<'a> {
     /// The deepest listed folder or shown child holding `cwd`: the session's folder.
     pub folder: PathBuf,
-    /// `folder` itself when listed, else the listed folder showing it: the entry's and the schedules' folder.
+    /// `folder` itself when listed, else the listed folder showing it: the entry's folder.
     pub listed: &'a FolderEntry,
 }
 

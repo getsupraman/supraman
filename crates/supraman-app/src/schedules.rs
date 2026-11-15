@@ -598,8 +598,8 @@ pub fn tray_tooltip(attention: usize, waiting: usize) -> String {
     out
 }
 
-/// Task Scheduler's tasks that run claude outside Supraman, by the deepest listed folder holding their working
-/// folder or script (`supraman_claude::holding`); Supraman never touches them.
+/// Task Scheduler's tasks that run claude outside Supraman, by the deepest listed or shown folder holding their
+/// working folder or script (`supraman_claude::holding`); Supraman never touches them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Others {
     /// By the folder's [`schedule::folder_key`].
@@ -608,12 +608,11 @@ pub struct Others {
 }
 
 impl Others {
-    pub fn of(found: &Foreign, entries: &Entries) -> Self {
+    pub fn of(found: &Foreign, entries: &Entries, shown: &Shown) -> Self {
         let mut out = Self::default();
         for t in &found.tasks {
-            // Schedules key by listed folders, so a task in a shown child files under its listed parent.
-            match t.dirs().find_map(|d| supraman_claude::holding(d, entries, &Shown::new(), |_| None)) {
-                Some(at) => out.by_folder.entry(schedule::folder_key(&at.listed.path)).or_default().push(t.clone()),
+            match t.dirs().find_map(|d| supraman_claude::holding(d, entries, shown, |_| None)) {
+                Some(at) => out.by_folder.entry(schedule::folder_key(&at.folder)).or_default().push(t.clone()),
                 None => out.unowned.push(t.clone()),
             }
         }
@@ -895,23 +894,27 @@ mod tests {
     }
 
     #[test]
-    fn other_schedules_go_under_the_deepest_listed_folder_holding_them_and_the_rest_apart() {
+    fn other_schedules_go_under_the_deepest_listed_or_shown_folder_holding_them_and_the_rest_apart() {
         use supraman_core::folders::{Entry, FolderEntry};
-        let (code, alpha) = (PathBuf::from(r"C:\code"), PathBuf::from(r"C:\code\alpha"));
-        let entries = Entries::new(vec![Entry::Folder(FolderEntry::new(&code)), Entry::Group { name: "g".into(), folders: vec![FolderEntry::new(&alpha)] }]);
+        let (code, alpha, web) = (PathBuf::from(r"C:\code"), PathBuf::from(r"C:\code\alpha"), PathBuf::from(r"D:\web"));
+        let shows = FolderEntry { show_subfolders: true, ..FolderEntry::new(&web) };
+        let entries = Entries::new(vec![Entry::Folder(FolderEntry::new(&code)), Entry::Group { name: "g".into(), folders: vec![FolderEntry::new(&alpha), shows] }]);
+        let shown = Shown::from([(supraman_core::paths::path_key(&web), vec![web.join("site")])]);
         let found = Foreign {
             tasks: vec![
                 other(r"\", "in alpha", Some(r"C:\code\alpha\sub"), schedule::Via::Direct),
                 other(r"\Mine", "script in alpha", None, schedule::Via::Script(PathBuf::from(r"C:\code\alpha\jobs\run.ps1"))),
                 other(r"\Mine", "in code", Some(r"C:\code\beta"), schedule::Via::Direct),
                 other(r"\Mine", "elsewhere", Some(r"D:\other"), schedule::Via::Shell),
+                other(r"\Mine", "in a shown child", Some(r"D:\web\site\src"), schedule::Via::Direct),
             ],
             unreadable: 0,
         };
-        let others = Others::of(&found, &entries);
+        let others = Others::of(&found, &entries, &shown);
         let names = |ts: &[ForeignTask]| ts.iter().map(|t| t.name.clone()).collect::<Vec<_>>();
         assert_eq!(names(others.of_folder(&schedule::folder_key(&alpha))), ["in alpha", "script in alpha"], "the deepest listed folder");
         assert_eq!(names(others.of_folder(&schedule::folder_key(&code))), ["in code"]);
+        assert_eq!(names(others.of_folder(&schedule::folder_key(&web.join("site")))), ["in a shown child"], "a shown child, not its listed parent");
         assert_eq!(names(&others.unowned), ["elsewhere"]);
         assert_eq!(others.find(r"\Mine\elsewhere").map(|t| t.name.as_str()), Some("elsewhere"));
         assert_eq!(others.find(r"\in alpha").map(|t| t.name.as_str()), Some("in alpha"));

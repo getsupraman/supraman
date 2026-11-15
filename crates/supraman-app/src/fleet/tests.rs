@@ -491,3 +491,45 @@ fn other_sessions_hides_stopped_and_caps_closed_as_a_folder_does() {
 
     assert!(build(&entries, &list[1..], NOW, false, &TreeInputs::default()).unlisted.is_none(), "hidden while none of it shows");
 }
+
+#[test]
+fn a_schedule_shows_under_the_first_row_of_its_folder_at_any_depth_else_under_other_schedules() {
+    let showing = |p: &str| FolderEntry { show_subfolders: true, ..FolderEntry::new(p) };
+    let entries = Entries::new(vec![
+        Entry::Folder(showing(r"P:\T")),
+        Entry::Group { name: "g".into(), folders: vec![FolderEntry::new(r"P:\M"), showing(r"P:\G")] },
+        top(r"P:\T\c"),
+    ]);
+    let shown = Shown::from([(path_key(Path::new(r"P:\T")), vec![PathBuf::from(r"P:\T\c")]), (path_key(Path::new(r"P:\G")), vec![PathBuf::from(r"P:\G\d")])]);
+    let disk = Disk { shown, ..Disk::default() };
+    let key = |p: &str| supraman_core::schedule::folder_key(Path::new(p));
+    let folders = [r"P:\T", r"P:\M", r"P:\T\c", r"P:\G\d", r"P:\Gone"];
+    let names: Vec<String> = folders.iter().map(|p| format!("fm-{}-sched-nightly-20261102-090000", key(p))).collect();
+    let list = rows(&[
+        ("eeee0101", &names[0], r"P:\T"),
+        ("eeee0102", &names[1], r"P:\M"),
+        ("eeee0103", &names[2], r"P:\T\c"),
+        ("eeee0104", &names[3], r"P:\G\d"),
+        ("eeee0105", &names[4], r"P:\Gone"),
+    ]);
+    let own = [key(r"P:\Gone")];
+    let tree = build(&entries, &list, NOW, false, &TreeInputs { disk: Some(&disk), own_names: &own, ..TreeInputs::default() });
+    let row_of = |p: &str| tree.schedule_row(&key(p)).map(|(e, f)| tree.entries[e].folders[f].key.clone());
+    assert_eq!(row_of(r"P:\T").as_deref(), Some("T"), "a top-level folder");
+    assert_eq!(row_of(r"P:\M").as_deref(), Some("g/M"), "a group member");
+    assert_eq!(row_of(r"P:\T\c").as_deref(), Some("T/c"), "a shown child, the first of its path's two rows");
+    assert_eq!(row_of(r"P:\G\d").as_deref(), Some("g/G/d"), "a group member's shown child");
+    assert_eq!(row_of(r"P:\Gone"), None, "no row: Other schedules");
+    let on_rows: Vec<(String, Vec<String>)> = tree
+        .folders()
+        .filter(|(_, f)| !f.scheduled.is_empty())
+        .map(|(_, f)| (f.key.clone(), f.scheduled.values().flatten().map(|r| r.session.id.clone()).collect()))
+        .collect();
+    let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_eq!(on_rows, [("T".into(), ids(&["eeee0101"])), ("T/c".into(), ids(&["eeee0103"])), ("g/M".into(), ids(&["eeee0102"])), ("g/G/d".into(), ids(&["eeee0104"]))]);
+    let unrowed: Vec<&str> = tree.unrowed_runs(&key(r"P:\Gone")).unwrap().values().flatten().map(|r| r.session.id.as_str()).collect();
+    assert_eq!(unrowed, ["eeee0105"]);
+    assert_eq!(tree.unrowed_keys().collect::<Vec<_>>(), [key(r"P:\Gone").as_str()]);
+    assert!(tree.folders().all(|(_, f)| f.sessions.iter().all(|r| !r.session.name.contains("-sched-"))), "no run is placed by its cwd too");
+    assert_eq!(tree.rows().count(), list.len(), "every run shows once");
+}

@@ -27,6 +27,7 @@ mod excluded;
 pub(super) mod fold;
 pub(super) mod group_field;
 pub(super) mod unlisted;
+pub(super) mod other_schedules;
 mod work_cards;
 
 const REVEAL_WITHIN: Duration = Duration::from_secs(60);
@@ -47,6 +48,7 @@ pub(super) enum LeftRow {
     More(usize, usize),
     /// Other sessions' row, after the entries; its sessions are `Session(e, 0, i)` with `e` past them ([`fleet::Tree::node`]).
     Unlisted,
+    /// Other schedules: the schedules with no row of their folder, then Task Scheduler's tasks in no folder.
     Others,
     /// Add Group's new row, its name typed in place.
     NewGroup,
@@ -358,7 +360,6 @@ impl FleetView {
     /// The sidebar's rows in order: a key each and the tokens its hit keys contain (supraman_ui::keyed_list).
     fn set_left_rows(&mut self, tree: &Rc<fleet::Tree>, cx: &gpui::App) {
         let mut rows = Vec::new();
-        let mut scheduled = std::collections::HashSet::new();
         for (e, entry) in tree.entries.iter().enumerate() {
             let name = &entry.name;
             if entry.group {
@@ -377,7 +378,7 @@ impl FleetView {
                     continue;
                 }
                 let fkey = supraman_core::schedule::folder_key(&folder.path);
-                if folder.listed() && scheduled.insert(fkey.clone()) {
+                if tree.schedule_row(&fkey) == Some((e, f)) {
                     let tokens = ["schedules-row-", "sched-row-", "sched-state-", "sched-error-", "others-row-"].iter().map(|p| format!("{p}{fkey}")).collect();
                     rows.push((LeftRow::Schedules(e, f), format!("sched:{fkey}"), tokens));
                 }
@@ -393,7 +394,7 @@ impl FleetView {
                 session_rows(&mut rows, tree.entries.len(), 0, &node.folders[0]);
             }
         }
-        rows.push((LeftRow::Others, "others".into(), ["others-row", "other-row-", "other-name-", "other-summary-"].iter().map(|p| p.to_string()).collect()));
+        rows.push((LeftRow::Others, other_schedules::KEY.into(), self.other_schedules_tokens(tree)));
         rows.push((LeftRow::DropEnd, "drop-end".into(), vec![drag::END.to_string()]));
         self.sidebar.left_list.set_rows(rows.iter().map(|(_, key, tokens)| (SharedString::from(key.clone()), tokens.clone())).collect());
         self.sidebar.left_rows = Rc::new((tree.clone(), rows.into_iter().map(|(row, ..)| row).collect()));
@@ -462,7 +463,7 @@ impl FleetView {
             }
             LeftRow::Schedules(e, f) => {
                 let entry = &tree.entries[e];
-                div().flex().flex_col().children(self.render_schedules(entry, &entry.folders[f], level(entry) + 1, cx)).into_any_element()
+                div().flex().flex_col().children(self.render_schedules(entry, &entry.folders[f], folder_level(entry, &entry.folders[f]) + 1, cx)).into_any_element()
             }
             LeftRow::Folder(e, f) => {
                 let (entry, folder) = (&tree.entries[e], &tree.entries[e].folders[f]);
@@ -479,7 +480,7 @@ impl FleetView {
             }
             LeftRow::More(e, f) => self.render_more_closed(tree.node(e), &tree.node(e).folders[f], cx),
             LeftRow::Unlisted => self.render_unlisted_row(!self.sidebar.collapsed.contains(unlisted::KEY), cx),
-            LeftRow::Others => div().flex().flex_col().children(self.render_unowned_others(cx)).into_any_element(),
+            LeftRow::Others => div().flex().flex_col().children(self.render_other_schedules(tree, cx)).into_any_element(),
             LeftRow::NewGroup => self.render_new_group_row(cx),
             LeftRow::DropEnd => self.render_drop_end(cx),
         }
@@ -946,6 +947,15 @@ impl FleetView {
     }
 
     /// `folder`: the row's own folder's name, shown where a listed row's folder is its parent row.
+    /// A row's own folder after its name, muted and cut (Other sessions' and Other schedules' rows); `path` its tooltip.
+    pub(super) fn folder_tag(&self, key: String, name: String, path: Option<String>, cx: &mut Context<Self>) -> Stateful<Div> {
+        let tag = match path {
+            Some(path) => supraman_ui::clipped::clipped_with(key.clone(), name, false, false).tooltip(Tooltip::text(path)),
+            None => clipped(key.clone(), name, false),
+        };
+        tag.min_w_0().max_w(px(FOLDER_MAX)).text_xs().text_color(secondary(cx)).child(hit_target(&self.hits, key))
+    }
+
     fn session_line(&self, place: &str, folder: Option<&str>, row: &SessionRow, cx: &mut Context<Self>) -> Div {
         let colors = cx.theme().colors().clone();
         let s = &row.session;
@@ -976,10 +986,7 @@ impl FleetView {
                         .child(hit_target(&self.hits, key)),
                 )
             })
-            .when_some(folder, |d, folder| {
-                let key = format!("session-folder-{}{at}", s.session_id);
-                d.child(clipped(key.clone(), folder.to_string(), false).min_w_0().max_w(px(FOLDER_MAX)).text_xs().text_color(secondary(cx)).child(hit_target(&self.hits, key)))
-            })
+            .when_some(folder, |d, folder| d.child(self.folder_tag(format!("session-folder-{}{at}", s.session_id), folder.to_string(), None, cx)))
             .child(
                 div()
                     .flex()

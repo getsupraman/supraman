@@ -204,19 +204,49 @@ fn refuses_bypass_permissions_unknown_scripts_and_flag_shaped_rules() {
 }
 
 #[test]
-fn the_folder_is_the_deepest_listed_one_holding_the_cwd_or_folder_given() {
+fn the_folder_is_the_deepest_listed_or_shown_one_holding_the_cwd_or_the_folder_given() {
     let f = fixture();
     let out = f.fm_in(&f.alpha.join("sub"), &["schedule", "add", "--name", "Here", "--every", "daily 09:00", "--command", "/fix"]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    assert_eq!(f.stored("here").name, "Here");
-    let out = f.fm_in(&f.outside, &["schedule", "show", "here", "--folder", s(&f.alpha.join("sub"))]);
+    assert_eq!(f.stored("here").name, "Here", "sub is no row while Alpha hides its sub folders: Alpha's");
+    let out = f.fm_in(&f.outside, &["schedule", "show", "here", "--folder", s(&f.alpha)]);
     assert!(String::from_utf8_lossy(&out.stdout).contains(&format!("folder: {}\n", f.alpha.display())), "{out:?}");
     assert!(f.ok(&["schedule", "list", "--folder", s(&f.beta)]).contains("no schedules in"), "Beta has its own");
 
     let out = f.fm_in(&f.outside, &["schedule", "list"]);
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("no listed folder holds") && err.contains(s(&f.outside)) && err.contains("--folder"), "{err}");
+    assert!(err.contains("no listed folder holds") && err.contains(s(&f.outside)) && err.contains("sm folder add"), "{err}");
+    let out = f.fm_in(&f.alpha, &["schedule", "list", "--folder", s(&f.outside)]);
+    assert_eq!(out.status.code(), Some(1), "a --folder outside every listed folder: {out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("sm folder add"), "{out:?}");
+    let out = f.fm_in(&f.alpha, &["schedule", "list", "--folder", s(&f.alpha.join("missing"))]);
+    assert_eq!(out.status.code(), Some(1), "a --folder that does not exist: {out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no such folder"), "{out:?}");
+}
+
+#[test]
+fn a_folder_given_is_filed_exactly_and_the_cwd_in_a_shown_child_picks_the_child() {
+    let f = fixture();
+    supraman_core::folders::edit(&f.home, |e| e.set_show_subfolders(supraman_core::folders::Pos::top(0), true)).unwrap();
+    let (sub, deep) = (f.alpha.join("sub"), f.alpha.join("sub").join("deep"));
+    fs::create_dir_all(&deep).unwrap();
+    let ids = |folder: &Path| schedule::load(&f.home, folder).unwrap().into_iter().map(|s| s.id).collect::<Vec<_>>();
+    let add = |cwd: &Path, name: &str, folder: Option<&Path>| {
+        let mut args = vec!["schedule", "add", "--name", name, "--every", "daily 09:00", "--script", "run.cmd"];
+        args.extend(folder.map(|p| ["--folder", s(p)]).into_iter().flatten());
+        let out = f.fm_in(cwd, &args);
+        assert_eq!(out.status.code(), Some(0), "{name}: {out:?}");
+    };
+    for d in [&f.alpha, &sub, &deep] {
+        fs::write(d.join("run.cmd"), "exit 0\n").unwrap();
+    }
+    add(&f.outside, "Child", Some(&sub));
+    add(&f.outside, "Deeper", Some(&deep));
+    add(&deep, "From inside", None);
+    assert_eq!(ids(&sub), ["child", "from-inside"], "--folder a shown child: that child; the cwd below it: the child too");
+    assert_eq!(ids(&deep), ["deeper"], "--folder a folder deeper than any row: that folder");
+    assert!(ids(&f.alpha).is_empty(), "nothing under the listed parent");
 }
 
 #[test]

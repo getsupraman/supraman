@@ -1,5 +1,6 @@
 //! Each folder's Schedules and their actions; every change of a schedule's task goes through `schedule::sync_all`.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,7 +23,7 @@ use super::left::{REPO_ROW, SESSION_LINE, disclosure, grid, icon_slot, secondary
 use super::menu::{Confirm, Confirmed, MenuTarget};
 use supraman_ui::clipped::clipped;
 use supraman_ui::tooltip::Tooltip;
-use crate::fleet::{EntryNode, FolderNode};
+use crate::fleet::{EntryNode, FolderNode, SessionRow};
 use crate::schedules::{self, Primary, ScheduleRow, Waiting};
 
 const DRY_RUN_WITHIN: Duration = Duration::from_secs(60);
@@ -749,27 +750,38 @@ impl FleetView {
         if !rows.is_empty() || !others.is_empty() {
             let gkey = format!("schedules:{fkey}");
             let open = !self.sidebar.collapsed.contains(&gkey);
-            out.push(self.render_schedules_row(&entry.name, folder, level, rows.len() + others.len(), open, cx));
+            out.push(self.render_schedules_row(&entry.name, folder, level, open, cx));
             if open {
-                for row in &rows {
-                    let runs = folder.scheduled.get(&row.schedule.id).map(Vec::as_slice).unwrap_or_default();
-                    let skey = format!("schedule:{}", key(&fkey, &row.schedule.id));
-                    let sopen = !self.sidebar.collapsed.contains(&skey);
-                    out.push(self.render_schedule_row(row, level + 1, runs.len(), sopen, cx));
-                    if sopen {
-                        out.extend(runs.iter().map(|r| self.render_session(&entry.name, &row.schedule.id, r, grid::indent(level + 2), cx)));
-                    }
-                }
-                out.extend(self.render_others(Some(&fkey), others, level + 1, cx));
+                out.extend(self.render_schedule_list(&entry.name, &rows, &folder.scheduled, level + 1, cx));
+                out.extend(self.render_others(&fkey, others, level + 1, cx));
             }
         }
-        for (id, runs) in folder.scheduled.iter().filter(|(id, _)| !rows.iter().any(|r| &r.schedule.id == *id)) {
-            out.extend(runs.iter().map(|r| self.render_session(&entry.name, id, r, grid::indent(level), cx)));
+        out.extend(self.render_gone_runs(&entry.name, &rows, &folder.scheduled, level, cx));
+        out
+    }
+
+    /// Each schedule's row at `level`, its runs of `runs` under it while open; under Other schedules each names its folder.
+    pub(super) fn render_schedule_list(&self, entry: &str, rows: &[ScheduleRow], runs: &BTreeMap<String, Vec<SessionRow>>, level: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let mut out = Vec::new();
+        for row in rows {
+            let runs = runs.get(&row.schedule.id).map(Vec::as_slice).unwrap_or_default();
+            let skey = format!("schedule:{}", key(&row.key, &row.schedule.id));
+            let sopen = !self.sidebar.collapsed.contains(&skey);
+            out.push(self.render_schedule_row(row, level, runs.len(), sopen, entry == crate::fleet::UNROWED, cx));
+            if sopen {
+                out.extend(runs.iter().map(|r| self.render_session(entry, &row.schedule.id, r, grid::indent(level + 1), cx)));
+            }
         }
         out
     }
 
-    fn render_schedules_row(&self, entry: &str, folder: &FolderNode, level: usize, count: usize, open: bool, cx: &mut Context<Self>) -> AnyElement {
+    /// The runs of `runs` whose schedule is none of `rows`, at `level`.
+    pub(super) fn render_gone_runs(&self, entry: &str, rows: &[ScheduleRow], runs: &BTreeMap<String, Vec<SessionRow>>, level: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let gone = runs.iter().filter(|(id, _)| !rows.iter().any(|r| &r.schedule.id == *id));
+        gone.flat_map(|(id, runs)| runs.iter().map(move |r| (id, r))).map(|(id, r)| self.render_session(entry, id, r, grid::indent(level), cx)).collect()
+    }
+
+    fn render_schedules_row(&self, entry: &str, folder: &FolderNode, level: usize, open: bool, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let folder_key = schedule::folder_key(&folder.path);
         let gkey = format!("schedules:{folder_key}");
@@ -791,7 +803,6 @@ impl FleetView {
             .child(disclosure(Some(open), secondary(cx)))
             .child(icon_slot(&self.hits, &tree_key, Some(Icon::Clock.slotted(grid::ICON, secondary(cx)).into_any_element())))
             .child(tree_label(&self.hits, &tree_key, div().flex_none().whitespace_nowrap().child("Schedules")))
-            .child(div().flex_none().text_xs().text_color(secondary(cx)).child(SharedString::from(count.to_string())))
             .child(hit_target(&self.hits, format!("schedules-row-{folder_key}")))
             .on_mouse_down(MouseButton::Right, {
                 let target = MenuTarget::Schedules { entry: entry.to_string(), folder: folder.path.clone() };
@@ -831,24 +842,18 @@ impl FleetView {
     }
 
     pub fn others(&self) -> schedules::Others {
-        self.scheduling.other_schedules.as_ref().map(|f| schedules::Others::of(f, &self.listed.entries)).unwrap_or_default()
+        self.scheduling.other_schedules.as_ref().map(|f| schedules::Others::of(f, &self.listed.entries, &self.listed.disk.shown)).unwrap_or_default()
     }
 
-    /// The top-level Other schedules: tasks that run claude in no listed folder.
-    pub(super) fn render_unowned_others(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let others = self.others();
-        self.render_others(None, &others.unowned, 0, cx)
-    }
-
-    fn render_others(&self, folder_key: Option<&str>, tasks: &[ForeignTask], level: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// A folder's Task Scheduler tasks under its Schedules row, folded or open.
+    fn render_others(&self, folder_key: &str, tasks: &[ForeignTask], level: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
         if tasks.is_empty() {
             return vec![];
         }
         let colors = cx.theme().colors().clone();
-        let scope = folder_key.unwrap_or_default();
-        let gkey = format!("others:{scope}");
+        let gkey = format!("others:{folder_key}");
         let open = !self.sidebar.collapsed.contains(&gkey);
-        let (hit, tree_key) = if scope.is_empty() { ("others-row".to_string(), "others".to_string()) } else { (format!("others-row-{scope}"), format!("others-{scope}")) };
+        let (hit, tree_key) = (format!("others-row-{folder_key}"), format!("others-{folder_key}"));
         let group = div()
             .id(SharedString::from(hit.clone()))
             .relative()
@@ -865,11 +870,7 @@ impl FleetView {
             .active(|s| s.bg(colors.ghost_element_active))
             .child(disclosure(Some(open), secondary(cx)))
             .child(icon_slot(&self.hits, &tree_key, Some(Icon::Clock.slotted(grid::ICON, secondary(cx)).into_any_element())))
-            .child(tree_label(
-                &self.hits,
-                &tree_key,
-                div().flex_none().whitespace_nowrap().text_color(secondary(cx)).child(SharedString::from(format!("Other schedules ({})", tasks.len()))),
-            ))
+            .child(tree_label(&self.hits, &tree_key, div().flex_none().whitespace_nowrap().text_color(secondary(cx)).child("Other schedules")))
             .child(hit_target(&self.hits, hit))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(gkey.clone(), cx)))
             .into_any_element();
@@ -881,7 +882,7 @@ impl FleetView {
     }
 
     /// Muted: Supraman shows the task and never changes, runs or deletes it.
-    fn render_other_row(&self, t: &ForeignTask, level: usize, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_other_row(&self, t: &ForeignTask, level: usize, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let path = t.path();
         let tree_key = format!("other-{path}");
@@ -919,7 +920,7 @@ impl FleetView {
             .into_any_element()
     }
 
-    pub(super) fn render_schedule_row(&self, row: &ScheduleRow, level: usize, runs: usize, open: bool, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_schedule_row(&self, row: &ScheduleRow, level: usize, runs: usize, open: bool, named: bool, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let (w, id) = (row.key.clone(), row.schedule.id.clone());
@@ -987,6 +988,10 @@ impl FleetView {
                     }
                 })
             }))
+            .when(named, |d| {
+                let path = row.folder.display().to_string();
+                d.child(self.folder_tag(format!("sched-folder-{k}"), supraman_core::paths::folder_name(&row.folder), Some(path), cx))
+            })
             .child(
                 div()
                     .id(SharedString::from(format!("sched-state-{k}")))
