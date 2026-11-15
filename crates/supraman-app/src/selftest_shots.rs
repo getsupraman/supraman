@@ -388,8 +388,24 @@ async fn settings_pages(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWind
     crate::selftest_left::shown_and_painted(handle, cx).await?;
     let shot = capture(out.join("supraman-settings-pages.png"), Some("Supraman Settings"), cx).await?;
     println!("shot: {}", shot.display());
+    settings_sessions(handle, out, cx).await?;
     view.update(cx, |v, cx| v.close_settings(cx));
     crate::selftest::until_with(cx, Duration::from_secs(10), "the settings window closed", |cx| handle.read_with(cx, |_, _| ()).is_err().then_some(())).await
+}
+
+/// The Sessions page's Medium buttons, − 20 + level, + holding the focus ring: the padding René judges, which no unit test shows.
+async fn settings_sessions(handle: gpui::WindowHandle<crate::settings_window::SettingsView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    use crate::settings_window::page;
+    handle.update(cx, |s, _, cx| s.show(page::SESSIONS, cx))?;
+    crate::selftest::drawn_in(handle.into(), cx).await.map_err(|e| anyhow!("settings window: {e}"))?;
+    let focused = handle.update(cx, |s, window, cx| s.focus_control("settings-max-inc", window, cx))?;
+    if !focused {
+        bail!("the Sessions page painted no settings-max-inc");
+    }
+    crate::selftest::drawn_in(handle.into(), cx).await.map_err(|e| anyhow!("settings window: {e}"))?;
+    let shot = capture(out.join("supraman-settings-sessions.png"), Some("Supraman Settings"), cx).await?;
+    println!("shot: {}", shot.display());
+    Ok(())
 }
 
 /// Twenty more tabs than the strip holds: the last one active beside the + ⌄ at the room's right edge, the left edge faded.

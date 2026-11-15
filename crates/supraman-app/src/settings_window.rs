@@ -222,6 +222,12 @@ impl SettingsView {
         self.loaded
     }
 
+    /// Focuses the page's button under `key`; whether the page painted one.
+    #[cfg(feature = "selftest")]
+    pub fn focus_control(&self, key: &str, window: &mut Window, cx: &mut App) -> bool {
+        self.members.get(key).map(|h| h.focus(window, cx)).is_some()
+    }
+
     pub fn show(&mut self, page: &str, cx: &mut Context<Self>) {
         self.page = self.pages.resolve(Some(page));
         cx.notify();
