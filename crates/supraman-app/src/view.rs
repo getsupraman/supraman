@@ -90,7 +90,7 @@ pub(crate) mod writes;
 use {links::{link_target, missing}, supraman_term::MaybeNavigationTarget};
 
 #[cfg(feature = "selftest")]
-pub(crate) use left::grid;
+pub(crate) use left::{TOP_ROW, grid};
 #[cfg(feature = "selftest")]
 pub use menu::MenuAction;
 pub use menu::{Confirm, Confirmed, MenuTarget};

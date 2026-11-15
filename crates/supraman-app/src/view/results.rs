@@ -135,7 +135,7 @@ impl FleetView {
         let key = format!("result-repo-{}", r.key);
         let icon = match r.kind {
             _ if r.key == crate::fleet::UNLISTED => None,
-            supraman_core::FolderKind::Git => Some(Icon::GitBranch),
+            supraman_core::FolderKind::Git => Some(Icon::GitFolder),
             _ => Some(Icon::Folder),
         };
         let folder = r.key.clone();

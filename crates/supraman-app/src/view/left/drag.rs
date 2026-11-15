@@ -1,6 +1,7 @@
-//! A listed folder's row dragged onto a group's row, another listed folder's row or below the tree.
+//! A listed folder's row dragged onto a group's row, another listed folder's row or below the tree; the room below the tree's
+//! rows and its right-click.
 
-use gpui::{AnyElement, Context, Div, SharedString, Stateful, div, prelude::*, px};
+use gpui::{AnyElement, Context, Div, MouseButton, MouseDownEvent, Pixels, SharedString, Stateful, div, prelude::*, px};
 use supraman_ui::hit::hit_target;
 use theme::ActiveTheme as _;
 
@@ -53,13 +54,26 @@ impl FleetView {
             .into_any_element()
     }
 
-    /// The tree's area: a folder let go below the drop row's top, in the empty room under the tree, lands at the top level's end.
-    pub(super) fn tree_drop(&self, area: Stateful<Div>, cx: &mut Context<Self>) -> Stateful<Div> {
+    /// The tree's area below the drop row's top, the empty room under the tree: a folder let go there lands at the top
+    /// level's end, and a right-click there opens the Add menu.
+    pub(super) fn tree_room(&self, area: Stateful<Div>, cx: &mut Context<Self>) -> Stateful<Div> {
         area.on_drop(cx.listener(|this, d: &DraggedFolder, window, cx| {
-            let below = this.hits.borrow().get(END).is_some_and(|h| window.mouse_position().y >= h.visible.top());
-            if below {
+            if this.below_rows(window.mouse_position().y) {
                 this.drop_folder(d, &Target::End, cx);
             }
         }))
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                if this.below_rows(e.position.y) {
+                    cx.stop_propagation();
+                    this.show_add_menu(e.position, cx);
+                }
+            }),
+        )
+    }
+
+    fn below_rows(&self, y: Pixels) -> bool {
+        self.hits.borrow().get(END).is_some_and(|h| y >= h.visible.top())
     }
 }
