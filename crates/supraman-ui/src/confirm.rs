@@ -1,9 +1,8 @@
-//! A question before an action that cannot be taken back, or a report with only its OK; a box or a band.
+//! A question before an action that cannot be taken back, or a report with only its OK; a band here, a dialog in [`crate::dialog`].
 
 use gpui::{AnyElement, App, ClickEvent, Context, Div, KeyDownEvent, Pixels, SharedString, Stateful, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
-use crate::banner;
 use crate::button;
 use crate::hit::{HitTargets, hit_target};
 use crate::themes;
@@ -13,6 +12,8 @@ pub const ROW: Pixels = px(34.);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Confirm<A> {
+    /// The dialog's title line.
+    pub title: Option<String>,
     pub text: String,
     pub yes: String,
     /// What a yes runs; `None` is a report, which has no Cancel.
@@ -35,16 +36,20 @@ pub enum Answer {
 
 impl<A> Confirm<A> {
     pub fn ask(text: impl Into<String>, yes: impl Into<String>, action: A) -> Self {
-        Self { text: text.into(), yes: yes.into(), action: Some(action), alt: None, danger: false, alt_danger: false }
+        Self { title: None, text: text.into(), yes: yes.into(), action: Some(action), alt: None, danger: false, alt_danger: false }
     }
 
     pub fn report(text: impl Into<String>) -> Self {
-        Self { text: text.into(), yes: "OK".into(), action: None, alt: None, danger: false, alt_danger: false }
+        Self { title: None, text: text.into(), yes: "OK".into(), action: None, alt: None, danger: false, alt_danger: false }
     }
 
     /// A second answer, painted under `<key>-alt` between the yes and Cancel.
     pub fn or(self, words: impl Into<String>, action: A) -> Self {
         Self { alt: Some((words.into(), action)), ..self }
+    }
+
+    pub fn titled(self, title: impl Into<String>) -> Self {
+        Self { title: Some(title.into()), ..self }
     }
 
     pub fn danger(self) -> Self {
@@ -69,41 +74,7 @@ impl<A> Confirm<A> {
         }
     }
 
-    /// The text, then the yes button and Cancel, under the hit keys `<key>-yes` and `<key>-cancel`.
-    pub fn render<V: 'static>(
-        &self,
-        hits: &HitTargets,
-        key: &str,
-        on_answer: impl Fn(&mut V, bool, &mut Window, &mut Context<V>) + Clone + 'static,
-        cx: &mut Context<V>,
-    ) -> Div {
-        self.render_answer(hits, key, move |this, answer, window, cx| on_answer(this, answer == Answer::Yes, window, cx), cx)
-    }
-
-    /// [`Confirm::render`] with the alt's button under `<key>-alt`, each button's [`Answer`] to `on_answer`.
-    pub fn render_answer<V: 'static>(
-        &self,
-        hits: &HitTargets,
-        key: &str,
-        on_answer: impl Fn(&mut V, Answer, &mut Window, &mut Context<V>) + Clone + 'static,
-        cx: &mut Context<V>,
-    ) -> Div {
-        let status = cx.theme().status().clone();
-        div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .p_2()
-            .rounded_md()
-            .border_1()
-            .border_color(status.warning)
-            .bg(banner::tint(status.warning))
-            .text_sm()
-            .child(SharedString::from(self.text.clone()))
-            .child(div().flex().flex_wrap().gap(button::GAP).justify_end().children(self.answers(hits, key, button::Tone::Neutral, on_answer, cx)))
-    }
-
-    /// [`Confirm::render`] as a [`band`]; Enter takes [`Confirm::default_answer`], Esc cancels, while it holds the owner's focus.
+    /// The question as a [`band`]: its text, then the yes, the alt and Cancel under `<key>-yes`, `<key>-alt` and `<key>-cancel`; Enter takes [`Confirm::default_answer`], Esc cancels, while it holds the owner's focus.
     pub fn render_band<V: 'static>(
         &self,
         hits: &HitTargets,
@@ -167,8 +138,8 @@ impl<A> Confirm<A> {
     }
 }
 
-/// Every answer of a question (a box's, a band's): `button::action` Solid at `button::Size::Medium`, the message's
-/// text size; the `default` one, Enter's, `button::ring`ed in the theme's text colour, which reads on the band and the box.
+/// Every answer of a question (a band's, a dialog's): `button::action` Solid at `button::Size::Medium`, the message's
+/// text size; the `default` one, Enter's, `button::ring`ed in the theme's text colour, which reads on the band.
 pub fn answer(hits: &HitTargets, key: impl Into<SharedString>, words: impl Into<SharedString>, tone: button::Tone, default: bool, cx: &App) -> Stateful<Div> {
     let ring = button::ring(cx.theme().colors().text);
     button::sized(button::action(hits, key, words, tone, button::Fill::Solid, cx), button::Size::Medium).when(default, |b| b.shadow(vec![ring]))
@@ -212,7 +183,6 @@ mod tests {
         focus: FocusHandle,
         width: Pixels,
         cover: Option<Pixels>,
-        boxed: bool,
         painted: Vec<(Option<gpui::Hsla>, bool)>,
         sizes: Vec<Option<gpui::AbsoluteLength>>,
     }
@@ -226,13 +196,6 @@ mod tests {
                 let style = b.style();
                 (style.background.as_ref().and_then(|f| f.color()).and_then(|c| c.as_solid()), style.box_shadow.as_ref().is_some_and(|s| !s.is_empty()))
             }).collect();
-            if self.boxed {
-                let boxed = self.confirm.render_answer(&self.hits, "ask", |this: &mut Asking, answer, _, cx| {
-                    this.answers.push(answer);
-                    cx.notify();
-                }, cx);
-                return div().relative().w(self.width).child(boxed.child(hit_target(&self.hits, "ask-box".into())));
-            }
             let band = self.confirm.render_band_answer(&self.hits, "ask", |this: &mut Asking, answer, _, cx| {
                 this.answers.push(answer);
                 cx.notify();
@@ -248,7 +211,7 @@ mod tests {
 
     fn open(confirm: Confirm<u8>, width: f32, cx: &mut TestAppContext) -> (gpui::Entity<Asking>, &mut VisualTestContext) {
         cx.update(|cx| crate::init_globals(cx, "test"));
-        let (view, cx) = cx.add_window_view(|_, cx| Asking { hits: HitTargets::default(), confirm, answers: Vec::new(), focus: cx.focus_handle(), width: px(width), cover: None, boxed: false, painted: Vec::new(), sizes: Vec::new() });
+        let (view, cx) = cx.add_window_view(|_, cx| Asking { hits: HitTargets::default(), confirm, answers: Vec::new(), focus: cx.focus_handle(), width: px(width), cover: None, painted: Vec::new(), sizes: Vec::new() });
         cx.run_until_parked();
         (view, cx)
     }
@@ -301,15 +264,8 @@ mod tests {
         assert_eq!(painted(&view, cx), [(Some(danger), false), (Some(success), false), (Some(neutral), true)], "all Solid, Cancel ringed as Enter's");
         swap(&view, Confirm::ask("Delete the tag v1?", "Delete", 1).danger(), cx);
         assert_eq!(painted(&view, cx), [(Some(danger), false), (Some(neutral), true)], "a two-answer question");
-        for boxed in [false, true] {
-            view.update(cx, |v, cx| {
-                v.boxed = boxed;
-                cx.notify();
-            });
-            cx.run_until_parked();
-            for k in ["ask-yes", "ask-cancel"] {
-                assert_eq!(at(&view, k, cx).size.height + px(2.), button::Size::Medium.height(), "{k} and its border at the medium height (boxed {boxed})");
-            }
+        for k in ["ask-yes", "ask-cancel"] {
+            assert_eq!(at(&view, k, cx).size.height + px(2.), button::Size::Medium.height(), "{k} and its border at the medium height");
         }
     }
 

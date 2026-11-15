@@ -31,6 +31,10 @@ impl FocusOrder {
         Self(handles.into_iter().collect())
     }
 
+    pub fn first(&self) -> Option<FocusHandle> {
+        self.0.first().cloned()
+    }
+
     /// The member holding the focus: the last one containing it, so a field's own popup counts as the field.
     pub fn focused(&self, window: &Window, cx: &App) -> Option<usize> {
         self.0.iter().rposition(|h| h.contains_focused(window, cx))
