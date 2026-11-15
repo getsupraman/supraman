@@ -1,8 +1,10 @@
 //! The buttons. Each takes `key` as its element id, its hover group and its [`hit_target`] key.
 
+use std::rc::Rc;
+
 use gpui::{
-    App, Div, ElementId, FocusHandle, Hsla, Pixels, SharedString, Stateful, StyleRefinement, Svg, Window, div,
-    prelude::*, px,
+    App, BoxShadow, Context, Div, ElementId, FocusHandle, Hsla, Pixels, Rems, SharedString, Stateful, StyleRefinement, Svg, Window, div,
+    point, prelude::*, px, rems,
 };
 use theme::ActiveTheme as _;
 
@@ -166,8 +168,52 @@ pub enum Fill {
     Outline,
 }
 
-/// Every [`action`]'s height.
-pub const HEIGHT: Pixels = px(20.);
+/// A labelled button's size: its height, side padding and text size together, one row of [`Size::table`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Size {
+    /// A row's, a panel's or a toolbar's button, in the 12 px text beside it.
+    Small,
+    /// A form's, a question's and a settings page's, as high as a one-line field, in the 14 px body text.
+    Medium,
+}
+
+impl Size {
+    pub const ALL: [Size; 2] = [Size::Small, Size::Medium];
+
+    /// Height, side padding and text size.
+    pub fn table(self) -> (Pixels, Pixels, Rems) {
+        match self {
+            Size::Small => (px(20.), px(8.), rems(0.75)),
+            Size::Medium => (crate::text_input::SINGLE_HEIGHT, px(12.), rems(0.875)),
+        }
+    }
+
+    pub fn height(self) -> Pixels {
+        self.table().0
+    }
+}
+
+/// `button` (an [`action`]) at `size`; its letters stay centred, since [`ink::text`] reads the size it is given.
+pub fn sized(button: Stateful<Div>, size: Size) -> Stateful<Div> {
+    let (height, padding, text) = size.table();
+    button.h(height).px(padding).text_size(text)
+}
+
+/// The one gap between the buttons of a row (a question's answers, a form's, a settings control's).
+pub const GAP: Pixels = px(8.);
+
+/// A row of buttons [`GAP`] apart, centred on one line.
+pub fn line() -> Div {
+    div().flex().flex_none().items_center().gap(GAP)
+}
+
+/// How far a ring (the focus's, a default answer's) stands out of its button.
+pub const RING: Pixels = px(2.);
+
+/// A [`RING`]-wide ring in `color` around a box.
+pub fn ring(color: Hsla) -> BoxShadow {
+    BoxShadow { color, offset: point(px(0.), px(0.)), blur_radius: px(0.), spread_radius: RING, inset: false }
+}
 
 /// An [`action`]'s colours: its fill, border and text, its fill and text hovered, and its fill pressed.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -208,12 +254,12 @@ const TINT_HOVER: f32 = 0.3;
 const SOLID_HOVER: f32 = 0.85;
 const SOLID_ACTIVE: f32 = 0.7;
 
-/// Every labelled button: `label` centred at [`HEIGHT`] in [`look`]'s colours of `tone` and `fill`.
+/// Every labelled button: `label`'s letters centred at [`Size::Small`] ([`sized`] for another) in [`look`]'s colours of `tone` and `fill`; the letters paint under `<key>-label`.
 pub fn action(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<SharedString>, tone: Tone, fill: Fill, cx: &App) -> Stateful<Div> {
     labelled(hits, key.into(), None, label.into(), tone, fill, cx)
 }
 
-/// An [`action`] with `icon` in its text colour before the label, on the label's letters ([`ink::mark`]).
+/// An [`action`] with `icon` in its text colour before the label, centred as its letters are.
 pub fn action_with(hits: &HitTargets, key: impl Into<SharedString>, icon: Icon, label: impl Into<SharedString>, tone: Tone, fill: Fill, cx: &App) -> Stateful<Div> {
     let text = look(tone, fill, cx).text;
     labelled(hits, key.into(), Some(icon.svg(12., text).into_any_element()), label.into(), tone, fill, cx)
@@ -230,23 +276,44 @@ pub fn action_turning(hits: &HitTargets, key: impl Into<SharedString>, icon: Ico
 fn labelled(hits: &HitTargets, key: SharedString, icon: Option<gpui::AnyElement>, label: SharedString, tone: Tone, fill: Fill, cx: &App) -> Stateful<Div> {
     let look = look(tone, fill, cx);
     let hover_border = if tone == Tone::Neutral { cx.theme().colors().border_selected } else { look.border };
-    base(hits, key, move |s| s.bg(look.hover).border_color(hover_border), look.active)
+    let letters = ink::text(div().relative().child(label).child(hit_target(hits, format!("{key}-label"))));
+    let button = base(hits, key, move |s| s.bg(look.hover).border_color(hover_border), look.active)
         .flex()
         .flex_none()
         .items_center()
         .justify_center()
         .gap_1()
-        .h(HEIGHT)
-        .px_2()
         .rounded_sm()
         .border_1()
         .border_color(look.border)
         .bg(look.fill)
-        .text_xs()
         .text_color(look.text)
         .whitespace_nowrap()
-        .children(icon.map(ink::mark))
-        .child(label)
+        .children(icon)
+        .child(letters);
+    sized(button, Size::Small)
+}
+
+/// − `value` +: two [`Size::Medium`] buttons of `members`' Tab order under `<key>-dec` and `<key>-inc`, `step` given -1 or 1
+/// by a click, Space or Enter; the value between them bold, its letters on theirs, under `<key>-value`.
+pub fn stepper<V: 'static>(
+    hits: &HitTargets,
+    key: &str,
+    value: impl Into<SharedString>,
+    members: &crate::focus_order::Members,
+    step: impl Fn(&mut V, i32, &mut Window, &mut Context<V>) + Clone + 'static,
+    cx: &mut Context<V>,
+) -> Div {
+    let mut one = |by: i32, part: &str, words: &'static str| {
+        let key = format!("{key}-{part}");
+        let button = sized(action(hits, key.clone(), words, Tone::Neutral, Fill::Solid, cx), Size::Medium);
+        let step = step.clone();
+        acting(button, &members.handle(key, cx), move |this, window, cx| step(this, by, window, cx), cx)
+    };
+    let (dec, inc) = (one(-1, "dec", "−"), one(1, "inc", "+"));
+    let value = ink::text(div().relative().child(value.into()).child(hit_target(hits, format!("{key}-value"))));
+    let value = div().min_w(px(28.)).flex().justify_center().text_size(Size::Medium.table().2).font_weight(gpui::FontWeight::BOLD).child(value);
+    line().child(dec).child(value).child(inc)
 }
 
 /// `button` dimmed, with the plain cursor, while it cannot act; its click must then do nothing.
@@ -296,10 +363,18 @@ pub fn focusable_checkbox(hits: &HitTargets, key: impl Into<SharedString>, on: b
     div().id(key.clone()).group(key.clone()).flex_none().cursor_pointer().child(ink::mark(square.child(hit_target(hits, key.to_string()))))
 }
 
-/// `button` taking the keyboard under `focus` (a form's [`crate::focus_order::FocusOrder`] member): bordered in the focus colour while focused, Space or Enter `press`.
+/// `button` taking the keyboard under `focus` (a [`crate::focus_order::FocusOrder`] member): [`ring`]ed in the focus colour while focused, over any other ring; Space or Enter `press`.
 pub fn focusable(button: Stateful<Div>, focus: &FocusHandle, press: impl Fn(&Press, &mut Window, &mut App) + 'static, cx: &App) -> Stateful<Div> {
-    let ring = cx.theme().colors().border_focused;
-    button.track_focus(focus).key_context(BUTTON_CONTEXT).on_action(press).focus(move |s| s.border_color(ring))
+    let focused = ring(cx.theme().colors().border_focused);
+    button.track_focus(focus).key_context(BUTTON_CONTEXT).on_action(press).focus(move |s| s.shadow(vec![focused]))
+}
+
+/// [`focusable`] under `focus`, `act` run by a click and by Space or Enter alike.
+pub fn acting<V: 'static>(button: Stateful<Div>, focus: &FocusHandle, act: impl Fn(&mut V, &mut Window, &mut Context<V>) + 'static, cx: &mut Context<V>) -> Stateful<Div> {
+    let act = Rc::new(act);
+    let pressed = act.clone();
+    let button = button.on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| act(this, window, cx)));
+    focusable(button, focus, cx.listener(move |this, _: &Press, window, cx| pressed(this, window, cx)), cx)
 }
 
 /// A 14 px square, checked and filled with `fill` while `on`, the same size either way; a read-only mark on its own.
@@ -329,6 +404,37 @@ pub fn choice(id: impl Into<ElementId>, label: impl Into<SharedString>, selected
         .border_color(if selected { colors.border_focused } else { colors.border })
         .text_sm()
         .child(div().flex_1().child(label.into()))
+}
+
+/// `list`, a row or column of `count` [`choice`]s, one keyboard member under `focus`: [`ring`]ed in the focus colour
+/// while focused, an arrow key picking the choice before or after `chosen` (`pick` its index), stopping at the ends.
+pub fn choices<V: 'static>(list: Div, focus: &FocusHandle, count: usize, chosen: Option<usize>, pick: impl Fn(&mut V, usize, &mut Window, &mut Context<V>) + 'static, cx: &mut Context<V>) -> Div {
+    let focused = ring(cx.theme().colors().border_focused);
+    list.track_focus(focus).rounded_sm().focus(move |s| s.shadow(vec![focused])).on_key_down(cx.listener(move |this, e: &gpui::KeyDownEvent, window, cx| {
+        let back = match e.keystroke.key.as_str() {
+            "up" | "left" => true,
+            "down" | "right" => false,
+            _ => return,
+        };
+        if e.keystroke.modifiers.modified() {
+            return;
+        }
+        cx.stop_propagation();
+        if let Some(to) = neighbour(chosen, count, back) {
+            pick(this, to, window, cx);
+        }
+    }))
+}
+
+/// The choice before `at` of `n` (after it unless `back`), `None` past an end; the first (the last) from none.
+pub fn neighbour(at: Option<usize>, n: usize, back: bool) -> Option<usize> {
+    match at {
+        _ if n == 0 => None,
+        None if back => Some(n - 1),
+        None => Some(0),
+        Some(at) if back => at.checked_sub(1),
+        Some(at) => (at + 1 < n).then_some(at + 1),
+    }
 }
 
 /// One option of a [`crate::segmented`] group: [`choice`]'s fills, `icon` and `label`, under `key`.

@@ -1,6 +1,9 @@
 //! A form's Tab order: Tab focuses its next field, Shift+Tab the previous one, wrapping within the form; Space or Enter presses a focused button, Esc on it is `Dismiss` for the form.
 
-use gpui::{App, FocusHandle, InteractiveElement, KeyBinding, Window};
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+use gpui::{App, FocusHandle, InteractiveElement, KeyBinding, SharedString, Window};
 
 gpui::actions!(focus_order, [NextField, PreviousField, Press, Dismiss]);
 
@@ -46,6 +49,43 @@ impl FocusOrder {
         form.key_context(CONTEXT)
             .on_action(move |_: &NextField, window, cx| self.step(false, window, cx))
             .on_action(move |_: &PreviousField, window, cx| back.step(true, window, cx))
+    }
+}
+
+/// A view's focusable buttons by key, each handle kept across frames, and its Tab order: the members in the order
+/// [`Members::handle`] and [`Members::add`] were called since [`Members::begin`], its render's paint order.
+#[derive(Default)]
+pub struct Members {
+    handles: RefCell<HashMap<SharedString, FocusHandle>>,
+    order: RefCell<Vec<FocusHandle>>,
+}
+
+impl Members {
+    /// A new frame's order, before its first member.
+    pub fn begin(&self) {
+        self.order.borrow_mut().clear();
+    }
+
+    /// The handle kept for `key`, made on its first call; the next member of this frame's order.
+    pub fn handle(&self, key: impl Into<SharedString>, cx: &App) -> FocusHandle {
+        let handle = self.handles.borrow_mut().entry(key.into()).or_insert_with(|| cx.focus_handle()).clone();
+        self.add(handle.clone());
+        handle
+    }
+
+    /// `handle` (a field's) as the next member of this frame's order.
+    pub fn add(&self, handle: FocusHandle) {
+        self.order.borrow_mut().push(handle);
+    }
+
+    /// The handle kept for `key`, if one was made.
+    pub fn get(&self, key: &str) -> Option<FocusHandle> {
+        self.handles.borrow().get(key).cloned()
+    }
+
+    /// This frame's members in order.
+    pub fn order(&self) -> FocusOrder {
+        FocusOrder::new(self.order.borrow().iter().cloned())
     }
 }
 

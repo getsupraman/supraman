@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, IntoElement, Render, Subscription, Window, div, prelude::*, px};
+use gpui::{AnyElement, App, AppContext as _, ClickEvent, Context, Entity, FocusHandle, Focusable as _, IntoElement, Render, Subscription, Window, div, prelude::*, px};
 use supraman_core::Settings;
 use supraman_gitman::{BackgroundSettings, background_settings, set_setting};
 use supraman_ui::button;
@@ -24,6 +24,8 @@ pub struct GitmanPage {
     home: Option<PathBuf>,
     hits: HitTargets,
     every: Entity<TextInput>,
+    /// The tick boxes' focus: maintenance, worktree rows.
+    ticks: [FocusHandle; 2],
     settings: BackgroundSettings,
     /// A change waits for the first read: it never saves over what the file holds.
     loaded: bool,
@@ -41,7 +43,7 @@ impl GitmanPage {
                 this.every_edited(&text, cx);
             }
         });
-        let page = GitmanPage { home, hits, every, settings: BackgroundSettings::default(), loaded: false, error: None, saves: Serial::default(), _every_events: events };
+        let page = GitmanPage { home, hits, every, ticks: [cx.focus_handle(), cx.focus_handle()], settings: BackgroundSettings::default(), loaded: false, error: None, saves: Serial::default(), _every_events: events };
         page.read(cx);
         page
     }
@@ -65,6 +67,12 @@ impl GitmanPage {
             .ok();
         })
         .detach();
+    }
+
+    /// The page's controls in their settings page's Tab order.
+    pub fn focus_members(&self, cx: &App) -> [FocusHandle; 3] {
+        let [maintenance, worktrees] = self.ticks.clone();
+        [self.every.focus_handle(cx), maintenance, worktrees]
     }
 
     #[cfg(test)]
@@ -134,8 +142,11 @@ impl GitmanPage {
 
     fn rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let field = div().w(px(72.)).child(self.every.clone()).into_any_element();
-        let tick = button::checkbox(&self.hits, MAINTENANCE_KEY, self.settings.maintains(), cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_maintenance(cx)));
-        let worktrees = button::checkbox(&self.hits, WORKTREE_WIP_KEY, self.settings.worktree_wips(), cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_worktree_wip(cx)));
+        let [maintenance, worktree_wip] = &self.ticks;
+        let tick = button::focusable_checkbox(&self.hits, MAINTENANCE_KEY, self.settings.maintains(), maintenance, cx.listener(|this, _, _, cx| this.toggle_maintenance(cx)), cx)
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_maintenance(cx)));
+        let worktrees = button::focusable_checkbox(&self.hits, WORKTREE_WIP_KEY, self.settings.worktree_wips(), worktree_wip, cx.listener(|this, _, _, cx| this.toggle_worktree_wip(cx)), cx)
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_worktree_wip(cx)));
         let mut rows = vec![
             row("Fetch every N minutes (0 = off)", "An open Git tab fetches every remote when it opens, each time it becomes the active tab, and then this often. A failure shows on the Pull button.", field, None, cx),
             row("Run git maintenance in the background", "Once an hour at most per repository, while no Claude session works in it: the commit-graph written, loose objects packed, packs repacked.", tick.into_any_element(), None, cx),
@@ -213,5 +224,28 @@ maintenance = false
         cx.run_until_parked();
         let saved = background_settings(&Settings::load(home.path()).unwrap());
         assert_eq!((saved.worktree_wip, saved.maintenance), (Some(false), Some(false)), "saved off, the other key kept");
+    }
+
+    #[gpui::test]
+    fn the_pages_members_are_its_field_then_its_tick_boxes_and_space_ticks_the_focused_one(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            supraman_ui::init_globals(cx, "test");
+            supraman_ui::text_input::bind_keys(cx);
+            supraman_ui::focus_order::bind_keys(cx);
+        });
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(Settings::path(home.path()), "[gitman]\nmaintenance = true\n").unwrap();
+        let (page, cx) = cx.add_window_view(|window, cx| GitmanPage::new(Some(home.path().to_path_buf()), HitTargets::default(), window, cx));
+        cx.run_until_parked();
+        let members = page.read_with(cx, |p, cx| p.focus_members(cx));
+        assert_eq!(members[0], page.read_with(cx, |p, cx| p.every().focus_handle(cx)), "the interval first");
+        cx.update(|window, cx| members[1].focus(window, cx));
+        cx.simulate_keystrokes("space");
+        cx.run_until_parked();
+        cx.update(|window, cx| members[2].focus(window, cx));
+        cx.simulate_keystrokes("space");
+        cx.run_until_parked();
+        let saved = background_settings(&Settings::load(home.path()).unwrap());
+        assert_eq!((saved.maintenance, saved.worktree_wip), (Some(false), Some(false)), "Space ticked each focused box");
     }
 }

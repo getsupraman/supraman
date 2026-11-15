@@ -5,7 +5,6 @@ use supraman_gitman::OperationState;
 use supraman_gitman::write::conflicts::Sequence;
 use supraman_gitman::write::wip::Step;
 use supraman_ui::button;
-use supraman_ui::form;
 use supraman_ui::hit::hit_target;
 use supraman_ui::focus_order::Press;
 use supraman_ui::icon::Icon;
@@ -115,7 +114,7 @@ impl WipPanel {
         let (words, act) = self.commit_button(false, cx)?;
         let (tone, fill) = (button::Tone::Success, button::Fill::Solid);
         let ink = button::look(tone, fill, cx).text;
-        let bar = form::sized(button::action(&self.hits, "wip-commit", SharedString::from(words.clone()), tone, fill, cx)).w_full().child(Icon::GitCommit.svg(14., ink));
+        let bar = button::sized(button::action(&self.hits, "wip-commit", SharedString::from(words.clone()), tone, fill, cx), button::Size::Medium).w_full().child(Icon::GitCommit.svg(14., ink));
         let busy = self.busy(cx);
         Some(if act.is_none() && busy.is_none() { button::dimmed(bar) } else { live(bar, busy, cx, |this, cx| this.commit(false, cx)) })
     }

@@ -345,9 +345,9 @@ impl BranchActions {
         let adding = self.adding.as_ref()?;
         let fields = adding.fields.as_ref()?;
         let reference = self.ref_field(adding, &fields.reference, cx);
-        let browse = form::sized(button::action(&self.hits, format!("{KEY}-browse"), "Browse", button::Tone::Neutral, button::Fill::Outline, cx)).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.browse(window, cx)));
+        let browse = button::sized(button::action(&self.hits, format!("{KEY}-browse"), "Browse", button::Tone::Neutral, button::Fill::Outline, cx), button::Size::Medium).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.browse(window, cx)));
         let browse = button::focusable(browse, &fields.browse, cx.listener(|this, _: &Press, window, cx| this.browse(window, cx)), cx);
-        let folder = div().flex().items_center().gap_2().child(form::input(&self.hits, format!("{KEY}-folder"), &fields.folder)).child(browse).into_any_element();
+        let folder = div().flex().items_center().gap(button::GAP).child(form::input(&self.hits, format!("{KEY}-folder"), &fields.folder)).child(browse).into_any_element();
         let rows = vec![
             ("Reference to checkout".into(), reference),
             ("Worktree branch to create (optional)".into(), form::input(&self.hits, format!("{KEY}-branch"), &fields.branch)),

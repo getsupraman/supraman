@@ -152,7 +152,7 @@ fn wip_commit_button_spans_the_commit_area_at_the_form_button_height(cx: &mut Te
     let (area, commit) = (at(crate::git_view::wip::compose_render::AREA), at("wip-commit"));
     let inset = gpui::px(8. + 1.);
     assert!((commit.left() - (area.left() + inset)).abs() < gpui::px(0.5) && (commit.right() - (area.right() - inset)).abs() < gpui::px(0.5), "Commit {commit:?} spans the area {area:?} within its padding, its hit key inside the 1 px border");
-    assert_eq!(commit.size.height, supraman_ui::form::BUTTON_HEIGHT - gpui::px(2.), "Commit stands at the form buttons' height");
+    assert_eq!(commit.size.height, supraman_ui::button::Size::Medium.height() - gpui::px(2.), "Commit stands at the form buttons' height");
 }
 
 fn hook(f: &Fixture) {
