@@ -1,4 +1,4 @@
-//! `--selftest` step 7h: closed sessions read from transcripts on disk by the real poll, painted in the sidebar, starred, and resumed by a double-click that runs a fake claude; FleetView is not buildable in a gpui test.
+//! `--selftest` step 7h: closed sessions read from transcripts on disk by the real poll, painted in the sidebar, starred, and resumed by a double-click that runs a fake claude; one outside every listed folder under Other sessions, folded until opened; FleetView is not buildable in a gpui test.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
@@ -14,7 +14,9 @@ use crate::{
 
 pub const RECENT: &str = "5e1f7e57-0000-4000-8000-00000000c105";
 pub const OLD: &str = "01d05e1f-0000-4000-8000-0000000001d0";
+pub const UNLISTED: &str = "0e15e000-0000-4000-8000-0000000e15e0";
 const RECENT_TITLE: &str = "selftest closed session";
+const UNLISTED_TITLE: &str = "selftest session elsewhere";
 const OLD_TITLE: &str = "selftest starred old session";
 const WITHIN: Duration = Duration::from_secs(15);
 
@@ -24,6 +26,11 @@ pub fn claude_dir(home: &Path) -> PathBuf {
 
 pub(crate) fn seen_file(home: &Path) -> PathBuf {
     claude_dir(home).join("resumed.txt")
+}
+
+/// A folder outside every listed one, where the Other sessions transcript ran.
+fn elsewhere(home: &Path) -> PathBuf {
+    home.join("elsewhere")
 }
 
 pub(crate) fn fake_claude(home: &Path) -> PathBuf {
@@ -46,15 +53,19 @@ pub(crate) fn transcript(id: &str, cwd: &Path, title: &str) -> String {
 pub fn prepare(home: &Path, main_repo: &Path) -> anyhow::Result<()> {
     let dir = claude_dir(home).join("projects").join(supraman_claude::transcript::slug(main_repo));
     std::fs::create_dir_all(&dir)?;
-    let write = |id: &str, title: &str, age: Duration| -> anyhow::Result<()> {
+    let write_in = |cwd: &Path, id: &str, title: &str, age: Duration| -> anyhow::Result<()> {
         let path = dir.join(format!("{id}.jsonl"));
-        std::fs::write(&path, transcript(id, main_repo, title))?;
+        std::fs::write(&path, transcript(id, cwd, title))?;
         let file = std::fs::OpenOptions::new().write(true).open(&path)?;
         file.set_modified(SystemTime::now() - age)?;
         Ok(())
     };
+    let write = |id: &str, title: &str, age: Duration| write_in(main_repo, id, title, age);
     write(RECENT, RECENT_TITLE, Duration::from_secs(3600))?;
     write(OLD, OLD_TITLE, Duration::from_secs(20 * 24 * 3600))?;
+    // listed folders' project dirs are the ones scanned; its cwd is what places it
+    std::fs::create_dir_all(elsewhere(home))?;
+    write_in(&elsewhere(home), UNLISTED, UNLISTED_TITLE, Duration::from_secs(3600))?;
     let seen = seen_file(home);
     std::fs::write(
         fake_claude(home),
@@ -63,7 +74,7 @@ pub fn prepare(home: &Path, main_repo: &Path) -> anyhow::Result<()> {
     let (mut stars, _) = Stars::load(Some(home));
     let (_, save) = stars.toggle(OLD);
     save.ok_or_else(|| anyhow!("no home to star {OLD} in"))?.write().map_err(|e| anyhow!("cannot star {OLD}: {e}"))?;
-    println!("step 1h: fake claude dir {} with transcripts {RECENT} (1 h old) and {OLD} (20 days, starred)", claude_dir(home).display());
+    println!("step 1h: fake claude dir {} with transcripts {RECENT} (1 h old), {OLD} (20 days, starred) and {UNLISTED} (1 h old, in {})", claude_dir(home).display(), elsewhere(home).display());
     Ok(())
 }
 
@@ -148,6 +159,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
         bail!("the fake claude ran in {cwd}, not the session's cwd {}", main.display());
     }
     let minted = args.contains("--mcp-config");
+    let other = other_sessions(view, home, cx).await?;
 
     click(view, &format!("star-{RECENT}"), cx).await?;
     until(view, cx, WITHIN, "the star sets", |v| row(v, RECENT).filter(|r| r.2).map(|_| ())).await?;
@@ -166,8 +178,43 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     .await?;
     Ok(format!(
         "starred 20-day-old {OLD} shown with stopped hidden {} ms in; {RECENT} only with stopped shown, as \"{RECENT_TITLE}\"; \
-         a double-click on its row resumed it: the fake claude ran `{args}` in {cwd} ({}); star kept it with stopped hidden; unstar hid it and left starred.json",
+         a double-click on its row resumed it: the fake claude ran `{args}` in {cwd} ({}); {other}; star kept it with stopped hidden; unstar hid it and left starred.json",
         first.as_millis(),
         if minted { "with its own token config" } else { "plain: no Workman token to mint" }
     ))
+}
+
+/// The closed session outside every listed folder: under Other sessions, folded until its row is clicked, then resumed by a double-click.
+async fn other_sessions(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let row_key = format!("session-row-{UNLISTED}");
+    until(view, cx, WITHIN, "Other sessions holding the session elsewhere", |v| {
+        v.tree().unlisted.as_ref().is_some_and(|n| n.rows().any(|r| r.session.session_id == UNLISTED)).then_some(())
+    })
+    .await?;
+    until(view, cx, WITHIN, "Other sessions' row painted", |v| painted(v, "unlisted-row").then_some(())).await?;
+    if view.read_with(cx, |v, _| painted(v, &row_key)) {
+        bail!("{UNLISTED}'s row is painted while Other sessions is folded");
+    }
+    click(view, "unlisted-row", cx).await?;
+    until(view, cx, WITHIN, "its row and its folder's name once Other sessions is opened", |v| {
+        (painted(v, &row_key) && painted(v, &format!("session-folder-{UNLISTED}"))).then_some(())
+    })
+    .await?;
+    let seen = seen_file(home);
+    std::fs::remove_file(&seen)?;
+    let tabs = view.read_with(cx, |v, _| v.tabs.len());
+    double_click(view, &row_key, cx).await?;
+    until(view, cx, WITHIN, "a double-click on its row resumes it in a tab", |v| (v.tabs.len() > tabs).then_some(())).await?;
+    let text = crate::selftest::until_with(cx, WITHIN, "the fake claude resuming it", |_| {
+        std::fs::read_to_string(&seen).ok().filter(|t| t.lines().count() >= 2)
+    })
+    .await?;
+    let mut lines = text.lines();
+    let (args, cwd) = (lines.next().unwrap_or_default().trim().to_string(), lines.next().unwrap_or_default().trim().to_string());
+    if !args.starts_with(&format!("--resume {UNLISTED}")) || !Path::new(&cwd).ends_with("elsewhere") {
+        bail!("the fake claude got `{args}` in {cwd}, not --resume {UNLISTED} in {}", elsewhere(home).display());
+    }
+    click(view, "unlisted-row", cx).await?;
+    until(view, cx, WITHIN, "its row gone once Other sessions is folded again", |v| (!painted(v, &row_key)).then_some(())).await?;
+    Ok(format!("{UNLISTED} in {} under Other sessions, folded until clicked, then its row with its folder's name; a double-click resumed it there", elsewhere(home).display()))
 }
