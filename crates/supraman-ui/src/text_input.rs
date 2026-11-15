@@ -580,11 +580,16 @@ pub fn quiet_frame(focused: bool, cx: &App) -> gpui::Div {
     div().flex().items_center().min_w_0().h(QUIET_HEIGHT).px(PAD_X).rounded_md().border_1().border_color(border).bg(colors.element_background).text_sm().line_height(LINE_HEIGHT).overflow_hidden()
 }
 
+/// An [`inline_frame`]'s padding beside the text, inside its 1 px border.
+const INLINE_PAD_X: Pixels = px(4.);
+/// Where an [`inline_frame`]'s text starts, from its outer left edge: the border and [`INLINE_PAD_X`].
+pub const INLINE_TEXT_LEFT: Pixels = px(5.);
+
 /// A [`TextInput::inline`] field's box: the text style it sits in, the full height, the focus colour's border, the error colour's while `invalid`.
 pub fn inline_frame(focused: bool, invalid: bool, cx: &App) -> gpui::Div {
     let colors = cx.theme().colors();
     let border = if invalid { cx.theme().status().error } else if focused { colors.border_focused } else { colors.border };
-    div().flex().items_center().min_w_0().h_full().px(px(4.)).rounded_sm().border_1().border_color(border).bg(colors.editor_background).overflow_hidden()
+    div().flex().items_center().min_w_0().h_full().px(INLINE_PAD_X).rounded_sm().border_1().border_color(border).bg(colors.editor_background).overflow_hidden()
 }
 
 pub struct TextInput {

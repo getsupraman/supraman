@@ -3,6 +3,7 @@
 use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, FontWeight, KeyBinding, MouseButton, SharedString, Subscription, Window, div, prelude::*, px};
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
+use supraman_ui::text_input;
 use supraman_ui::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
@@ -93,6 +94,7 @@ impl FleetView {
                 .relative()
                 .flex_1()
                 .min_w_0()
+                .ml(-text_input::INLINE_TEXT_LEFT)
                 .h(px(TOP_ROW - 4.))
                 .font_weight(FontWeight::BOLD)
                 .child(field)
