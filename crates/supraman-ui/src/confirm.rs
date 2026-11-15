@@ -218,12 +218,15 @@ mod tests {
         cover: Option<Pixels>,
         boxed: bool,
         painted: Vec<(Option<gpui::Hsla>, bool)>,
+        sizes: Vec<Option<gpui::AbsoluteLength>>,
     }
 
     impl Render for Asking {
         fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             let probe = HitTargets::default();
-            self.painted = self.confirm.answers(&probe, "probe", button::Tone::Success, |_: &mut Asking, _, _, _| {}, cx).into_iter().map(|mut b| {
+            let mut answers = self.confirm.answers(&probe, "probe", button::Tone::Success, |_: &mut Asking, _, _, _| {}, cx);
+            self.sizes = answers.iter_mut().map(|b| b.style().text.font_size).collect();
+            self.painted = answers.iter_mut().map(|b| {
                 let style = b.style();
                 (style.background.as_ref().and_then(|f| f.color()).and_then(|c| c.as_solid()), style.box_shadow.as_ref().is_some_and(|s| !s.is_empty()))
             }).collect();
@@ -249,7 +252,7 @@ mod tests {
 
     fn open(confirm: Confirm<u8>, width: f32, cx: &mut TestAppContext) -> (gpui::Entity<Asking>, &mut VisualTestContext) {
         cx.update(|cx| crate::init_globals(cx, "test"));
-        let (view, cx) = cx.add_window_view(|_, cx| Asking { hits: HitTargets::default(), confirm, answers: Vec::new(), focus: cx.focus_handle(), width: px(width), cover: None, boxed: false, painted: Vec::new() });
+        let (view, cx) = cx.add_window_view(|_, cx| Asking { hits: HitTargets::default(), confirm, answers: Vec::new(), focus: cx.focus_handle(), width: px(width), cover: None, boxed: false, painted: Vec::new(), sizes: Vec::new() });
         cx.run_until_parked();
         (view, cx)
     }
@@ -269,6 +272,8 @@ mod tests {
         assert_eq!((band.origin.x, band.size.width), (px(0.), px(1000.)), "full width");
         let [text, yes, alt, cancel] = ["ask-text", "ask-yes", "ask-alt", "ask-cancel"].map(|k| at(&view, k, cx));
         let below = letters_below(cx);
+        let sizes = view.read_with(cx, |v, _| v.sizes.clone());
+        assert_eq!(sizes, [Some(gpui::rems(0.875).into()); 3], "the answers in the message's text size, so one offset puts both's letters");
         for (b, k) in [(yes, "yes"), (alt, "alt"), (cancel, "cancel")] {
             assert!(ink::level(b.center().y + below, text.center().y + below), "{k}'s letters on the text's: {b:?} by {text:?}");
         }
