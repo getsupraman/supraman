@@ -195,8 +195,8 @@ fn rows() -> anyhow::Result<Vec<supraman_claude::Session>> {
         row("d0000004", "demo-docs", "docs", "background", "working", "idle", None, 63),
         row("d0000005", "refactor-auth", "api", "interactive", "working", "busy", None, 8),
         row("d0000006", "demo-infra", "infra", "background", "stopped", "idle", None, 240),
-        elsewhere("d0000007", "release-notes", "notes", "background", "working", "idle", 12),
-        elsewhere("d0000008", "try-a-crate", "scratch", "interactive", "working", "busy", 95),
+        elsewhere("d00000a7", "release-notes", "notes", "background", "working", "idle", 12),
+        elsewhere("d00000a8", "try-a-crate", "scratch", "interactive", "working", "busy", 95),
     ]);
     Ok(supraman_claude::parse(&json.to_string())?)
 }
@@ -283,7 +283,7 @@ async fn sidebar_shown(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindo
 
 /// Other sessions opened at the tree's bottom: the sessions outside every listed folder, each with its folder's name.
 async fn other_sessions(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
-    let row = "session-row-d0000007-0000-4000-8000-00000000de00";
+    let row = "session-row-d00000a7-0000-4000-8000-00000000de00";
     crate::selftest::click(view, "unlisted-row", cx).await?;
     crate::selftest::until(view, cx, Duration::from_secs(10), "Other sessions' rows", |v| v.shown(row).then_some(())).await?;
     crate::selftest::drawn(cx).await?;
