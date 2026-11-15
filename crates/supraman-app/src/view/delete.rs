@@ -154,7 +154,8 @@ impl FleetView {
             "Delete",
             Confirmed::Delete { session, discard: None },
         )
-        .titled("Delete session"));
+        .titled("Delete session")
+        .danger());
     }
 
     pub(super) fn delete_now(&mut self, session: Session, discard: Option<String>, cx: &mut Context<Self>) {
@@ -200,7 +201,8 @@ impl FleetView {
                     format!("Discard {commits} and delete"),
                     Confirmed::Delete { session, discard: Some(value) },
                 )
-                .titled("Discard unpushed commits"))
+                .titled("Discard unpushed commits")
+                .danger())
             }
             None => self.action_error = Some(format!("claude rm kept {} ({commits}{at}): {}", label(&session), refusal.text)),
         }
@@ -241,6 +243,7 @@ impl FleetView {
                         Confirmed::DeleteClosed { entry, sessions, skipped },
                     )
                     .titled(CLOSED)
+                    .danger()
                 });
                 cx.notify();
             })

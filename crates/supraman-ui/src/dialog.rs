@@ -18,6 +18,10 @@ pub const PRIORITY: usize = menu::PRIORITY + 1;
 pub const WIDTH: Pixels = px(520.);
 /// The least room between the panel and the window's edges.
 pub const MARGIN: Pixels = px(24.);
+/// The scrim's black on a dark theme: enough to set the panel apart on a near-black ground.
+pub const SCRIM_DARK: f32 = 0.6;
+/// The scrim's black on a light theme: [`SCRIM_DARK`] there turns the window a muddy grey.
+pub const SCRIM_LIGHT: f32 = 0.3;
 
 type Act<V> = Rc<dyn Fn(&mut V, &mut Window, &mut Context<V>)>;
 
@@ -162,7 +166,8 @@ impl Dialog {
             .child(button::line().justify_end().flex_wrap().pt_2().children(buttons))
             .child(take_focus)
             .child(hit_target(hits, format!("{key}-dialog")));
-        deferred(scrim(hits, &key).child(card)).with_priority(PRIORITY).into_any_element()
+        let shade = if cx.theme().appearance.is_light() { SCRIM_LIGHT } else { SCRIM_DARK };
+        deferred(scrim(hits, &key, shade).child(card)).with_priority(PRIORITY).into_any_element()
     }
 }
 
@@ -172,7 +177,7 @@ pub fn over(content: impl IntoElement, dialog: Option<AnyElement>) -> Div {
     div().relative().size_full().child(content).children(dialog)
 }
 
-fn scrim(hits: &HitTargets, key: &str) -> gpui::Stateful<Div> {
+fn scrim(hits: &HitTargets, key: &str, shade: f32) -> gpui::Stateful<Div> {
     div()
         .id(SharedString::from(format!("{key}-scrim")))
         .absolute()
@@ -183,7 +188,7 @@ fn scrim(hits: &HitTargets, key: &str) -> gpui::Stateful<Div> {
         .items_center()
         .justify_center()
         .p(MARGIN)
-        .bg(gpui::black().opacity(0.45))
+        .bg(gpui::black().opacity(shade))
         .occlude()
         .child(hit_target(hits, format!("{key}-scrim")))
 }

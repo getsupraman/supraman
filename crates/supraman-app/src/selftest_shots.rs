@@ -309,6 +309,9 @@ async fn group_dialogs(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindo
     crate::selftest::drawn(cx).await?;
     let shot = capture(out.join("supraman-remove-group.png"), None, cx).await?;
     println!("shot: {}", shot.display());
+    if let Some(home) = view.read_with(cx, |v, _| v.home.clone()) {
+        crate::selftest_schedules::themed_shots(&home, "supraman-remove-group", cx).await;
+    }
     crate::selftest::click(view, "confirm-cancel", cx).await?;
     crate::selftest::until(view, cx, Duration::from_secs(10), "the question gone", |v| v.dialogs.confirm.is_none().then_some(())).await?;
     Ok(())

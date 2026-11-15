@@ -474,6 +474,9 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
 
     click(view, &format!("sched-page-remove-{ws}/{ID}"), cx).await?;
     confirm_text(view, "Remove's question", "nothing in any folder is touched", cx).await?;
+    if !view.read_with(cx, |v, _| v.dialogs.confirm.as_ref().is_some_and(|c| c.danger)) {
+        bail!("Remove's question is not a danger one: Enter would remove the schedule");
+    }
     click(view, "confirm-yes", cx).await?;
     until(view, cx, WITHIN, "the schedule removed", |v| v.schedule_row(&ws, ID).is_none().then_some(())).await?;
     if !schedule::load(home, &dir)?.is_empty() || has_task(&fake) || fake.has_folder(&format!(r"{}\{ws}", schedule::task_root(home))) {

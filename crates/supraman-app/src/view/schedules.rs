@@ -309,7 +309,8 @@ impl FleetView {
             "Remove",
             Confirmed::RemoveSchedule { folder_key: folder_key.to_string(), id: id.to_string() },
         )
-        .titled("Remove schedule"));
+        .titled("Remove schedule")
+        .danger());
         cx.notify();
     }
 
