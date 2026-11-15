@@ -48,7 +48,8 @@ pub fn fake() -> Option<(&'static FakeWorkman, &'static supraman_workman::fake::
 
 fn item(id: &str, qref: &str, kind: &str, title: &str, status: &str) -> Value {
     let ref_ = qref.rsplit('/').next().unwrap_or(qref);
-    json!({ "id": id, "ref": ref_, "qualifiedRef": qref, "kind": kind, "title": title, "status": status })
+    let full = if kind == "project" { qref.to_string() } else { format!("{GROUP}/{qref}") };
+    json!({ "id": id, "ref": ref_, "qualifiedRef": qref, "fullRef": full, "kind": kind, "title": title, "status": status })
 }
 
 fn rollup(total: u32, done: u32, in_progress: u32, open: u32, cancelled: u32) -> Value {
@@ -409,7 +410,7 @@ async fn folder_work(view: &Entity<FleetView>, group_tab: u64, cx: &mut AsyncWin
     let work = crate::selftest::until_app(view, cx, LOADED_WITHIN, "the folder's Open Work bound", |v, cx| item(v, &key, cx).filter(|i| i.dimmed.is_none())).await?;
     let MenuAction::Work(target @ Target::Folder(_)) = work.action.clone() else { bail!("{key}'s Open Work is {:?}, not its folder's", work.action) };
     cx.update(|window, cx| view.update(cx, |v, cx| v.run_action(work.action, window, cx)))?;
-    let title = "Work · Supraman selftest project";
+    let title = format!("Work · {GROUP}");
     let folder_tab = crate::selftest::until_app(view, cx, LOADED_WITHIN, "the folder's Work tab titled by its project", |v, cx| {
         let tab = v.active.and_then(|id| v.tab(id)).filter(|t| matches!(&t.kind, TabKind::Work(w) if w.read(cx).target == target))?;
         (tab.title == title).then_some(tab.id)

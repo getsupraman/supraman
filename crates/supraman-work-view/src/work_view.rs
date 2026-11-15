@@ -730,17 +730,17 @@ impl WorkView {
         self.projects.iter().any(|p| p.item.id == project)
     }
 
-    /// The bound project's name when there is one, else the target's.
+    /// The bound project's ref when there is one, else the target's name.
     pub fn name(&self) -> String {
         match self.projects.as_slice() {
-            [one] if !one.item.title.is_empty() => one.item.title.clone(),
+            [one] if !one.item.full().is_empty() => one.item.full().to_string(),
             _ => self.target.name(),
         }
     }
 
     /// The tab's title: `Work · <name>`.
     pub fn title(&self) -> String {
-        let projects: Vec<&str> = self.projects.iter().map(|p| p.item.title.as_str()).collect();
+        let projects: Vec<&str> = self.projects.iter().map(|p| p.item.full()).collect();
         title(&self.target, &projects)
     }
 }

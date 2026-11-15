@@ -80,7 +80,8 @@ pub fn prepare() -> anyhow::Result<()> {
 
 fn item(id: &str, qref: &str, kind: &str, title: &str, status: &str) -> Value {
     let ref_ = qref.rsplit('/').next().unwrap_or(qref);
-    json!({ "id": id, "ref": ref_, "qualifiedRef": qref, "kind": kind, "title": title, "status": status })
+    let full = if kind == "project" { qref.to_string() } else { format!("{GROUP}/{qref}") };
+    json!({ "id": id, "ref": ref_, "qualifiedRef": qref, "fullRef": full, "kind": kind, "title": title, "status": status })
 }
 
 /// A fixture folder's repo: every one is the demo shop's checkout.

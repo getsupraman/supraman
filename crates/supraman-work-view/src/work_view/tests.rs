@@ -22,9 +22,11 @@ fn id(n: u32) -> String {
     format!("aaaa0000-0000-4000-8000-00000000{n:04}")
 }
 
-fn item(id: &str, qref: &str, kind: &str, title: &str, status: &str) -> Value {
-    let ref_ = qref.rsplit('/').next().unwrap_or(qref);
-    json!({ "id": id, "ref": ref_, "qualifiedRef": qref, "kind": kind, "title": title, "status": status })
+/// `full` as Workman's `fullRef`, `project/run/ref`; its `qualifiedRef` is the same without the project.
+fn item(id: &str, full: &str, kind: &str, title: &str, status: &str) -> Value {
+    let ref_ = full.rsplit('/').next().unwrap_or(full);
+    let qref = full.split_once('/').map_or(full, |(_, rest)| rest);
+    json!({ "id": id, "ref": ref_, "qualifiedRef": qref, "fullRef": full, "kind": kind, "title": title, "status": status })
 }
 
 fn run_item(id: &str, qref: &str, status: &str) -> Value {
@@ -282,14 +284,14 @@ fn c1_each_folders_project_shows_its_runs(cx: &mut TestAppContext) {
     let Opened { view, cx, .. } = open(cx);
     let ids: Vec<String> = view.read_with(cx, |v, _| v.projects.iter().map(|p| p.item.id.clone()).collect());
     assert_eq!(ids, [PA, PB], "alpha's remote binds pa, beta's root binds pb, pc is no folder's");
-    for key in ["work-project-pa", "work-project-pb", "work-nav-run-pa/ra", "work-nav-run-pb/rb", "work-nav-overview", "work-nav-activity", "work-nav-inbox=7"] {
+    for key in ["work-project-pa", "work-project-pb", "work-nav-run-ra", "work-nav-run-rb", "work-nav-overview", "work-nav-activity", "work-nav-inbox=7"] {
         bounds(&view, key, cx);
     }
-    assert!(hit(&view, "work-project-pc", cx).is_none() && hit(&view, "work-nav-run-pc/rc", cx).is_none());
-    assert!(hit(&view, "work-nav-run-pa/old", cx).is_none(), "a closed run waits under N closed");
+    assert!(hit(&view, "work-project-pc", cx).is_none() && hit(&view, "work-nav-run-rc", cx).is_none());
+    assert!(hit(&view, "work-nav-run-old", cx).is_none(), "a closed run waits under N closed");
     click(&view, "work-closed-pa", cx);
-    bounds(&view, "work-nav-run-pa/old", cx);
-    click(&view, "work-nav-run-pb/rb", cx);
+    bounds(&view, "work-nav-run-old", cx);
+    click(&view, "work-nav-run-rb", cx);
     assert_eq!(view.read_with(cx, |v, _| v.page.clone()), Page::Run(RB.into()));
 }
 
@@ -297,23 +299,23 @@ fn c1_each_folders_project_shows_its_runs(cx: &mut TestAppContext) {
 fn c2_a_selected_row_shows_in_the_detail_beside_the_list(cx: &mut TestAppContext) {
     let Opened { view, cx, .. } = open(cx);
     assert_eq!(view.read_with(cx, |v, _| v.page.clone()), Page::Run(RA.into()), "the first active run opens");
-    bounds(&view, "work-pill-pa/ra=doing", cx);
-    let row = "work-row-pa/ra/3".to_string();
+    bounds(&view, "work-pill-ra=doing", cx);
+    let row = "work-row-ra/3".to_string();
     click(&view, &row, cx);
-    let (nav, list, detail) = (bounds(&view, "work-nav-run-pa/ra", cx), bounds(&view, &row, cx), bounds(&view, "work-pill-pa/ra/3=doing", cx));
+    let (nav, list, detail) = (bounds(&view, "work-nav-run-ra", cx), bounds(&view, &row, cx), bounds(&view, "work-pill-ra/3=doing", cx));
     assert!(nav.right() <= list.left() && list.right() <= detail.left(), "navigator | list | detail: {nav:?} {list:?} {detail:?}");
     assert_eq!(view.read_with(cx, |v, _| (v.selected.clone(), v.page.clone())), (Some(id(3)), Page::Run(RA.into())));
-    bounds(&view, "work-row-pa/ra/4", cx);
+    bounds(&view, "work-row-ra/4", cx);
     view.update(cx, |v, cx| assert!(v.escape(cx)));
     settle(&view, cx);
     assert_eq!(view.read_with(cx, |v, _| v.selected.clone()), None);
-    bounds(&view, "work-pill-pa/ra=doing", cx);
+    bounds(&view, "work-pill-ra=doing", cx);
 }
 
 #[gpui::test]
 fn a_row_click_emits_its_item_selected(cx: &mut TestAppContext) {
     let Opened { view, cx, .. } = open(cx);
-    bounds(&view, "work-pill-pa/ra=doing", cx);
+    bounds(&view, "work-pill-ra=doing", cx);
     let selected: Rc<RefCell<Vec<String>>> = Rc::default();
     let sink = selected.clone();
     cx.update(|_, cx| {
@@ -324,7 +326,7 @@ fn a_row_click_emits_its_item_selected(cx: &mut TestAppContext) {
         })
         .detach()
     });
-    click(&view, "work-row-pa/ra/3", cx);
+    click(&view, "work-row-ra/3", cx);
     assert_eq!(*selected.borrow(), [id(3)]);
 }
 
@@ -339,17 +341,17 @@ fn c3_filters_count_and_rows_show_only_dot_ref_title_and_criteria(cx: &mut TestA
     assert_eq!(texts[0], ["1", "Verified by the controller", "2/3"], "the criteria count only with criteria");
     assert_eq!(texts[1], ["2", "Done but only claimed"]);
     assert!(texts.iter().flatten().all(|t| !["done", "open", "blocked", "in_progress", "Verified", "claim"].contains(&t.as_str())), "no status words: {texts:?}");
-    for key in ["work-filter-open", "work-filter-all", "work-filter-attention", "work-row-pa/ra/3", "work-dot-pa/ra/3=doing"] {
+    for key in ["work-filter-open", "work-filter-all", "work-filter-attention", "work-row-ra/3", "work-dot-ra/3=doing"] {
         bounds(&view, key, cx);
     }
-    assert!(hit(&view, "work-row-pa/ra/1", cx).is_none(), "Open leaves the done rows out");
+    assert!(hit(&view, "work-row-ra/1", cx).is_none(), "Open leaves the done rows out");
     click(&view, "work-filter-attention", cx);
-    bounds(&view, "work-row-pa/ra/2", cx);
-    bounds(&view, "work-row-pa/ra/4", cx);
-    assert!(hit(&view, "work-row-pa/ra/3", cx).is_none());
+    bounds(&view, "work-row-ra/2", cx);
+    bounds(&view, "work-row-ra/4", cx);
+    assert!(hit(&view, "work-row-ra/3", cx).is_none());
     click(&view, "work-filter-all", cx);
-    bounds(&view, "work-row-pa/ra/1", cx);
-    assert!(hit(&view, "work-row-pa/ra/7", cx).is_none(), "a cancelled row is never listed");
+    bounds(&view, "work-row-ra/1", cx);
+    assert!(hit(&view, "work-row-ra/7", cx).is_none(), "a cancelled row is never listed");
     view.update(cx, |v, cx| {
         if let Some(BoardState::Ready(b)) = v.boards.get_mut(RA) {
             b.rows.retain(|r| r.item.kind == "run" || r.item.status == supraman_workman::ItemStatus::InProgress);
@@ -365,19 +367,22 @@ fn c3_filters_count_and_rows_show_only_dot_ref_title_and_criteria(cx: &mut TestA
 fn c4_copy_ref_and_open_in_web_from_row_breadcrumb_and_header(cx: &mut TestAppContext) {
     let Opened { view, fake, cx, .. } = open(cx);
     let toast = |view: &Entity<WorkView>, cx: &mut VisualTestContext| view.read_with(cx, |v, _| v.toast.text().map(str::to_string));
-    click(&view, "work-row-copy-pa/ra/3", cx);
-    assert_eq!((clipboard(cx), toast(&view, cx)), (Some("pa/ra/3".into()), Some("Copied pa/ra/3".into())));
+    let crumb = view.read_with(cx, |v, _| v.board().and_then(run_list::crumb_project));
+    assert_eq!(crumb, Some(("pa".to_string(), "Project pa".to_string())), "the breadcrumb starts with the project's ref, its title the tooltip");
+    bounds(&view, "work-crumb-project", cx);
+    click(&view, "work-row-copy-ra/3", cx);
+    assert_eq!((clipboard(cx), toast(&view, cx)), (Some("pa/ra/3".into()), Some("Copied pa/ra/3".into())), "the full ref, never the qualified one");
     assert_eq!(view.read_with(cx, |v, _| v.selected.clone()), None, "the copy icon does not select its row");
     click(&view, "work-crumb-copy", cx);
     assert_eq!((clipboard(cx), toast(&view, cx)), (Some("pa/ra".into()), Some("Copied pa/ra".into())));
-    click(&view, "work-row-pa/ra/3", cx);
+    click(&view, "work-row-ra/3", cx);
     click(&view, "work-detail-copy", cx);
     assert_eq!((clipboard(cx), toast(&view, cx)), (Some("pa/ra/3".into()), Some("Copied pa/ra/3".into())));
 
     let base = fake.base().trim_end_matches('/').to_string();
     click(&view, "work-crumb-web", cx);
     click(&view, "work-detail-web", cx);
-    let row = bounds(&view, "work-row-pa/ra/4", cx).center();
+    let row = bounds(&view, "work-row-ra/4", cx).center();
     cx.simulate_mouse_down(row, MouseButton::Right, Modifiers::none());
     cx.simulate_mouse_up(row, MouseButton::Right, Modifiers::none());
     settle(&view, cx);
@@ -392,6 +397,10 @@ fn c4_copy_ref_and_open_in_web_from_row_breadcrumb_and_header(cx: &mut TestAppCo
     settle(&view, cx);
     click(&view, "menu-work-copy-title", cx);
     assert_eq!(clipboard(cx), Some("Blocked on the API".into()));
+    cx.simulate_mouse_down(row, MouseButton::Right, Modifiers::none());
+    settle(&view, cx);
+    click(&view, "menu-work-copy-ref", cx);
+    assert_eq!((clipboard(cx), toast(&view, cx)), (Some("pa/ra/4".into()), Some("Copied pa/ra/4".into())), "the row menu's Copy ref");
 }
 
 #[gpui::test]
@@ -399,7 +408,7 @@ fn c5_the_details_tabs_count_and_the_dots_follow_the_legend(cx: &mut TestAppCont
     let Opened { view, cx, .. } = open(cx);
     click(&view, "work-filter-all", cx);
     for (n, key) in [(1, "proven"), (2, "claimed"), (3, "doing"), (4, "stop"), (5, "wait"), (6, "idle")] {
-        bounds(&view, &format!("work-dot-pa/ra/{n}={key}"), cx);
+        bounds(&view, &format!("work-dot-ra/{n}={key}"), cx);
     }
     view.update(cx, |_, cx| {
         let (s, c) = (cx.theme().status().clone(), cx.theme().colors().clone());
@@ -411,8 +420,8 @@ fn c5_the_details_tabs_count_and_the_dots_follow_the_legend(cx: &mut TestAppCont
         assert!(matches!(StateKey::Wait.mark(cx), Mark::Ring(_)), "Waiting: a hollow ring");
         assert_eq!(StateKey::Idle.mark(cx).color(), c.text_muted.opacity(0.55), "Open: muted");
     });
-    click(&view, "work-row-pa/ra/1", cx);
-    bounds(&view, "work-pill-pa/ra/1=proven", cx);
+    click(&view, "work-row-ra/1", cx);
+    bounds(&view, "work-pill-ra/1=proven", cx);
     for key in ["work-tab-overview", "work-tab-evidence", "work-tab-notes", "work-tab-activity", "work-tab-brief", "work-detail-section-intent", "work-detail-section-criteria-check-0=done", "work-detail-section-verify"] {
         bounds(&view, key, cx);
     }
@@ -448,7 +457,7 @@ fn c7_prompt_chips_are_the_servers_in_order_and_copy_their_text(cx: &mut TestApp
     assert_eq!(clipboard(cx), Some("Finalize run `pa/ra`: close what is proven.".into()));
     click(&view, "work-prompt-run-close", cx);
     assert!(hit(&view, "work-prompt-run-copy", cx).is_none());
-    click(&view, "work-row-pa/ra/4", cx);
+    click(&view, "work-row-ra/4", cx);
     bounds(&view, "work-prompt-item-unblock", cx);
     let asked: Vec<String> = fake.seen().into_iter().map(|s| s.target).filter(|t| t.starts_with("/api/v1/prompts")).collect();
     assert_eq!(asked, [format!("/api/v1/prompts?scope={RA}"), format!("/api/v1/prompts?scope={}", id(4))]);
@@ -457,7 +466,7 @@ fn c7_prompt_chips_are_the_servers_in_order_and_copy_their_text(cx: &mut TestApp
 #[gpui::test]
 fn keys_move_in_the_list_and_into_the_detail(cx: &mut TestAppContext) {
     let Opened { view, cx, .. } = open(cx);
-    click(&view, "work-row-pa/ra/3", cx);
+    click(&view, "work-row-ra/3", cx);
     cx.simulate_keystrokes("down");
     settle(&view, cx);
     assert_eq!(view.read_with(cx, |v, _| v.selected.clone()), Some(id(4)));
@@ -479,7 +488,7 @@ fn keys_move_in_the_list_and_into_the_detail(cx: &mut TestAppContext) {
 #[gpui::test]
 fn f6_steps_through_the_navigator_list_and_detail(cx: &mut TestAppContext) {
     let Opened { view, cx, .. } = open(cx);
-    click(&view, "work-row-pa/ra/3", cx);
+    click(&view, "work-row-ra/3", cx);
     assert_eq!(holding(cx).as_deref(), Some(FOCUS_MAIN), "a click on a row gives the list the keys");
     assert_eq!(cx.update(|window, cx| focus::order(window, cx)), [FOCUS_NAV, FOCUS_MAIN, FOCUS_DETAIL]);
     let mut walked = Vec::new();
@@ -556,7 +565,7 @@ fn the_overview_spans_both_columns_and_its_tiles_and_cards_fit(cx: &mut TestAppC
         let (runs, card) = (bounds(&view, &format!("work-overview-runs-{p}"), cx), bounds(&view, &format!("work-overview-project-{p}"), cx));
         assert!(inside(runs, card), "{p}'s runs line fits its card: {runs:?} {card:?}");
     }
-    bounds(&view, "work-working-facts-pa/ra/3=worker · pa/ra/3 · p:/wt/ra · lease ends in 26m", cx);
+    bounds(&view, "work-working-facts-ra/3=worker · ra/3 · p:/wt/ra · lease ends in 26m", cx);
 }
 
 #[gpui::test]
@@ -566,31 +575,31 @@ fn c2_the_overview_says_what_needs_you_and_who_works_on_what(cx: &mut TestAppCon
     click(&view, "work-nav-overview", cx);
     bounds(&view, "work-overview-sentence=6 tasks open across 2 projects. 7 things need you.", cx);
     for n in 2..=6 {
-        bounds(&view, &format!("work-overview-needs-pa/ra/q{n}"), cx);
+        bounds(&view, &format!("work-overview-needs-ra/q{n}"), cx);
     }
-    assert!(hit(&view, "work-overview-needs-pa/ra/q1", cx).is_none() && hit(&view, "work-overview-needs-pb/rb/1", cx).is_none(), "the top five, newest first");
+    assert!(hit(&view, "work-overview-needs-ra/q1", cx).is_none() && hit(&view, "work-overview-needs-rb/1", cx).is_none(), "the top five, newest first");
     click(&view, "work-overview-more=+2 more in the inbox", cx);
     assert_eq!(shown.get(), 1, "+2 more opens the Inbox");
 
-    bounds(&view, "work-working-pa/ra/3", cx);
-    assert!(hit(&view, "work-working-pc/rc/1", cx).is_none(), "a claim in a project of no folder is not this tab's");
-    let facts = view.read_with(cx, |v, _| v.hits.borrow().iter().find(|(k, _)| k.starts_with("work-working-facts-pa/ra/3=")).map(|(_, h)| h.bounds)).expect("the holder's line");
-    let (name, open) = (facts, bounds(&view, "work-working-open-pa/ra/3", cx));
+    bounds(&view, "work-working-ra/3", cx);
+    assert!(hit(&view, "work-working-rc/1", cx).is_none(), "a claim in a project of no folder is not this tab's");
+    let facts = view.read_with(cx, |v, _| v.hits.borrow().iter().find(|(k, _)| k.starts_with("work-working-facts-ra/3=")).map(|(_, h)| h.bounds)).expect("the holder's line");
+    let (name, open) = (facts, bounds(&view, "work-working-open-ra/3", cx));
     assert!(open.top() >= name.top() - px(4.) && open.bottom() <= name.bottom() + px(4.), "Open on the holder's line: {open:?} in {name:?}");
-    click(&view, "work-working-open-pa/ra/3", cx);
+    click(&view, "work-working-open-ra/3", cx);
     assert_eq!(SESSIONS_OPENED.with(|a| a.borrow().clone()), ["uuid-live"], "the claim's Supraman session opens through the fleet's Open");
 
     for key in ["work-tile-closed without independent proof=1", "work-tile-forced closures=4", "work-tile-follow-ups open=3", "work-tile-tasks open=6"] {
         bounds(&view, key, cx);
     }
-    for key in ["work-overview-project-pa", "work-overview-project-pb", "work-overview-run-pa/ra", "work-overview-run-pb/rb", "work-prompt-project-pa-cleanup", "work-legend"] {
+    for key in ["work-overview-project-pa", "work-overview-project-pb", "work-overview-run-ra", "work-overview-run-rb", "work-prompt-project-pa-cleanup", "work-legend"] {
         bounds(&view, key, cx);
     }
-    assert!(hit(&view, "work-overview-run-pa/old", cx).is_none(), "a closed run is counted, not listed");
-    click(&view, "work-overview-run-pb/rb", cx);
+    assert!(hit(&view, "work-overview-run-old", cx).is_none(), "a closed run is counted, not listed");
+    click(&view, "work-overview-run-rb", cx);
     assert_eq!(view.read_with(cx, |v, _| v.page.clone()), Page::Run(RB.into()));
     click(&view, "work-nav-overview", cx);
-    click(&view, "work-overview-needs-pa/ra/q6", cx);
+    click(&view, "work-overview-needs-ra/q6", cx);
     assert_eq!(view.read_with(cx, |v, _| v.selected.clone()), Some(id(26)));
 }
 
@@ -611,7 +620,7 @@ fn c2_activity_groups_the_projects_events_by_day_newest_first(cx: &mut TestAppCo
 #[gpui::test]
 fn c6_ctrl_p_finds_an_item_by_ref_and_enter_shows_it(cx: &mut TestAppContext) {
     let Opened { view, fake, cx, .. } = open(cx);
-    click(&view, "work-row-pa/ra/3", cx);
+    click(&view, "work-row-ra/3", cx);
     view.update(cx, |v, cx| v.clear_selection(cx));
     cx.simulate_keystrokes("ctrl-p");
     settle(&view, cx);
@@ -619,15 +628,15 @@ fn c6_ctrl_p_finds_an_item_by_ref_and_enter_shows_it(cx: &mut TestAppContext) {
     cx.simulate_input("pa/ra/");
     settle(&view, cx);
     let (refs, selected) = palette_refs(&view, cx);
-    assert_eq!(refs[..3], ["pa/ra/1", "pa/ra/2", "pa/ra/3"], "the board's rows in order: {refs:?}");
-    assert_eq!(selected.as_deref(), Some("pa/ra/1"));
+    assert_eq!(refs[..3], ["ra/1", "ra/2", "ra/3"], "the board's rows in order, found by their full refs: {refs:?}");
+    assert_eq!(selected.as_deref(), Some("ra/1"));
     bounds(&view, &format!("work-find-row-{}", id(1)), cx);
     cx.simulate_keystrokes("down down");
     settle(&view, cx);
-    assert_eq!(palette_refs(&view, cx).1.as_deref(), Some("pa/ra/3"));
+    assert_eq!(palette_refs(&view, cx).1.as_deref(), Some("ra/3"));
     cx.simulate_keystrokes("up");
     settle(&view, cx);
-    assert_eq!(palette_refs(&view, cx).1.as_deref(), Some("pa/ra/2"));
+    assert_eq!(palette_refs(&view, cx).1.as_deref(), Some("ra/2"));
     cx.simulate_keystrokes("enter");
     settle(&view, cx);
     assert!(view.read_with(cx, |v, _| v.palette.is_none()), "Enter closes the palette");
@@ -643,7 +652,7 @@ fn c6_ctrl_p_finds_an_item_by_ref_and_enter_shows_it(cx: &mut TestAppContext) {
     settle(&view, cx);
     cx.simulate_input("zebra");
     settle(&view, cx);
-    assert_eq!(palette_refs(&view, cx).0, ["pb/rb/2"], "Workman's hit in a bound project; pc's is not this tab's");
+    assert_eq!(palette_refs(&view, cx).0, ["rb/2"], "Workman's hit in a bound project; pc's is not this tab's");
     assert!(fake.seen().iter().any(|s| s.target == "/api/v1/search?q=zebra&limit=20"));
     click(&view, &format!("work-find-row-{}", id(41)), cx);
     assert_eq!(view.read_with(cx, |v, _| (v.palette.is_none(), v.selected.clone())), (true, Some(id(41))), "a click opens it");
@@ -653,7 +662,9 @@ fn c6_ctrl_p_finds_an_item_by_ref_and_enter_shows_it(cx: &mut TestAppContext) {
 fn the_inbox_reads_every_project_its_folders_bind(cx: &mut TestAppContext) {
     let Opened { fake, inbox, cx, .. } = open(cx);
     let rows: Vec<String> = inbox.read_with(cx, |i, _| i.rows().iter().map(|r| format!("{}:{}", r.context, r.row.item.qualified_ref)).collect());
-    assert_eq!(rows, ["Project pa:pa/ra/q6", "Project pa:pa/ra/q5", "Project pa:pa/ra/q4", "Project pa:pa/ra/q3", "Project pa:pa/ra/q2", "Project pa:pa/ra/q1", "Project pb:pb/rb/1"], "pa's and pb's rows, newest first, each with its project's name");
+    assert_eq!(rows, ["pa:ra/q6", "pa:ra/q5", "pa:ra/q4", "pa:ra/q3", "pa:ra/q2", "pa:ra/q1", "pb:rb/1"], "pa's and pb's rows, newest first, each with its project's ref");
+    let tips: Vec<Option<String>> = inbox.read_with(cx, |i, _| i.rows().iter().map(|r| r.context_tip.clone()).collect());
+    assert_eq!(tips[0].as_deref(), Some("Project pa"), "the project's title is the context's tooltip");
     let mut asked: Vec<String> = fake.seen().into_iter().map(|s| s.target).filter(|t| t.starts_with("/api/v1/inbox") || t.starts_with("/api/v1/resolve")).collect();
     asked.dedup();
     assert_eq!(asked, [format!("/api/v1/inbox?project={PA}"), format!("/api/v1/inbox?project={PB}")], "never a project found by a name");
@@ -774,7 +785,7 @@ fn a_tab_is_titled_by_its_one_bound_project_else_by_its_folder_or_group(cx: &mut
         })
     });
     cx.run_until_parked();
-    assert_eq!(folder.read_with(cx, |v, _| v.title()), "Work · Project pa", "alpha binds pa alone");
+    assert_eq!(folder.read_with(cx, |v, _| v.title()), "Work · pa", "alpha binds pa alone: its ref, never its title");
     let needs = folder.read_with(cx, |v, cx| v.needs_you(cx));
     assert_eq!(needs, 6, "only pa's rows are this tab's");
 }

@@ -43,7 +43,7 @@ impl Render for Holder {
 fn open(cx: &mut TestAppContext) -> (Entity<Holder>, &mut VisualTestContext) {
     cx.update(|cx| supraman_ui::init_globals(cx, "test"));
     let now = supraman_core::time::rfc3339_ms("2026-11-06T12:00:00+00:00").unwrap();
-    let rows = served().into_iter().map(|row| cards::Row { target: work_view::Target::Group("g".into()), project: "p".into(), context: "Shop".into(), row });
+    let rows = served().into_iter().map(|row| cards::Row { target: work_view::Target::Group("g".into()), project: "p".into(), context: "ws".into(), context_tip: Some("Shop — the web shop".into()), row });
     let cards: Vec<Card> = rows.filter_map(|row| cards::card(&row, false, now)).collect();
     assert_eq!(cards.len(), INBOX_KINDS.len());
     let (view, cx) = cx.add_window_view(|_, _| Holder { cards, hits: HitTargets::default(), done: Rc::default() });
@@ -82,7 +82,7 @@ fn every_kinds_card_leads_with_the_items_title_then_its_ref_and_never_paints_the
         let texts = card.texts(now);
         assert_eq!(texts.iter().position(|t| t == &card.title), Some(3), "{}: project, time and badge on the head line, then the title: {texts:?}", card.kind);
         assert!(texts.iter().all(|t| !t.contains("work_status")), "{}: {texts:?}", card.kind);
-        assert_eq!(texts[0], "Shop", "{}: the project's name is the card's context", card.kind);
+        assert_eq!(texts[0], "ws", "{}: the project's ref is the card's context", card.kind);
     }
     let blocked = cards.iter().find(|c| c.kind == "blocked").unwrap();
     let one = bounds(&view, &part_key("title", &cards[0]), cx).size.height;
@@ -95,11 +95,11 @@ fn every_kinds_card_leads_with_the_items_title_then_its_ref_and_never_paints_the
 }
 
 #[gpui::test]
-fn copy_puts_the_call_on_the_clipboard_and_each_action_reaches_the_owner(cx: &mut TestAppContext) {
+fn copy_puts_the_full_ref_on_the_clipboard_and_each_action_reaches_the_owner(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
     let card = view.read_with(cx, |h, _| h.cards.iter().find(|c| c.kind == "done_unverified").cloned().unwrap());
     click(&view, &part_key("copy", &card), cx);
-    assert_eq!(cx.read_from_clipboard().and_then(|c| c.text()), Some(r#"work_status(ref:"ws/r1/done_unverified", to:"in_progress")"#.to_string()));
+    assert_eq!(cx.read_from_clipboard().and_then(|c| c.text()), Some("ws/r1/done_unverified".to_string()), "the full ref, never the call or the ref's last part");
     click(&view, &part_key("web", &card), cx);
     click(&view, &part_key("open", &card), cx);
     click(&view, &work_view::dismiss_key_of(&card.key), cx);

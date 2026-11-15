@@ -60,7 +60,7 @@ impl Hash for Target {
     }
 }
 
-/// `Work · <name>`: the project's when the target binds exactly one, else the folder's or group's.
+/// `Work · <name>`: the project's ref when the target binds exactly one, else the folder's or group's name.
 pub fn title(target: &Target, projects: &[&str]) -> String {
     match projects {
         [one] if !one.is_empty() => format!("Work · {one}"),

@@ -1,4 +1,4 @@
-//! What the Inbox paints of a Workman row: why the user sees it and what they can do; the resolving call is only ever copied.
+//! What the Inbox paints of a Workman row: why the user sees it and what they can do; the resolving call is never shown.
 
 use supraman_core::text::count;
 use supraman_core::time;
@@ -9,13 +9,14 @@ use super::Target;
 pub const NOTE: &str = "unconsumed_note";
 const STALE: [&str; 2] = ["stale_in_progress", "expired_claim"];
 
-/// An Inbox row as the Inbox keeps it: the target whose Work tab opens it, the project it is of and that
-/// project's name (else the target's) as its context.
+/// An Inbox row as the Inbox keeps it: the target whose Work tab opens it, the project it is of, that
+/// project's ref (else the target's name) as its context and the project's title as the context's tooltip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
     pub target: Target,
     pub project: String,
     pub context: String,
+    pub context_tip: Option<String>,
     pub row: InboxRow,
 }
 
@@ -24,6 +25,7 @@ pub struct Card {
     pub target: Target,
     pub project: String,
     pub context: String,
+    pub context_tip: Option<String>,
     /// The row's key, `kind:item`.
     pub key: String,
     pub kind: String,
@@ -34,7 +36,8 @@ pub struct Card {
     pub since: Option<i64>,
     pub item_id: String,
     pub url: Option<String>,
-    pub call: String,
+    /// What Copy puts on the clipboard: [`ItemRef::full`].
+    pub full_ref: String,
     pub(crate) run: Option<ItemRef>,
 }
 
@@ -122,6 +125,7 @@ pub fn card(shown: &Row, held: bool, now: i64) -> Option<Card> {
         target: shown.target.clone(),
         project: shown.project.clone(),
         context: shown.context.clone(),
+        context_tip: shown.context_tip.clone(),
         key: row.key.clone(),
         kind: row.kind.clone(),
         badge: badge(&row.kind),
@@ -131,7 +135,7 @@ pub fn card(shown: &Row, held: bool, now: i64) -> Option<Card> {
         since: time::rfc3339_ms(&row.since),
         item_id: row.item.id.clone(),
         url: row.url.clone().filter(|u| !u.is_empty()),
-        call: row.call.clone(),
+        full_ref: row.item.full().to_string(),
         run: row.run.clone(),
     })
 }
@@ -206,7 +210,7 @@ mod tests {
     }
 
     fn shown(row: &InboxRow) -> Row {
-        Row { target: Target::Group("g".into()), project: "p".into(), context: "Project".into(), row: row.clone() }
+        Row { target: Target::Group("g".into()), project: "p".into(), context: "proj".into(), context_tip: Some("Project".into()), row: row.clone() }
     }
 
     fn row(kind: &str, id: &str) -> InboxRow {
@@ -255,7 +259,7 @@ mod tests {
             r.what = r.call.clone();
             r.detail = None;
             let card = card(&shown(&r), false, now()).unwrap();
-            assert_eq!(card.texts(now())[0], "Project", "{kind}: its project's name first");
+            assert_eq!(card.texts(now())[0], "proj", "{kind}: its project's ref first");
             assert_eq!(card.texts(now())[3..5], [card.title.clone(), card.ref_.clone()], "{kind}: title, then ref");
             assert!(card.texts(now()).iter().all(|t| !t.contains(&r.call)), "{kind}: {:?}", card.texts(now()));
         }
