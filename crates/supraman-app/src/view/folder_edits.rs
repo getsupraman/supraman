@@ -7,18 +7,22 @@ use std::sync::atomic::Ordering;
 use gpui::{Context, Window};
 use supraman_core::folders::{self, Entries, Place, Pos};
 use supraman_core::paths::{folder_name, path_key};
+use supraman_core::schedule::Registrar;
 use supraman_core::{CoreError, text};
 
 use super::FleetView;
 use super::left::{PendingReveal, fold};
 use super::listed;
 use super::menu::{Confirm, Confirmed, MenuAction};
+use super::schedules::{drop_schedule, sync_now};
 
 mod drop;
 mod group_name;
+mod leaving;
 
 pub use drop::{DraggedFolder, DraggedGroup, Target, group_landing, landing};
 pub use group_name::{FIELD, GroupName, GroupNameEvent};
+pub use leaving::{KEY as REMOVE_KEY, Leaving, RemoveQuestion, orphans};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FolderEdit {
@@ -146,6 +150,17 @@ fn still_at(entries: &Entries, pos: Pos, path: &Path) -> supraman_core::Result<(
     }
 }
 
+/// The schedules `leaving` deletes gone, each through the one remove, then one sync; the sync's failure is kept
+/// apart since the entries are gone already. Blocking.
+fn drop_leaving(home: &Path, registrar: &dyn Registrar, leaving: &Leaving) -> Result<Option<String>, String> {
+    if !leaving.delete || leaving.schedules.is_empty() {
+        return Ok(None);
+    }
+    let dropped: Result<Vec<()>, String> = leaving.schedules.iter().map(|(folder, id)| drop_schedule(home, folder, id).map_err(|e| format!("schedule {id}: {e}"))).collect();
+    let synced = sync_now(home, registrar).err();
+    dropped.map(|_| synced)
+}
+
 /// `edit` written under folders.toml's lock, then the list read back; blocking.
 pub fn write(home: &Path, edit: &FolderEdit) -> Result<(String, listed::Read), String> {
     let (_, said) = folders::edit(home, |e| edit.apply(e)).map_err(|e| format!("{}: {e}", edit.refused()))?;
@@ -170,17 +185,29 @@ pub fn remove_group_question(name: &str, folders: usize) -> Confirm {
 impl FleetView {
     /// `edit` written off the UI thread; what it did, or why not, is the toast's.
     pub fn edit_folders(&mut self, edit: FolderEdit, cx: &mut Context<Self>) {
+        self.edit_folders_leaving(edit, Leaving::default(), cx);
+    }
+
+    /// [`Self::edit_folders`], the schedules `leaving` deletes gone first; a failed delete writes no edit.
+    pub fn edit_folders_leaving(&mut self, edit: FolderEdit, leaving: Leaving, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
             return self.toast.show_why(format!("{}: no Supraman home", edit.refused()), |v: &mut Self| &mut v.toast, cx);
         };
         let generation = self.polls.folder_writes.fetch_add(1, Ordering::SeqCst) + 1;
-        let row = edit.row();
-        let write = cx.background_executor().spawn(async move { write(&home, &edit) });
+        let (row, words) = (edit.row(), leaving.words(&edit));
+        let registrar = self.scheduling.registrar.clone();
+        let write = cx.background_executor().spawn(async move {
+            let synced = drop_leaving(&home, &*registrar, &leaving).map_err(|e| format!("{}: {e}", edit.refused()))?;
+            write(&home, &edit).map(|(said, read)| (said, read, synced))
+        });
         cx.spawn(async move |this, cx| {
             let done = write.await;
             this.update(cx, |this, cx| {
                 match done {
-                    Ok((said, read)) => {
+                    Ok((said, read, synced)) => {
+                        if let Some(e) = synced {
+                            this.scheduling.sync_errors.insert("tasks/sync".into(), e);
+                        }
                         let writes = this.polls.folder_writes.load(Ordering::SeqCst);
                         if this.listed.apply(read, generation, writes) {
                             this.listed_changed(cx);
@@ -188,10 +215,11 @@ impl FleetView {
                         if let Some(row) = row {
                             this.reveal_new(PendingReveal::Row(row));
                         }
-                        this.show_toast(said, cx);
+                        this.show_toast(words.unwrap_or(said), cx);
                     }
                     Err(why) => this.toast.show_why(why, |v: &mut Self| &mut v.toast, cx),
                 }
+                this.polls.poll_nudge.wake();
                 cx.notify();
             })
             .ok();
@@ -226,9 +254,27 @@ impl FleetView {
         supraman_ui::folder_picker::pick_folder(&title, window, cx, move |this, path, _, cx| this.edit_folders(FolderEdit::AddFolder { path, group: group.clone() }, cx));
     }
 
-    fn ask_remove_group(&mut self, name: String) {
+    /// The schedules `edit` would leave without a row, by folder and id.
+    fn leaving(&self, edit: &FolderEdit) -> Vec<(PathBuf, String)> {
+        let rows: Vec<_> = self.scheduling.schedules.values().flatten().collect();
+        let lost = orphans(edit, &self.tree(), rows.iter().map(|r| (r.key.as_str(), r.schedule.id.as_str())));
+        rows.iter().filter(|r| lost.iter().any(|(k, id)| *k == r.key && *id == r.schedule.id)).map(|r| (r.folder.clone(), r.schedule.id.clone())).collect()
+    }
+
+    /// Asked only while it would leave schedules without a row.
+    fn remove_folder(&mut self, edit: FolderEdit, cx: &mut Context<Self>) {
+        match self.leaving(&edit) {
+            schedules if schedules.is_empty() => self.edit_folders(edit, cx),
+            schedules => self.dialogs.remove = Some(RemoveQuestion::folder(edit, schedules, cx.focus_handle())),
+        }
+    }
+
+    fn ask_remove_group(&mut self, name: String, cx: &mut Context<Self>) {
         let folders = self.listed.entries.groups().find(|(n, _)| *n == name).map_or(0, |(_, f)| f.len());
-        self.dialogs.confirm = Some(remove_group_question(&name, folders));
+        match self.leaving(&FolderEdit::RemoveGroup { name: name.clone(), with_folders: true }) {
+            schedules if schedules.is_empty() => self.dialogs.confirm = Some(remove_group_question(&name, folders)),
+            schedules => self.dialogs.remove = Some(RemoveQuestion::group(&name, folders, schedules, cx.focus_handle())),
+        }
     }
 
     pub(super) fn run_folder_action(&mut self, action: MenuAction, window: &mut Window, cx: &mut Context<Self>) {
@@ -236,8 +282,8 @@ impl FleetView {
             MenuAction::AddFolder(group) => self.add_folder(group, window, cx),
             MenuAction::AddGroup => self.open_group_name(None, window, cx),
             MenuAction::RenameGroup(name) => self.open_group_name(Some(name), window, cx),
-            MenuAction::RemoveFolder { pos, path } => self.edit_folders(FolderEdit::RemoveFolder { pos, path }, cx),
-            MenuAction::RemoveGroup(name) => self.ask_remove_group(name),
+            MenuAction::RemoveFolder { pos, path } => self.remove_folder(FolderEdit::RemoveFolder { pos, path }, cx),
+            MenuAction::RemoveGroup(name) => self.ask_remove_group(name, cx),
             MenuAction::ShowSubfolders { pos, path, show } => self.edit_folders(FolderEdit::ShowSubfolders { pos, path, show }, cx),
             MenuAction::ExcludeFolder { parent, path } => self.edit_folders(FolderEdit::ExcludeFolder { parent, path }, cx),
             MenuAction::IncludeFolder { parent, path } => self.edit_folders(FolderEdit::IncludeFolder { parent, path }, cx),

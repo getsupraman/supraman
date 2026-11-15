@@ -172,6 +172,19 @@ pub fn sync_now(home: &Path, registrar: &dyn Registrar) -> Result<(), String> {
     }
 }
 
+/// The entry of schedule `id` gone from `folder`'s file; its task goes with the next [`sync_now`]. Blocking.
+pub fn drop_schedule(home: &Path, folder: &Path, id: &str) -> Result<(), String> {
+    schedule::edit(home, folder, |all| {
+        let before = all.len();
+        all.retain(|s| s.id != id);
+        if all.len() == before {
+            return Err(supraman_core::CoreError::NoSchedule { folder: folder.display().to_string(), id: id.to_string() });
+        }
+        Ok(())
+    })
+    .map_err(|e| e.to_string())
+}
+
 /// Why a step failed: the edit (nothing changed) or the sync after it (the schedule changed, its task did not).
 enum Failed {
     Edit(String),
@@ -316,17 +329,7 @@ impl FleetView {
     }
 
     pub fn remove_schedule(&mut self, folder_key: String, id: String, cx: &mut Context<Self>) {
-        self.change_schedule(folder_key, id, "removed with its task", cx, |home, w, id| {
-            schedule::edit(home, w, |all| {
-                let before = all.len();
-                all.retain(|s| s.id != id);
-                if all.len() == before {
-                    return Err(supraman_core::CoreError::NoSchedule { folder: w.display().to_string(), id: id.to_string() });
-                }
-                Ok(())
-            })
-            .map_err(|e| e.to_string())
-        });
+        self.change_schedule(folder_key, id, "removed with its task", cx, drop_schedule);
     }
 
     /// A sync failure stays on the row and in the Inbox until a sync of the folder succeeds.
