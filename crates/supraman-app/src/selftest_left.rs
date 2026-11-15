@@ -7,7 +7,7 @@ use anyhow::{anyhow, bail};
 use gpui::{AsyncWindowContext, Bounds, Entity, Modifiers, MouseMoveEvent, PlatformInput, Pixels, WindowHandle};
 
 use crate::{
-    selftest::{GROUP, click, drawn, drawn_in, log_offset, teardown_errors_since, until, until_with, win},
+    selftest::{GROUP, click, drawn, drawn_in, log_offset, teardown_errors_since, until, until_every, until_with, win},
     selftest_manage::{shot, shot_window},
     settings_window::{SettingsView, page},
     view::FleetView,
@@ -116,6 +116,7 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     let modal = modal_over_main(hwnd, cx)?;
     let closing = log_offset();
     view.update(cx, |v, cx| v.close_settings(cx));
+    hidden_after_main_enabled(hwnd, cx).await?;
     closed(handle, hwnd, cx).await?;
     main_back(cx).await?;
     let errors = teardown_errors_since(closing);
@@ -191,8 +192,9 @@ async fn close_settings_by_wm_close(view: &Entity<FleetView>, cx: &mut AsyncWind
         .flatten()
         .ok_or_else(|| anyhow!("the settings window has no HWND"))?;
     let closing = log_offset();
-    win::post_close(hwnd)?;
     modal_over_main(Some(hwnd), cx)?;
+    win::post_close(hwnd)?;
+    hidden_after_main_enabled(Some(hwnd), cx).await?;
     let gone = closed(handle, Some(hwnd), cx).await?;
     main_back(cx).await?;
     let errors = teardown_errors_since(closing);
@@ -220,6 +222,29 @@ fn modal_over_main(settings: Option<isize>, cx: &mut AsyncWindowContext) -> anyh
 #[cfg(not(windows))]
 fn modal_over_main(_settings: Option<isize>, _cx: &mut AsyncWindowContext) -> anyhow::Result<&'static str> {
     Ok("")
+}
+
+/// The main window enabled by the time the settings window hides, so the activation goes back to it; gpui enables it again only once the HWND is destroyed.
+#[cfg(windows)]
+async fn hidden_after_main_enabled(settings: Option<isize>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    use supraman_core::platform::desktop;
+    let settings = settings.ok_or_else(|| anyhow!("the settings window has no HWND"))?;
+    let main = cx.update(|window, _| win::hwnd_of(window))?.ok_or_else(|| anyhow!("the main window has no HWND"))?;
+    let seen = until_every(cx, WITHIN, Duration::from_millis(1), "the settings window hidden", |_| {
+        let gone = win::destroyed(Some(settings));
+        (gone || !desktop::is_window_visible(settings)).then(|| (gone, desktop::is_enabled(main)))
+    })
+    .await?;
+    match seen {
+        (true, _) => bail!("the settings window was destroyed before it was seen hidden"),
+        (false, false) => bail!("the settings window hid while the main window was still disabled"),
+        (false, true) => Ok(()),
+    }
+}
+
+#[cfg(not(windows))]
+async fn hidden_after_main_enabled(_settings: Option<isize>, _cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    Ok(())
 }
 
 /// The main window enabled and active again once the settings window is gone.

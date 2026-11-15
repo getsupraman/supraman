@@ -19,6 +19,17 @@ pub(crate) async fn until_with<T>(
     cx: &mut AsyncWindowContext,
     within: Duration,
     what: &str,
+    check: impl FnMut(&mut AsyncWindowContext) -> Option<T>,
+) -> anyhow::Result<T> {
+    until_every(cx, within, Duration::from_millis(25), what, check).await
+}
+
+/// `until_with` looking every `every`: a state that lasts a few milliseconds.
+pub(crate) async fn until_every<T>(
+    cx: &mut AsyncWindowContext,
+    within: Duration,
+    every: Duration,
+    what: &str,
     mut check: impl FnMut(&mut AsyncWindowContext) -> Option<T>,
 ) -> anyhow::Result<T> {
     let started = Instant::now();
@@ -30,7 +41,7 @@ pub(crate) async fn until_with<T>(
             bail!("{what}: not within {within:?}");
         }
         frame_if_asked(cx);
-        sleep(cx, Duration::from_millis(25)).await;
+        sleep(cx, every).await;
     }
 }
 
