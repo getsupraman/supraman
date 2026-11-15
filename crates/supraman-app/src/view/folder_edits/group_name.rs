@@ -1,23 +1,21 @@
-//! Add Group's and Rename's one field: a `validate_name` name no other group has; Enter adds, Esc cancels.
-//! Hit keys `group-name`, `group-name-field`, `group-name-ok`, `group-name-close`.
+//! A group's name typed in place on its row (Rename…, F2, Add Group's new row): a `validate_name` name no other group has.
+//! Enter names it, Esc cancels, focus lost in the active window names it while it is valid and cancels otherwise.
 
-use gpui::{Context, Entity, EventEmitter, FocusHandle, Focusable as _, IntoElement, Render, SharedString, Subscription, Window};
+use gpui::{AppContext as _, Context, Entity, EventEmitter, Focusable as _, Subscription, Window};
 use supraman_core::{name_char, validate_name};
-use supraman_ui::focus_order::FocusOrder;
-use supraman_ui::form::{self, Answers, Form};
-use supraman_ui::hit::HitTargets;
-use supraman_ui::icon::Icon;
-use supraman_ui::text_input::TextInput;
+use supraman_ui::text_input::{InputEvent, TextInput};
 
 use super::FolderEdit;
 
-pub const KEY: &str = "group-name";
+/// The field's hit key.
+pub const FIELD: &str = "group-name-field";
 pub const NEEDS_NAME: &str = "Type the group's name";
 
-const ANSWERS: Answers<GroupName> = Answers { ok: GroupName::submit, close: GroupName::close };
-
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GroupNameEvent {
     Named(FolderEdit),
+    /// Enter on a name it cannot take, and why; the field stays open.
+    Refused(String),
     Closed,
 }
 
@@ -26,25 +24,49 @@ pub struct GroupName {
     /// Every group's name now.
     taken: Vec<String>,
     field: Entity<TextInput>,
-    _edits: Subscription,
-    ok: FocusHandle,
-    hits: HitTargets,
+    /// Enter was refused on an empty name: its why shows until the next edit.
+    empty_refused: bool,
+    done: bool,
+    _subs: [Subscription; 2],
 }
 
 impl EventEmitter<GroupNameEvent> for GroupName {}
 
 impl GroupName {
-    pub fn new(renaming: Option<String>, taken: Vec<String>, hits: HitTargets, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let (field, edits) = form::field_with("name", renaming.as_deref().unwrap_or_default(), Some(name_char), ANSWERS, |_, cx| cx.notify(), window, cx);
-        field.update(cx, |i, cx| i.focus(window, cx));
-        Self { renaming, taken, field, _edits: edits, ok: cx.focus_handle(), hits }
+    pub fn new(renaming: Option<String>, taken: Vec<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let field = cx.new(|cx| TextInput::new("", Some(name_char), window, cx).inline());
+        field.update(cx, |i, cx| {
+            i.set_text(renaming.as_deref().unwrap_or_default(), cx);
+            i.focus_all(window, cx);
+        });
+        let edits = cx.subscribe(&field, |this, _, e: &InputEvent, cx| match e {
+            InputEvent::Edited => this.edited(cx),
+            InputEvent::Confirm => this.submit(cx),
+            InputEvent::Cancel => this.close(cx),
+            _ => {}
+        });
+        let blur = cx.on_blur(&field.focus_handle(cx), window, |this, window, cx| {
+            if window.is_window_active() {
+                this.left(cx);
+            }
+        });
+        Self { renaming, taken, field, empty_refused: false, done: false, _subs: [edits, blur] }
+    }
+
+    /// The group renamed, or `None` for Add Group's new row.
+    pub fn renaming(&self) -> Option<&str> {
+        self.renaming.as_deref()
+    }
+
+    pub fn field(&self) -> &Entity<TextInput> {
+        &self.field
     }
 
     fn typed(&self, cx: &gpui::App) -> String {
         self.field.read(cx).text().trim().to_string()
     }
 
-    /// Why OK cannot act on what is typed.
+    /// Why Enter cannot name what is typed.
     pub fn why_not(&self, cx: &gpui::App) -> Option<String> {
         let name = self.typed(cx);
         if name.is_empty() {
@@ -56,10 +78,38 @@ impl GroupName {
         (self.renaming.as_deref() != Some(name.as_str()) && self.taken.contains(&name)).then(|| format!("A group named {name} exists already"))
     }
 
+    /// The why the field shows now: a name typed that it cannot take, or Enter refused on nothing typed.
+    pub fn shown_why(&self, cx: &gpui::App) -> Option<String> {
+        if self.typed(cx).is_empty() && !self.empty_refused {
+            return None;
+        }
+        self.why_not(cx)
+    }
+
+    fn edited(&mut self, cx: &mut Context<Self>) {
+        self.empty_refused = false;
+        self.mark(cx);
+    }
+
+    fn mark(&mut self, cx: &mut Context<Self>) {
+        let invalid = self.shown_why(cx).is_some();
+        self.field.update(cx, |i, cx| i.set_invalid(invalid, cx));
+        cx.notify();
+    }
+
     fn submit(&mut self, cx: &mut Context<Self>) {
-        if self.why_not(cx).is_some() {
+        if self.done {
             return;
         }
+        if self.renaming.is_none() && self.typed(cx).is_empty() {
+            return self.close(cx);
+        }
+        if let Some(why) = self.why_not(cx) {
+            self.empty_refused = self.typed(cx).is_empty();
+            self.mark(cx);
+            return cx.emit(GroupNameEvent::Refused(why));
+        }
+        self.done = true;
         let to = self.typed(cx);
         cx.emit(match self.renaming.clone() {
             Some(from) if from == to => GroupNameEvent::Closed,
@@ -68,23 +118,16 @@ impl GroupName {
         });
     }
 
+    fn left(&mut self, cx: &mut Context<Self>) {
+        match self.why_not(cx) {
+            None => self.submit(cx),
+            Some(_) => self.close(cx),
+        }
+    }
+
     fn close(&mut self, cx: &mut Context<Self>) {
-        cx.emit(GroupNameEvent::Closed);
-    }
-
-    #[cfg(test)]
-    pub fn field(&self) -> &Entity<TextInput> {
-        &self.field
-    }
-}
-
-impl Render for GroupName {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (title, ok) = if self.renaming.is_some() { ("Rename Group", "Rename") } else { ("Add Group", "Add Group") };
-        let why = self.why_not(cx).map(SharedString::from);
-        let form = Form { key: KEY.into(), icon: Icon::Group, title: title.into(), ok: ok.into(), why, running: false, answers: ANSWERS };
-        let fields = vec![(SharedString::from("Name"), form::input(&self.hits, format!("{KEY}-field"), &self.field))];
-        let order = FocusOrder::new([self.field.focus_handle(cx), self.ok.clone()]);
-        form.render(&self.hits, fields, order, Some(&self.ok), cx)
+        if !std::mem::replace(&mut self.done, true) {
+            cx.emit(GroupNameEvent::Closed);
+        }
     }
 }

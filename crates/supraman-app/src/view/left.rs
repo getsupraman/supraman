@@ -23,6 +23,7 @@ use crate::fleet::{self, EntryNode, FolderNode, Open, SessionRow};
 
 mod action_bar;
 mod drag;
+pub(super) mod group_field;
 pub(super) mod unlisted;
 mod work_cards;
 
@@ -45,6 +46,8 @@ pub(super) enum LeftRow {
     /// Other sessions' row, after the entries; its sessions are `Session(e, 0, i)` with `e` past them ([`fleet::Tree::node`]).
     Unlisted,
     Others,
+    /// Add Group's new row, its name typed in place.
+    NewGroup,
     /// Below the tree: a dragged folder dropped here goes to the top level's end.
     DropEnd,
 }
@@ -278,6 +281,8 @@ impl FleetView {
             .child(body)
             .children(toast)
             .track_focus(&self.sidebar.focus)
+            .key_context(group_field::KEY_CONTEXT)
+            .on_action(cx.listener(Self::rename_selected))
             .child(supraman_ui::focus::Pane::new("sidebar", &self.sidebar.focus).paint(&self.hits))
             .into_any_element()
     }
@@ -318,9 +323,6 @@ impl FleetView {
             notices.push(notice(e.clone(), banner::tinted(status.warning)));
         }
         notices.extend(self.render_confirm(cx));
-        notices.extend(self.group_name_form().map(|form| {
-            div().mx_3().my_2().rounded_md().border_1().border_color(cx.theme().colors().border).overflow_hidden().child(form.clone()).into_any_element()
-        }));
         notices.extend(self.render_schedule_edit(cx));
         if self.listed.error.is_none() && self.polls.refreshes > 0 && tree.entries.is_empty() {
             notices.push(notice("No folders yet. Add one with the folder button above, or:  sm folder add <dir>".into(), banner::plain(cx)));
@@ -332,8 +334,11 @@ impl FleetView {
         let query = self.search_query(cx);
         self.sidebar.search_marks.clear();
         if query.is_empty() {
-            self.set_left_rows(tree);
-            let list = gpui::list(self.sidebar.left_list.state(), cx.processor(|this: &mut Self, ix: usize, _, cx| div().w_full().child(this.render_left_row(ix, cx)).into_any_element())).size_full().pb_4();
+            self.set_left_rows(tree, cx);
+            let list = gpui::list(self.sidebar.left_list.state(), cx.processor(|this: &mut Self, ix: usize, window, cx| {
+                let focused = this.sidebar.focus.contains_focused(window, cx);
+                div().w_full().child(this.render_left_row(ix, focused, cx)).into_any_element()
+            })).size_full().pb_4();
             let area = div().id("fleet").relative().child(hit_target(&self.hits, "tree-area".into())).flex().flex_col().flex_1().min_h(relative(TREE_MIN_SHARE)).child(list);
             self.tree_room(area, cx)
         } else {
@@ -352,7 +357,7 @@ impl FleetView {
     }
 
     /// The sidebar's rows in order: a key each and the tokens its hit keys contain (supraman_ui::keyed_list).
-    fn set_left_rows(&mut self, tree: &Rc<fleet::Tree>) {
+    fn set_left_rows(&mut self, tree: &Rc<fleet::Tree>, cx: &gpui::App) {
         let mut rows = Vec::new();
         let mut scheduled = std::collections::HashSet::new();
         for (e, entry) in tree.entries.iter().enumerate() {
@@ -379,6 +384,9 @@ impl FleetView {
                 }
                 session_rows(&mut rows, e, f, folder);
             }
+        }
+        if self.adding_group(cx) {
+            rows.push((LeftRow::NewGroup, group_field::NEW_ROW.into(), vec![crate::view::folder_edits::FIELD.to_string()]));
         }
         if let Some(node) = &tree.unlisted {
             rows.push((LeftRow::Unlisted, unlisted::KEY.into(), unlisted::tokens()));
@@ -443,7 +451,7 @@ impl FleetView {
         &self.sidebar.left_list
     }
 
-    fn render_left_row(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn render_left_row(&mut self, ix: usize, focused: bool, cx: &mut Context<Self>) -> AnyElement {
         let rows = self.sidebar.left_rows.clone();
         let (tree, rows) = (&rows.0, &rows.1);
         let Some(row) = rows.get(ix) else { return div().into_any_element() };
@@ -451,7 +459,7 @@ impl FleetView {
             LeftRow::Group(e) => {
                 let entry = &tree.entries[e];
                 let open = !self.sidebar.collapsed.contains(&format!("group:{}", entry.name));
-                self.render_group_row(entry, open, cx)
+                self.render_group_row(entry, open, focused, cx)
             }
             LeftRow::Schedules(e, f) => {
                 let entry = &tree.entries[e];
@@ -470,6 +478,7 @@ impl FleetView {
             LeftRow::More(e, f) => self.render_more_closed(tree.node(e), &tree.node(e).folders[f], cx),
             LeftRow::Unlisted => self.render_unlisted_row(!self.sidebar.collapsed.contains(unlisted::KEY), cx),
             LeftRow::Others => div().flex().flex_col().children(self.render_unowned_others(cx)).into_any_element(),
+            LeftRow::NewGroup => self.render_new_group_row(cx),
             LeftRow::DropEnd => self.render_drop_end(cx),
         }
     }
@@ -691,12 +700,13 @@ impl FleetView {
         }
     }
 
-    fn render_group_row(&self, entry: &EntryNode, open: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn render_group_row(&self, entry: &EntryNode, open: bool, focused: bool, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let name = entry.name.clone();
         let pkey = format!("group:{name}");
         let group = SharedString::from(format!("group-hover-{name}"));
         let shown = self.entry_selected(entry, cx);
+        let editing = self.group_name_field(Some(&name), cx);
         let add = {
             let name = name.clone();
             self.hover_icon(format!("group-add-folder-{name}"), Icon::FolderAdd, "Add Folder… to this group", &group, false, cx).on_click(cx.listener(
@@ -707,6 +717,10 @@ impl FleetView {
             ))
         };
         let buttons = div().flex().flex_none().items_center().gap(px(2.)).child(add).children(self.work_button(entry, &group, shown, cx)).child(self.task_button(entry, &group, shown, cx));
+        let editing_now = editing.is_some();
+        let label = editing.unwrap_or_else(|| {
+            tree_label(&self.hits, &format!("group-{name}"), div().flex_none().font_weight(FontWeight::BOLD).whitespace_nowrap().child(SharedString::from(name.clone()))).into_any_element()
+        });
         let line = div()
             .flex()
             .items_center()
@@ -714,9 +728,9 @@ impl FleetView {
             .h(px(TOP_ROW))
             .child(disclosure(Some(open), colors.text_muted))
             .child(icon_slot(&self.hits, &format!("group-{name}"), Some(Icon::Group.slotted(grid::ICON, colors.text_muted).into_any_element())))
-            .child(tree_label(&self.hits, &format!("group-{name}"), div().flex_none().font_weight(FontWeight::BOLD).whitespace_nowrap().child(SharedString::from(name.clone()))))
-            .child(div().flex_1())
-            .child(buttons);
+            .child(label)
+            .when(!editing_now, |d| d.child(div().flex_1()).child(buttons));
+        let selected = self.sidebar.selected_group.as_deref() == Some(name.as_str());
         let row = div()
             .id(SharedString::from(pkey.clone()))
             .group(group)
@@ -727,20 +741,25 @@ impl FleetView {
             .pl(grid::indent(0))
             .pr_2()
             .map(top_text)
-            .cursor_pointer()
-            .hover(|s| s.bg(colors.ghost_element_hover))
-            .active(|s| s.bg(colors.ghost_element_active));
-        self.group_drag(row, &name, cx)
+            .when(selected, |d| d.bg(supraman_ui::themes::selection(&colors, focused)))
             .child(line)
-            .child(hit_target(&self.hits, format!("group-row-{name}")))
+            .child(hit_target(&self.hits, format!("group-row-{name}")));
+        if editing_now {
+            return row.into_any_element();
+        }
+        self.group_drag(row.cursor_pointer().hover(|s| s.bg(colors.ghost_element_hover)).active(|s| s.bg(colors.ghost_element_active)), &name, cx)
             .on_mouse_down(MouseButton::Right, {
                 let name = name.clone();
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
+                    this.sidebar.selected_group = Some(name.clone());
                     this.open_menu(MenuTarget::Group(name.clone()), e.position, cx);
                 })
             })
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(pkey.clone(), cx)))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.sidebar.selected_group = Some(name.clone());
+                this.toggle(pkey.clone(), cx)
+            }))
             .into_any_element()
     }
 

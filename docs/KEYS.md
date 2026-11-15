@@ -18,6 +18,7 @@ paste on Ctrl+V, find on Ctrl+Shift+F, no copy on select, plain-text copy). Code
 | Ctrl+Alt+T | reopen the last tab closed in this run (the last 20 are kept; a New task, Schedule or Details tab is not) |
 | F6, Shift+F6 | the next / previous pane, wrapping: the sidebar, then the active tab's panes (a terminal tab, Details, Schedule or New task its page; the Git tab its ref panel while open, graph, right panel, then the diff viewer while open; the Work tab its navigator while open, list or page, detail); in the settings window its page list, then the page. The pane holding the keys has a thin edge in the theme's focus colour. Also from a terminal tab, whose program never gets F6. A pane comes back to what it held; a closed menu, palette, band or form gives the keys back to the pane that had them |
 | Ctrl+, | settings |
+| F2 | in the sidebar: rename the selected group (the group row last clicked) in place on its row |
 | Ctrl+Shift+E | the search box over the tree, its text selected; also from a terminal tab (VS Code's Explorer chord; Ctrl+Shift+F is the terminal's find bar, and a Ctrl+letter belongs to the program in the tab) |
 | F5 | refresh: read the running sessions (`claude agents`) and the closed ones' transcripts now, as the action bar's ↻ does, while no terminal tab is active (no tab, or a Work tab). With a terminal tab active, F5 goes to its program; use ↻ there |
 
@@ -39,11 +40,11 @@ as anywhere else.
 | Backspace, Delete; Ctrl+Backspace, Ctrl+Delete | delete a character; a word |
 | Ctrl+C / Ctrl+Insert, Ctrl+X / Shift+Delete, Ctrl+V / Shift+Insert | copy, cut, paste (line breaks pasted as spaces; the task box keeps them) |
 | Ctrl+Z; Ctrl+Y, Ctrl+Shift+Z | undo (typing runs to a space are one step); redo |
-| Enter | Search: nothing. Find bar: next match up. Task box: send. Add Group's or Rename's name: add or rename (only a name of lowercase letters, digits and `-` no other group has; capitals type as lower case, other characters are not taken) |
+| Enter | Search: nothing. Find bar: next match up. Task box: send. A group's name typed in place (Add Group's new row, Rename…, F2): add or rename (only a name of lowercase letters, digits and `-` no other group has; capitals type as lower case, other characters are not taken; a refused name keeps the field open, its border red, the why in a toast and its tooltip; an unchanged name writes nothing). A click elsewhere names a valid name and cancels a refused one |
 | Shift+Enter | find bar: next match down. Task box: a new line |
 | Ctrl+Enter | a commit message's fields: commit |
 | Tab, Shift+Tab | in a form (the commit area: summary, description, Amend previous commit, the graph's WIP row field standing for the summary; the commit panel's summary and description; Add Remote; Create Worktree): the next / previous field or button, wrapping; Space or Enter presses a focused button or ticks a focused box, Esc on it closes the form. Outside a form Tab goes where it went before (a terminal gets it); no field types a tab |
-| Esc | Search: clear the box (the tree is back); on an empty box, give the keys back to the window. Find bar: close. Add Group's or Rename's name: close it, nothing written. An open menu closes first |
+| Esc | Search: clear the box (the tree is back); on an empty box, give the keys back to the window. Find bar: close. A group's name typed in place: close it, nothing written (Add Group's new row goes). An open menu closes first |
 | click, drag, Shift+click | place the caret, select, extend the selection |
 | double-click, triple-click | select the word, select all |
 

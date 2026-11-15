@@ -293,22 +293,23 @@ async fn other_sessions(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWind
     crate::selftest::until(view, cx, Duration::from_secs(10), "Other sessions folded again", |v| (!v.shown(row)).then_some(())).await
 }
 
-/// Add Group's form and Remove Group's question over the tree, each closed again.
+/// Rename on a group's row, its name selected in the field in place, then Remove Group's question over the tree, each closed again.
 async fn group_dialogs(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let run = |action: crate::view::MenuAction, cx: &mut AsyncWindowContext| cx.update(|window, cx| view.update(cx, |v, cx| v.run_action(action, window, cx)));
-    run(crate::view::MenuAction::AddGroup, cx)?;
-    crate::selftest::until(view, cx, Duration::from_secs(10), "Add Group's form", |v| v.hits.borrow().contains_key("group-name-field").then_some(())).await?;
+    run(crate::view::MenuAction::RenameGroup(GROUP.into()), cx)?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "Rename's field on the group's row", |v| v.hits.borrow().contains_key(crate::view::folder_edits::FIELD).then_some(())).await?;
     crate::selftest::drawn(cx).await?;
-    let shot = capture(out.join("supraman-add-group.png"), None, cx).await?;
+    let shot = capture(out.join("supraman-rename-group.png"), None, cx).await?;
     println!("shot: {}", shot.display());
-    crate::selftest::click(view, "group-name-close", cx).await?;
+    crate::selftest::keys::keystroke(cx, "escape", None, gpui::Modifiers::default())?;
+    crate::selftest::until_app(view, cx, Duration::from_secs(10), "Rename's field closed", |v, cx| v.group_editing(cx).is_none().then_some(())).await?;
     run(crate::view::MenuAction::RemoveGroup(GROUP.into()), cx)?;
     crate::selftest::until(view, cx, Duration::from_secs(10), "Remove Group's question", |v| v.hits.borrow().contains_key("confirm-alt").then_some(())).await?;
     crate::selftest::drawn(cx).await?;
     let shot = capture(out.join("supraman-remove-group.png"), None, cx).await?;
     println!("shot: {}", shot.display());
     crate::selftest::click(view, "confirm-cancel", cx).await?;
-    crate::selftest::until(view, cx, Duration::from_secs(10), "the question gone", |v| (v.dialogs.confirm.is_none() && v.dialogs.group_name.is_none()).then_some(())).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the question gone", |v| v.dialogs.confirm.is_none().then_some(())).await?;
     Ok(())
 }
 

@@ -101,6 +101,7 @@ const KEY_CONTEXT: &str = "FleetView";
 
 pub fn bind_keys(cx: &mut gpui::App) {
     tab_keys::bind(cx);
+    left::group_field::bind_keys(cx);
     cx.bind_keys([KeyBinding::new("ctrl-shift-e", FocusSearch, Some(KEY_CONTEXT))]);
 }
 

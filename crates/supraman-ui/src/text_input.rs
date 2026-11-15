@@ -580,6 +580,18 @@ pub fn quiet_frame(focused: bool, cx: &App) -> gpui::Div {
     div().flex().items_center().min_w_0().h(QUIET_HEIGHT).px(PAD_X).rounded_md().border_1().border_color(border).bg(colors.element_background).text_sm().line_height(LINE_HEIGHT).overflow_hidden()
 }
 
+/// An [`inline_frame`]'s padding beside the text, inside its 1 px border.
+const INLINE_PAD_X: Pixels = px(4.);
+/// Where an [`inline_frame`]'s text starts, from its outer left edge: the border and [`INLINE_PAD_X`].
+pub const INLINE_TEXT_LEFT: Pixels = px(5.);
+
+/// A [`TextInput::inline`] field's box: the text style it sits in, the full height, the focus colour's border, the error colour's while `invalid`.
+pub fn inline_frame(focused: bool, invalid: bool, cx: &App) -> gpui::Div {
+    let colors = cx.theme().colors();
+    let border = if invalid { cx.theme().status().error } else if focused { colors.border_focused } else { colors.border };
+    div().flex().items_center().min_w_0().h_full().px(INLINE_PAD_X).rounded_sm().border_1().border_color(border).bg(colors.editor_background).overflow_hidden()
+}
+
 pub struct TextInput {
     focus_handle: FocusHandle,
     pub line: LineText,
@@ -594,6 +606,9 @@ pub struct TextInput {
     submit_apart: bool,
     masked: bool,
     quiet: bool,
+    inline: bool,
+    /// What is typed is refused: the border in the error colour.
+    invalid: bool,
     last_layout: Option<Layout>,
     last_bounds: Option<Bounds<Pixels>>,
     last_line_height: Pixels,
@@ -664,6 +679,8 @@ impl TextInput {
             submit_apart: false,
             masked: false,
             quiet: false,
+            inline: false,
+            invalid: false,
             last_layout: None,
             last_bounds: None,
             last_line_height: LINE_HEIGHT,
@@ -705,6 +722,24 @@ impl TextInput {
     pub fn quiet(mut self) -> Self {
         self.quiet = true;
         self
+    }
+
+    /// A one-line field in its row's own text style, as tall as the room it is given ([`inline_frame`]): a tree row's name.
+    pub fn inline(mut self) -> Self {
+        self.inline = true;
+        self
+    }
+
+    /// The border in the error colour while what is typed is refused.
+    pub fn set_invalid(&mut self, invalid: bool, cx: &mut Context<Self>) {
+        if self.invalid != invalid {
+            self.invalid = invalid;
+            cx.notify();
+        }
+    }
+
+    pub fn invalid(&self) -> bool {
+        self.invalid
     }
 
     pub fn text(&self) -> &str {
@@ -1361,7 +1396,9 @@ impl Render for TextInput {
         let colors = cx.theme().colors();
         let focused = self.focus_handle.is_focused(window);
         let multi_line = self.multi_line;
-        let frame = if self.quiet && !multi_line {
+        let frame = if self.inline && !multi_line {
+            inline_frame(focused, self.invalid, cx)
+        } else if self.quiet && !multi_line {
             quiet_frame(focused, cx)
         } else {
             div()
