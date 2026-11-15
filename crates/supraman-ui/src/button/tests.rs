@@ -277,3 +277,40 @@ fn tab_walks_a_row_of_three_buttons_and_space_or_enter_presses_the_focused_one(c
     cx.simulate_click(at.center(), gpui::Modifiers::none());
     assert_eq!(view.read_with(cx, |v, _| v.pressed.clone()), [1, 2, 0], "a click runs the same act");
 }
+
+struct Stepped {
+    hits: HitTargets,
+    members: crate::focus_order::Members,
+    n: i32,
+}
+
+impl Render for Stepped {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.members.begin();
+        let control = stepper(&self.hits, "max", self.n.to_string(), &self.members, |this: &mut Stepped, by, _, cx| {
+            this.n += by;
+            cx.notify();
+        }, cx);
+        let row = crate::settings_page::row("Busy sessions at most", "How many may work at once.", control.into_any_element(), None, cx);
+        self.members.order().on(div().id("page").w(px(600.)).child(row))
+    }
+}
+
+#[gpui::test]
+fn a_settings_rows_stepper_stands_one_gap_apart_with_the_values_letters_on_the_buttons_and_steps_by_key(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::init_globals(cx, "test");
+        crate::focus_order::bind_keys(cx);
+    });
+    let (view, cx) = cx.add_window_view(|_, _| Stepped { hits: HitTargets::default(), members: Default::default(), n: 20 });
+    cx.run_until_parked();
+    let hits = view.read_with(cx, |v, _| v.hits.clone());
+    let [dec, value, inc, dec_label] = ["max-dec", "max-value", "max-inc", "max-dec-label"].map(|k| bounds(&hits, k));
+    assert!(crate::ink::level(value.center().y, dec_label.center().y), "the value's letters level with the buttons': {value:?} {dec_label:?}");
+    assert!(crate::ink::level(dec.center().y, inc.center().y), "both buttons on one middle");
+    assert!(value.left() - dec.right() >= GAP + px(1.) && inc.left() - value.right() >= GAP + px(1.), "one gap each side of the value");
+    let first = view.read_with(cx, |v, _| v.members.get("max-dec")).expect("a handle");
+    cx.update(|window, cx| first.focus(window, cx));
+    cx.simulate_keystrokes("space tab enter enter");
+    assert_eq!(view.read_with(cx, |v, _| v.n), 21, "− once, then + twice by key");
+}

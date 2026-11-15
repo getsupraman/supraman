@@ -274,6 +274,7 @@ mod tests {
             assert!(ink::level(b.center().y + below, text.center().y + below), "{k}'s letters on the text's: {b:?} by {text:?}");
         }
         assert!(text.right() <= yes.left() && yes.right() < alt.left() && alt.right() < cancel.left(), "the text, the yes, the alt, Cancel");
+        assert_eq!((alt.left() - yes.right(), cancel.left() - alt.right()), (button::GAP + px(2.), button::GAP + px(2.)), "one gap between answers, border to border");
         let (left, right) = (text.left() - band.left(), band.right() - cancel.right());
         assert!((left - right).abs() < px(24.), "centred as one group: {left:?} left, {right:?} right");
         assert_eq!(band.size.height, ROW, "one row");

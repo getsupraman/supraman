@@ -3,7 +3,7 @@
 
 use std::sync::{Arc, OnceLock};
 
-use gpui::{AnyElement, ClickEvent, Context, FontWeight, Pixels, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, ClickEvent, Context, Pixels, SharedString, div, prelude::*, px};
 use supraman_core::shells::ShellSetting;
 use supraman_core::{DEFAULT_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, TabKeys};
 use supraman_ui::settings_page::row;
@@ -156,8 +156,7 @@ impl SettingsView {
                 .text_color(colors.text_muted)
                 .child("VS Code Dark Modern: kevcamel/vscode_dark_modern.zed, © 2024 Kevin Camellini, MIT licence (THIRD_PARTY.md)."),
         );
-        let folder = button::action(&self.hits, "settings-themes-folder", "Open themes folder", button::Tone::Neutral, button::Fill::Solid, cx)
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_themes_folder(cx)));
+        let folder = self.control("settings-themes-folder", "Open themes folder", |this, _, cx| this.open_themes_folder(cx), cx);
         row(
             "Theme",
             "The colours of every Supraman window. Zed theme files (*.json) in the themes folder of the \
@@ -192,29 +191,13 @@ impl SettingsView {
         let size = self.fleet.upgrade().map(|f| f.read(cx).term_look.term_font_size);
         self.shown_font_size.set(size);
         let font_size = match size {
-            Some(size) => div()
-                .flex()
-                .items_center()
-                .gap_1()
-                .child(button::action(&self.hits, "settings-term-font-dec", "−", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.set_term_font_size(size - px(1.), cx);
-                })))
-                .child(
-                    div()
-                        .id("term-font-size")
-                        .w(px(28.))
-                        .flex()
-                        .justify_center()
-                        .font_weight(FontWeight::BOLD)
-                        .child(SharedString::from(format!("{}", f32::from(size)))),
-                )
-                .child(button::action(&self.hits, "settings-term-font-inc", "+", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.set_term_font_size(size + px(1.), cx);
-                })))
-                .child(button::action(&self.hits, "settings-term-font-reset", "Reset", button::Tone::Neutral, button::Fill::Solid, cx).ml_1().on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.set_term_font_size(term_element::FONT_SIZE, cx);
-                })))
-                .into_any_element(),
+            Some(size) => {
+                let stepper = button::stepper(&self.hits, "settings-term-font", format!("{}", f32::from(size)), &self.members, move |this: &mut Self, by, _, cx| {
+                    this.set_term_font_size(size + px(by as f32), cx);
+                }, cx);
+                let reset = self.control("settings-term-font-reset", "Reset", |this, _, cx| this.set_term_font_size(term_element::FONT_SIZE, cx), cx);
+                button::line().child(stepper).child(reset).into_any_element()
+            }
             None => div().text_sm().text_color(colors.text_muted).child("the main window is closed").into_any_element(),
         };
         row(
@@ -257,8 +240,7 @@ impl SettingsView {
             .collect::<Vec<_>>();
         fonts = fonts.children(font_notes);
         let default = supraman_core::default_terminal_font_family(installed);
-        let font_reset = button::action(&self.hits, "settings-term-font-default", "Default", button::Tone::Neutral, button::Fill::Solid, cx)
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_term_font(None, ligatures, cx)));
+        let font_reset = self.control("settings-term-font-default", "Default", move |this, _, cx| this.set_term_font(None, ligatures, cx), cx);
         row(
             "Terminal font",
             format!(

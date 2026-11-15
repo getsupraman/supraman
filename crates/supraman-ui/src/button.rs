@@ -294,6 +294,28 @@ fn labelled(hits: &HitTargets, key: SharedString, icon: Option<gpui::AnyElement>
     sized(button, Size::Small)
 }
 
+/// − `value` +: two [`Size::Medium`] buttons of `members`' Tab order under `<key>-dec` and `<key>-inc`, `step` given -1 or 1
+/// by a click, Space or Enter; the value between them bold, its letters on theirs, under `<key>-value`.
+pub fn stepper<V: 'static>(
+    hits: &HitTargets,
+    key: &str,
+    value: impl Into<SharedString>,
+    members: &crate::focus_order::Members,
+    step: impl Fn(&mut V, i32, &mut Window, &mut Context<V>) + Clone + 'static,
+    cx: &mut Context<V>,
+) -> Div {
+    let mut one = |by: i32, part: &str, words: &'static str| {
+        let key = format!("{key}-{part}");
+        let button = sized(action(hits, key.clone(), words, Tone::Neutral, Fill::Solid, cx), Size::Medium);
+        let step = step.clone();
+        acting(button, &members.handle(key, cx), move |this, window, cx| step(this, by, window, cx), cx)
+    };
+    let (dec, inc) = (one(-1, "dec", "−"), one(1, "inc", "+"));
+    let value = ink::text(div().relative().child(value.into()).child(hit_target(hits, format!("{key}-value"))));
+    let value = div().min_w(px(28.)).flex().justify_center().text_size(Size::Medium.table().2).font_weight(gpui::FontWeight::BOLD).child(value);
+    line().child(dec).child(value).child(inc)
+}
+
 /// `button` dimmed, with the plain cursor, while it cannot act; its click must then do nothing.
 pub fn dimmed(button: Stateful<Div>) -> Stateful<Div> {
     button.opacity(0.4).cursor_default()

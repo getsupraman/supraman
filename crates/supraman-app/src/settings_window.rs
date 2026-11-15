@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use supraman_core::Settings;
 use supraman_ui::settings_page::{SettingsPage, SettingsPages};
-use supraman_ui::{banner, button};
+use supraman_ui::{banner, button, focus_order};
 use supraman_workman::AuthStatus;
 use supraman_ui::themes::{self, Catalog, TerminalColors};
 use gpui::{
@@ -62,6 +62,8 @@ pub struct SettingsView {
     nav: FocusHandle,
     _restore: gpui::Subscription,
     hits: HitTargets,
+    /// The page's buttons and fields in Tab order.
+    members: focus_order::Members,
     /// As last shown: a change re-reads settings.toml.
     workman: WorkmanStatus,
     catalog: Catalog,
@@ -159,6 +161,7 @@ impl SettingsView {
             nav: cx.focus_handle(),
             _restore: supraman_ui::focus::restore_on_loss(window, cx),
             hits,
+            members: Default::default(),
             workman,
             catalog: Catalog::default(),
             theme_problem: None,
@@ -392,6 +395,12 @@ impl SettingsView {
         }
     }
 
+    /// A page's button: [`button::Size::Medium`], the next of the page's Tab order, `act` its click, Space and Enter.
+    fn control(&self, key: &'static str, label: impl Into<SharedString>, act: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let shown = button::sized(button::action(&self.hits, key, label, button::Tone::Neutral, button::Fill::Solid, cx), button::Size::Medium);
+        button::acting(shown, &self.members.handle(key, cx), act, cx)
+    }
+
     fn render_gitman(&self, _: &mut Context<Self>) -> Vec<AnyElement> {
         vec![self.gitman.clone().into_any_element()]
     }
@@ -428,6 +437,7 @@ impl Render for SettingsView {
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_file(cx))),
         );
 
+        self.members.begin();
         let (title, rows) = match self.pages.get(self.page) {
             Some(page) => (page.title, (page.render)(self, cx)),
             None => ("", Vec::new()),
@@ -451,7 +461,7 @@ impl Render for SettingsView {
                 )
             })
             .children(rows);
-        let page = div().relative().flex().flex_1().min_w_0().track_focus(&self.focus).child(content).child(supraman_ui::focus::Pane::new("settings-page", &self.focus).paint(&self.hits));
+        let page = self.members.order().on(div()).relative().flex().flex_1().min_w_0().track_focus(&self.focus).child(content).child(supraman_ui::focus::Pane::new("settings-page", &self.focus).paint(&self.hits));
 
         supraman_ui::focus::root(div())
             .size_full()

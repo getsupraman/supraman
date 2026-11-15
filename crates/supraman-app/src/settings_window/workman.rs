@@ -1,6 +1,6 @@
 //! The settings window's Workman page: the sign-in status, the server URL and the MCP server name.
 
-use gpui::{AnyElement, App, ClickEvent, Context, Div, Hsla, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, App, Context, Div, Focusable as _, Hsla, SharedString, div, prelude::*, px};
 use supraman_ui::settings_page::row;
 use supraman_ui::{banner, button};
 use supraman_workman::AuthStatus;
@@ -63,12 +63,11 @@ impl SettingsView {
     pub(super) fn render_workman(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let status = cx.theme().status().clone();
         let colors = cx.theme().colors().clone();
-        let field = div()
-            .flex()
-            .items_center()
-            .gap_2()
+        let status_row = self.render_workman_status(cx);
+        self.members.add(self.url_input.focus_handle(cx));
+        let field = button::line()
             .child(div().id("ws-url").w(px(280.)).child(self.url_input.clone()))
-            .child(button::action(&self.hits, "settings-ws-url-apply", "Apply", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.apply_url(cx))));
+            .child(self.control("settings-ws-url-apply", "Apply", |this, _, cx| this.apply_url(cx), cx));
         let below = div()
             .flex()
             .flex_col()
@@ -90,7 +89,7 @@ impl SettingsView {
             Some(ServerCheck { mcp_name: None, .. }) => "none: no usable ~/.workman/server.json".to_string(),
         };
         vec![
-            self.render_workman_status(cx),
+            status_row,
             row(
                 "Server URL",
                 format!(
@@ -186,27 +185,27 @@ impl SettingsView {
         let held = self.auth.as_ref().is_some_and(|a| !matches!(a, AuthStatus::NotSignedIn));
         let mut controls = div().flex().flex_col().items_end().gap_1();
         controls = match signing_in {
-            true => controls.child(button::action(&self.hits, "settings-ws-cancel", "Cancel sign-in", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            true => controls.child(self.control("settings-ws-cancel", "Cancel sign-in", |this, _, cx| {
                 this.fleet.update(cx, |fleet, _| fleet.cancel_sign_in()).ok();
-            }))),
+            }, cx)),
             false if self.auth.is_some() && (!held || matches!(self.workman, WorkmanStatus::SignInAgain { .. })) => {
-                controls.child(button::action(&self.hits, "settings-ws-signin", "Sign in", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                controls.child(self.control("settings-ws-signin", "Sign in", |this, _, cx| {
                     this.fleet.update(cx, |fleet, cx| fleet.sign_in(cx)).ok();
                     cx.notify();
-                })))
+                }, cx))
             }
             false => controls,
         };
         if held && !signing_in {
-            controls = controls.child(button::action(&self.hits, "settings-ws-signout", "Sign out", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            controls = controls.child(self.control("settings-ws-signout", "Sign out", |this, _, cx| {
                 this.fleet.update(cx, |fleet, cx| fleet.sign_out(cx)).ok();
                 cx.notify();
-            })));
+            }, cx));
         }
-        controls.child(button::action(&self.hits, "settings-ws-check", "Check now", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+        controls.child(self.control("settings-ws-check", "Check now", |this, _, cx| {
             this.fleet.update(cx, |fleet, _| fleet.recheck_workman()).ok();
             this.check_server(cx);
-        })))
+        }, cx))
     }
 
     #[cfg(feature = "selftest")]

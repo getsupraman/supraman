@@ -1,8 +1,8 @@
 //! The settings window's About page: this build, the update check, the claude CLI, the poll and the home.
 
-use gpui::{AnyElement, App, ClickEvent, Context, Hsla, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, App, Context, Hsla, SharedString, div, prelude::*, px};
 use supraman_ui::settings_page::row;
-use supraman_ui::{banner, button};
+use supraman_ui::banner;
 use theme::ActiveTheme as _;
 
 use super::SettingsView;
@@ -84,17 +84,16 @@ impl SettingsView {
 
     fn render_update_rows(&self, cx: &mut Context<Self>) -> [AnyElement; 2] {
         let on = self.settings.updates.check;
-        let check_toggle = button::action(&self.hits, "settings-updates-check", if on { "On" } else { "Off" }, button::Tone::Neutral, button::Fill::Solid, cx)
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_update_check(!on, cx)));
+        let check_toggle = self.control("settings-updates-check", if on { "On" } else { "Off" }, move |this, _, cx| this.set_update_check(!on, cx), cx);
         let last_check = div()
             .flex()
             .items_center()
             .gap_2()
             .child(div().id("updates-last").max_w(px(260.)).text_sm().child(SharedString::from(self.updates_line(cx))))
             .children(on.then(|| {
-                button::action(&self.hits, "settings-updates-check-now", "Check now", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                self.control("settings-updates-check-now", "Check now", |this, _, cx| {
                     this.fleet.update(cx, |fleet, _| fleet.check_updates_now()).ok();
-                }))
+                }, cx)
             }));
         [
             row(
