@@ -947,6 +947,15 @@ impl FleetView {
     }
 
     /// `folder`: the row's own folder's name, shown where a listed row's folder is its parent row.
+    /// A row's own folder after its name, muted and cut (Other sessions' and Other schedules' rows); `path` its tooltip.
+    pub(super) fn folder_tag(&self, key: String, name: String, path: Option<String>, cx: &mut Context<Self>) -> Stateful<Div> {
+        let tag = match path {
+            Some(path) => supraman_ui::clipped::clipped_with(key.clone(), name, false, false).tooltip(Tooltip::text(path)),
+            None => clipped(key.clone(), name, false),
+        };
+        tag.min_w_0().max_w(px(FOLDER_MAX)).text_xs().text_color(secondary(cx)).child(hit_target(&self.hits, key))
+    }
+
     fn session_line(&self, place: &str, folder: Option<&str>, row: &SessionRow, cx: &mut Context<Self>) -> Div {
         let colors = cx.theme().colors().clone();
         let s = &row.session;
@@ -977,10 +986,7 @@ impl FleetView {
                         .child(hit_target(&self.hits, key)),
                 )
             })
-            .when_some(folder, |d, folder| {
-                let key = format!("session-folder-{}{at}", s.session_id);
-                d.child(clipped(key.clone(), folder.to_string(), false).min_w_0().max_w(px(FOLDER_MAX)).text_xs().text_color(secondary(cx)).child(hit_target(&self.hits, key)))
-            })
+            .when_some(folder, |d, folder| d.child(self.folder_tag(format!("session-folder-{}{at}", s.session_id), folder.to_string(), None, cx)))
             .child(
                 div()
                     .flex()

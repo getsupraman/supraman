@@ -373,7 +373,7 @@ async fn schedules_anywhere(view: &Entity<FleetView>, infra: &Path, out: &Path, 
     let key = |p: &Path| supraman_core::schedule::folder_key(p);
     let (under, apart) = (format!("schedules-row-{}", key(&terraform)), format!("sched-row-{}/lint", key(&modules)));
     crate::selftest::until(view, cx, Duration::from_secs(10), "terraform's Schedules and Other schedules", |v| {
-        (v.shown(&under) && v.shown(&format!("sched-row-{}/plan", key(&terraform))) && v.shown("other-schedules-row") && v.shown(&apart)).then_some(())
+        (v.shown(&under) && v.shown(&format!("sched-row-{}/plan", key(&terraform))) && v.shown("other-schedules-row") && v.shown(&apart) && v.shown(&format!("sched-folder-{}/lint", key(&modules)))).then_some(())
     })
     .await?;
     crate::selftest::until(view, cx, Duration::from_secs(10), "Show sub folders' toast gone", |v| v.toast.text().is_none().then_some(())).await?;

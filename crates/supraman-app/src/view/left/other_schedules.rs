@@ -27,7 +27,7 @@ impl FleetView {
     pub(super) fn other_schedules_tokens(&self, tree: &Tree) -> Vec<String> {
         let mut tokens = vec![format!("{KEY}-row"), format!("tree-label-{KEY}"), format!("{KEY}-caption"), "other-row-".into(), "other-name-".into(), "other-summary-".into()];
         for key in self.unrowed_keys(tree) {
-            tokens.extend(["sched-row-", "sched-state-", "sched-error-", "sched-name-"].iter().map(|p| format!("{p}{key}")));
+            tokens.extend(["sched-row-", "sched-state-", "sched-error-", "sched-name-", "sched-folder-"].iter().map(|p| format!("{p}{key}")));
         }
         tokens
     }

@@ -750,7 +750,7 @@ impl FleetView {
         if !rows.is_empty() || !others.is_empty() {
             let gkey = format!("schedules:{fkey}");
             let open = !self.sidebar.collapsed.contains(&gkey);
-            out.push(self.render_schedules_row(&entry.name, folder, level, rows.len() + others.len(), open, cx));
+            out.push(self.render_schedules_row(&entry.name, folder, level, open, cx));
             if open {
                 out.extend(self.render_schedule_list(&entry.name, &rows, &folder.scheduled, level + 1, cx));
                 out.extend(self.render_others(&fkey, others, level + 1, cx));
@@ -760,14 +760,14 @@ impl FleetView {
         out
     }
 
-    /// Each schedule's row at `level`, its runs of `runs` under it while open.
+    /// Each schedule's row at `level`, its runs of `runs` under it while open; under Other schedules each names its folder.
     pub(super) fn render_schedule_list(&self, entry: &str, rows: &[ScheduleRow], runs: &BTreeMap<String, Vec<SessionRow>>, level: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut out = Vec::new();
         for row in rows {
             let runs = runs.get(&row.schedule.id).map(Vec::as_slice).unwrap_or_default();
             let skey = format!("schedule:{}", key(&row.key, &row.schedule.id));
             let sopen = !self.sidebar.collapsed.contains(&skey);
-            out.push(self.render_schedule_row(row, level, runs.len(), sopen, cx));
+            out.push(self.render_schedule_row(row, level, runs.len(), sopen, entry == crate::fleet::UNROWED, cx));
             if sopen {
                 out.extend(runs.iter().map(|r| self.render_session(entry, &row.schedule.id, r, grid::indent(level + 1), cx)));
             }
@@ -781,7 +781,7 @@ impl FleetView {
         gone.flat_map(|(id, runs)| runs.iter().map(move |r| (id, r))).map(|(id, r)| self.render_session(entry, id, r, grid::indent(level), cx)).collect()
     }
 
-    fn render_schedules_row(&self, entry: &str, folder: &FolderNode, level: usize, count: usize, open: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn render_schedules_row(&self, entry: &str, folder: &FolderNode, level: usize, open: bool, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let folder_key = schedule::folder_key(&folder.path);
         let gkey = format!("schedules:{folder_key}");
@@ -803,7 +803,6 @@ impl FleetView {
             .child(disclosure(Some(open), secondary(cx)))
             .child(icon_slot(&self.hits, &tree_key, Some(Icon::Clock.slotted(grid::ICON, secondary(cx)).into_any_element())))
             .child(tree_label(&self.hits, &tree_key, div().flex_none().whitespace_nowrap().child("Schedules")))
-            .child(div().flex_none().text_xs().text_color(secondary(cx)).child(SharedString::from(count.to_string())))
             .child(hit_target(&self.hits, format!("schedules-row-{folder_key}")))
             .on_mouse_down(MouseButton::Right, {
                 let target = MenuTarget::Schedules { entry: entry.to_string(), folder: folder.path.clone() };
@@ -921,7 +920,7 @@ impl FleetView {
             .into_any_element()
     }
 
-    pub(super) fn render_schedule_row(&self, row: &ScheduleRow, level: usize, runs: usize, open: bool, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_schedule_row(&self, row: &ScheduleRow, level: usize, runs: usize, open: bool, named: bool, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let (w, id) = (row.key.clone(), row.schedule.id.clone());
@@ -989,6 +988,10 @@ impl FleetView {
                     }
                 })
             }))
+            .when(named, |d| {
+                let path = row.folder.display().to_string();
+                d.child(self.folder_tag(format!("sched-folder-{k}"), supraman_core::paths::folder_name(&row.folder), Some(path), cx))
+            })
             .child(
                 div()
                     .id(SharedString::from(format!("sched-state-{k}")))

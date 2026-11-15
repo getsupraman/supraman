@@ -276,12 +276,13 @@ async fn anywhere(view: &Entity<FleetView>, home: &Path, dir: &Path, cx: &mut As
     until(view, cx, WITHIN, "the schedule under Other schedules once the child has no row", |v| {
         let hits = v.hits.borrow();
         let below = matches!((hits.get(top), hits.get(&sched)), (Some(t), Some(r)) if r.bounds.top() > t.bounds.top());
-        (v.tree().schedule_row(&key).is_none() && !hits.contains_key(&group) && below).then_some(())
+        let named = hits.contains_key(&format!("sched-folder-{key}/here"));
+        (v.tree().schedule_row(&key).is_none() && !hits.contains_key(&group) && below && named).then_some(())
     })
     .await?;
     std::fs::remove_file(schedule::file_path(home, &key)?)?;
     until(view, cx, WITHIN, "Other schedules gone with its last schedule", |v| (!painted(v, top)).then_some(())).await?;
-    Ok(format!("10 New scheduled task… on the shown child starts in it; sm there filed schedules/{key}.toml, its Schedules under the child's row; the child hidden: under Other schedules"))
+    Ok(format!("10 New scheduled task… on the shown child starts in it; sm there filed schedules/{key}.toml, its Schedules under the child's row; the child hidden: under Other schedules, named by its folder"))
 }
 
 /// 3c: an approved schedule whose slash command file is edited says so, offers Approve and asks in the Inbox; Approve
