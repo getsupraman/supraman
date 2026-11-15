@@ -17,7 +17,20 @@ impl Render for DraggedFolder {
     }
 }
 
-/// Where a dragged folder row is let go.
+/// A group's row being dragged.
+#[derive(Clone)]
+pub struct DraggedGroup {
+    pub name: String,
+    pub title: SharedString,
+}
+
+impl Render for DraggedGroup {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        supraman_ui::tabs::chip(self.title.clone(), cx)
+    }
+}
+
+/// Where a dragged folder or group row is let go.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
     /// A group's row: the end of its folders.
@@ -45,6 +58,21 @@ pub fn landing(entries: &Entries, from: Pos, target: &Target) -> Option<Place> {
         },
     };
     (place != here(entries, from)?).then_some(place)
+}
+
+/// Where the group `name` dropped on `target` goes among the top-level entries, counted with it taken out
+/// ([`Entries::move_group`]): before a top-level row's entry, or last below the tree; a row inside a group is no target.
+/// `None` when that is where it is already, or the group or target is gone.
+pub fn group_landing(entries: &Entries, name: &str, target: &Target) -> Option<usize> {
+    let from = entries.list.iter().position(|e| e.group_name() == Some(name))?;
+    let before = match target {
+        Target::End => entries.list.len(),
+        Target::Group(other) => entries.list.iter().position(|e| e.group_name() == Some(other))?,
+        Target::Folder(Pos { entry, folder: None }) if matches!(entries.list.get(*entry), Some(Entry::Folder(_))) => *entry,
+        Target::Folder(_) => return None,
+    };
+    let to = before - usize::from(from < before);
+    (to != from).then_some(to)
 }
 
 /// The place of the folder at `from`, as [`landing`] counts it.

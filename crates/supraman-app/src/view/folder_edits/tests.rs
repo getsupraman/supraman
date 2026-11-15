@@ -229,3 +229,42 @@ fn a_move_or_show_subfolders_of_a_folder_no_longer_at_its_position_is_refused() 
     assert!(!folders::load(home.path()).unwrap().folder_at(Pos::top(2)).unwrap().show_subfolders);
     assert!(run(home.path(), &FolderEdit::ShowSubfolders { pos: Pos::top(1), path: a, show: true }).unwrap_err().starts_with("Cannot show the sub folders of alpha"));
 }
+
+/// The top-level entries' names (a group's, a folder's path) after the group `name` lands on `target`.
+fn group_after(name: &str, target: Target) -> Vec<String> {
+    let mut e = dropping();
+    let to = group_landing(&e, name, &target).unwrap_or_else(|| panic!("{name} on {target:?} changes nothing"));
+    e.move_group(name, to).unwrap();
+    e.list.iter().map(|x| x.group_name().map_or_else(|| x.folders()[0].path.display().to_string(), str::to_string)).collect()
+}
+
+#[test]
+fn a_group_dropped_on_a_top_level_row_goes_before_that_entry_and_below_the_tree_to_the_end() {
+    assert_eq!(group_after("h", Target::Group("g".into())), [r"C:\a", "h", "g", r"C:\b"], "onto a group row: before it");
+    assert_eq!(group_after("h", Target::Folder(Pos::top(0))), ["h", r"C:\a", "g", r"C:\b"], "onto the first row: first");
+    assert_eq!(group_after("g", Target::Folder(Pos::top(0))), ["g", r"C:\a", r"C:\b", "h"], "onto an earlier top-level folder row: before it");
+    assert_eq!(group_after("g", Target::Group("h".into())), [r"C:\a", r"C:\b", "g", "h"], "onto a later group row: before it");
+    assert_eq!(group_after("g", Target::End), [r"C:\a", r"C:\b", "h", "g"], "below the tree: the end");
+}
+
+#[test]
+fn a_group_dropped_where_it_is_or_inside_a_group_has_no_landing() {
+    let e = dropping();
+    assert_eq!(group_landing(&e, "g", &Target::Group("g".into())), None, "onto its own row");
+    assert_eq!(group_landing(&e, "g", &Target::Folder(Pos::top(2))), None, "before the entry after it");
+    assert_eq!(group_landing(&e, "h", &Target::End), None, "the last below the tree");
+    assert_eq!(group_landing(&e, "h", &Target::Folder(Pos::member(1, 0))), None, "a row inside a group is no target");
+    assert_eq!(group_landing(&e, "h", &Target::Folder(Pos::top(1))), None, "a group's place is no folder row");
+    assert_eq!(group_landing(&e, "gone", &Target::End), None, "a group no longer there");
+}
+
+#[test]
+fn move_group_writes_the_move_and_refuses_a_group_gone_since() {
+    let home = tempfile::tempdir().unwrap();
+    let a = PathBuf::from(r"C:\demo\alpha");
+    add(home.path(), &a, None).unwrap();
+    run(home.path(), &FolderEdit::AddGroup("demo".into())).unwrap();
+    assert_eq!(run(home.path(), &FolderEdit::MoveGroup { name: "demo".into(), to: 0 }).unwrap(), "Moved group demo.");
+    assert_eq!(listed(home.path()), [group("demo", &[]), Entry::Folder(FolderEntry::new(&a))]);
+    assert!(run(home.path(), &FolderEdit::MoveGroup { name: "gone".into(), to: 0 }).unwrap_err().starts_with("Cannot move group gone"));
+}
