@@ -6,7 +6,10 @@ mod window;
 
 pub use hidden::{DesktopChild, HiddenDesktop, input_desktop_name, quote_arg, spawn_on, thread_desktop_name};
 pub use instance::{Claimed, Instance, claim};
-pub use window::{drained, hand_activation_away, hide_window, is_window_visible, light_taskbar, show_window, small_icon_size};
+pub use window::{
+    active_window, drained, hand_activation_away, hide_window, is_enabled, is_window_visible, light_taskbar, owner_of, set_active, set_enabled,
+    show_window, small_icon_size,
+};
 
 /// Frees a console Windows allocated despite the manifest's detached `consoleAllocationPolicy`.
 #[cfg(windows)]

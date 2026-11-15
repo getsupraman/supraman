@@ -232,7 +232,7 @@ pub(crate) fn image_of(_pid: u32) -> Option<std::path::PathBuf> {
     None
 }
 
-/// This process's visible top-level window titled `title`, or its largest one.
+/// This process's visible top-level window titled `title` (an owned one, a modal window, too), or its largest unowned one.
 #[cfg(windows)]
 pub fn window(title: Option<&str>) -> anyhow::Result<isize> {
     use windows::Win32::Foundation::{HWND, LPARAM, RECT};
@@ -240,7 +240,7 @@ pub fn window(title: Option<&str>) -> anyhow::Result<isize> {
     use windows::core::BOOL;
     struct Found {
         pid: u32,
-        windows: Vec<(isize, String, i64)>,
+        windows: Vec<(isize, String, i64, bool)>,
     }
     unsafe extern "system" fn each(hwnd: HWND, found: LPARAM) -> BOOL {
         // SAFETY: `found` is the `Found` passed to EnumWindows below, alive for the call.
@@ -248,13 +248,13 @@ pub fn window(title: Option<&str>) -> anyhow::Result<isize> {
         let mut pid = 0;
         unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
         let owned = unsafe { GetWindow(hwnd, GW_OWNER) }.is_ok_and(|o| !o.is_invalid());
-        if pid == found.pid && unsafe { IsWindowVisible(hwnd) }.as_bool() && !owned {
+        if pid == found.pid && unsafe { IsWindowVisible(hwnd) }.as_bool() {
             let mut text = [0u16; 256];
             let n = unsafe { GetWindowTextW(hwnd, &mut text) } as usize;
             let mut r = RECT::default();
             let _ = unsafe { GetWindowRect(hwnd, &mut r) };
             let area = i64::from(r.right - r.left) * i64::from(r.bottom - r.top);
-            found.windows.push((hwnd.0 as isize, String::from_utf16_lossy(&text[..n]), area));
+            found.windows.push((hwnd.0 as isize, String::from_utf16_lossy(&text[..n]), area, owned));
         }
         true.into()
     }
@@ -262,11 +262,11 @@ pub fn window(title: Option<&str>) -> anyhow::Result<isize> {
     // SAFETY: the callback only touches `found`, which outlives the call.
     unsafe { EnumWindows(Some(each), LPARAM(&mut found as *mut Found as isize)) }.map_err(|e| anyhow!("EnumWindows: {e}"))?;
     let chosen = match title {
-        Some(title) => found.windows.iter().find(|(_, t, _)| t == title),
-        None => found.windows.iter().max_by_key(|(_, _, area)| *area),
+        Some(title) => found.windows.iter().find(|(_, t, _, _)| t == title),
+        None => found.windows.iter().filter(|(_, _, _, owned)| !owned).max_by_key(|(_, _, area, _)| *area),
     };
-    chosen.map(|(hwnd, _, _)| *hwnd).ok_or_else(|| {
-        let titles: Vec<&str> = found.windows.iter().map(|(_, t, _)| t.as_str()).collect();
+    chosen.map(|(hwnd, _, _, _)| *hwnd).ok_or_else(|| {
+        let titles: Vec<&str> = found.windows.iter().map(|(_, t, _, _)| t.as_str()).collect();
         anyhow!("this process has no visible window titled {title:?}; its windows: {titles:?}")
     })
 }

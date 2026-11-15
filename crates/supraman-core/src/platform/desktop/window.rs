@@ -136,3 +136,66 @@ pub fn drained(hwnd: isize) -> bool {
 pub fn drained(_hwnd: isize) -> bool {
     true
 }
+
+/// The window that owns this one: a modal window's owner stays below it and minimises with it.
+#[cfg(windows)]
+pub fn owner_of(hwnd: isize) -> Option<isize> {
+    use windows::Win32::UI::WindowsAndMessaging::{GW_OWNER, GetWindow};
+    unsafe { GetWindow(handle(hwnd), GW_OWNER) }.ok().filter(|owner| !owner.is_invalid()).map(|owner| owner.0 as isize)
+}
+
+#[cfg(not(windows))]
+pub fn owner_of(_hwnd: isize) -> Option<isize> {
+    None
+}
+
+/// A disabled window takes no input; a click on it brings forward the enabled window it owns.
+#[cfg(windows)]
+pub fn set_enabled(hwnd: isize, enabled: bool) -> Result<(), String> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
+    unsafe {
+        let _ = EnableWindow(handle(hwnd), enabled);
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub fn set_enabled(_hwnd: isize, _enabled: bool) -> Result<(), String> {
+    Err(crate::platform::refused("enabling a window by its HWND"))
+}
+
+#[cfg(windows)]
+pub fn is_enabled(hwnd: isize) -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
+    unsafe { IsWindowEnabled(handle(hwnd)) }.as_bool()
+}
+
+#[cfg(not(windows))]
+pub fn is_enabled(_hwnd: isize) -> bool {
+    true
+}
+
+/// Active among this thread's windows, without taking the foreground from another process.
+#[cfg(windows)]
+pub fn set_active(hwnd: isize) -> Result<(), String> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::SetActiveWindow;
+    unsafe { SetActiveWindow(handle(hwnd)) }.map(|_| ()).map_err(|e| e.to_string())
+}
+
+#[cfg(not(windows))]
+pub fn set_active(_hwnd: isize) -> Result<(), String> {
+    Err(crate::platform::refused("activating a window by its HWND"))
+}
+
+/// This thread's active window.
+#[cfg(windows)]
+pub fn active_window() -> Option<isize> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow;
+    let active = unsafe { GetActiveWindow() };
+    (!active.is_invalid()).then_some(active.0 as isize)
+}
+
+#[cfg(not(windows))]
+pub fn active_window() -> Option<isize> {
+    None
+}

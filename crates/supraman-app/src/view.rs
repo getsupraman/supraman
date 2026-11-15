@@ -719,10 +719,10 @@ impl FleetView {
         {
             return;
         }
-        let (home, fleet) = (self.home.clone(), cx.weak_entity());
+        let (owner, home, fleet) = (self.window, self.home.clone(), cx.weak_entity());
         let this = cx.weak_entity();
         cx.defer(move |cx| {
-            let handle = settings_window::open(home, fleet, page, cx);
+            let handle = settings_window::open(owner, home, fleet, page, cx);
             this.update(cx, |this, _| this.settings_window = handle).ok();
         });
     }
@@ -1347,6 +1347,7 @@ impl Render for FleetView {
                         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_settings(cx)))
                         .into_any_element(),
                 ),
+                true,
                 &self.hits,
                 window,
                 cx,

@@ -1,4 +1,4 @@
-//! `--selftest` step 7c: the sidebar's action bar, its Settings window opened and closed (by FleetView and by WM_CLOSE) with no teardown line in the log, and the tree clipped under the Inbox with real fonts; real windows a gpui test does not make.
+//! `--selftest` step 7c: the sidebar's action bar, its Settings window opened modal over the main window and closed (by FleetView and by WM_CLOSE) with no teardown line in the log and the main window enabled and active again, and the tree clipped under the Inbox with real fonts; real windows a gpui test does not make.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -7,7 +7,7 @@ use anyhow::{anyhow, bail};
 use gpui::{AsyncWindowContext, Bounds, Entity, Modifiers, MouseMoveEvent, PlatformInput, Pixels, WindowHandle};
 
 use crate::{
-    selftest::{GROUP, click, drawn, drawn_in, log_offset, teardown_errors_since, until, until_with, win},
+    selftest::{GROUP, click, drawn, drawn_in, log_offset, teardown_errors_since, until, until_every, until_with, win},
     selftest_manage::{shot, shot_window},
     settings_window::{SettingsView, page},
     view::FleetView,
@@ -113,9 +113,12 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     shown_and_painted(handle, cx).await?;
     shot_window("m5-13-settings-about", Some("Supraman Settings"), cx).await;
     let hwnd = handle.update(cx, |_, window, _| win::hwnd_of(window)).ok().flatten();
+    let modal = modal_over_main(hwnd, cx)?;
     let closing = log_offset();
     view.update(cx, |v, cx| v.close_settings(cx));
+    hidden_after_main_enabled(hwnd, cx).await?;
     closed(handle, hwnd, cx).await?;
+    main_back(cx).await?;
     let errors = teardown_errors_since(closing);
     if !errors.is_empty() {
         bail!("close_settings logged {} window-teardown line(s): {}", errors.len(), errors.join(" | "));
@@ -124,7 +127,7 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
 
     Ok(format!(
         "action bar: {} icons {:.0}×{:.0} px on one line; collapse all hid {open_rows} repo row(s), expand all restored them; \
-         {counted}; stopped toggle and busy ±1 (from {busy}) round-tripped; Settings opened, About shown; {closed}",
+         {counted}; stopped toggle and busy ±1 (from {busy}) round-tripped; Settings opened, About shown; {modal}; {closed}",
         ICONS.len(),
         f32::from(first.size.width),
         f32::from(first.size.height),
@@ -189,13 +192,75 @@ async fn close_settings_by_wm_close(view: &Entity<FleetView>, cx: &mut AsyncWind
         .flatten()
         .ok_or_else(|| anyhow!("the settings window has no HWND"))?;
     let closing = log_offset();
+    modal_over_main(Some(hwnd), cx)?;
     win::post_close(hwnd)?;
+    hidden_after_main_enabled(Some(hwnd), cx).await?;
     let gone = closed(handle, Some(hwnd), cx).await?;
+    main_back(cx).await?;
     let errors = teardown_errors_since(closing);
     if !errors.is_empty() {
         bail!("closing the settings window logged {} window-teardown line(s): {}", errors.len(), errors.join(" | "));
     }
     Ok(format!("Settings closed again by WM_CLOSE in {} ms; no window-teardown line in the log", gone.as_millis()))
+}
+
+/// The settings window owned by the main window, which takes no input while it is open.
+#[cfg(windows)]
+fn modal_over_main(settings: Option<isize>, cx: &mut AsyncWindowContext) -> anyhow::Result<&'static str> {
+    use supraman_core::platform::desktop;
+    let settings = settings.ok_or_else(|| anyhow!("the settings window has no HWND"))?;
+    let main = cx.update(|window, _| win::hwnd_of(window))?.ok_or_else(|| anyhow!("the main window has no HWND"))?;
+    if desktop::owner_of(settings) != Some(main) {
+        bail!("the settings window is owned by {:?}, not the main window {main}", desktop::owner_of(settings));
+    }
+    if desktop::is_enabled(main) {
+        bail!("the main window takes input while the settings window is open");
+    }
+    Ok("owned by the main window, which it disabled")
+}
+
+#[cfg(not(windows))]
+fn modal_over_main(_settings: Option<isize>, _cx: &mut AsyncWindowContext) -> anyhow::Result<&'static str> {
+    Ok("")
+}
+
+/// The main window enabled by the time the settings window hides, so the activation goes back to it; gpui enables it again only once the HWND is destroyed.
+#[cfg(windows)]
+async fn hidden_after_main_enabled(settings: Option<isize>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    use supraman_core::platform::desktop;
+    let settings = settings.ok_or_else(|| anyhow!("the settings window has no HWND"))?;
+    let main = cx.update(|window, _| win::hwnd_of(window))?.ok_or_else(|| anyhow!("the main window has no HWND"))?;
+    let seen = until_every(cx, WITHIN, Duration::from_millis(1), "the settings window hidden", |_| {
+        let gone = win::destroyed(Some(settings));
+        (gone || !desktop::is_window_visible(settings)).then(|| (gone, desktop::is_enabled(main)))
+    })
+    .await?;
+    match seen {
+        (true, _) => bail!("the settings window was destroyed before it was seen hidden"),
+        (false, false) => bail!("the settings window hid while the main window was still disabled"),
+        (false, true) => Ok(()),
+    }
+}
+
+#[cfg(not(windows))]
+async fn hidden_after_main_enabled(_settings: Option<isize>, _cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    Ok(())
+}
+
+/// The main window enabled and active again once the settings window is gone.
+#[cfg(windows)]
+async fn main_back(cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    use supraman_core::platform::desktop;
+    let main = cx.update(|window, _| win::hwnd_of(window))?.ok_or_else(|| anyhow!("the main window has no HWND"))?;
+    if !desktop::is_enabled(main) {
+        bail!("the main window is left disabled after the settings window closed");
+    }
+    until_with(cx, WITHIN, "the main window active again", |_| (desktop::active_window() == Some(main)).then_some(())).await
+}
+
+#[cfg(not(windows))]
+async fn main_back(_cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    Ok(())
 }
 
 #[cfg(not(windows))]

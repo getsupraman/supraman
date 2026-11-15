@@ -4,6 +4,7 @@ mod elevate;
 mod fleet;
 mod hand;
 mod instance;
+mod modal;
 mod keeping;
 mod row_details;
 mod saved_tabs;

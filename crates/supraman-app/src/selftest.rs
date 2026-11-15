@@ -32,7 +32,7 @@ mod wait;
 pub(crate) mod win;
 
 pub(crate) use shell_tab::select_wheel_line;
-pub(crate) use wait::{drawn, drawn_in, frame_if_asked, until, until_app, until_with};
+pub(crate) use wait::{drawn, drawn_in, frame_if_asked, until, until_app, until_every, until_with};
 
 pub const GROUP: &str = "larchsys";
 const PROMPT: &str = "Reply with the word ready and then wait for input";
