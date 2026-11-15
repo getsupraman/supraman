@@ -242,21 +242,55 @@ async fn add_menu(view: &Entity<FleetView>, item: &str, cx: &mut AsyncWindowCont
     click(view, item, cx).await
 }
 
-/// Add Group typed into its field, Add Folder into it from its row's menu, then Remove Group's second answer. The action bar's menu,
-/// the form in the sidebar, its Enter and the question's second button are FleetView's, which a gpui test cannot build.
+/// Esc on Add Group's new row, Add Group typed in place, Rename… typed in place on its row, F2 on the selected row, Add Folder into
+/// it from its row's menu, then Remove Group's second answer. The tree's rows, their focus, the menus and the question's second
+/// button are FleetView's, which a gpui test cannot build.
 async fn groups(view: &Entity<FleetView>, folder: &Path, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    const FIRST: &str = "selftest-first";
     const GROUP: &str = "selftest-group";
     let groups = |home: &Path| supraman_core::folders::load(home).map(|e| e.groups().map(|(n, f)| (n.to_string(), f.len())).collect::<Vec<_>>());
+    let before = groups(home)?;
+    let field = crate::view::folder_edits::FIELD;
+    let editing = |v: &FleetView, cx: &gpui::App| v.group_editing(cx);
+    let plain = Modifiers::default();
+
     add_menu(view, "menu-add-group", cx).await?;
-    until(view, cx, WITHIN, "Add Group's field", |v| painted(v, "group-name-field").then_some(())).await?;
+    until_app(view, cx, WITHIN, "Add Group's new row with its field", |v, cx| (painted(v, field) && editing(v, cx) == Some(None)).then_some(())).await?;
+    crate::selftest::keys::keystroke(cx, "escape", None, plain)?;
+    until_app(view, cx, WITHIN, "the new row gone on Esc", |v, cx| (editing(v, cx).is_none() && !painted(v, field)).then_some(())).await?;
+    if groups(home)? != before {
+        bail!("Esc on Add Group's new row left folders.toml's groups {:?}, not {before:?}", groups(home)?);
+    }
+
+    add_menu(view, "menu-add-group", cx).await?;
+    until_app(view, cx, WITHIN, "Add Group's new row again", |v, cx| (painted(v, field) && editing(v, cx) == Some(None)).then_some(())).await?;
+    crate::selftest::keys::type_text(cx, &format!("{FIRST}
+"))?;
+    let first_row = format!("group-row-{FIRST}");
+    until_app(view, cx, WITHIN, "the new group's row", |v, cx| (painted(v, &first_row) && editing(v, cx).is_none()).then_some(())).await?;
+    if !groups(home)?.contains(&(FIRST.to_string(), 0)) {
+        bail!("Add Group {FIRST} left folders.toml's groups {:?}", groups(home)?);
+    }
+
+    press_painted(view, &first_row, MouseButton::Right, cx).await?;
+    menu_open(view, FIRST, cx).await?;
+    click(view, "menu-rename-group", cx).await?;
+    until_app(view, cx, WITHIN, "Rename's field on the row", |v, cx| (painted(v, field) && editing(v, cx) == Some(Some(FIRST.into()))).then_some(())).await?;
     crate::selftest::keys::type_text(cx, &format!("{GROUP}
 "))?;
     let row = format!("group-row-{GROUP}");
-    until(view, cx, WITHIN, "the new group's row", |v| (painted(v, &row) && v.dialogs.group_name.is_none()).then_some(())).await?;
-    let made = groups(home)?;
-    if !made.contains(&(GROUP.to_string(), 0)) {
-        bail!("Add Group {GROUP} left folders.toml's groups {made:?}");
+    until_app(view, cx, WITHIN, "the renamed group's row", |v, cx| (painted(v, &row) && editing(v, cx).is_none()).then_some(())).await?;
+    let renamed = groups(home)?;
+    if !renamed.contains(&(GROUP.to_string(), 0)) || renamed.iter().any(|(n, _)| n == FIRST) {
+        bail!("Rename {FIRST} to {GROUP} left folders.toml's groups {renamed:?}");
     }
+
+    click(view, &row, cx).await?;
+    crate::selftest::keys::keystroke(cx, "f2", None, plain)?;
+    until_app(view, cx, WITHIN, "F2's field on the selected group's row", |v, cx| (painted(v, field) && editing(v, cx) == Some(Some(GROUP.into()))).then_some(())).await?;
+    crate::selftest::keys::keystroke(cx, "escape", None, plain)?;
+    until_app(view, cx, WITHIN, "F2's field closed on Esc", |v, cx| (editing(v, cx).is_none() && painted(v, &row)).then_some(())).await?;
+    click(view, &row, cx).await?;
 
     view.update(cx, |v, _| v.dialogs.pick_folder = Some(folder.to_path_buf()));
     press_painted(view, &row, MouseButton::Right, cx).await?;
@@ -275,7 +309,9 @@ async fn groups(view: &Entity<FleetView>, folder: &Path, home: &Path, cx: &mut A
     if left.groups().any(|(n, _)| n == GROUP) || left.folders().filter(|f| f.path == folder).count() != 1 {
         bail!("Remove Group with its folders left {left:?}");
     }
-    Ok(format!("Add Group {GROUP} typed and entered, {FOLDER} added into it from its menu, Remove Group's \"Remove its folders too\" left {FOLDER} only at the top level"))
+    Ok(format!(
+        "Esc on Add Group's new row wrote nothing; Add Group {FIRST} typed in place, renamed to {GROUP} in place by Rename…, F2 on the selected row opened the field (Esc closed it), {FOLDER} added into it from its menu, Remove Group's \"Remove its folders too\" left {FOLDER} only at the top level"
+    ))
 }
 
 pub(crate) async fn menu_open(view: &Entity<FleetView>, title: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Vec<SharedString>> {

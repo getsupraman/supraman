@@ -28,6 +28,9 @@ pub struct Sidebar {
     /// The sidebar's pane in [`supraman_ui::focus`].
     pub(super) focus: gpui::FocusHandle,
     pub(super) subfolders: Entity<super::listed::SubfolderWatch>,
+    /// The group row last clicked: F2 renames it.
+    pub(super) selected_group: Option<String>,
+    pub(super) group_edit: Option<left::group_field::GroupEdit>,
 }
 
 pub(super) struct CachedTree {
@@ -55,6 +58,8 @@ impl Sidebar {
             search_marks: HashMap::new(),
             focus: cx.focus_handle(),
             subfolders: super::listed::SubfolderWatch::new(cx),
+            selected_group: None,
+            group_edit: None,
         }
     }
 }

@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
-use gpui::{AppContext as _, Context, Entity, Window};
+use gpui::{Context, Window};
 use supraman_core::folders::{self, Entries, Place, Pos};
 use supraman_core::paths::{folder_name, path_key};
 use supraman_core::{CoreError, text};
@@ -18,7 +18,7 @@ mod drop;
 mod group_name;
 
 pub use drop::{DraggedFolder, DraggedGroup, Target, group_landing, landing};
-pub use group_name::{GroupName, GroupNameEvent};
+pub use group_name::{FIELD, GroupName, GroupNameEvent};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FolderEdit {
@@ -210,26 +210,6 @@ impl FleetView {
             None => "Add a folder to Supraman".to_string(),
         };
         supraman_ui::folder_picker::pick_folder(&title, window, cx, move |this, path, _, cx| this.edit_folders(FolderEdit::AddFolder { path, group: group.clone() }, cx));
-    }
-
-    /// Add Group, or Rename with `renaming`'s name filled in.
-    pub fn open_group_name(&mut self, renaming: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
-        let taken = self.listed.entries.groups().map(|(n, _)| n.to_string()).collect();
-        let hits = self.hits.clone();
-        let form = cx.new(|cx| GroupName::new(renaming, taken, hits, window, cx));
-        let sub = cx.subscribe(&form, |this, _, e: &GroupNameEvent, cx| {
-            this.dialogs.group_name = None;
-            if let GroupNameEvent::Named(edit) = e {
-                this.edit_folders(edit.clone(), cx);
-            }
-            cx.notify();
-        });
-        self.dialogs.group_name = Some((form, sub));
-        cx.notify();
-    }
-
-    pub(super) fn group_name_form(&self) -> Option<&Entity<GroupName>> {
-        self.dialogs.group_name.as_ref().map(|(form, _)| form)
     }
 
     fn ask_remove_group(&mut self, name: String) {

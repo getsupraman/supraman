@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use gpui::TestAppContext;
 use supraman_core::folders::{self, Entry, FolderEntry};
 use supraman_ui::confirm::Answer;
-use supraman_ui::hit::HitTargets;
 
 use super::*;
 
@@ -100,59 +99,134 @@ fn remove_group_moves_its_folders_up_by_default_removes_them_on_the_second_answe
     assert!(empty.alt.is_none() && empty.text.contains("empty group"));
 }
 
-fn named(cx: &mut TestAppContext, renaming: Option<&str>, typed: &str) -> (Option<String>, Vec<FolderEdit>, bool) {
+impl gpui::Render for GroupName {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+        use gpui::ParentElement as _;
+        gpui::div().child(self.field().clone())
+    }
+}
+
+type Seen = std::rc::Rc<std::cell::RefCell<Vec<GroupNameEvent>>>;
+
+fn field<'a>(cx: &'a mut TestAppContext, renaming: Option<&str>) -> (gpui::Entity<GroupName>, &'a mut gpui::VisualTestContext, Seen) {
     cx.update(|cx| {
         supraman_ui::init_globals(cx, "test");
         supraman_ui::text_input::bind_keys(cx);
     });
-    let hits = HitTargets::default();
     let renaming = renaming.map(str::to_string);
-    let (form, cx) = cx.add_window_view(|window, cx| GroupName::new(renaming, vec!["demo".into(), "other".into()], hits.clone(), window, cx));
-    let seen = std::rc::Rc::new(std::cell::RefCell::new((Vec::new(), false)));
+    let (name, cx) = cx.add_window_view(|window, cx| GroupName::new(renaming, vec!["demo".into(), "other".into()], window, cx));
+    let seen: Seen = Default::default();
     let sink = seen.clone();
-    cx.update(|_, cx| {
-        cx.subscribe(&form, move |_, e: &GroupNameEvent, _| match e {
-            GroupNameEvent::Named(edit) => sink.borrow_mut().0.push(edit.clone()),
-            GroupNameEvent::Closed => sink.borrow_mut().1 = true,
-        })
-        .detach()
-    });
-    form.update_in(cx, |f, window, cx| f.field().update(cx, |i, cx| i.focus_all(window, cx)));
-    cx.simulate_input(typed);
+    cx.update(|_, cx| cx.subscribe(&name, move |_, e: &GroupNameEvent, _| sink.borrow_mut().push(e.clone())).detach());
     cx.run_until_parked();
-    let why = form.read_with(cx, |f, cx| f.why_not(cx));
+    (name, cx, seen)
+}
+
+/// `typed` over the whole name, then Enter: what the field showed and what it said.
+fn named(cx: &mut TestAppContext, renaming: Option<&str>, typed: &str) -> (Option<String>, Vec<GroupNameEvent>) {
+    let (name, cx, seen) = field(cx, renaming);
+    if !typed.is_empty() {
+        cx.simulate_input(typed);
+    }
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
-    assert!(hits.borrow().contains_key("group-name-ok"), "the form paints its OK");
-    let (edits, closed) = seen.borrow().clone();
-    (why, edits, closed)
+    let why = name.read_with(cx, |n, cx| n.shown_why(cx));
+    let said = seen.borrow().clone();
+    (why, said)
 }
 
 #[gpui::test]
-fn add_groups_field_takes_a_names_letters_and_enter_adds_only_a_new_name(cx: &mut TestAppContext) {
-    assert_eq!(named(cx, None, "Big Ideas"), (None, vec![FolderEdit::AddGroup("bigideas".into())], false), "typed in the name's letters");
+fn rename_opens_with_the_whole_name_selected_and_focused(cx: &mut TestAppContext) {
+    let (name, cx, _) = field(cx, Some("demo"));
+    let (text, selection, focused) = name.update_in(cx, |n, window, cx| {
+        let i = n.field().read(cx);
+        (i.text().to_string(), i.line.selection(), i.is_focused(window))
+    });
+    assert_eq!((text.as_str(), selection, focused), ("demo", 0..4, true));
 }
 
 #[gpui::test]
-fn add_group_refuses_a_name_another_group_has(cx: &mut TestAppContext) {
-    let (why, edits, _) = named(cx, None, "other");
-    assert_eq!((why.as_deref(), edits), (Some("A group named other exists already"), vec![]));
+fn enter_renames_to_a_new_name(cx: &mut TestAppContext) {
+    assert_eq!(named(cx, Some("demo"), "work"), (None, vec![GroupNameEvent::Named(FolderEdit::RenameGroup { from: "demo".into(), to: "work".into() })]));
 }
 
 #[gpui::test]
-fn add_group_refuses_a_name_the_rule_does_not_allow(cx: &mut TestAppContext) {
-    let (why, edits, _) = named(cx, None, "-x");
-    assert!(why.is_some_and(|w| w.contains("invalid name")) && edits.is_empty());
+fn enter_on_the_unchanged_name_closes_without_a_write(cx: &mut TestAppContext) {
+    assert_eq!(named(cx, Some("demo"), ""), (None, vec![GroupNameEvent::Closed]));
 }
 
 #[gpui::test]
-fn rename_keeps_its_own_name_and_renames_to_a_new_one(cx: &mut TestAppContext) {
-    assert_eq!(named(cx, Some("demo"), "work"), (None, vec![FolderEdit::RenameGroup { from: "demo".into(), to: "work".into() }], false));
+fn esc_cancels_and_names_nothing(cx: &mut TestAppContext) {
+    let (_, cx, seen) = field(cx, Some("demo"));
+    cx.simulate_input("work");
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert_eq!(*seen.borrow(), [GroupNameEvent::Closed]);
 }
 
 #[gpui::test]
-fn rename_to_the_same_name_closes_without_a_write(cx: &mut TestAppContext) {
-    assert_eq!(named(cx, Some("demo"), "demo"), (None, vec![], true));
+fn a_name_another_group_has_is_refused_in_place_with_its_why(cx: &mut TestAppContext) {
+    let why = "A group named other exists already";
+    assert_eq!(named(cx, Some("demo"), "other"), (Some(why.into()), vec![GroupNameEvent::Refused(why.into())]));
+}
+
+#[gpui::test]
+fn a_refused_name_marks_the_field_and_an_edit_to_a_free_one_clears_it(cx: &mut TestAppContext) {
+    let (name, cx, _) = field(cx, None);
+    cx.simulate_input("other");
+    cx.run_until_parked();
+    assert!(name.read_with(cx, |n, cx| n.field().read(cx).invalid()), "a taken name shows as typed");
+    cx.simulate_input("s");
+    cx.run_until_parked();
+    assert!(!name.read_with(cx, |n, cx| n.field().read(cx).invalid()));
+}
+
+#[gpui::test]
+fn a_name_the_rule_does_not_allow_is_refused(cx: &mut TestAppContext) {
+    let (why, said) = named(cx, None, "-x");
+    assert!(why.as_deref().is_some_and(|w| w.contains("invalid name")), "{why:?}");
+    assert!(matches!(said.as_slice(), [GroupNameEvent::Refused(_)]), "{said:?}");
+}
+
+#[gpui::test]
+fn an_emptied_rename_is_refused_as_needing_a_name(cx: &mut TestAppContext) {
+    let (_, cx, seen) = field(cx, Some("demo"));
+    cx.simulate_keystrokes("backspace enter");
+    cx.run_until_parked();
+    assert_eq!(*seen.borrow(), [GroupNameEvent::Refused(super::group_name::NEEDS_NAME.into())]);
+}
+
+#[gpui::test]
+fn add_groups_field_takes_a_names_letters_and_enter_adds_it(cx: &mut TestAppContext) {
+    assert_eq!(named(cx, None, "Big Ideas"), (None, vec![GroupNameEvent::Named(FolderEdit::AddGroup("bigideas".into()))]), "typed in the name's letters");
+}
+
+#[gpui::test]
+fn enter_on_an_empty_new_row_closes_it(cx: &mut TestAppContext) {
+    assert_eq!(named(cx, None, ""), (None, vec![GroupNameEvent::Closed]));
+}
+
+fn lose_focus(cx: &mut gpui::VisualTestContext) {
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    cx.update(|window, cx| window.blur(cx));
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn focus_lost_names_a_valid_name(cx: &mut TestAppContext) {
+    let (_, cx, seen) = field(cx, Some("demo"));
+    cx.simulate_input("work");
+    lose_focus(cx);
+    assert_eq!(*seen.borrow(), [GroupNameEvent::Named(FolderEdit::RenameGroup { from: "demo".into(), to: "work".into() })]);
+}
+
+#[gpui::test]
+fn focus_lost_on_a_refused_name_cancels(cx: &mut TestAppContext) {
+    let (_, cx, seen) = field(cx, Some("demo"));
+    cx.simulate_input("other");
+    lose_focus(cx);
+    assert_eq!(*seen.borrow(), [GroupNameEvent::Closed]);
 }
 
 fn top(path: &str) -> Entry {
