@@ -23,6 +23,7 @@ use crate::fleet::{self, EntryNode, FolderNode, Open, SessionRow};
 
 mod action_bar;
 mod drag;
+pub(super) mod unlisted;
 mod work_cards;
 
 const REVEAL_WITHIN: Duration = Duration::from_secs(60);
@@ -41,6 +42,8 @@ pub(super) enum LeftRow {
     Schedules(usize, usize),
     Session(usize, usize, usize),
     More(usize, usize),
+    /// Other sessions' row, after the entries; its sessions are `Session(e, 0, i)` with `e` past them ([`fleet::Tree::node`]).
+    Unlisted,
     Others,
     /// Below the tree: a dragged folder dropped here goes to the top level's end.
     DropEnd,
@@ -106,6 +109,8 @@ pub(super) const REPO_ROW: f32 = 26.;
 pub(super) const SESSION_LINE: f32 = 24.;
 /// One hover icon's place: always laid out, so a row's icons never shift.
 const SLOT: f32 = 20.;
+/// The widest an Other sessions row's folder name gets before it is cut.
+const FOLDER_MAX: f32 = 120.;
 
 fn slot() -> AnyElement {
     div().flex_none().size(px(SLOT)).into_any_element()
@@ -365,12 +370,13 @@ impl FleetView {
                     let tokens = ["schedules-row-", "sched-row-", "sched-state-", "sched-error-", "others-row-"].iter().map(|p| format!("{p}{fkey}")).collect();
                     rows.push((LeftRow::Schedules(e, f), format!("sched:{fkey}"), tokens));
                 }
-                for (i, row) in folder.sessions.iter().enumerate() {
-                    rows.push((LeftRow::Session(e, f, i), format!("s:{key}/{}{}", row.session.session_id, row.scope), vec![row.session.session_id.clone(), row.session.id.clone()]));
-                }
-                if folder.more > 0 {
-                    rows.push((LeftRow::More(e, f), format!("more:{key}"), vec![format!("more-{key}")]));
-                }
+                session_rows(&mut rows, e, f, folder);
+            }
+        }
+        if let Some(node) = &tree.unlisted {
+            rows.push((LeftRow::Unlisted, unlisted::KEY.into(), unlisted::tokens()));
+            if !self.sidebar.collapsed.contains(unlisted::KEY) {
+                session_rows(&mut rows, tree.entries.len(), 0, &node.folders[0]);
             }
         }
         rows.push((LeftRow::Others, "others".into(), ["others-row", "other-row-", "other-name-", "other-summary-"].iter().map(|p| p.to_string()).collect()));
@@ -445,10 +451,12 @@ impl FleetView {
                 self.render_folder_row(entry, folder, open, cx)
             }
             LeftRow::Session(e, f, i) => {
-                let (entry, folder) = (&tree.entries[e], &tree.entries[e].folders[f]);
-                self.render_session(&entry.name, &folder.key, &folder.sessions[i], grid::indent(folder_level(entry, folder) + 1), cx)
+                let (entry, folder) = (tree.node(e), &tree.node(e).folders[f]);
+                let row = &folder.sessions[i];
+                self.render_session(&entry.name, &folder.row_place(row), row, grid::indent(folder_level(entry, folder) + 1), cx)
             }
-            LeftRow::More(e, f) => self.render_more_closed(&tree.entries[e], &tree.entries[e].folders[f], cx),
+            LeftRow::More(e, f) => self.render_more_closed(tree.node(e), &tree.node(e).folders[f], cx),
+            LeftRow::Unlisted => self.render_unlisted_row(!self.sidebar.collapsed.contains(unlisted::KEY), cx),
             LeftRow::Others => div().flex().flex_col().children(self.render_unowned_others(cx)).into_any_element(),
             LeftRow::DropEnd => self.render_drop_end(cx),
         }
@@ -851,7 +859,7 @@ impl FleetView {
             .map(|h| format!("hook: {}", h.label(now_ms())));
         let shown = self.is_marked(s);
         let group = SharedString::from(format!("session-group-{}{at}", s.session_id));
-        let line = self.session_line(place, row, cx);
+        let line = self.session_line(place, (entry == fleet::UNLISTED).then_some(place), row, cx);
 
         let (title, clicked) = (place.replace('/', " · "), row.clone());
         let target = MenuTarget::Session { entry: entry.to_string(), place: place.to_string(), session_id: s.session_id.clone() };
@@ -903,7 +911,8 @@ impl FleetView {
             .into_any_element()
     }
 
-    fn session_line(&self, place: &str, row: &SessionRow, cx: &mut Context<Self>) -> Div {
+    /// `folder`: the row's own folder's name, shown where a listed row's folder is its parent row.
+    fn session_line(&self, place: &str, folder: Option<&str>, row: &SessionRow, cx: &mut Context<Self>) -> Div {
         let colors = cx.theme().colors().clone();
         let s = &row.session;
         let at = row.scope.clone();
@@ -932,6 +941,10 @@ impl FleetView {
                         .text_color(secondary(cx))
                         .child(hit_target(&self.hits, key)),
                 )
+            })
+            .when_some(folder, |d, folder| {
+                let key = format!("session-folder-{}{at}", s.session_id);
+                d.child(clipped(key.clone(), folder.to_string(), false).min_w_0().max_w(px(FOLDER_MAX)).text_xs().text_color(secondary(cx)).child(hit_target(&self.hits, key)))
             })
             .child(
                 div()
@@ -1018,6 +1031,17 @@ impl FleetView {
     fn render_confirm(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let confirm = self.dialogs.confirm.as_ref()?;
         Some(confirm.render_answer(&self.hits, "confirm", |this: &mut Self, answer, _, cx| this.answer_confirm(answer, cx), cx).mx_3().my_2().into_any_element())
+    }
+}
+
+/// A folder's session rows and its More, keyed by its key.
+fn session_rows(rows: &mut Vec<(LeftRow, String, Vec<String>)>, e: usize, f: usize, folder: &FolderNode) {
+    let key = &folder.key;
+    for (i, row) in folder.sessions.iter().enumerate() {
+        rows.push((LeftRow::Session(e, f, i), format!("s:{key}/{}{}", row.session.session_id, row.scope), vec![row.session.session_id.clone(), row.session.id.clone()]));
+    }
+    if folder.more > 0 {
+        rows.push((LeftRow::More(e, f), format!("more:{key}"), vec![format!("more-{key}")]));
     }
 }
 

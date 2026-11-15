@@ -65,7 +65,7 @@ impl FleetView {
 
     fn session_row(&self, session_id: &str) -> Option<(SessionRow, Option<(String, PathBuf)>)> {
         let tree = self.tree();
-        let node = tree.entries.iter().find(|n| n.rows().any(|r| r.session.session_id == session_id))?;
+        let node = tree.nodes().find(|n| n.rows().any(|r| r.session.session_id == session_id))?;
         Some((node.rows().find(|r| r.session.session_id == session_id)?.clone(), folder_of(node, session_id)))
     }
 
@@ -133,7 +133,7 @@ impl FleetView {
         for (i, t) in self.tabs.iter().enumerate() {
             let TabKind::Details(page) = &t.kind else { continue };
             let MenuTarget::Session { session_id, .. } = &page.target else { continue };
-            let node = tree.entries.iter().find(|n| n.rows().any(|r| &r.session.session_id == session_id));
+            let node = tree.nodes().find(|n| n.rows().any(|r| &r.session.session_id == session_id));
             let row = node.and_then(|n| n.rows().find(|r| &r.session.session_id == session_id)).cloned();
             let folder = node.and_then(|n| folder_of(n, session_id));
             let read = row.as_ref().or(page.seen.as_ref()).filter(|_| !page.reading).map(|r| DiskRead {
@@ -332,6 +332,9 @@ fn apply_disk(tabs: &mut [Tab], read: Vec<(u64, String, OnDisk)>) -> bool {
 }
 
 fn folder_of(node: &EntryNode, session_id: &str) -> Option<(String, PathBuf)> {
+    if node.unlisted() {
+        return None;
+    }
     node.folders.iter().find(|r| r.sessions.iter().any(|s| s.session.session_id == session_id)).map(|r| (r.name.clone(), r.path.clone()))
 }
 

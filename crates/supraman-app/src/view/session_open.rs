@@ -39,9 +39,9 @@ impl FleetView {
     /// The session of claude's `session_id` in the tree: its entry, the folder key or schedule id it is listed under, the row.
     pub(super) fn listed_place(&self, session_id: &str) -> Option<(String, String, SessionRow)> {
         let tree = self.tree();
-        tree.entries.iter().find_map(|node| {
+        tree.nodes().find_map(|node| {
             let row = node.rows().find(|r| r.session.session_id == session_id)?;
-            Some((node.name.clone(), super::right::tab_menu::row_folder(node, session_id).to_string(), row.clone()))
+            Some((node.name.clone(), super::right::tab_menu::row_folder(node, session_id), row.clone()))
         })
     }
 

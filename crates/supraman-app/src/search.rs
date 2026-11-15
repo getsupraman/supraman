@@ -87,14 +87,14 @@ pub fn search(tree: &Tree, query: &str) -> Results {
     }
     let hits = |rows: &[SessionRow]| -> Vec<SessionHit> { rows.iter().filter_map(|row| session_marks(row, needle).map(|marks| SessionHit { row: row.clone(), marks })).collect() };
     let entries = tree
-        .entries
-        .iter()
+        .nodes()
         .filter_map(|w| {
             let folders: Vec<FolderHit> = w
                 .folders
                 .iter()
                 .filter_map(|r| {
-                    let folder = FolderHit { key: r.key.clone(), name: r.name.clone(), kind: r.kind, name_marks: find_all(&r.name, needle), sessions: hits(&r.sessions) };
+                    let name_marks = if w.unlisted() { Vec::new() } else { find_all(&r.name, needle) };
+                    let folder = FolderHit { key: r.key.clone(), name: r.name.clone(), kind: r.kind, name_marks, sessions: hits(&r.sessions) };
                     (!folder.name_marks.is_empty() || !folder.sessions.is_empty()).then_some(folder)
                 })
                 .collect();
@@ -153,6 +153,7 @@ mod tests {
                 },
                 EntryNode { name: "pipeline-tools".into(), group: false, folders: vec![folder("pipeline-tools", vec![row("Pipeline fix", "bbbb2222-0003", false)])] },
             ],
+            unlisted: None,
             hidden_stopped: 0,
         }
     }
@@ -207,5 +208,16 @@ mod tests {
         assert_eq!(r.summary(), "0 sessions, 1 group or folder by name");
         assert!(search(&tree(), "zzqx").is_empty());
         assert!(search(&tree(), "   ").is_empty());
+    }
+
+    #[test]
+    fn an_unlisted_session_is_found_under_other_sessions_which_no_name_matches() {
+        let other = crate::fleet::UNLISTED;
+        let unlisted = EntryNode { name: other.into(), group: false, folders: vec![FolderNode { name: crate::fleet::UNLISTED_TITLE.into(), ..folder(other, vec![row("loose pipe", "cccc3333-0004", false)]) }] };
+        let tree = Tree { unlisted: Some(unlisted), ..tree() };
+        let r = search(&tree, "pipe");
+        assert_eq!(names(&r).last().map(String::as_str), Some("    loose pipe"));
+        assert_eq!(r.entries.last().map(|w| w.folders[0].key.as_str()), Some(other));
+        assert!(search(&tree, "other").is_empty(), "its title is no folder's name");
     }
 }
