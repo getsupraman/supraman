@@ -238,7 +238,7 @@ fn a_folder_given_is_filed_exactly_and_the_cwd_in_a_shown_child_picks_the_child(
         let out = f.fm_in(cwd, &args);
         assert_eq!(out.status.code(), Some(0), "{name}: {out:?}");
     };
-    for d in [&sub, &deep] {
+    for d in [&f.alpha, &sub, &deep] {
         fs::write(d.join("run.cmd"), "exit 0\n").unwrap();
     }
     add(&f.outside, "Child", Some(&sub));
