@@ -213,6 +213,7 @@ impl FleetView {
     pub fn collapse_all(&mut self, collapse: bool, cx: &mut Context<Self>) {
         if collapse {
             self.sidebar.collapsed.extend(self.listed.entries.groups().map(|(name, _)| format!("group:{name}")));
+            self.sidebar.collapsed.insert(unlisted::KEY.to_string());
         } else {
             self.sidebar.collapsed.clear();
         }
@@ -417,6 +418,11 @@ impl FleetView {
             crate::selftest_seams::ask_frame();
         }
         false
+    }
+
+    #[cfg(feature = "selftest")]
+    pub fn unlisted_open(&self) -> bool {
+        !self.sidebar.collapsed.contains(unlisted::KEY)
     }
 
     /// How many folder rows of the entry `name` the sidebar holds, in view or not.

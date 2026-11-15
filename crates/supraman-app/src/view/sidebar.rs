@@ -50,7 +50,7 @@ impl Sidebar {
             left_list: Default::default(),
             reveal_pending: None,
             left_rows: Rc::new((Rc::new(Tree { entries: Vec::new(), unlisted: None, hidden_stopped: 0 }), Vec::new())),
-            collapsed: HashSet::from([left::unlisted::KEY.to_string()]),
+            collapsed: left::unlisted::first_collapsed(),
             closed_expanded: HashSet::new(),
             search_marks: HashMap::new(),
             focus: cx.focus_handle(),

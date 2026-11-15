@@ -28,9 +28,10 @@ pub(crate) fn seen_file(home: &Path) -> PathBuf {
     claude_dir(home).join("resumed.txt")
 }
 
-/// A folder outside every listed one, where the Other sessions transcript ran.
+/// A folder outside every listed one and every checkout (the scratch home lies in this repo's), where the Other sessions
+/// transcript ran.
 fn elsewhere(home: &Path) -> PathBuf {
-    home.join("elsewhere")
+    std::env::temp_dir().join(format!("supraman-selftest-elsewhere-{}", supraman_core::paths::folder_name(home)))
 }
 
 pub(crate) fn fake_claude(home: &Path) -> PathBuf {
@@ -192,6 +193,12 @@ async fn other_sessions(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWin
     })
     .await?;
     until(view, cx, WITHIN, "Other sessions' row painted", |v| painted(v, "unlisted-row").then_some(())).await?;
+    // folded at the start (`unlisted::first_collapsed`'s test); step 7c's Expand all opened it
+    if view.read_with(cx, |v, _| v.unlisted_open()) {
+        click(view, "unlisted-row", cx).await?;
+    }
+    until(view, cx, WITHIN, "Other sessions folded", |v| (!v.unlisted_open()).then_some(())).await?;
+    crate::selftest::drawn(cx).await?;
     if view.read_with(cx, |v, _| painted(v, &row_key)) {
         bail!("{UNLISTED}'s row is painted while Other sessions is folded");
     }
@@ -211,7 +218,7 @@ async fn other_sessions(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWin
     .await?;
     let mut lines = text.lines();
     let (args, cwd) = (lines.next().unwrap_or_default().trim().to_string(), lines.next().unwrap_or_default().trim().to_string());
-    if !args.starts_with(&format!("--resume {UNLISTED}")) || !Path::new(&cwd).ends_with("elsewhere") {
+    if !args.starts_with(&format!("--resume {UNLISTED}")) || !Path::new(&cwd).ends_with(supraman_core::paths::folder_name(&elsewhere(home))) {
         bail!("the fake claude got `{args}` in {cwd}, not --resume {UNLISTED} in {}", elsewhere(home).display());
     }
     click(view, "unlisted-row", cx).await?;

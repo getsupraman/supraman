@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use gpui::{AnyElement, ClickEvent, Context, SharedString, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
@@ -6,7 +8,7 @@ use crate::fleet::UNLISTED_TITLE;
 use crate::view::FleetView;
 use supraman_ui::hit::hit_target;
 
-/// Other sessions' key in the sidebar's rows and its `collapsed` set, which holds it from the start: folded by default.
+/// Other sessions' key in the sidebar's rows and its `collapsed` set.
 pub(in crate::view) const KEY: &str = "repo::unlisted";
 const HIT: &str = "unlisted";
 
@@ -38,7 +40,20 @@ impl FleetView {
     }
 }
 
+/// The sidebar's `collapsed` set at the start: Other sessions folded.
+pub(in crate::view) fn first_collapsed() -> HashSet<String> {
+    HashSet::from([KEY.to_string()])
+}
+
 /// The hit keys Other sessions' row paints, for the sidebar's [`supraman_ui::keyed_list::KeyedList`].
 pub(super) fn tokens() -> Vec<String> {
     vec![format!("{HIT}-row"), format!("tree-icon-{HIT}"), format!("tree-label-{HIT}")]
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn other_sessions_starts_folded() {
+        assert!(super::first_collapsed().contains(super::KEY));
+    }
 }
