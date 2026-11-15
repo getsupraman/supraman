@@ -29,6 +29,28 @@ fn painted_repo_rows(v: &FleetView) -> usize {
     v.hits.borrow().keys().filter(|k| k.starts_with(&prefix)).count()
 }
 
+fn painted_session_rows(v: &FleetView) -> usize {
+    v.hits.borrow().keys().filter(|k| k.starts_with("session-row-")).count()
+}
+
+/// Collapse all folds every group, folder row and Other sessions; Expand all opens all but Other sessions.
+async fn collapse_expand_all(view: &Entity<FleetView>, open_rows: usize, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    click(view, "collapse-all", cx).await?;
+    until(view, cx, WITHIN, "Collapse all hides the repo rows", |v| (repo_rows(v) == 0).then_some(())).await?;
+    click(view, &format!("group-row-{GROUP}"), cx).await?;
+    until(view, cx, WITHIN, "the gate group opened shows its folder rows folded", |v| {
+        (painted_repo_rows(v) > 0 && v.session_rows(GROUP) == 0 && painted_session_rows(v) == 0 && !v.unlisted_open()).then_some(())
+    })
+    .await
+    .map_err(|e| e.context(format!("{} session rows of the gate group held after Collapse all", view.read_with(cx, |v, _| v.session_rows(GROUP)))))?;
+    click(view, "expand-all", cx).await?;
+    until(view, cx, WITHIN, "Expand all shows the repo and session rows again, Other sessions folded", |v| {
+        (repo_rows(v) == open_rows && painted_repo_rows(v) > 0 && v.session_rows(GROUP) > 0 && painted_session_rows(v) > 0 && !v.unlisted_open()).then_some(())
+    })
+    .await?;
+    Ok(())
+}
+
 pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let mut sizes = Vec::new();
     for key in ICONS.iter().chain(&["toggle-stopped", "busy-dec", "busy-inc"]) {
@@ -49,10 +71,7 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     }
 
     let open_rows = until(view, cx, WITHIN, "repo rows of the gate group", |v| Some(repo_rows(v)).filter(|n| *n > 0)).await?;
-    click(view, "collapse-all", cx).await?;
-    until(view, cx, WITHIN, "Collapse all hides the repo rows", |v| (repo_rows(v) == 0).then_some(())).await?;
-    click(view, "expand-all", cx).await?;
-    until(view, cx, WITHIN, "Expand all shows the repo rows again", |v| (repo_rows(v) == open_rows && painted_repo_rows(v) > 0).then_some(())).await?;
+    collapse_expand_all(view, open_rows, cx).await?;
 
     let counted = no_counts(view, cx).await?;
 

@@ -10,7 +10,7 @@ use supraman_core::paths::{folder_name, path_key};
 use supraman_core::{CoreError, text};
 
 use super::FleetView;
-use super::left::PendingReveal;
+use super::left::{PendingReveal, fold};
 use super::listed;
 use super::menu::{Confirm, Confirmed, MenuAction};
 
@@ -128,11 +128,11 @@ impl FolderEdit {
     /// The tree row it makes, scrolled into view once read back.
     fn row(&self) -> Option<String> {
         match self {
-            FolderEdit::AddFolder { path, group: None } => Some(format!("repo:{}", folder_name(path))),
-            FolderEdit::AddFolder { path, group: Some(g) } => Some(format!("repo:{g}/{}", folder_name(path))),
-            FolderEdit::AddGroup(name) | FolderEdit::RenameGroup { to: name, .. } | FolderEdit::MoveGroup { name, .. } => Some(format!("group:{name}")),
-            FolderEdit::MoveFolder { path, to: Place::Top(_), .. } => Some(format!("repo:{}", folder_name(path))),
-            FolderEdit::MoveFolder { path, to: Place::Group { name, .. }, .. } => Some(format!("repo:{name}/{}", folder_name(path))),
+            FolderEdit::AddFolder { path, group: None } => Some(fold::folder(&folder_name(path))),
+            FolderEdit::AddFolder { path, group: Some(g) } => Some(fold::folder(&format!("{g}/{}", folder_name(path)))),
+            FolderEdit::AddGroup(name) | FolderEdit::RenameGroup { to: name, .. } | FolderEdit::MoveGroup { name, .. } => Some(fold::group(name)),
+            FolderEdit::MoveFolder { path, to: Place::Top(_), .. } => Some(fold::folder(&folder_name(path))),
+            FolderEdit::MoveFolder { path, to: Place::Group { name, .. }, .. } => Some(fold::folder(&format!("{name}/{}", folder_name(path)))),
             FolderEdit::RemoveFolder { .. } | FolderEdit::RemoveGroup { .. } | FolderEdit::ShowSubfolders { .. } | FolderEdit::ExcludeFolder { .. } | FolderEdit::IncludeFolder { .. } => None,
         }
     }

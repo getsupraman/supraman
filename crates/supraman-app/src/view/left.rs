@@ -24,6 +24,7 @@ use crate::fleet::{self, EntryNode, FolderNode, Open, SessionRow};
 mod action_bar;
 mod drag;
 mod excluded;
+pub(super) mod fold;
 pub(super) mod group_field;
 pub(super) mod unlisted;
 mod work_cards;
@@ -222,10 +223,9 @@ impl FleetView {
 
     pub fn collapse_all(&mut self, collapse: bool, cx: &mut Context<Self>) {
         if collapse {
-            self.sidebar.collapsed.extend(self.listed.entries.groups().map(|(name, _)| format!("group:{name}")));
-            self.sidebar.collapsed.insert(unlisted::KEY.to_string());
+            self.sidebar.collapsed.extend(fold::all(&self.tree()));
         } else {
-            self.sidebar.collapsed.clear();
+            self.sidebar.collapsed = fold::expanded();
         }
         cx.notify();
     }
@@ -364,18 +364,18 @@ impl FleetView {
         for (e, entry) in tree.entries.iter().enumerate() {
             let name = &entry.name;
             if entry.group {
-                rows.push((LeftRow::Group(e), format!("group:{name}"), vec![name.clone()]));
-                if self.sidebar.collapsed.contains(&format!("group:{name}")) {
+                rows.push((LeftRow::Group(e), fold::group(name), vec![name.clone()]));
+                if self.sidebar.collapsed.contains(&fold::group(name)) {
                     continue;
                 }
             }
             for (f, folder) in entry.folders.iter().enumerate() {
                 let key = &folder.key;
-                if folder.parent.as_ref().is_some_and(|p| self.sidebar.collapsed.contains(&format!("repo:{p}"))) {
+                if folder.parent.as_ref().is_some_and(|p| self.sidebar.collapsed.contains(&fold::folder(p))) {
                     continue;
                 }
-                rows.push((LeftRow::Folder(e, f), format!("repo:{key}"), vec![key.clone()]));
-                if self.sidebar.collapsed.contains(&format!("repo:{key}")) {
+                rows.push((LeftRow::Folder(e, f), fold::folder(key), vec![key.clone()]));
+                if self.sidebar.collapsed.contains(&fold::folder(key)) {
                     continue;
                 }
                 let fkey = supraman_core::schedule::folder_key(&folder.path);
@@ -459,7 +459,7 @@ impl FleetView {
         match *row {
             LeftRow::Group(e) => {
                 let entry = &tree.entries[e];
-                let open = !self.sidebar.collapsed.contains(&format!("group:{}", entry.name));
+                let open = !self.sidebar.collapsed.contains(&fold::group(&entry.name));
                 self.render_group_row(entry, open, focused, cx)
             }
             LeftRow::Schedules(e, f) => {
@@ -471,7 +471,7 @@ impl FleetView {
                 if folder.excluded {
                     return self.render_excluded_row(entry, folder, cx);
                 }
-                let open = !self.sidebar.collapsed.contains(&format!("repo:{}", folder.key));
+                let open = !self.sidebar.collapsed.contains(&fold::folder(&folder.key));
                 self.render_folder_row(entry, folder, open, cx)
             }
             LeftRow::Session(e, f, i) => {
@@ -707,7 +707,7 @@ impl FleetView {
     fn render_group_row(&self, entry: &EntryNode, open: bool, focused: bool, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let name = entry.name.clone();
-        let pkey = format!("group:{name}");
+        let pkey = fold::group(&name);
         let group = SharedString::from(format!("group-hover-{name}"));
         let shown = self.entry_selected(entry, cx);
         let editing = self.group_name_field(Some(&name), cx);
@@ -797,7 +797,7 @@ impl FleetView {
     fn render_folder_row(&self, entry: &EntryNode, repo: &FolderNode, open: bool, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let key = &repo.key;
-        let rkey = format!("repo:{key}");
+        let rkey = fold::folder(key);
         let tree_key = format!("repo-{key}");
         let group = SharedString::from(format!("repo-group-{key}"));
         let children = entry.folders.iter().any(|f| f.parent.as_ref() == Some(key));

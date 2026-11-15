@@ -32,7 +32,7 @@ impl FleetView {
     /// Add Group's new row with an empty field, or Rename on `renaming`'s row with its name selected.
     pub fn open_group_name(&mut self, renaming: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         let taken = self.listed.entries.groups().map(|(n, _)| n.to_string()).collect();
-        let row = renaming.as_ref().map_or_else(|| NEW_ROW.to_string(), |n| format!("group:{n}"));
+        let row = renaming.as_ref().map_or_else(|| NEW_ROW.to_string(), |n| super::fold::group(n));
         let name = cx.new(|cx| GroupName::new(renaming, taken, window, cx));
         let sub = cx.subscribe_in(&name, window, |this, _, e: &GroupNameEvent, window, cx| this.group_named(e, window, cx));
         self.sidebar.group_edit = Some(GroupEdit { name, _sub: sub });

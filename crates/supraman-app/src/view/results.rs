@@ -6,7 +6,7 @@ use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, SharedString, State
 use theme::ActiveTheme as _;
 
 use supraman_ui::icon::Icon;
-use super::left::{disclosure, grid, icon_slot, quiet, secondary, tree_label};
+use super::left::{disclosure, fold, grid, icon_slot, quiet, secondary, tree_label};
 use super::{FleetView, hit_target};
 use crate::fleet::{Open, Tree, TreeInputs};
 use crate::search::{self, EntryHit, FolderHit, SessionHit};
@@ -45,10 +45,10 @@ impl FleetView {
     /// Out of the search, with the group and the folder `key` open.
     pub(super) fn reveal(&mut self, group: Option<&str>, key: Option<&str>, cx: &mut Context<Self>) {
         if let Some(group) = group {
-            self.sidebar.collapsed.remove(&format!("group:{group}"));
+            self.sidebar.collapsed.remove(&fold::group(group));
         }
         if let Some(key) = key {
-            self.sidebar.collapsed.remove(&format!("repo:{key}"));
+            self.sidebar.collapsed.remove(&fold::folder(key));
         }
         self.clear_search(cx);
     }
