@@ -17,6 +17,7 @@ use crate::view::folder_edits::FolderEdit;
 
 const GROUP: &str = "selftest-drag";
 const WITHIN: Duration = Duration::from_secs(10);
+const TOP: f32 = crate::view::TOP_ROW;
 
 /// The top level's folders and the group's, as folders.toml holds them.
 fn places(entries: &Entries) -> (Vec<PathBuf>, Option<Vec<PathBuf>>) {
@@ -35,6 +36,7 @@ pub(crate) async fn drags(view: &Entity<FleetView>, root: &Path, name: &str, hom
     let group_row = format!("group-row-{GROUP}");
     until(view, cx, WITHIN, "the new group's row", |v| v.shown(&group_row).then_some(())).await?;
     let onto = scrolled_into_view(view, &group_row, cx).await?.center();
+    top_rhythm(view, &[&group_row, &format!("repo-row-{name}")], cx).await?;
     drag_from(view, &format!("repo-row-{name}"), onto, Some("folder-drag"), cx).await?;
     let member = format!("repo-row-{GROUP}/{name}");
     until(view, cx, WITHIN, "the folder's row in the group after the drop", |v| v.shown(&member).then_some(())).await?;
@@ -53,7 +55,25 @@ pub(crate) async fn drags(view: &Entity<FleetView>, root: &Path, name: &str, hom
     }
     view.update(cx, |v, cx| v.edit_folders(FolderEdit::RemoveGroup { name: GROUP.into(), with_folders: true }, cx));
     until(view, cx, WITHIN, "the group gone from the tree, so the rows' positions are folders.toml's", |v| v.tree().entry(GROUP).is_none().then_some(())).await?;
-    Ok(format!("{name} dragged onto {GROUP}'s row: into {GROUP}; then below the tree: the top level's end; folders.toml checked after each"))
+    Ok(format!("{GROUP}'s row and {name}'s each {TOP} px with no margin; {name} dragged onto {GROUP}'s row: into {GROUP}; then below the tree: the top level's end; folders.toml checked after each"))
+}
+
+/// Each top-level row's list item is its painted row alone, `TOP_ROW` high: no margin of its own sets one kind apart.
+/// The item's bounds are the sidebar list's layout, which only a painted FleetView has.
+async fn top_rhythm(view: &Entity<FleetView>, rows: &[&str], cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    for row in rows {
+        scrolled_into_view(view, row, cx).await?;
+        let (painted, item) = view.read_with(cx, |v, _| {
+            let list = v.left_list();
+            (v.hits.borrow().get(*row).map(|h| h.bounds), list.row_of(row).and_then(|ix| list.state().bounds_for_item(ix)))
+        });
+        let (Some(painted), Some(item)) = (painted, item) else { bail!("{row}: painted {painted:?}, its list item {item:?}") };
+        let high = f32::from(item.size.height);
+        if (high - TOP).abs() > 0.5 || (f32::from(painted.size.height) - high).abs() > 0.5 {
+            bail!("{row}: its list item {high} px high, the row painted {} px; every top-level row is {} px with no margin", f32::from(painted.size.height), TOP);
+        }
+    }
+    Ok(())
 }
 
 /// Show sub folders from `root`'s menu, a folder made and one removed under it, then Hide sub folders.

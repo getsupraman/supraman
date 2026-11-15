@@ -104,7 +104,8 @@ fn tinted_button(hits: &HitTargets, key: &'static str, icon: Icon, tip: impl Int
     button::toolbar(hits, key, icon.svg(16., fg), on, fg, cx).tooltip(Tooltip::text(tip))
 }
 
-const GROUP_ROW: f32 = 30.;
+/// Every top-level row's height: a group's, a top-level folder's, Other sessions'; no margin between them.
+pub(crate) const TOP_ROW: f32 = 30.;
 pub(super) const REPO_ROW: f32 = 26.;
 pub(super) const SESSION_LINE: f32 = 24.;
 /// One hover icon's place: always laid out, so a row's icons never shift.
@@ -705,7 +706,7 @@ impl FleetView {
             .flex()
             .items_center()
             .gap(grid::gap())
-            .h(px(GROUP_ROW))
+            .h(px(TOP_ROW))
             .child(disclosure(Some(open), colors.text_muted))
             .child(icon_slot(&self.hits, &format!("group-{name}"), Some(Icon::Group.slotted(grid::ICON, colors.text_muted).into_any_element())))
             .child(tree_label(&self.hits, &format!("group-{name}"), div().flex_none().font_weight(FontWeight::BOLD).whitespace_nowrap().child(SharedString::from(name.clone()))))
@@ -720,7 +721,6 @@ impl FleetView {
             .flex_none()
             .pl(grid::indent(0))
             .pr_2()
-            .mt_2()
             .cursor_pointer()
             .hover(|s| s.bg(colors.ghost_element_hover))
             .active(|s| s.bg(colors.ghost_element_active));
@@ -803,7 +803,8 @@ impl FleetView {
                 },
             ))
         });
-        let work = (!entry.group && repo.listed()).then(|| self.work_button(entry, &group, self.entry_selected(entry, cx), cx)).flatten();
+        let top = !entry.group && repo.listed();
+        let work = top.then(|| self.work_button(entry, &group, self.entry_selected(entry, cx), cx)).flatten();
         let row = div()
             .id(SharedString::from(rkey.clone()))
             .group(group)
@@ -812,7 +813,7 @@ impl FleetView {
             .flex_none()
             .items_center()
             .gap(grid::gap())
-            .h(px(if entry.group || !repo.listed() { REPO_ROW } else { GROUP_ROW }))
+            .h(px(if top { TOP_ROW } else { REPO_ROW }))
             .pl(grid::indent(folder_level(entry, repo)))
             .pr_2()
             .text_sm()
@@ -823,7 +824,7 @@ impl FleetView {
             .when(empty, |d| d.text_color(quiet(cx)))
             .child(disclosure((!empty).then_some(open), secondary(cx)))
             .child(icon_slot(&self.hits, &tree_key, Some(if git { Icon::GitBranch } else { Icon::Folder }.slotted(grid::ICON, secondary(cx)).into_any_element())))
-            .child(tree_label(&self.hits, &tree_key, div().flex_none().whitespace_nowrap().child(SharedString::from(repo.name.clone()))))
+            .child(tree_label(&self.hits, &tree_key, div().flex_none().whitespace_nowrap().when(top, |d| d.font_weight(FontWeight::BOLD)).child(SharedString::from(repo.name.clone()))))
             .child(clipped(format!("branch-{key}"), branch, false).text_xs().text_color(secondary(cx)).child(hit_target(&self.hits, format!("branch-{key}"))))
             .child(div().relative().flex_1().child(hit_target(&self.hits, format!("repo-room-{key}"))))
             .child(div().flex().flex_none().items_center().gap(px(2.)).children(history).child(new_claude).child(terminal).children(work))
