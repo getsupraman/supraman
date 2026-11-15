@@ -114,10 +114,14 @@ impl RemoveQuestion {
         Self { title: "Remove group", text, answers, schedules, delete: false, tick, dialog: Dialog::default() }
     }
 
-    fn note(&self) -> &'static str {
+    fn note(&self) -> String {
+        let keeping = match self.schedules.len() {
+            1 => "eeping it moves it to Other schedules",
+            _ => "eeping them moves them to Other schedules",
+        };
         match self.answers.len() {
-            1 => "Keeping them moves them to Other schedules",
-            _ => "Only with Remove its folders too; keeping them moves them to Other schedules",
+            1 => format!("K{keeping}"),
+            _ => format!("Only with Remove its folders too; k{keeping}"),
         }
     }
 
