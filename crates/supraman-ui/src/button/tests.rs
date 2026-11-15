@@ -314,3 +314,51 @@ fn a_settings_rows_stepper_stands_one_gap_apart_with_the_values_letters_on_the_b
     cx.simulate_keystrokes("space tab enter enter");
     assert_eq!(view.read_with(cx, |v, _| v.n), 21, "− once, then + twice by key");
 }
+
+struct Listed {
+    hits: HitTargets,
+    members: crate::focus_order::Members,
+    chosen: usize,
+}
+
+impl Render for Listed {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.members.begin();
+        let before = sized(action(&self.hits, "before", "Before", Tone::Neutral, Fill::Solid, cx), Size::Medium);
+        let before = acting(before, &self.members.handle("before", cx), |_: &mut Listed, _, _| {}, cx);
+        let mut list = div().flex().gap_1();
+        for n in 0..3 {
+            list = list.child(choice(("pick", n), format!("Pick {n}"), n == self.chosen, cx));
+        }
+        let focus = self.members.handle("list", cx);
+        let list = choices(list, &focus, 3, Some(self.chosen), |this: &mut Listed, ix, _, cx| {
+            this.chosen = ix;
+            cx.notify();
+        }, cx);
+        self.members.order().on(div().id("form").child(before).child(list))
+    }
+}
+
+#[gpui::test]
+fn tab_reaches_a_choice_list_as_one_member_and_the_arrows_pick_its_neighbours_up_to_its_ends(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::init_globals(cx, "test");
+        crate::focus_order::bind_keys(cx);
+    });
+    let (view, cx) = cx.add_window_view(|_, _| Listed { hits: HitTargets::default(), members: Default::default(), chosen: 1 });
+    cx.run_until_parked();
+    let (before, list) = view.read_with(cx, |v, _| (v.members.get("before").unwrap(), v.members.get("list").unwrap()));
+    cx.update(|window, cx| before.focus(window, cx));
+    cx.simulate_keystrokes("tab");
+    assert!(cx.update(|window, _| list.is_focused(window)), "Tab from the button to the list");
+    let mut picked = Vec::new();
+    for key in ["right", "right", "left", "left", "left", "down", "up"] {
+        cx.simulate_keystrokes(key);
+        cx.run_until_parked();
+        picked.push(view.read_with(cx, |v, _| v.chosen));
+    }
+    assert_eq!(picked, [2, 2, 1, 0, 0, 1, 0], "each arrow its neighbour, nothing past an end");
+    cx.simulate_keystrokes("tab");
+    assert!(cx.update(|window, _| before.is_focused(window)), "the list is one member: Tab leaves it");
+    assert_eq!((neighbour(None, 3, false), neighbour(None, 3, true), neighbour(Some(0), 0, false)), (Some(0), Some(2), None));
+}

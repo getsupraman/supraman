@@ -393,9 +393,15 @@ async fn settings_pages(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWind
     crate::selftest::until_with(cx, Duration::from_secs(10), "the settings window closed", |cx| handle.read_with(cx, |_, _| ()).is_err().then_some(())).await
 }
 
-/// The Sessions page's Medium buttons, − 20 + level, + holding the focus ring: the padding René judges, which no unit test shows.
+/// The Appearance theme list holding the focus ring, then the Sessions page's Medium buttons, − 20 + level, + holding it: the look René judges, which no unit test shows.
 async fn settings_sessions(handle: gpui::WindowHandle<crate::settings_window::SettingsView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     use crate::settings_window::page;
+    if !handle.update(cx, |s, window, cx| s.focus_control("settings-theme-list", window, cx))? {
+        bail!("the Appearance page painted no settings-theme-list");
+    }
+    crate::selftest::drawn_in(handle.into(), cx).await.map_err(|e| anyhow!("settings window: {e}"))?;
+    let shot = capture(out.join("supraman-settings-theme-list.png"), Some("Supraman Settings"), cx).await?;
+    println!("shot: {}", shot.display());
     handle.update(cx, |s, _, cx| s.show(page::SESSIONS, cx))?;
     crate::selftest::drawn_in(handle.into(), cx).await.map_err(|e| anyhow!("settings window: {e}"))?;
     let focused = handle.update(cx, |s, window, cx| s.focus_control("settings-max-inc", window, cx))?;

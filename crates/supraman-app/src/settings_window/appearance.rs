@@ -128,7 +128,8 @@ impl SettingsView {
     fn render_theme(&self, current: &str, terminal: TerminalColors, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
-        let mut list = div().flex().flex_col().gap_1().pt_2();
+        let folder = self.control("settings-themes-folder", "Open themes folder", |this, _, cx| this.open_themes_folder(cx), cx);
+        let mut list = div().flex().flex_col().gap_1();
         for (ix, entry) in self.catalog.entries.iter().enumerate() {
             let selected = entry.name == current;
             let name = entry.name.clone();
@@ -143,20 +144,23 @@ impl SettingsView {
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_theme(name.clone(), terminal, cx))),
             );
         }
+        let names: Vec<String> = self.catalog.entries.iter().map(|e| e.name.clone()).collect();
+        let chosen = names.iter().position(|n| n == current);
+        let focus = self.members.handle("settings-theme-list", cx);
+        let list = button::choices(list, &focus, names.len(), chosen, move |this: &mut Self, ix, _, cx| this.set_theme(names[ix].clone(), terminal, cx), cx);
         let notes = self
             .theme_problem
             .iter()
             .chain(&self.catalog.errors)
             .map(|e| div().text_xs().text_color(status.warning).child(SharedString::from(e.clone())).into_any_element())
             .collect::<Vec<_>>();
-        list = list.children(notes).child(
+        let list = div().flex().flex_col().gap_1().pt_2().child(list).children(notes).child(
             div()
                 .pt_1()
                 .text_xs()
                 .text_color(colors.text_muted)
                 .child("VS Code Dark Modern: kevcamel/vscode_dark_modern.zed, © 2024 Kevin Camellini, MIT licence (THIRD_PARTY.md)."),
         );
-        let folder = self.control("settings-themes-folder", "Open themes folder", |this, _, cx| this.open_themes_folder(cx), cx);
         row(
             "Theme",
             "The colours of every Supraman window. Zed theme files (*.json) in the themes folder of the \
@@ -168,14 +172,19 @@ impl SettingsView {
     }
 
     fn render_terminal_colors(&self, current: &str, terminal: TerminalColors, cx: &mut Context<Self>) -> AnyElement {
+        const VALUES: [(&str, TerminalColors); 2] = [("Theme", TerminalColors::Theme), ("Campbell", TerminalColors::Campbell)];
         let mut terminal_choices = div().flex().gap_1();
-        for (ix, (label, value)) in [("Theme", TerminalColors::Theme), ("Campbell", TerminalColors::Campbell)].into_iter().enumerate() {
+        for (ix, (label, value)) in VALUES.into_iter().enumerate() {
             let name = current.to_string();
             terminal_choices = terminal_choices.child(
                 button::choice(("terminal-colors", ix), label, terminal == value, cx)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_theme(name.clone(), value, cx))),
             );
         }
+        let focus = self.members.handle("settings-terminal-colors", cx);
+        let name = current.to_string();
+        let chosen = VALUES.iter().position(|(_, v)| *v == terminal);
+        let terminal_choices = button::choices(terminal_choices, &focus, VALUES.len(), chosen, move |this: &mut Self, ix, _, cx| this.set_theme(name.clone(), VALUES[ix].1, cx), cx);
         row(
             "Terminal colours",
             "The 16 ANSI colours in terminal tabs: the theme's, or Windows Terminal's Campbell. Background, \
@@ -217,16 +226,21 @@ impl SettingsView {
     fn render_font(&self, family: &SharedString, ligatures: bool, installed: &[String], cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
-        let mut fonts = div().flex().flex_wrap().gap_1().pt_2();
+        let font_reset = self.control("settings-term-font-default", "Default", move |this, _, cx| this.set_term_font(None, ligatures, cx), cx);
+        let mut fonts = div().flex().flex_col().gap_1().pt_2();
         match &self.mono_fonts {
             Some(mono) => {
+                let mut list = div().flex().flex_wrap().gap_1();
                 for (ix, name) in mono.iter().enumerate() {
                     let pick = name.clone();
-                    fonts = fonts.child(
+                    list = list.child(
                         button::choice(("term-font", ix), SharedString::from(name.clone()), *name == *family, cx)
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_term_font(Some(&pick), ligatures, cx))),
                     );
                 }
+                let focus = self.members.handle("settings-term-font-list", cx);
+                let (mono, chosen) = (mono.clone(), mono.iter().position(|n| *n == *family));
+                fonts = fonts.child(button::choices(list, &focus, mono.len(), chosen, move |this: &mut Self, ix, _, cx| this.set_term_font(Some(&mono[ix]), ligatures, cx), cx));
             }
             None => fonts = fonts.child(div().text_xs().text_color(colors.text_muted).child("finding the monospace fonts…")),
         }
@@ -240,7 +254,6 @@ impl SettingsView {
             .collect::<Vec<_>>();
         fonts = fonts.children(font_notes);
         let default = supraman_core::default_terminal_font_family(installed);
-        let font_reset = self.control("settings-term-font-default", "Default", move |this, _, cx| this.set_term_font(None, ligatures, cx), cx);
         row(
             "Terminal font",
             format!(
@@ -256,14 +269,19 @@ impl SettingsView {
     }
 
     fn render_ligatures(&self, ligatures: bool, cx: &mut Context<Self>) -> AnyElement {
+        const VALUES: [(&str, bool); 2] = [("On", true), ("Off", false)];
         let mut ligature_choices = div().flex().gap_1();
-        for (ix, (label, on)) in [("On", true), ("Off", false)].into_iter().enumerate() {
+        for (ix, (label, on)) in VALUES.into_iter().enumerate() {
             let family = self.settings.terminal.font_family.clone();
             ligature_choices = ligature_choices.child(
                 button::choice(("ligatures", ix), label, ligatures == on, cx)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_term_font(family.as_deref(), on, cx))),
             );
         }
+        let focus = self.members.handle("settings-ligatures", cx);
+        let family = self.settings.terminal.font_family.clone();
+        let chosen = VALUES.iter().position(|(_, on)| *on == ligatures);
+        let ligature_choices = button::choices(ligature_choices, &focus, VALUES.len(), chosen, move |this: &mut Self, ix, _, cx| this.set_term_font(family.as_deref(), VALUES[ix].1, cx), cx);
         row(
             "Ligatures",
             "Character pairs such as -> and != drawn as one symbol, when the font has them (Cascadia Code does), \
@@ -288,13 +306,17 @@ impl SettingsView {
 
     pub(super) fn render_tab_keys(&self, cx: &mut Context<Self>) -> AnyElement {
         let current = self.settings.window.tab_keys();
+        const MODES: [(&str, TabKeys); 2] = [("Outside terminals", TabKeys::OutsideTerminals), ("Everywhere", TabKeys::Everywhere)];
         let mut choices = div().flex().gap_1();
-        for (ix, (label, mode)) in [("Outside terminals", TabKeys::OutsideTerminals), ("Everywhere", TabKeys::Everywhere)].into_iter().enumerate() {
+        for (ix, (label, mode)) in MODES.into_iter().enumerate() {
             choices = choices.child(
                 button::choice(("tab-keys", ix), label, current == mode, cx)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_tab_keys(mode, cx))),
             );
         }
+        let focus = self.members.handle("settings-tab-keys", cx);
+        let chosen = MODES.iter().position(|(_, mode)| *mode == current);
+        let choices = button::choices(choices, &focus, MODES.len(), chosen, |this: &mut Self, ix, _, cx| this.set_tab_keys(MODES[ix].1, cx), cx);
         row(
             "Tab keys in a terminal",
             "Ctrl+T opens a new task tab, Ctrl+W closes the active tab and Ctrl+Shift+PgUp/PgDn move it. Outside terminals, the \
@@ -322,19 +344,24 @@ impl SettingsView {
                 (default.found().cloned(), default.resolved().and_then(|(_, notice)| notice.clone()))
             })
             .unwrap_or_default();
-        let mut choices = div().flex().flex_wrap().gap_1().pt_2();
+        let mut choices = div().flex().flex_col().gap_1().pt_2();
         let mut notes = Vec::new();
         match &shells {
             Some(shells) => {
                 let named = shells.list.iter().filter_map(|s| s.setting.clone().map(|setting| (s.label.clone(), setting)));
                 let custom = matches!(current, ShellSetting::Custom(_)).then(|| (format!("{current} ([terminal] shell)"), current.clone()));
-                for (ix, (label, setting)) in [("Automatic".to_string(), ShellSetting::Auto)].into_iter().chain(named).chain(custom).enumerate() {
+                let options: Vec<(String, ShellSetting)> = [("Automatic".to_string(), ShellSetting::Auto)].into_iter().chain(named).chain(custom).collect();
+                let mut list = div().flex().flex_wrap().gap_1();
+                for (ix, (label, setting)) in options.iter().cloned().enumerate() {
                     let selected = setting == current;
-                    choices = choices.child(
+                    list = list.child(
                         button::choice(("term-shell", ix), SharedString::from(label), selected, cx)
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_shell(setting.clone(), cx))),
                     );
                 }
+                let focus = self.members.handle("settings-term-shell", cx);
+                let chosen = options.iter().position(|(_, setting)| *setting == current);
+                choices = choices.child(button::choices(list, &focus, options.len(), chosen, move |this: &mut Self, ix, _, cx| this.set_shell(options[ix].1.clone(), cx), cx));
                 notes.extend(notice);
             }
             None => choices = choices.child(div().text_xs().text_color(colors.text_muted).child("finding this machine's shells…")),

@@ -56,14 +56,14 @@ impl SettingsView {
             ),
             row(
                 "Reopen last tabs on start",
-                "Supraman keeps the open tabs, in their order, and reopens them when it starts again: shells in                  their folder, attached background sessions attached again while they run (a stopped one waits for                  Resume; nothing is restarted unasked), Work tabs, and claude tabs resumed with a fresh Workman                  token. A tab whose folder or session is gone is left out with one notice.",
+                "Supraman keeps the open tabs, in their order, and reopens them when it starts again: shells in their folder, attached background sessions attached again while they run (a stopped one waits for Resume; nothing is restarted unasked), Work tabs, and claude tabs resumed with a fresh Workman token. A tab whose folder or session is gone is left out with one notice.",
                 reopen_toggle.into_any_element(),
                 None,
                 cx,
             ),
             row(
                 "Resume reopened claude tabs",
-                "At once: each claude tab of the last run resumes its conversation when Supraman starts. On a click:                  it opens with a Resume button and nothing runs until you click it.",
+                "At once: each claude tab of the last run resumes its conversation when Supraman starts. On a click: it opens with a Resume button and nothing runs until you click it.",
                 resume_toggle.into_any_element(),
                 None,
                 cx,

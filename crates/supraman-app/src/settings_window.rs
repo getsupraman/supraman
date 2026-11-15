@@ -407,7 +407,10 @@ impl SettingsView {
         button::acting(shown, &self.members.handle(key, cx), act, cx)
     }
 
-    fn render_gitman(&self, _: &mut Context<Self>) -> Vec<AnyElement> {
+    fn render_gitman(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        for member in self.gitman.read(cx).focus_members(cx) {
+            self.members.add(member);
+        }
         vec![self.gitman.clone().into_any_element()]
     }
 

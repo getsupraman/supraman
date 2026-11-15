@@ -406,6 +406,37 @@ pub fn choice(id: impl Into<ElementId>, label: impl Into<SharedString>, selected
         .child(div().flex_1().child(label.into()))
 }
 
+/// `list`, a row or column of `count` [`choice`]s, one keyboard member under `focus`: [`ring`]ed in the focus colour
+/// while focused, an arrow key picking the choice before or after `chosen` (`pick` its index), stopping at the ends.
+pub fn choices<V: 'static>(list: Div, focus: &FocusHandle, count: usize, chosen: Option<usize>, pick: impl Fn(&mut V, usize, &mut Window, &mut Context<V>) + 'static, cx: &mut Context<V>) -> Div {
+    let focused = ring(cx.theme().colors().border_focused);
+    list.track_focus(focus).rounded_sm().focus(move |s| s.shadow(vec![focused])).on_key_down(cx.listener(move |this, e: &gpui::KeyDownEvent, window, cx| {
+        let back = match e.keystroke.key.as_str() {
+            "up" | "left" => true,
+            "down" | "right" => false,
+            _ => return,
+        };
+        if e.keystroke.modifiers.modified() {
+            return;
+        }
+        cx.stop_propagation();
+        if let Some(to) = neighbour(chosen, count, back) {
+            pick(this, to, window, cx);
+        }
+    }))
+}
+
+/// The choice before `at` of `n` (after it unless `back`), `None` past an end; the first (the last) from none.
+pub fn neighbour(at: Option<usize>, n: usize, back: bool) -> Option<usize> {
+    match at {
+        _ if n == 0 => None,
+        None if back => Some(n - 1),
+        None => Some(0),
+        Some(at) if back => at.checked_sub(1),
+        Some(at) => (at + 1 < n).then_some(at + 1),
+    }
+}
+
 /// One option of a [`crate::segmented`] group: [`choice`]'s fills, `icon` and `label`, under `key`.
 pub fn segment(hits: &HitTargets, key: impl Into<SharedString>, icon: Option<Icon>, label: Option<SharedString>, selected: bool, cx: &App) -> Stateful<Div> {
     let key = key.into();

@@ -104,7 +104,7 @@ impl SettingsView {
             ),
             row(
                 "MCP server name",
-                "The name ~/.workman/server.json gives the Workman MCP server, which /workman:setup registers in                  claude's user config. Supraman's sessions are given it as workman; Apply writes workman.",
+                "The name ~/.workman/server.json gives the Workman MCP server, which /workman:setup registers in claude's user config. Supraman's sessions are given it as workman; Apply writes workman.",
                 div().id("ws-mcp-name").text_sm().child(SharedString::from(mcp_name)).into_any_element(),
                 None,
                 cx,
