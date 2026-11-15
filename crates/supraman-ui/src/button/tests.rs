@@ -76,7 +76,7 @@ fn each_tone_and_fill_paints_its_theme_colours(cx: &mut TestAppContext) {
     for (tone, fill, p) in painted {
         let key = format!("{tone:?}-{fill:?}");
         let hit = view.read_with(cx, |v, _| v.hits.borrow().get(&key).copied()).unwrap_or_else(|| panic!("{key} paints"));
-        assert_eq!(hit.bounds.size.height, HEIGHT - px(2.), "{key}: one height, its hit inside the 1 px border");
+        assert_eq!(hit.bounds.size.height, Size::Small.height() - px(2.), "{key}: one height, its hit inside the 1 px border");
         let tint = match tone {
             Tone::Neutral => colors.border,
             Tone::Success => status.success,
@@ -171,4 +171,109 @@ fn a_row_under_its_own_hit_key_keeps_its_selected_fill_hovered_and_another_takes
     let other = hovered_fills(&view, "session-row-b", cx);
     assert!(other.contains(&hover) && !other.contains(&selected), "an unselected row under the pointer takes the hover: {other:?}");
     assert!(view.read_with(cx, |v, _| v.hits.borrow().get("session-a").is_none()), "the hit key is the row's own, not its id");
+}
+
+struct Sizes {
+    hits: HitTargets,
+}
+
+impl Render for Sizes {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut column = div().flex().flex_col().gap_2().p_2();
+        for size in Size::ALL {
+            let plain = sized(action(&self.hits, format!("{size:?}"), "Agj", Tone::Neutral, Fill::Solid, cx), size);
+            let with = sized(action_with(&self.hits, format!("{size:?}-icon"), crate::icon::Icon::Check, "Open", Tone::Success, Fill::Solid, cx), size);
+            column = column.child(line().child(plain).child(with));
+        }
+        column
+    }
+}
+
+fn bounds(hits: &HitTargets, key: &str) -> gpui::Bounds<Pixels> {
+    hits.borrow().get(key).map(|h| h.bounds).unwrap_or_else(|| panic!("{key} paints"))
+}
+
+#[gpui::test]
+fn every_size_stands_at_its_height_with_its_letters_on_its_middle(cx: &mut TestAppContext) {
+    cx.update(|cx| crate::init_globals(cx, "test"));
+    let (view, cx) = cx.add_window_view(|_, _| Sizes { hits: HitTargets::default() });
+    cx.run_until_parked();
+    let hits = view.read_with(cx, |v, _| v.hits.clone());
+    for size in Size::ALL {
+        let (height, _, text) = size.table();
+        let below = cx.update(|window, _| {
+            let mut style = window.text_style();
+            style.font_size = text.into();
+            crate::ink::offset(&style, window)
+        });
+        assert!(below > px(0.), "{size:?}: the letters' middle is below the line's");
+        for key in [format!("{size:?}"), format!("{size:?}-icon")] {
+            let (button, label) = (bounds(&hits, &key), bounds(&hits, &format!("{key}-label")));
+            assert_eq!(button.size.height + px(2.), height, "{key}: its size's height");
+            assert!(crate::ink::level(button.center().y, label.center().y + below), "{key}: the letters on the middle: {button:?} {label:?} by {below:?}");
+        }
+    }
+    assert_eq!(Size::Medium.height(), crate::text_input::SINGLE_HEIGHT, "a medium button as high as a one-line field");
+    let (plain, with) = (bounds(&hits, "Medium"), bounds(&hits, "Medium-icon"));
+    assert_eq!(with.left() - plain.right(), GAP + px(2.), "a line's buttons one gap apart, border to border");
+}
+
+struct Three {
+    hits: HitTargets,
+    members: crate::focus_order::Members,
+    pressed: Vec<usize>,
+    skip: Option<usize>,
+}
+
+impl Render for Three {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.members.begin();
+        let mut row = line();
+        for n in 0..3 {
+            let key = format!("answer-{n}");
+            let button = sized(action(&self.hits, key.clone(), format!("Answer {n}"), Tone::Neutral, Fill::Solid, cx), Size::Medium);
+            row = row.child(if self.skip == Some(n) {
+                button
+            } else {
+                let focus = self.members.handle(key, cx);
+                acting(button, &focus, move |this: &mut Three, _, _| this.pressed.push(n), cx)
+            });
+        }
+        self.members.order().on(row.id("three"))
+    }
+}
+
+fn three(skip: Option<usize>, cx: &mut TestAppContext) -> (gpui::Entity<Three>, &mut VisualTestContext) {
+    cx.update(|cx| {
+        crate::init_globals(cx, "test");
+        crate::focus_order::bind_keys(cx);
+    });
+    let (view, cx) = cx.add_window_view(|_, _| Three { hits: HitTargets::default(), members: Default::default(), pressed: Vec::new(), skip });
+    cx.run_until_parked();
+    (view, cx)
+}
+
+fn ringed(view: &gpui::Entity<Three>, cx: &mut VisualTestContext) -> Vec<usize> {
+    cx.run_until_parked();
+    cx.update(|window, cx| (0..3).filter(|n| view.read(cx).members.get(&format!("answer-{n}")).is_some_and(|h| h.is_focused(window))).collect())
+}
+
+#[gpui::test]
+fn tab_walks_a_row_of_three_buttons_and_space_or_enter_presses_the_focused_one(cx: &mut TestAppContext) {
+    let (view, cx) = three(None, cx);
+    let first = view.read_with(cx, |v, _| v.members.get("answer-0")).expect("a handle per button");
+    cx.update(|window, cx| first.focus(window, cx));
+    let mut walked = vec![ringed(&view, cx)];
+    for keys in ["tab", "tab", "tab", "shift-tab", "shift-tab"] {
+        cx.simulate_keystrokes(keys);
+        walked.push(ringed(&view, cx));
+    }
+    assert_eq!(walked, [vec![0], vec![1], vec![2], vec![0], vec![2], vec![1]], "Tab through each, wrapping; Shift+Tab back");
+    cx.simulate_keystrokes("space");
+    cx.simulate_keystrokes("tab enter");
+    let pressed = view.read_with(cx, |v, _| v.pressed.clone());
+    assert_eq!(pressed, [1, 2], "Space and Enter press the focused button");
+    let at = bounds(&view.read_with(cx, |v, _| v.hits.clone()), "answer-0");
+    cx.simulate_click(at.center(), gpui::Modifiers::none());
+    assert_eq!(view.read_with(cx, |v, _| v.pressed.clone()), [1, 2, 0], "a click runs the same act");
 }

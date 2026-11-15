@@ -1,25 +1,17 @@
-//! Every side form: a title with its icon and ×, labelled fields, and its OK (`button::action` Success Solid, [`BUTTON_HEIGHT`]) dimmed with why,
+//! Every side form: a title with its icon and ×, labelled fields, and its OK (`button::action` Success Solid, `button::Size::Medium`) dimmed with why,
 //! turning while the owner's write runs;
 //! Tab and Shift+Tab through its `FocusOrder`, Enter in a field its OK, Esc its close; hit keys `<key>`, `<key>-close`, `<key>-ok`.
 
-use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Div, Entity, FocusHandle, FontWeight, Pixels, SharedString, Stateful, Subscription, Window, div, prelude::*, px};
+use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, FocusHandle, FontWeight, SharedString, Subscription, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
 use crate::button;
 use crate::focus_order::{Dismiss, FocusOrder, Press};
 use crate::hit::{HitTargets, hit_target};
 use crate::icon::Icon;
-use crate::text_input::{InputEvent, SINGLE_HEIGHT, TextInput};
+use crate::text_input::{InputEvent, TextInput};
 use crate::themes::secondary;
 use crate::tooltip::Tooltip;
-
-/// A form's buttons stand as high as its one-line fields.
-pub const BUTTON_HEIGHT: Pixels = SINGLE_HEIGHT;
-
-/// `button` (a `button::action`) at [`BUTTON_HEIGHT`]: a form's OK, a button beside a field (Browse) and the WIP panel's Commit.
-pub fn sized(button: Stateful<Div>) -> Stateful<Div> {
-    button.h(BUTTON_HEIGHT).px_3()
-}
 
 /// The owner's OK and close, what the form's button, ×, Enter and Esc run.
 pub struct Answers<V> {
@@ -116,7 +108,7 @@ impl<V: 'static> Form<V> {
             Some(focus) => button::focusable(ok, focus, cx.listener(move |this, _: &Press, _, cx| on_ok(this, cx)), cx),
             None => ok,
         };
-        let body = div().flex().flex_col().gap_3().p_3().children(fields).child(div().flex().child(sized(ok)));
+        let body = div().flex().flex_col().gap_3().p_3().children(fields).child(div().flex().child(button::sized(ok, button::Size::Medium)));
         order
             .on(div())
             .on_action(cx.listener(move |this, _: &Dismiss, _, cx| on_close(this, cx)))

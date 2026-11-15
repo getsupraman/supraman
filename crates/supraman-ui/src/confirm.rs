@@ -1,11 +1,10 @@
 //! A question before an action that cannot be taken back, or a report with only its OK; a box or a band.
 
-use gpui::{AnyElement, App, BoxShadow, ClickEvent, Context, Div, KeyDownEvent, Pixels, SharedString, Stateful, Window, div, point, prelude::*, px};
+use gpui::{AnyElement, App, ClickEvent, Context, Div, KeyDownEvent, Pixels, SharedString, Stateful, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
 use crate::banner;
 use crate::button;
-use crate::form;
 use crate::hit::{HitTargets, hit_target};
 use crate::themes;
 
@@ -101,7 +100,7 @@ impl<A> Confirm<A> {
             .bg(banner::tint(status.warning))
             .text_sm()
             .child(SharedString::from(self.text.clone()))
-            .child(div().flex().flex_wrap().gap_3().justify_end().children(self.answers(hits, key, button::Tone::Neutral, on_answer, cx)))
+            .child(div().flex().flex_wrap().gap(button::GAP).justify_end().children(self.answers(hits, key, button::Tone::Neutral, on_answer, cx)))
     }
 
     /// [`Confirm::render`] as a [`band`]; Enter takes [`Confirm::default_answer`], Esc cancels, while it holds the owner's focus.
@@ -168,20 +167,17 @@ impl<A> Confirm<A> {
     }
 }
 
-/// How far the default answer's ring stands out of its button.
-pub const RING: Pixels = px(2.);
-
-/// Every answer of a question (a box's, a band's): `button::action` Solid at `form::BUTTON_HEIGHT` in the message's
-/// text size; the `default` one, Enter's, ringed in the theme's text colour, which reads on the band and the box.
+/// Every answer of a question (a box's, a band's): `button::action` Solid at `button::Size::Medium`, the message's
+/// text size; the `default` one, Enter's, `button::ring`ed in the theme's text colour, which reads on the band and the box.
 pub fn answer(hits: &HitTargets, key: impl Into<SharedString>, words: impl Into<SharedString>, tone: button::Tone, default: bool, cx: &App) -> Stateful<Div> {
-    let ring = BoxShadow { color: cx.theme().colors().text, offset: point(px(0.), px(0.)), blur_radius: px(0.), spread_radius: RING, inset: false };
-    form::sized(button::action(hits, key, words, tone, button::Fill::Solid, cx)).text_sm().when(default, |b| b.shadow(vec![ring]))
+    let ring = button::ring(cx.theme().colors().text);
+    button::sized(button::action(hits, key, words, tone, button::Fill::Solid, cx), button::Size::Medium).when(default, |b| b.shadow(vec![ring]))
 }
 
 /// A prompt band on the [`themes::attention`] fill: `message`, then `items` (fields, then answers) centred in a [`ROW`]; paints `<key>-band` and `<key>-text`.
 pub fn band(hits: &HitTargets, key: &str, message: impl IntoElement, items: impl IntoIterator<Item = AnyElement>, cx: &App) -> Div {
     let text = div().relative().min_w_0().mr_4().py_1().text_sm().text_color(cx.theme().colors().text).child(message).child(hit_target(hits, format!("{key}-text")));
-    let row = div().flex().flex_none().items_center().gap_3().h(ROW).pr_2().children(items);
+    let row = div().flex().flex_none().items_center().gap(button::GAP).h(ROW).pr_2().children(items);
     div()
         .relative()
         .w_full()
@@ -311,7 +307,7 @@ mod tests {
             });
             cx.run_until_parked();
             for k in ["ask-yes", "ask-cancel"] {
-                assert_eq!(at(&view, k, cx).size.height + px(2.), form::BUTTON_HEIGHT, "{k} and its border at the form's button height (boxed {boxed})");
+                assert_eq!(at(&view, k, cx).size.height + px(2.), button::Size::Medium.height(), "{k} and its border at the medium height (boxed {boxed})");
             }
         }
     }

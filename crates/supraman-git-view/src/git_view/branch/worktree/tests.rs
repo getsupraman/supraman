@@ -166,7 +166,7 @@ fn create_worktree_turns_while_its_add_runs_ignores_another_and_closes_on_succes
     let hits = test_support::repaint(&view, cx);
     let height = |k: &str| hits.borrow().get(k).map(|h| h.bounds.size.height).unwrap_or_else(|| panic!("{k} is painted"));
     let field = height(&format!("{KEY}-folder"));
-    assert_eq!(field, supraman_ui::form::BUTTON_HEIGHT, "the field stands at the form's button height");
+    assert_eq!(field, supraman_ui::button::Size::Medium.height(), "the field stands at the form's button height");
     let inside = field - px(2.);
     assert_eq!((height(&format!("{KEY}-ok")), height(&format!("{KEY}-browse"))), (inside, inside), "OK and Browse as high as the field, their hit keys inside the 1 px border");
     assert!(!hits.borrow().contains_key(&format!("{KEY}-ok-turning")), "OK is still before Create");
