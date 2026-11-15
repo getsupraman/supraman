@@ -1,12 +1,12 @@
-//! A listed folder's row dragged onto a group's row, another listed folder's row or below the tree; the room below the tree's
-//! rows and its right-click.
+//! A listed folder's row dragged onto a group's row, another listed folder's row or below the tree, a group's row onto a
+//! top-level row or below the tree; the room below the tree's rows and its right-click.
 
 use gpui::{AnyElement, Context, Div, MouseButton, MouseDownEvent, Pixels, SharedString, Stateful, div, prelude::*, px};
 use supraman_ui::hit::hit_target;
 use theme::ActiveTheme as _;
 
 use super::super::FleetView;
-use super::super::folder_edits::{DraggedFolder, Target};
+use super::super::folder_edits::{DraggedFolder, DraggedGroup, Target};
 use super::{REPO_ROW, grid};
 use crate::fleet::FolderNode;
 
@@ -14,23 +14,37 @@ use crate::fleet::FolderNode;
 pub(crate) const END: &str = "tree-drop-end";
 
 impl FleetView {
-    /// A listed folder's row: dragged by its chip, and taking another folder before it.
+    /// A listed folder's row: dragged by its chip, and taking another folder before it; a top-level one a group too.
     pub(super) fn folder_drag(&self, row: Stateful<Div>, folder: &FolderNode, cx: &mut Context<Self>) -> Stateful<Div> {
         let Some(pos) = folder.pos else { return row };
         let border = cx.theme().colors().drop_target_border;
         let dragged = DraggedFolder { pos, path: folder.path.clone(), title: SharedString::from(folder.place()) };
-        row.on_drag(dragged, |d, _, _, cx| cx.new(|_| d.clone()))
+        let row = row
+            .on_drag(dragged, |d, _, _, cx| cx.new(|_| d.clone()))
             .drag_over::<DraggedFolder>(move |s, d: &DraggedFolder, _, _| if d.pos == pos { s } else { s.border_t_2().border_color(border) })
-            .on_drop(cx.listener(move |this, d: &DraggedFolder, _, cx| this.drop_folder(d, &Target::Folder(pos), cx)))
+            .on_drop(cx.listener(move |this, d: &DraggedFolder, _, cx| this.drop_folder(d, &Target::Folder(pos), cx)));
+        if pos.folder.is_some() {
+            return row;
+        }
+        row.drag_over::<DraggedGroup>(move |s, _, _, _| s.border_t_2().border_color(border))
+            .on_drop(cx.listener(move |this, d: &DraggedGroup, _, cx| this.drop_group(d, &Target::Folder(pos), cx)))
     }
 
-    /// A group's row: a folder dropped on it goes to the end of its folders.
-    pub(super) fn group_drop(&self, row: Stateful<Div>, name: &str, cx: &mut Context<Self>) -> Stateful<Div> {
+    /// A group's row: dragged by its chip; a folder dropped on it goes to the end of its folders, another group before it.
+    pub(super) fn group_drag(&self, row: Stateful<Div>, name: &str, cx: &mut Context<Self>) -> Stateful<Div> {
         let colors = cx.theme().colors();
         let (fill, border) = (colors.drop_target_background, colors.drop_target_border);
         let target = Target::Group(name.to_string());
-        row.drag_over::<DraggedFolder>(move |s, _, _, _| s.bg(fill).border_1().border_color(border))
-            .on_drop(cx.listener(move |this, d: &DraggedFolder, _, cx| this.drop_folder(d, &target, cx)))
+        let dragged = DraggedGroup { name: name.to_string(), title: SharedString::from(name.to_string()) };
+        let own = name.to_string();
+        row.on_drag(dragged, |d, _, _, cx| cx.new(|_| d.clone()))
+            .drag_over::<DraggedFolder>(move |s, _, _, _| s.bg(fill).border_1().border_color(border))
+            .drag_over::<DraggedGroup>(move |s, d: &DraggedGroup, _, _| if d.name == own { s } else { s.border_t_2().border_color(border) })
+            .on_drop(cx.listener({
+                let target = target.clone();
+                move |this, d: &DraggedFolder, _, cx| this.drop_folder(d, &target, cx)
+            }))
+            .on_drop(cx.listener(move |this, d: &DraggedGroup, _, cx| this.drop_group(d, &target, cx)))
     }
 
     /// The row below the tree: a folder dropped there goes to the end of the top level; its words show only then.
@@ -50,7 +64,9 @@ impl FleetView {
             .child(SharedString::from("Move to the top level"))
             .child(hit_target(&self.hits, END.into()))
             .drag_over::<DraggedFolder>(move |s, _, _, _| s.bg(fill).border_1().border_color(border).text_color(text))
+            .drag_over::<DraggedGroup>(move |s, _, _, _| s.bg(fill).border_1().border_color(border).text_color(text))
             .on_drop(cx.listener(|this, d: &DraggedFolder, _, cx| this.drop_folder(d, &Target::End, cx)))
+            .on_drop(cx.listener(|this, d: &DraggedGroup, _, cx| this.drop_group(d, &Target::End, cx)))
             .into_any_element()
     }
 
@@ -60,6 +76,11 @@ impl FleetView {
         area.on_drop(cx.listener(|this, d: &DraggedFolder, window, cx| {
             if this.below_rows(window.mouse_position().y) {
                 this.drop_folder(d, &Target::End, cx);
+            }
+        }))
+        .on_drop(cx.listener(|this, d: &DraggedGroup, window, cx| {
+            if this.below_rows(window.mouse_position().y) {
+                this.drop_group(d, &Target::End, cx);
             }
         }))
         .on_mouse_down(

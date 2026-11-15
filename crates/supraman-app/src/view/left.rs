@@ -730,7 +730,7 @@ impl FleetView {
             .cursor_pointer()
             .hover(|s| s.bg(colors.ghost_element_hover))
             .active(|s| s.bg(colors.ghost_element_active));
-        self.group_drop(row, &name, cx)
+        self.group_drag(row, &name, cx)
             .child(line)
             .child(hit_target(&self.hits, format!("group-row-{name}")))
             .on_mouse_down(MouseButton::Right, {

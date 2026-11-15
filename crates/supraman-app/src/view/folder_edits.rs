@@ -1,5 +1,5 @@
 //! The sidebar's edits of folders.toml: Add Folder, Add Group, Rename, Remove Folder, Remove Group, a folder dropped
-//! elsewhere and Show/Hide sub folders, each written off the UI thread.
+//! or group dropped elsewhere and Show/Hide sub folders, each written off the UI thread.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -17,7 +17,7 @@ use super::menu::{Confirm, Confirmed, MenuAction};
 mod drop;
 mod group_name;
 
-pub use drop::{DraggedFolder, Target, landing};
+pub use drop::{DraggedFolder, DraggedGroup, Target, group_landing, landing};
 pub use group_name::{GroupName, GroupNameEvent};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +33,8 @@ pub enum FolderEdit {
     MoveFolder { from: Pos, path: PathBuf, to: Place },
     /// The folder at `pos`, while it is still `path` there, showing its direct child folders or not.
     ShowSubfolders { pos: Pos, path: PathBuf, show: bool },
+    /// The group moved to `to` among the top-level entries ([`group_landing`]).
+    MoveGroup { name: String, to: usize },
 }
 
 impl FolderEdit {
@@ -89,6 +91,10 @@ impl FolderEdit {
                     false => format!("Hid the sub folders of {}.", folder_name(path)),
                 })
             }
+            FolderEdit::MoveGroup { name, to } => {
+                entries.move_group(name, *to)?;
+                Ok(format!("Moved group {name}."))
+            }
         }
     }
 
@@ -102,6 +108,7 @@ impl FolderEdit {
             FolderEdit::RemoveGroup { name, .. } => format!("Cannot remove group {name}"),
             FolderEdit::MoveFolder { path, .. } => format!("Cannot move {}", folder_name(path)),
             FolderEdit::ShowSubfolders { path, show, .. } => format!("Cannot {} the sub folders of {}", if *show { "show" } else { "hide" }, folder_name(path)),
+            FolderEdit::MoveGroup { name, .. } => format!("Cannot move group {name}"),
         }
     }
 
@@ -110,7 +117,7 @@ impl FolderEdit {
         match self {
             FolderEdit::AddFolder { path, group: None } => Some(format!("repo:{}", folder_name(path))),
             FolderEdit::AddFolder { path, group: Some(g) } => Some(format!("repo:{g}/{}", folder_name(path))),
-            FolderEdit::AddGroup(name) | FolderEdit::RenameGroup { to: name, .. } => Some(format!("group:{name}")),
+            FolderEdit::AddGroup(name) | FolderEdit::RenameGroup { to: name, .. } | FolderEdit::MoveGroup { name, .. } => Some(format!("group:{name}")),
             FolderEdit::MoveFolder { path, to: Place::Top(_), .. } => Some(format!("repo:{}", folder_name(path))),
             FolderEdit::MoveFolder { path, to: Place::Group { name, .. }, .. } => Some(format!("repo:{name}/{}", folder_name(path))),
             FolderEdit::RemoveFolder { .. } | FolderEdit::RemoveGroup { .. } | FolderEdit::ShowSubfolders { .. } => None,
@@ -182,6 +189,13 @@ impl FleetView {
     pub(super) fn drop_folder(&mut self, dragged: &DraggedFolder, target: &Target, cx: &mut Context<Self>) {
         if let Some(to) = landing(&self.listed.entries, dragged.pos, target) {
             self.edit_folders(FolderEdit::MoveFolder { from: dragged.pos, path: dragged.path.clone(), to }, cx);
+        }
+    }
+
+    /// A dragged group let go on `target`; nothing is written when it would stay where it is.
+    pub(super) fn drop_group(&mut self, dragged: &DraggedGroup, target: &Target, cx: &mut Context<Self>) {
+        if let Some(to) = group_landing(&self.listed.entries, &dragged.name, target) {
+            self.edit_folders(FolderEdit::MoveGroup { name: dragged.name.clone(), to }, cx);
         }
     }
 

@@ -126,6 +126,22 @@ fn folders_are_added_removed_and_moved_by_position() {
 
 
 #[test]
+fn move_group_counts_its_index_with_the_group_taken_out_and_refuses_an_unknown_name() {
+    let mut e = sample();
+    e.move_group("gaia", 0).unwrap();
+    assert_eq!(e.list, [group("gaia", &[r"C:\g", r"C:\g\api"]), top(r"C:\a"), top(r"C:\b")], "to the front");
+    e.move_group("gaia", 2).unwrap();
+    assert_eq!(e.list, [top(r"C:\a"), top(r"C:\b"), group("gaia", &[r"C:\g", r"C:\g\api"])], "to the end");
+    let before = e.clone();
+    e.move_group("gaia", 2).unwrap();
+    assert_eq!(e, before, "where it is already");
+    e.move_group("gaia", 9).unwrap();
+    assert_eq!(e, before, "past the end appends");
+    assert!(matches!(e.move_group("no", 0), Err(CoreError::NoGroup(_))));
+    assert_eq!(e, before, "a refused move changes nothing");
+}
+
+#[test]
 fn the_first_load_makes_a_group_of_each_workspace_with_a_duplicate_at_its_first_place_once() {
     let home = tempfile::tempdir().unwrap();
     let larchsys = PathBuf::from(r"P:\Projects\LarchSys");
