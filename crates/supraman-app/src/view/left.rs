@@ -463,7 +463,7 @@ impl FleetView {
             }
             LeftRow::Schedules(e, f) => {
                 let entry = &tree.entries[e];
-                div().flex().flex_col().children(self.render_schedules(entry, &entry.folders[f], level(entry) + 1, cx)).into_any_element()
+                div().flex().flex_col().children(self.render_schedules(entry, &entry.folders[f], folder_level(entry, &entry.folders[f]) + 1, cx)).into_any_element()
             }
             LeftRow::Folder(e, f) => {
                 let (entry, folder) = (&tree.entries[e], &tree.entries[e].folders[f]);
