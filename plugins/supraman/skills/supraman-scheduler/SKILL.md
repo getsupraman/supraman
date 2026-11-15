@@ -22,9 +22,10 @@ run**. Until then it is `pending`, and every change to what it runs makes it pen
 | `sm schedule pause <id>` | stop it firing; nothing else changes |
 | `sm schedule resume <id>` | let it fire again; it stays `pending` unless its approval still matches |
 
-Each verb works on one listed folder's schedules: the deepest listed folder holding the current folder, or
-the one holding `--folder <dir>` when you pass it (any verb takes it). `sm` says when no listed folder holds
-it; `sm folder list` lists them. No other verb (§4).
+Each verb works on one folder's schedules: `--folder <dir>` itself when you pass it (any verb takes it; it must
+lie inside a listed folder), else the deepest listed folder or shown sub folder holding the current folder.
+`sm` says when no listed folder holds it; `sm folder list` lists them. The Supraman window shows a schedule
+under its folder's row, or under Other schedules when the folder has none. No other verb (§4).
 
 ## 1. "Call /<command> every monday" → one `sm schedule add`
 
@@ -33,8 +34,9 @@ Work out each part, then ask **once** for everything still open (§2), then add.
 1. **The command.** `--command /<name>`. It must exist as `.claude/commands/<name>.md` in the folder the run
    works in (or the user's own commands); `sm` refuses an unknown one and names the folder it looked in.
    Read that file: it tells you what the run will do and so which profile it needs.
-2. **The folder.** The run works in the listed folder that holds the command: run `sm` in it (or below), or
-   pass `--folder <dir>`. `sm` names the folder it took in what it prints.
+2. **The folder.** The run works in the folder the human named (Supraman's New scheduled task… starts you in
+   it): run `sm` there, or pass `--folder <dir>` for exactly that folder. `sm` names the folder it took in what
+   it prints.
 3. **The trigger.** `--every "weekly mon 09:00"` (days `mon..sun`, comma-separated: `weekly mon,thu 07:30`),
    `--every "daily 09:00"`, `--every "interval 2h from 08:00"`. Local wall time; DST follows the clock.
    **No time given → propose `09:00` and ask** (§2).

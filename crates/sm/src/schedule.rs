@@ -64,16 +64,25 @@ fn folder_arg<'a>(args: &[&'a str]) -> Result<(Option<&'a str>, Vec<&'a str>), F
     Ok((folder, rest))
 }
 
-/// The deepest listed folder holding `--folder <dir>`, else the current folder (`assign::holding`).
+/// The folder every verb's schedules are filed under: `--folder <dir>` itself, a folder in a listed one; else the
+/// deepest listed or shown folder holding the current folder (`supraman_claude::holding`).
 fn folder_of(home: &Path, given: Option<&str>) -> Result<PathBuf, Failure> {
     let dir = match given {
         Some(d) => std::path::absolute(d).map_err(|e| Failure::Usage(format!("--folder {d}: {e}")))?,
         None => std::env::current_dir().map_err(|e| Failure::Usage(format!("cannot read the current folder: {e}")))?,
     };
     let entries = folders::load(home)?;
-    supraman_claude::holding(&dir, &entries, &folders::Shown::new(), supraman_claude::main_repo).map(|h| h.listed.path.clone()).ok_or_else(|| {
-        Failure::Refused(format!("error: no listed folder holds {}; give --folder <dir> of a listed folder, or list it with sm folder add <dir>", dir.display()))
-    })
+    let shown = folders::shown(&entries);
+    let held = supraman_claude::holding(&dir, &entries, &shown, supraman_claude::main_repo).map(|h| h.folder);
+    match (given, held) {
+        (Some(_), _) if !dir.is_dir() => Err(Failure::Refused(format!("error: --folder {}: no such folder", dir.display()))),
+        (Some(_), Some(_)) => Ok(dir),
+        (None, Some(folder)) => Ok(folder),
+        (_, None) => Err(Failure::Refused(format!(
+            "error: no listed folder holds {}; list it or a folder above it with sm folder add <dir>, or give --folder <dir> inside a listed folder",
+            dir.display()
+        ))),
+    }
 }
 
 /// `<id>`.

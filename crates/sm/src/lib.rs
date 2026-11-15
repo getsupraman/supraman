@@ -30,7 +30,8 @@ usage:
   sm schedule secret set <id> <NAME> [--folder <dir>]   (the value on stdin; the script gets it as $NAME)
   sm schedule report <run> done|needs-you <one line>   (inside a scheduled run: its outcome, to the run's owner)
   sm schedule fire --home <home> <folder key> <id> --fingerprint <hex>   (what the schedule's task runs, as smw.exe)
-      --folder <dir>: the deepest listed folder holding it, default the current folder's. An added or changed
+      --folder <dir>: that folder, inside a listed one; default the deepest listed or shown folder holding the
+      current folder. The Supraman window shows a schedule under its folder's row, else under Other schedules. An added or changed
       schedule is pending until Approve in the Supraman window; sm never approves and never registers a task.
   sm release manifest <zip> --version <semver> --commit <sha> [--notes-url <url>]
       (writes supraman-update.json and SHA256SUMS beside the zip; the zip is Supraman-<semver>.zip)
