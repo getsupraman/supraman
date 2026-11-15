@@ -373,8 +373,13 @@ mod tests {
         assert_eq!((items[7].label.as_str(), &items[7].action), ("Hide sub folders", &MenuAction::ShowSubfolders { pos: Pos::top(1), path: r"C:\demo\Alpha".into(), show: false }));
         let child = FolderNode { parent: Some("Alpha".into()), ..folder("Alpha/gaia") };
         let items = folder_items(&top, &child, true, None);
-        assert_eq!(keys(&items), ["new-claude", "open-git", "work", "open-terminal", "open-folder", "details"], "a shown child is no entry: no Remove Folder");
+        assert_eq!(keys(&items), ["new-claude", "open-git", "work", "open-terminal", "open-folder", "details", "exclude-folder"], "a shown child is no entry: no Remove Folder");
         assert_eq!(items[2].action, MenuAction::Work(Target::Folder(child.path.clone())));
+        assert_eq!((items[6].label.as_str(), &items[6].action), ("Exclude Folder", &MenuAction::ExcludeFolder { parent: Pos::top(1), path: child.path.clone() }), "by its parent's position");
+        let excluded = FolderNode { excluded: true, ..child.clone() };
+        let items = folder_items(&top, &excluded, true, None);
+        assert_eq!(keys(&items), ["include-folder", "open-folder"]);
+        assert_eq!((items[0].label.as_str(), &items[0].action), ("Include Folder", &MenuAction::IncludeFolder { parent: Pos::top(1), path: child.path.clone() }));
         let schedules = schedules_items("demo", Path::new(r"C:\demo\Alpha"));
         assert_eq!(keys(&schedules), ["new-scheduled-task"]);
         assert_eq!(schedules[0].action, MenuAction::NewTask { entry: "demo".into(), folder: Some(r"C:\demo\Alpha".into()), scheduled: true }, "in its folder");
