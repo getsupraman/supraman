@@ -159,7 +159,7 @@ pub enum Tone {
     Danger,
 }
 
-/// Solid for a form's or band's main answer (Enter's), Outline for the rest.
+/// Solid for a form's main answer (Enter's), Outline for the rest; a question's answers are all Solid (`confirm::answer`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fill {
     Solid,

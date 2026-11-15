@@ -5,7 +5,7 @@ use supraman_core::askpass::{Asked, Prompt, Reply};
 use supraman_gitman::write::remote::PullMode;
 use supraman_gitman::Remote;
 use supraman_ui::button;
-use supraman_ui::confirm::band;
+use supraman_ui::confirm::{answer, band};
 use supraman_ui::hit::hit_target;
 use supraman_ui::segmented::{Segment, segmented};
 use supraman_ui::tooltip::Tooltip;
@@ -180,7 +180,7 @@ impl RemoteActions {
     }
 
     fn cancel_button(&self, key: &str, words: &str, cx: &mut Context<Self>) -> AnyElement {
-        button::action(&self.hits, key.to_string(), words.to_string(), button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.close_dialogs(cx))).into_any_element()
+        answer(&self.hits, key.to_string(), words.to_string(), button::Tone::Neutral, false, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.close_dialogs(cx))).into_any_element()
     }
 
     fn field(&self, field: &Entity<TextInput>, key: &str, width: f32) -> AnyElement {
@@ -202,7 +202,7 @@ impl RemoteActions {
             Then::Pull(_) => ("Pull", "Pull {} with no upstream from"),
             Then::Set => ("Set upstream", "Track {} at"),
         };
-        let ok = button::action(&self.hits, "git-upstream-ok", ok_words, button::Tone::Success, button::Fill::Solid, cx);
+        let ok = answer(&self.hits, "git-upstream-ok", ok_words, button::Tone::Success, true, cx);
         let ok = if d.chosen(&self.remotes, cx).is_some() { ok.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.submit_upstream(cx))) } else { button::dimmed(ok) };
         let items = vec![
             remotes.into_any_element(),
@@ -217,9 +217,9 @@ impl RemoteActions {
     fn render_prompt(&self, cx: &mut Context<Self>) -> Option<(Div, bool)> {
         let p = self.prompting.as_ref()?;
         let host = matches!(p.prompt, Prompt::HostKey { .. });
-        let ok = button::action(&self.hits, "git-askpass-ok", if host { "Yes, trust it" } else { "OK" }, button::Tone::Success, button::Fill::Solid, cx)
+        let ok = answer(&self.hits, "git-askpass-ok", if host { "Yes, trust it" } else { "OK" }, button::Tone::Success, p.field.is_some(), cx)
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.answer_prompt(true, cx)));
-        let cancel = button::action(&self.hits, "git-askpass-cancel", if host { "No" } else { "Cancel" }, button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.answer_prompt(false, cx)));
+        let cancel = answer(&self.hits, "git-askpass-cancel", if host { "No" } else { "Cancel" }, button::Tone::Neutral, false, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.answer_prompt(false, cx)));
         let remember = matches!(p.prompt, Prompt::Passphrase { key: Some(_) }).then(|| {
             let tick = button::checkbox(&self.hits, "git-askpass-remember", p.remember, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 if let Some(p) = this.prompting.as_mut() {

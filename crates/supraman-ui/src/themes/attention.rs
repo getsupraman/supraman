@@ -1,28 +1,26 @@
-//! The attention fill: a prompt band's background, Supraman's indigo or a theme's `supraman.attention`, held so the theme's text on it holds `NAME_FLOOR` and it stands off the editor background.
+//! The attention fill: a prompt band's background, the theme's focused selection or its `supraman.attention`, held so the theme's text on it holds `NAME_FLOOR` and it stands off the editor background.
 
 use gpui::Hsla;
 use theme::Theme;
 
-use super::{Adjustment, Kept, NAME_FLOOR, contrast, hex, nearest_holding, parse_color};
+use super::{Adjustment, Kept, NAME_FLOOR, contrast, hex, nearest_holding, over};
 
 pub const KEY: &str = "supraman.attention";
-
-/// Indigo: away from the warning's amber, the info's blue and the selection's.
-pub const DARK: &str = "#342E7F";
-pub const LIGHT: &str = "#DCD4FF";
 
 /// The least contrast of the fill against the editor background, so the band stands out.
 pub const SHOWS: f32 = 1.2;
 
 static FITTED: Kept<Hsla> = Kept::new();
 
-/// The fill `theme` paints a band with: its fitted one, else Supraman's for its appearance.
+/// The fill `theme` paints a band with: its fitted one, else its selection's.
 pub fn attention(theme: &Theme) -> Hsla {
-    FITTED.get(&theme.id).unwrap_or_else(|| default(theme))
+    FITTED.get(&theme.id).unwrap_or_else(|| selection(theme))
 }
 
-pub fn default(theme: &Theme) -> Hsla {
-    parse_color(if theme.appearance.is_light() { LIGHT } else { DARK }).expect("the shipped attention parses")
+/// The theme's focused selection (`element.selected`) as it shows on the editor background.
+pub fn selection(theme: &Theme) -> Hsla {
+    let c = theme.colors();
+    over(super::selection(c, true), c.editor_background).into()
 }
 
 /// Whether the theme's text reads on `fill` and `fill` shows on the editor background.
@@ -31,13 +29,13 @@ pub fn holds(theme: &Theme, fill: Hsla) -> bool {
     contrast(c.text, fill) >= NAME_FLOOR && contrast(fill, c.editor_background) >= SHOWS
 }
 
-/// Supraman's fill or `set`, moved to the nearest lightness that [`holds`], kept for `theme`. Returns what changed.
+/// The selection's fill or `set`, moved to the nearest lightness that [`holds`], kept for `theme`. Returns what changed.
 pub fn fit(theme: &Theme, set: Option<Hsla>) -> Option<Adjustment> {
-    let old = set.map_or_else(|| default(theme), |c| Hsla { a: 1., ..c });
+    let old = set.map_or_else(|| selection(theme), |c| Hsla { a: 1., ..c });
     let fill = nearest_holding(old, |c| holds(theme, c)).unwrap_or(old);
     FITTED.keep(&theme.id, fill);
     let text = |c: Hsla| contrast(theme.colors().text, c);
-    (hex(old) != hex(fill)).then(|| Adjustment { key: KEY.into(), old: hex(old), new: hex(fill), was: text(old), now: text(fill) })
+    (set.is_some() && hex(old) != hex(fill)).then(|| Adjustment { key: KEY.into(), old: hex(old), new: hex(fill), was: text(old), now: text(fill) })
 }
 
 pub(super) fn carry(from: &str, to: &str) {
@@ -54,12 +52,12 @@ mod tests {
     }
 
     #[test]
-    fn the_fill_holds_the_text_floor_and_shows_in_dark_and_light_and_is_not_the_warning() {
+    fn the_fill_is_the_selections_hue_and_holds_the_text_floor_and_shows_in_dark_and_light() {
         let light = from_zed(&one_dark(), &parse_family(selftest_light::LIGHT).unwrap().themes[0]).theme;
         for theme in [dark_modern().theme, supraman_dark().theme, light] {
-            let fill = attention(&theme);
+            let (fill, selected) = (attention(&theme), selection(&theme));
             assert!(holds(&theme, fill), "{} {}", theme.name, hex(fill));
-            assert_eq!(hex(fill), if theme.appearance.is_light() { LIGHT } else { DARK }, "{}: Supraman's fill holds as shipped", theme.name);
+            assert!((fill.h - selected.h).abs() < 1e-3 && (fill.s - selected.s).abs() < 1e-3, "{}: {} is {}'s hue, moved in lightness only", theme.name, hex(fill), hex(selected));
             assert_ne!(hex(fill), hex(theme.status().warning), "{}: not the warning colour", theme.name);
         }
     }

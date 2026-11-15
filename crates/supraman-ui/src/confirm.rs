@@ -1,10 +1,11 @@
 //! A question before an action that cannot be taken back, or a report with only its OK; a box or a band.
 
-use gpui::{AnyElement, App, ClickEvent, Context, Div, KeyDownEvent, Pixels, SharedString, Window, div, prelude::*, px};
+use gpui::{AnyElement, App, BoxShadow, ClickEvent, Context, Div, KeyDownEvent, Pixels, SharedString, Stateful, Window, div, point, prelude::*, px};
 use theme::ActiveTheme as _;
 
 use crate::banner;
 use crate::button;
+use crate::form;
 use crate::hit::{HitTargets, hit_target};
 use crate::themes;
 
@@ -89,10 +90,6 @@ impl<A> Confirm<A> {
         cx: &mut Context<V>,
     ) -> Div {
         let status = cx.theme().status().clone();
-        let (on_yes, on_alt) = (on_answer.clone(), on_answer.clone());
-        let default = self.default_answer();
-        let fill = |answer| if answer == default { button::Fill::Solid } else { button::Fill::Outline };
-        let tone = |danger: bool| if danger { button::Tone::Danger } else { button::Tone::Neutral };
         div()
             .flex()
             .flex_col()
@@ -104,34 +101,7 @@ impl<A> Confirm<A> {
             .bg(banner::tint(status.warning))
             .text_sm()
             .child(SharedString::from(self.text.clone()))
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .justify_end()
-                    .child(button::action(hits, format!("{key}-yes"), self.yes.clone(), tone(self.danger), fill(Answer::Yes), cx).on_click(cx.listener(
-                        move |this, _: &ClickEvent, window, cx| {
-                            cx.stop_propagation();
-                            on_yes(this, Answer::Yes, window, cx);
-                        },
-                    )))
-                    .when_some(self.alt.as_ref(), |d, (words, _)| {
-                        d.child(button::action(hits, format!("{key}-alt"), words.clone(), tone(self.alt_danger), fill(Answer::Alt), cx).on_click(cx.listener(
-                            move |this, _: &ClickEvent, window, cx| {
-                                cx.stop_propagation();
-                                on_alt(this, Answer::Alt, window, cx);
-                            },
-                        )))
-                    })
-                    .when(self.action.is_some(), |d| {
-                        d.child(button::action(hits, format!("{key}-cancel"), "Cancel", button::Tone::Neutral, fill(Answer::No), cx).on_click(cx.listener(
-                            move |this, _: &ClickEvent, window, cx| {
-                                cx.stop_propagation();
-                                on_answer(this, Answer::No, window, cx);
-                            },
-                        )))
-                    }),
-            )
+            .child(div().flex().flex_wrap().gap_3().justify_end().children(self.answers(hits, key, button::Tone::Neutral, on_answer, cx)))
     }
 
     /// [`Confirm::render`] as a [`band`]; Enter takes [`Confirm::default_answer`], Esc cancels, while it holds the owner's focus.
@@ -154,17 +124,7 @@ impl<A> Confirm<A> {
         cx: &mut Context<V>,
     ) -> Div {
         let (default, escape) = (self.default_answer(), if self.action.is_some() { Answer::No } else { Answer::Yes });
-        let look = |danger: bool, answer: Answer| {
-            let tone = if danger { button::Tone::Danger } else if answer == Answer::No { button::Tone::Neutral } else { button::Tone::Success };
-            (tone, if answer == default { button::Fill::Solid } else { button::Fill::Outline })
-        };
-        let mut items = vec![answer_button(hits, format!("{key}-yes"), self.yes.clone(), look(self.danger, Answer::Yes), Answer::Yes, on_answer.clone(), cx)];
-        if let Some((words, _)) = &self.alt {
-            items.push(answer_button(hits, format!("{key}-alt"), words.clone(), look(self.alt_danger, Answer::Alt), Answer::Alt, on_answer.clone(), cx));
-        }
-        if self.action.is_some() {
-            items.push(answer_button(hits, format!("{key}-cancel"), "Cancel".into(), look(false, Answer::No), Answer::No, on_answer.clone(), cx));
-        }
+        let items = self.answers(hits, key, button::Tone::Success, on_answer.clone(), cx).into_iter().map(IntoElement::into_any_element);
         band(hits, key, SharedString::from(self.text.clone()), items, cx).on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
             let answer = match e.keystroke.key.as_str() {
                 "enter" => default,
@@ -175,23 +135,47 @@ impl<A> Confirm<A> {
             on_answer(this, answer, window, cx);
         }))
     }
+
+    /// The yes in `yes_tone` (Danger when it destroys), the alt, then Cancel: each an [`answer`], the default one ringed.
+    fn answers<V: 'static>(
+        &self,
+        hits: &HitTargets,
+        key: &str,
+        yes_tone: button::Tone,
+        on_answer: impl Fn(&mut V, Answer, &mut Window, &mut Context<V>) + Clone + 'static,
+        cx: &mut Context<V>,
+    ) -> Vec<Stateful<Div>> {
+        let default = self.default_answer();
+        let tone = |danger: bool| if danger { button::Tone::Danger } else { yes_tone };
+        let mut asked = vec![(format!("{key}-yes"), self.yes.clone(), tone(self.danger), Answer::Yes)];
+        if let Some((words, _)) = &self.alt {
+            asked.push((format!("{key}-alt"), words.clone(), tone(self.alt_danger), Answer::Alt));
+        }
+        if self.action.is_some() {
+            asked.push((format!("{key}-cancel"), "Cancel".into(), button::Tone::Neutral, Answer::No));
+        }
+        asked
+            .into_iter()
+            .map(|(key, words, tone, answer)| {
+                let on_answer = on_answer.clone();
+                self::answer(hits, key, words, tone, answer == default, cx)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        cx.stop_propagation();
+                        on_answer(this, answer, window, cx);
+                    }))
+            })
+            .collect()
+    }
 }
 
-fn answer_button<V: 'static>(
-    hits: &HitTargets,
-    key: String,
-    words: String,
-    (tone, fill): (button::Tone, button::Fill),
-    answer: Answer,
-    on_answer: impl Fn(&mut V, Answer, &mut Window, &mut Context<V>) + 'static,
-    cx: &mut Context<V>,
-) -> AnyElement {
-    button::action(hits, key, words, tone, fill, cx)
-        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-            cx.stop_propagation();
-            on_answer(this, answer, window, cx);
-        }))
-        .into_any_element()
+/// How far the default answer's ring stands out of its button.
+pub const RING: Pixels = px(2.);
+
+/// Every answer of a question (a box's, a band's): `button::action` Solid at `form::BUTTON_HEIGHT` in the message's
+/// text size; the `default` one, Enter's, ringed in the theme's text colour, which reads on the band and the box.
+pub fn answer(hits: &HitTargets, key: impl Into<SharedString>, words: impl Into<SharedString>, tone: button::Tone, default: bool, cx: &App) -> Stateful<Div> {
+    let ring = BoxShadow { color: cx.theme().colors().text, offset: point(px(0.), px(0.)), blur_radius: px(0.), spread_radius: RING, inset: false };
+    form::sized(button::action(hits, key, words, tone, button::Fill::Solid, cx)).text_sm().when(default, |b| b.shadow(vec![ring]))
 }
 
 /// A prompt band on the [`themes::attention`] fill: `message`, then `items` (fields, then answers) centred in a [`ROW`]; paints `<key>-band` and `<key>-text`.
@@ -223,6 +207,7 @@ mod tests {
     use gpui::{Bounds, FocusHandle, TestAppContext, VisualTestContext};
 
     use super::*;
+    use crate::ink;
 
     struct Asking {
         hits: HitTargets,
@@ -231,10 +216,27 @@ mod tests {
         focus: FocusHandle,
         width: Pixels,
         cover: Option<Pixels>,
+        boxed: bool,
+        painted: Vec<(Option<gpui::Hsla>, bool)>,
+        sizes: Vec<Option<gpui::AbsoluteLength>>,
     }
 
     impl Render for Asking {
         fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let probe = HitTargets::default();
+            let mut answers = self.confirm.answers(&probe, "probe", button::Tone::Success, |_: &mut Asking, _, _, _| {}, cx);
+            self.sizes = answers.iter_mut().map(|b| b.style().text.font_size).collect();
+            self.painted = answers.iter_mut().map(|b| {
+                let style = b.style();
+                (style.background.as_ref().and_then(|f| f.color()).and_then(|c| c.as_solid()), style.box_shadow.as_ref().is_some_and(|s| !s.is_empty()))
+            }).collect();
+            if self.boxed {
+                let boxed = self.confirm.render_answer(&self.hits, "ask", |this: &mut Asking, answer, _, cx| {
+                    this.answers.push(answer);
+                    cx.notify();
+                }, cx);
+                return div().relative().w(self.width).child(boxed.child(hit_target(&self.hits, "ask-box".into())));
+            }
             let band = self.confirm.render_band_answer(&self.hits, "ask", |this: &mut Asking, answer, _, cx| {
                 this.answers.push(answer);
                 cx.notify();
@@ -250,7 +252,7 @@ mod tests {
 
     fn open(confirm: Confirm<u8>, width: f32, cx: &mut TestAppContext) -> (gpui::Entity<Asking>, &mut VisualTestContext) {
         cx.update(|cx| crate::init_globals(cx, "test"));
-        let (view, cx) = cx.add_window_view(|_, cx| Asking { hits: HitTargets::default(), confirm, answers: Vec::new(), focus: cx.focus_handle(), width: px(width), cover: None });
+        let (view, cx) = cx.add_window_view(|_, cx| Asking { hits: HitTargets::default(), confirm, answers: Vec::new(), focus: cx.focus_handle(), width: px(width), cover: None, boxed: false, painted: Vec::new(), sizes: Vec::new() });
         cx.run_until_parked();
         (view, cx)
     }
@@ -269,13 +271,49 @@ mod tests {
         let band = at(&view, "ask-band", cx);
         assert_eq!((band.origin.x, band.size.width), (px(0.), px(1000.)), "full width");
         let [text, yes, alt, cancel] = ["ask-text", "ask-yes", "ask-alt", "ask-cancel"].map(|k| at(&view, k, cx));
+        let below = letters_below(cx);
+        let sizes = view.read_with(cx, |v, _| v.sizes.clone());
+        assert_eq!(sizes, [Some(gpui::rems(0.875).into()); 3], "the answers in the message's text size, so one offset puts both's letters");
         for (b, k) in [(yes, "yes"), (alt, "alt"), (cancel, "cancel")] {
-            assert!((b.center().y - text.center().y).abs() < px(1.), "{k} on the text's line");
+            assert!(ink::level(b.center().y + below, text.center().y + below), "{k}'s letters on the text's: {b:?} by {text:?}");
         }
         assert!(text.right() <= yes.left() && yes.right() < alt.left() && alt.right() < cancel.left(), "the text, the yes, the alt, Cancel");
         let (left, right) = (text.left() - band.left(), band.right() - cancel.right());
         assert!((left - right).abs() < px(24.), "centred as one group: {left:?} left, {right:?} right");
         assert_eq!(band.size.height, ROW, "one row");
+    }
+
+    fn letters_below(cx: &mut VisualTestContext) -> Pixels {
+        cx.update(|window, _| {
+            let mut style = window.text_style();
+            style.font_size = gpui::rems(0.875).into();
+            ink::offset(&style, window)
+        })
+    }
+
+    fn painted(view: &gpui::Entity<Asking>, cx: &mut VisualTestContext) -> Vec<(Option<gpui::Hsla>, bool)> {
+        view.read_with(cx, |v, _| v.painted.clone())
+    }
+
+    #[gpui::test]
+    fn every_answer_of_a_question_paints_the_same_fill_at_the_forms_button_height_and_only_the_default_is_ringed(cx: &mut TestAppContext) {
+        let (view, cx) = open(Confirm::ask("Stash 2 files?", "Stash", 1).or("Stash staged", 2), 1000., cx);
+        let [success, neutral, danger] = cx.update(|_, cx| [button::Tone::Success, button::Tone::Neutral, button::Tone::Danger].map(|tone| button::look(tone, button::Fill::Solid, cx).fill));
+        assert_eq!(painted(&view, cx), [(Some(success), true), (Some(success), false), (Some(neutral), false)], "all Solid, the yes ringed");
+        swap(&view, deleting(), cx);
+        assert_eq!(painted(&view, cx), [(Some(danger), false), (Some(success), false), (Some(neutral), true)], "all Solid, Cancel ringed as Enter's");
+        swap(&view, Confirm::ask("Delete the tag v1?", "Delete", 1).danger(), cx);
+        assert_eq!(painted(&view, cx), [(Some(danger), false), (Some(neutral), true)], "a two-answer question");
+        for boxed in [false, true] {
+            view.update(cx, |v, cx| {
+                v.boxed = boxed;
+                cx.notify();
+            });
+            cx.run_until_parked();
+            for k in ["ask-yes", "ask-cancel"] {
+                assert_eq!(at(&view, k, cx).size.height + px(2.), form::BUTTON_HEIGHT, "{k} and its border at the form's button height (boxed {boxed})");
+            }
+        }
     }
 
     #[gpui::test]
