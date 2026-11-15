@@ -212,7 +212,7 @@ pub struct Tree {
     /// The runs of schedules whose folder has no row ([`Tree::schedule_row`]), shown under Other schedules.
     pub unrowed: Option<EntryNode>,
     pub hidden_stopped: usize,
-    pub(crate) schedule_rows: HashMap<String, (usize, usize)>,
+    pub(crate) schedule_rows: BTreeMap<String, (usize, usize)>,
 }
 
 impl Tree {
@@ -435,8 +435,8 @@ pub fn build(entries: &Entries, sessions: &[Session], now_ms: i64, show_stopped:
 }
 
 /// The one rule of where a folder's schedules show: by folder key, the first row of that path, excluded rows aside.
-fn schedule_rows(nodes: &[EntryNode]) -> HashMap<String, (usize, usize)> {
-    let mut out = HashMap::new();
+fn schedule_rows(nodes: &[EntryNode]) -> BTreeMap<String, (usize, usize)> {
+    let mut out = BTreeMap::new();
     for (e, node) in nodes.iter().enumerate() {
         for (f, folder) in node.folders.iter().enumerate().filter(|(_, f)| !f.excluded) {
             out.entry(supraman_core::schedule::folder_key(&folder.path)).or_insert((e, f));
