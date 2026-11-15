@@ -309,6 +309,8 @@ async fn removed(view: &Entity<FleetView>, fake: &FakeRegistrar, home: &Path, di
     }
     let (kk, gk) = (schedule::folder_key(&keep), schedule::folder_key(&gone));
     let task = format!(r"{}\{gk}\goes", schedule::task_root(home));
+    let rows = [format!("sched-row-{kk}/kept"), format!("sched-row-{gk}/goes")];
+    until(view, cx, WITHIN, "both schedules under their folders' rows", |v| rows.iter().all(|r| painted(v, r)).then_some(())).await?;
     double_click(view, &format!("sched-row-{gk}/goes"), cx).await?;
     let approve = format!("sched-page-approve-{gk}/goes");
     crate::selftest::scrolled_into_view(view, &approve, cx).await?;
