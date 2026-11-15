@@ -48,7 +48,7 @@ pub fn holding<'a>(cwd: &Path, entries: &'a Entries, shown: &Shown, main_of: imp
     let keys: Vec<String> = placed.iter().map(|p| path_key(p)).collect();
     let key = folder_key(cwd, &keys, main_of)?;
     let folder = placed[keys.iter().position(|k| *k == key)?].to_path_buf();
-    let shows = |f: &FolderEntry| f.show_subfolders && shown.get(&path_key(&f.path)).is_some_and(|c| c.iter().any(|c| path_key(c) == key));
+    let shows = |f: &FolderEntry| f.children(shown).any(|c| path_key(c) == key);
     let listed = entries.folders().find(|f| path_key(&f.path) == key).or_else(|| entries.folders().find(|f| shows(f)))?;
     Some(Holding { folder, listed })
 }

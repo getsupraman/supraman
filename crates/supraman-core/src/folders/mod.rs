@@ -33,11 +33,14 @@ pub struct FolderEntry {
     pub path: PathBuf,
     #[serde(default, skip_serializing_if = "is_false")]
     pub show_subfolders: bool,
+    /// Shown children left out: their sessions show under this folder; kept while sub folders are hidden.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub excluded: Vec<PathBuf>,
 }
 
 impl FolderEntry {
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into(), show_subfolders: false }
+        Self { path: path.into(), show_subfolders: false, excluded: Vec::new() }
     }
 }
 
@@ -76,6 +79,8 @@ struct Stored {
     path: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "is_false")]
     show_subfolders: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    excluded: Vec<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     group: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -87,7 +92,7 @@ impl TryFrom<Stored> for Entry {
 
     fn try_from(s: Stored) -> std::result::Result<Self, String> {
         match (s.path, s.group) {
-            (Some(path), None) if s.folders.is_none() => Ok(Entry::Folder(FolderEntry { path, show_subfolders: s.show_subfolders })),
+            (Some(path), None) if s.folders.is_none() => Ok(Entry::Folder(FolderEntry { path, show_subfolders: s.show_subfolders, excluded: s.excluded })),
             (None, Some(name)) => Ok(Entry::Group { name, folders: s.folders.unwrap_or_default() }),
             _ => Err("an entry is a folder (`path`) or a group (`group` with its `folders`)".into()),
         }
@@ -97,8 +102,8 @@ impl TryFrom<Stored> for Entry {
 impl From<Entry> for Stored {
     fn from(e: Entry) -> Self {
         match e {
-            Entry::Folder(f) => Stored { path: Some(f.path), show_subfolders: f.show_subfolders, group: None, folders: None },
-            Entry::Group { name, folders } => Stored { path: None, show_subfolders: false, group: Some(name), folders: Some(folders) },
+            Entry::Folder(f) => Stored { path: Some(f.path), show_subfolders: f.show_subfolders, excluded: f.excluded, group: None, folders: None },
+            Entry::Group { name, folders } => Stored { path: None, show_subfolders: false, excluded: Vec::new(), group: Some(name), folders: Some(folders) },
         }
     }
 }

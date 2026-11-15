@@ -16,6 +16,8 @@ pub enum CoreError {
     FolderListed(PathBuf),
     #[error("not a directory: {}", .0.display())]
     NotADirectory(PathBuf),
+    #[error("{} is no sub folder of {}", child.display(), parent.display())]
+    NotAChild { child: PathBuf, parent: PathBuf },
     #[error("{folder} has no schedule '{id}'")]
     NoSchedule { folder: String, id: String },
     #[error("schedule '{id}': {why}")]
@@ -63,6 +65,7 @@ impl CoreError {
                 | Self::NoEntry(_)
                 | Self::FolderListed(_)
                 | Self::NotADirectory(_)
+                | Self::NotAChild { .. }
                 | Self::NoSchedule { .. }
                 | Self::InvalidSchedule { .. }
                 | Self::NoPrompt(_)

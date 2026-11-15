@@ -40,6 +40,14 @@ pub struct FolderNode {
     /// A shown child's: the key of the folder row it shows under.
     pub parent: Option<String>,
     pub shows_subfolders: bool,
+    /// A shown child its parent excludes: its row only with the stopped sessions shown, and no sessions.
+    pub excluded: bool,
+}
+
+impl FolderNode {
+    pub fn bare(key: String, name: String, path: PathBuf, kind: FolderKind, branch: Option<String>) -> Self {
+        FolderNode { key, name, path, kind, branch, sessions: Vec::new(), more: 0, scheduled: BTreeMap::new(), pos: None, parent: None, shows_subfolders: false, excluded: false }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -184,7 +192,8 @@ pub struct Disk {
 /// Read once per poll off the UI thread.
 pub fn on_disk(entries: &Entries) -> Disk {
     let shown = supraman_core::folders::shown(entries);
-    let kinds = entries.placed(&shown).map(|p| (path_key(p), supraman_core::folders::on_disk(p))).collect();
+    let read = entries.folders().map(|f| f.path.as_path()).chain(shown.values().flatten().map(PathBuf::as_path));
+    let kinds = read.map(|p| (path_key(p), supraman_core::folders::on_disk(p))).collect();
     Disk { kinds, shown }
 }
 
@@ -493,17 +502,25 @@ impl<'a> Build<'a> {
         parent.scheduled = self.runs.remove(&supraman_core::schedule::folder_key(&f.path)).unwrap_or_default();
         parent.pos = Some(pos);
         parent.shows_subfolders = f.show_subfolders;
-        let children: &[PathBuf] = match f.show_subfolders {
-            true => placed.disk.shown.get(&path_key(&f.path)).map_or(&[], Vec::as_slice),
-            false => &[],
-        };
         let mut out = vec![parent];
-        for child in children {
-            let mut node = self.folder(format!("{}/{}", out[0].key, folder_name(child)), child, placed);
+        for child in f.read_children(&placed.disk.shown) {
+            let base = format!("{}/{}", out[0].key, folder_name(child));
+            let mut node = match f.excludes(child) {
+                false => self.folder(base, child, placed),
+                true if self.show_stopped => self.excluded(base, child, placed),
+                true => continue,
+            };
             node.parent = Some(out[0].key.clone());
             out.push(node);
         }
         out
+    }
+
+    /// An excluded child's row, shown only with the stopped sessions: no sessions, they show under its parent.
+    fn excluded(&mut self, base: String, path: &Path, placed: &Placed) -> FolderNode {
+        let key = self.unique_key(base);
+        let OnDisk { kind, branch } = placed.disk.kinds.get(&path_key(path)).cloned().unwrap_or(OnDisk { kind: FolderKind::Plain, branch: None });
+        FolderNode { excluded: true, ..FolderNode::bare(key, folder_name(path), path.to_path_buf(), kind, branch) }
     }
 
     /// A folder's row with the sessions it holds; a path shown before shows them again, its keys scoped.
@@ -517,25 +534,13 @@ impl<'a> Build<'a> {
             sessions.iter_mut().for_each(|r| r.scope = format!("@{key}"));
         }
         let OnDisk { kind, branch } = placed.disk.kinds.get(&at).cloned().unwrap_or(OnDisk { kind: FolderKind::Plain, branch: None });
-        FolderNode { key, name, path: path.to_path_buf(), kind, branch, sessions, more, scheduled: BTreeMap::new(), pos: None, parent: None, shows_subfolders: false }
+        FolderNode { sessions, more, ..FolderNode::bare(key, name, path.to_path_buf(), kind, branch) }
     }
 
     /// Other sessions' node, its rows placed as a folder's; `None` while none shows.
     fn unlisted(&mut self, open: Vec<Session>, closed: Vec<Session>) -> Option<EntryNode> {
         let (sessions, more) = self.place(UNLISTED, open, closed);
-        let folder = FolderNode {
-            key: UNLISTED.into(),
-            name: UNLISTED_TITLE.into(),
-            path: PathBuf::new(),
-            kind: FolderKind::Plain,
-            branch: None,
-            sessions,
-            more,
-            scheduled: BTreeMap::new(),
-            pos: None,
-            parent: None,
-            shows_subfolders: false,
-        };
+        let folder = FolderNode { sessions, more, ..FolderNode::bare(UNLISTED.into(), UNLISTED_TITLE.into(), PathBuf::new(), FolderKind::Plain, None) };
         (!folder.sessions.is_empty() || more > 0).then(|| EntryNode { name: UNLISTED.into(), group: false, folders: vec![folder] })
     }
 

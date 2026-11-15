@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::paths::path_key;
 
-use super::Entries;
+use super::{Entries, FolderEntry};
 
 /// The direct child folders shown under each listed folder that shows them, by the parent's [`path_key`].
 pub type Shown = BTreeMap<String, Vec<PathBuf>>;
@@ -35,11 +35,31 @@ pub fn shown(entries: &Entries) -> Shown {
     entries.folders().filter(|f| f.show_subfolders).map(|f| (path_key(&f.path), subfolders(&f.path))).collect()
 }
 
+impl FolderEntry {
+    /// Whether this folder leaves its child folder `child` out.
+    pub fn excludes(&self, child: &Path) -> bool {
+        let key = path_key(child);
+        self.excluded.iter().any(|p| path_key(p) == key)
+    }
+
+    /// Its shown children, excluded ones too; none while it does not show them.
+    pub fn read_children<'a>(&self, shown: &'a Shown) -> &'a [PathBuf] {
+        match self.show_subfolders {
+            true => shown.get(&path_key(&self.path)).map_or(&[], Vec::as_slice),
+            false => &[],
+        }
+    }
+
+    /// Its shown children but the excluded: the ones that hold sessions.
+    pub fn children<'a>(&'a self, shown: &'a Shown) -> impl Iterator<Item = &'a Path> {
+        self.read_children(shown).iter().map(PathBuf::as_path).filter(|c| !self.excludes(c))
+    }
+}
+
 impl Entries {
-    /// Every folder placement weighs: the listed ones, then the shown children of each that shows them.
+    /// Every folder placement weighs: the listed ones, then the shown, not excluded, children of each.
     pub fn placed<'a>(&'a self, shown: &'a Shown) -> impl Iterator<Item = &'a Path> {
-        let children = self.folders().filter(|f| f.show_subfolders).flat_map(move |f| shown.get(&path_key(&f.path)).into_iter().flatten().map(PathBuf::as_path));
-        self.folders().map(|f| f.path.as_path()).chain(children)
+        self.folders().map(|f| f.path.as_path()).chain(self.folders().flat_map(|f| f.children(shown)))
     }
 
     /// The folders that show their sub folders, each once.

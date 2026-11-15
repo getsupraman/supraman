@@ -93,14 +93,31 @@ impl Entries {
         }
     }
 
+    fn folder_mut(&mut self, pos: Pos) -> Result<&mut FolderEntry> {
+        match (self.list.get_mut(pos.entry), pos.folder) {
+            (Some(Entry::Folder(f)), None) => Ok(f),
+            (Some(Entry::Group { folders, .. }), Some(i)) if i < folders.len() => Ok(&mut folders[i]),
+            _ => Err(CoreError::NoEntry(format!("{pos:?}"))),
+        }
+    }
+
     /// Whether the folder at `pos` shows its direct child folders.
     pub fn set_show_subfolders(&mut self, pos: Pos, show: bool) -> Result<()> {
-        let f = match (self.list.get_mut(pos.entry), pos.folder) {
-            (Some(Entry::Folder(f)), None) => f,
-            (Some(Entry::Group { folders, .. }), Some(i)) if i < folders.len() => &mut folders[i],
-            _ => return Err(CoreError::NoEntry(format!("{pos:?}"))),
-        };
-        f.show_subfolders = show;
+        self.folder_mut(pos)?.show_subfolders = show;
+        Ok(())
+    }
+
+    /// Whether the folder at `pos` leaves its direct child folder `child` out; refused for any other path.
+    pub fn set_excluded(&mut self, pos: Pos, child: &Path, excluded: bool) -> Result<()> {
+        let f = self.folder_mut(pos)?;
+        if child.parent().is_none_or(|p| path_key(p) != path_key(&f.path)) {
+            return Err(CoreError::NotAChild { child: child.to_path_buf(), parent: f.path.clone() });
+        }
+        match (excluded, f.excludes(child)) {
+            (true, false) => f.excluded.push(child.to_path_buf()),
+            (false, true) => f.excluded.retain(|p| path_key(p) != path_key(child)),
+            _ => {}
+        }
         Ok(())
     }
 

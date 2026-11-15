@@ -189,3 +189,25 @@ fn holding_answers_the_shown_child_and_its_listed_parent_by_the_placement_rule()
         assert_eq!(by_holding, by_place, "one rule for {}", s.cwd.display());
     }
 }
+
+#[test]
+fn a_session_in_an_excluded_child_places_under_its_parent_and_holding_names_the_parent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let larch = tmp.path().join("LarchSys");
+    let (gaia, web) = (larch.join("gaia"), larch.join("web"));
+    fs::create_dir_all(gaia.join("src")).unwrap();
+    fs::create_dir_all(&web).unwrap();
+    let mut parent = FolderEntry::new(&larch);
+    parent.show_subfolders = true;
+    parent.excluded = vec![gaia.clone()];
+    let entries = Entries::new(vec![Entry::Folder(parent)]);
+    let shown = Shown::from([(path_key(&larch), supraman_core::folders::subfolders(&larch))]);
+    let sessions = vec![session("g1", &gaia.join("src")), session("w1", &web)];
+    let placed = place_with(&sessions, &entries, &shown, |_| None);
+    let ids = |dir: &Path| placed.by_folder.get(&path_key(dir)).map(|v| v.iter().map(|s| s.id.as_str()).collect::<Vec<_>>()).unwrap_or_default();
+    assert_eq!(ids(&larch), ["g1"], "the excluded gaia's session shows under its parent");
+    assert!(ids(&gaia).is_empty());
+    assert_eq!(ids(&web), ["w1"], "a child not excluded keeps its own");
+    let h = holding(&gaia.join("src"), &entries, &shown, |_| None).unwrap();
+    assert_eq!((folder_name(&h.folder), folder_name(&h.listed.path)), ("LarchSys".to_string(), "LarchSys".to_string()));
+}
