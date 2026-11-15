@@ -376,6 +376,7 @@ async fn schedules_anywhere(view: &Entity<FleetView>, infra: &Path, out: &Path, 
         (v.shown(&under) && v.shown(&format!("sched-row-{}/plan", key(&terraform))) && v.shown("other-schedules-row") && v.shown(&apart)).then_some(())
     })
     .await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "Show sub folders' toast gone", |v| v.toast.text().is_none().then_some(())).await?;
     crate::selftest::drawn(cx).await?;
     let shot = capture(out.join("supraman-schedules-anywhere.png"), None, cx).await?;
     println!("shot: {}", shot.display());
