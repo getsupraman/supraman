@@ -152,7 +152,7 @@ impl FleetView {
     pub(in crate::view) fn render_remove_question(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let q = self.dialogs.remove.as_ref()?;
         let muted = supraman_ui::themes::secondary(cx.theme().colors());
-        let tick = button::focusable_checkbox(&self.hits, format!("{KEY}-tick"), q.delete, &q.tick, cx.listener(|this, _: &Press, _, cx| this.toggle_remove_tick(cx)), cx).on_click(cx.listener(Self::clicked_remove_tick));
+        let tick = button::focusable_checkbox(&self.hits, format!("{KEY}-tick"), q.delete, &q.tick, cx.listener(|this, _: &Press, _, cx| this.toggle_remove_tick(cx)), cx);
         let label = text::count(q.schedules.len(), "scheduled task", "scheduled tasks");
         let body = div()
             .flex()
