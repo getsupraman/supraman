@@ -436,7 +436,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     out.push(groups(view, &root, &home, cx).await?);
     out.push(crate::selftest_folders::drags(view, &root, FOLDER, &home, cx).await?);
     out.push(crate::selftest_folders::room_menu(view, cx).await?);
-    out.push(crate::selftest_folders::subfolders(view, &root, FOLDER, cx).await?);
+    out.push(crate::selftest_folders::subfolders(view, &root, FOLDER, &home, cx).await?);
 
     out.push(row_details(view, own, &root, cx).await?);
 

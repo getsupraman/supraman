@@ -344,10 +344,32 @@ async fn subfolders(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowCo
     crate::selftest::drawn(cx).await?;
     let shot = capture(out.join("supraman-subfolders.png"), None, cx).await?;
     println!("shot: {}", shot.display());
+    excluded(view, pos, &infra.join("scripts"), out, cx).await?;
     run(false, cx)?;
     view.read_with(cx, |v, _| v.polls.injected.lock().unwrap_or_else(|e| e.into_inner()).retain(|s| s.session_id != session_id));
     view.update(cx, |v, _| v.polls.poll_nudge.wake());
     crate::selftest::until(view, cx, Duration::from_secs(15), "infra's sub folders hidden", |v| (!v.hits.borrow().contains_key("repo-row-infra/terraform")).then_some(())).await?;
+    Ok(())
+}
+
+/// infra's scripts excluded and the stopped sessions shown: its row translucent among infra's sub folders; then included.
+async fn excluded(view: &Entity<FleetView>, parent: supraman_core::folders::Pos, child: &Path, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let run = |action: crate::view::MenuAction, cx: &mut AsyncWindowContext| cx.update(|window, cx| view.update(cx, |v, cx| v.run_action(action, window, cx)));
+    let shown = view.update(cx, |v, cx| {
+        cx.notify();
+        std::mem::replace(&mut v.show_stopped, true)
+    });
+    run(crate::view::MenuAction::ExcludeFolder { parent, path: child.to_path_buf() }, cx)?;
+    crate::selftest::until(view, cx, Duration::from_secs(15), "infra's scripts translucent", |v| v.hits.borrow().contains_key("excluded-row-infra/scripts").then_some(())).await?;
+    crate::selftest::drawn(cx).await?;
+    let shot = capture(out.join("supraman-subfolders-excluded.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    run(crate::view::MenuAction::IncludeFolder { parent, path: child.to_path_buf() }, cx)?;
+    crate::selftest::until(view, cx, Duration::from_secs(15), "infra's scripts included", |v| v.hits.borrow().contains_key("repo-row-infra/scripts").then_some(())).await?;
+    view.update(cx, |v, cx| {
+        v.show_stopped = shown;
+        cx.notify();
+    });
     Ok(())
 }
 

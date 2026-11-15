@@ -153,7 +153,7 @@ impl FleetView {
             tab @ (MenuAction::OpenGit(_) | MenuAction::OpenWorkman { .. } | MenuAction::CloseTab(_) | MenuAction::CloseOtherTabs(_) | MenuAction::CloseTabsRight(_) | MenuAction::ReopenClosed) => {
                 self.run_tab_action(tab, cx);
             }
-            folders @ (MenuAction::AddFolder(_) | MenuAction::AddGroup | MenuAction::RenameGroup(_) | MenuAction::RemoveFolder { .. } | MenuAction::RemoveGroup(_) | MenuAction::ShowSubfolders { .. }) => {
+            folders @ (MenuAction::AddFolder(_) | MenuAction::AddGroup | MenuAction::RenameGroup(_) | MenuAction::RemoveFolder { .. } | MenuAction::RemoveGroup(_) | MenuAction::ShowSubfolders { .. } | MenuAction::ExcludeFolder { .. } | MenuAction::IncludeFolder { .. }) => {
                 self.run_folder_action(folders, window, cx);
             }
         }

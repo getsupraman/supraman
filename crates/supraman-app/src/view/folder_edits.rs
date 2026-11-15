@@ -1,5 +1,5 @@
 //! The sidebar's edits of folders.toml: Add Folder, Add Group, Rename, Remove Folder, Remove Group, a folder dropped
-//! or group dropped elsewhere and Show/Hide sub folders, each written off the UI thread.
+//! or group dropped elsewhere, Show/Hide sub folders and Exclude/Include a shown sub folder, each written off the UI thread.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -35,6 +35,9 @@ pub enum FolderEdit {
     ShowSubfolders { pos: Pos, path: PathBuf, show: bool },
     /// The group moved to `to` among the top-level entries ([`group_landing`]).
     MoveGroup { name: String, to: usize },
+    /// The shown sub folder `path` left out by the folder at `parent`, while that folder still holds it.
+    ExcludeFolder { parent: Pos, path: PathBuf },
+    IncludeFolder { parent: Pos, path: PathBuf },
 }
 
 impl FolderEdit {
@@ -95,6 +98,14 @@ impl FolderEdit {
                 entries.move_group(name, *to)?;
                 Ok(format!("Moved group {name}."))
             }
+            FolderEdit::ExcludeFolder { parent, path } => {
+                entries.set_excluded(*parent, path, true)?;
+                Ok(format!("Excluded {}.", folder_name(path)))
+            }
+            FolderEdit::IncludeFolder { parent, path } => {
+                entries.set_excluded(*parent, path, false)?;
+                Ok(format!("Included {}.", folder_name(path)))
+            }
         }
     }
 
@@ -109,6 +120,8 @@ impl FolderEdit {
             FolderEdit::MoveFolder { path, .. } => format!("Cannot move {}", folder_name(path)),
             FolderEdit::ShowSubfolders { path, show, .. } => format!("Cannot {} the sub folders of {}", if *show { "show" } else { "hide" }, folder_name(path)),
             FolderEdit::MoveGroup { name, .. } => format!("Cannot move group {name}"),
+            FolderEdit::ExcludeFolder { path, .. } => format!("Cannot exclude {}", folder_name(path)),
+            FolderEdit::IncludeFolder { path, .. } => format!("Cannot include {}", folder_name(path)),
         }
     }
 
@@ -120,7 +133,7 @@ impl FolderEdit {
             FolderEdit::AddGroup(name) | FolderEdit::RenameGroup { to: name, .. } | FolderEdit::MoveGroup { name, .. } => Some(format!("group:{name}")),
             FolderEdit::MoveFolder { path, to: Place::Top(_), .. } => Some(format!("repo:{}", folder_name(path))),
             FolderEdit::MoveFolder { path, to: Place::Group { name, .. }, .. } => Some(format!("repo:{name}/{}", folder_name(path))),
-            FolderEdit::RemoveFolder { .. } | FolderEdit::RemoveGroup { .. } | FolderEdit::ShowSubfolders { .. } => None,
+            FolderEdit::RemoveFolder { .. } | FolderEdit::RemoveGroup { .. } | FolderEdit::ShowSubfolders { .. } | FolderEdit::ExcludeFolder { .. } | FolderEdit::IncludeFolder { .. } => None,
         }
     }
 }
@@ -225,6 +238,8 @@ impl FleetView {
             MenuAction::RemoveFolder { pos, path } => self.edit_folders(FolderEdit::RemoveFolder { pos, path }, cx),
             MenuAction::RemoveGroup(name) => self.ask_remove_group(name),
             MenuAction::ShowSubfolders { pos, path, show } => self.edit_folders(FolderEdit::ShowSubfolders { pos, path, show }, cx),
+            MenuAction::ExcludeFolder { parent, path } => self.edit_folders(FolderEdit::ExcludeFolder { parent, path }, cx),
+            MenuAction::IncludeFolder { parent, path } => self.edit_folders(FolderEdit::IncludeFolder { parent, path }, cx),
             _ => {}
         }
     }

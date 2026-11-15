@@ -221,3 +221,58 @@ fn show_subfolders_is_set_by_position_and_shown_children_join_the_placed_folders
     e.move_folder(Pos::member(1, 0), &Place::Top(0)).unwrap();
     assert!(e.folder_at(Pos::top(0)).unwrap().show_subfolders, "a move keeps the flag");
 }
+
+#[test]
+fn a_shown_child_is_excluded_and_included_by_its_parents_position_once_and_only_a_direct_child() {
+    let mut e = sample();
+    let web = PathBuf::from(r"C:\g\web");
+    e.set_excluded(Pos::member(1, 0), &web, true).unwrap();
+    e.set_excluded(Pos::member(1, 0), Path::new(r"c:/G/WEB"), true).unwrap();
+    assert_eq!(e.folder_at(Pos::member(1, 0)).unwrap().excluded, [web.clone()], "idempotent, by path_key");
+    assert!(e.folder_at(Pos::member(1, 0)).unwrap().excludes(Path::new(r"c:\g\Web")));
+    for not_child in [r"C:\g\web\deep", r"C:\a\web", r"C:\g"] {
+        assert!(matches!(e.set_excluded(Pos::member(1, 0), Path::new(not_child), true), Err(CoreError::NotAChild { .. })), "{not_child}");
+    }
+    assert!(matches!(e.set_excluded(Pos::top(1), &web, true), Err(CoreError::NoEntry(_))), "a group is no folder");
+    e.set_excluded(Pos::member(1, 0), &web, false).unwrap();
+    e.set_excluded(Pos::member(1, 0), &web, false).unwrap();
+    assert!(e.folder_at(Pos::member(1, 0)).unwrap().excluded.is_empty());
+}
+
+#[test]
+fn excluded_paths_are_saved_only_when_there_are_some_and_kept_while_sub_folders_are_hidden() {
+    let home = tempfile::tempdir().unwrap();
+    let web = PathBuf::from(r"C:\g\web");
+    edit(home.path(), |entries| {
+        *entries = sample();
+        entries.set_show_subfolders(Pos::member(1, 0), true)?;
+        entries.set_excluded(Pos::member(1, 0), &web, true)?;
+        entries.set_show_subfolders(Pos::member(1, 0), false)
+    })
+    .unwrap();
+    let text = std::fs::read_to_string(path(home.path())).unwrap();
+    assert_eq!(text.matches("excluded").count(), 1, "{text}");
+    assert_eq!(load(home.path()).unwrap().folder_at(Pos::member(1, 0)).unwrap().excluded, [web.clone()], "hiding sub folders keeps it");
+    edit(home.path(), |entries| entries.set_excluded(Pos::member(1, 0), &web, false)).unwrap();
+    let text = std::fs::read_to_string(path(home.path())).unwrap();
+    assert!(!text.contains("excluded"), "{text}");
+    edit(home.path(), |entries| {
+        entries.set_show_subfolders(Pos::top(0), true)?;
+        entries.set_excluded(Pos::top(0), Path::new(r"C:\a\x"), true)
+    })
+    .unwrap();
+    assert_eq!(load(home.path()).unwrap().folder_at(Pos::top(0)).unwrap().excluded, [PathBuf::from(r"C:\a\x")], "a top-level folder's too");
+}
+
+#[test]
+fn placed_leaves_an_excluded_child_out() {
+    let mut e = sample();
+    e.set_show_subfolders(Pos::member(1, 0), true).unwrap();
+    let (web, docs) = (PathBuf::from(r"C:\g\web"), PathBuf::from(r"C:\g\docs"));
+    let shown = Shown::from([(crate::paths::path_key(Path::new(r"C:\g")), vec![docs.clone(), web.clone()])]);
+    e.set_excluded(Pos::member(1, 0), &web, true).unwrap();
+    let placed: Vec<&Path> = e.placed(&shown).collect();
+    assert_eq!(placed, [Path::new(r"C:\a"), Path::new(r"C:\g"), Path::new(r"C:\g\api"), Path::new(r"C:\b"), docs.as_path()]);
+    let g = e.folder_at(Pos::member(1, 0)).unwrap();
+    assert_eq!(g.read_children(&shown), [docs, web], "the read children keep it for its row");
+}

@@ -404,6 +404,24 @@ fn a_shown_child_is_a_row_after_its_parent_and_takes_the_sessions_below_it() {
 }
 
 #[test]
+fn an_excluded_child_has_a_row_only_with_the_stopped_sessions_shown_and_never_sessions() {
+    let mut larch = FolderEntry::new(r"P:\L");
+    larch.show_subfolders = true;
+    larch.excluded = vec![PathBuf::from(r"P:\L\gaia")];
+    let entries = Entries::new(vec![Entry::Folder(larch)]);
+    let shown = Shown::from([(path_key(Path::new(r"P:\L")), vec![PathBuf::from(r"P:\L\gaia"), PathBuf::from(r"P:\L\zed")])]);
+    let disk = Disk { shown, ..Disk::default() };
+    let list = rows(&[("aaaa0451", "ui", r"P:\L\gaia\src"), ("aaaa0452", "ed", r"P:\L\zed")]);
+    let tree = build(&entries, &list, NOW, false, &TreeInputs { disk: Some(&disk), ..TreeInputs::default() });
+    assert_eq!(folders(&tree), [f("L", &["ui"]), f("L/zed", &["ed"])], "no row for the excluded gaia; its session under L");
+    let tree = build(&entries, &list, NOW, true, &TreeInputs { disk: Some(&disk), ..TreeInputs::default() });
+    assert_eq!(folders(&tree), [f("L", &["ui"]), f("L/gaia", &[]), f("L/zed", &["ed"])], "with the stopped sessions shown: its row, empty");
+    let gaia = &tree.entries[0].folders[1];
+    assert!(gaia.excluded && gaia.parent.as_deref() == Some("L") && gaia.pos.is_none());
+    assert!(!tree.entries[0].folders[2].excluded);
+}
+
+#[test]
 fn a_session_in_a_shown_child_holds_the_child_as_its_folder_and_its_parents_entry() {
     let mut infra = FolderEntry::new(r"P:\ops\infra");
     infra.show_subfolders = true;

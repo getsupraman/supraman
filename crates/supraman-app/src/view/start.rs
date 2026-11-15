@@ -362,7 +362,7 @@ because"), "use postgres");
 
     #[test]
     fn the_folders_are_the_entrys_each_once() {
-        let folder = |key: &str, path: &str| crate::fleet::FolderNode { key: key.into(), name: key.rsplit('/').next().unwrap().into(), path: path.into(), kind: supraman_core::FolderKind::Git, branch: None, sessions: vec![], more: 0, scheduled: Default::default(), pos: Some(supraman_core::folders::Pos::member(0, 0)), parent: None, shows_subfolders: false };
+        let folder = |key: &str, path: &str| crate::fleet::FolderNode { key: key.into(), name: key.rsplit('/').next().unwrap().into(), path: path.into(), kind: supraman_core::FolderKind::Git, branch: None, sessions: vec![], more: 0, scheduled: Default::default(), pos: Some(supraman_core::folders::Pos::member(0, 0)), parent: None, shows_subfolders: false, excluded: false };
         let child = crate::fleet::FolderNode { pos: None, parent: Some("demo/Alpha".into()), ..folder("demo/Alpha/web", "C:/demo/Alpha/web") };
         let entry = EntryNode { name: "demo".into(), group: true, folders: vec![folder("demo/Alpha", "C:/demo/Alpha"), child, folder("demo/Same", "c:/DEMO/alpha")] };
         let names = |chosen: Option<&str>| folders(&entry, chosen.map(std::path::Path::new)).into_iter().map(|(n, _)| n).collect::<Vec<_>>();

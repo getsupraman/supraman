@@ -23,6 +23,7 @@ use crate::fleet::{self, EntryNode, FolderNode, Open, SessionRow};
 
 mod action_bar;
 mod drag;
+mod excluded;
 pub(super) mod group_field;
 pub(super) mod unlisted;
 mod work_cards;
@@ -467,6 +468,9 @@ impl FleetView {
             }
             LeftRow::Folder(e, f) => {
                 let (entry, folder) = (&tree.entries[e], &tree.entries[e].folders[f]);
+                if folder.excluded {
+                    return self.render_excluded_row(entry, folder, cx);
+                }
                 let open = !self.sidebar.collapsed.contains(&format!("repo:{}", folder.key));
                 self.render_folder_row(entry, folder, open, cx)
             }

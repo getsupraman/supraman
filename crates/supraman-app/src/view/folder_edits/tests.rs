@@ -304,6 +304,25 @@ fn a_move_or_show_subfolders_of_a_folder_no_longer_at_its_position_is_refused() 
     assert!(run(home.path(), &FolderEdit::ShowSubfolders { pos: Pos::top(1), path: a, show: true }).unwrap_err().starts_with("Cannot show the sub folders of alpha"));
 }
 
+#[test]
+fn exclude_and_include_write_the_childs_path_while_its_parent_still_holds_it() {
+    let home = tempfile::tempdir().unwrap();
+    let (a, b) = (PathBuf::from(r"C:\demolpha"), PathBuf::from(r"C:\demoeta"));
+    add(home.path(), &a, None).unwrap();
+    let web = a.join("web");
+    assert_eq!(run(home.path(), &FolderEdit::ExcludeFolder { parent: Pos::top(0), path: web.clone() }).unwrap(), "Excluded web.");
+    assert_eq!(folders::load(home.path()).unwrap().folder_at(Pos::top(0)).unwrap().excluded, [web.clone()]);
+    let stale = FolderEdit::IncludeFolder { parent: Pos::top(1), path: web.clone() };
+    assert!(run(home.path(), &stale).unwrap_err().starts_with("Cannot include web"), "no folder there");
+    run(home.path(), &FolderEdit::RemoveFolder { pos: Pos::top(0), path: a.clone() }).unwrap();
+    add(home.path(), &b, None).unwrap();
+    assert!(run(home.path(), &FolderEdit::IncludeFolder { parent: Pos::top(0), path: web.clone() }).unwrap_err().starts_with("Cannot include web"), "beta took alpha's place");
+    add(home.path(), &a, None).unwrap();
+    run(home.path(), &FolderEdit::ExcludeFolder { parent: Pos::top(1), path: web.clone() }).unwrap();
+    assert_eq!(run(home.path(), &FolderEdit::IncludeFolder { parent: Pos::top(1), path: web }).unwrap(), "Included web.");
+    assert!(!std::fs::read_to_string(folders::path(home.path())).unwrap().contains("excluded"));
+}
+
 /// The top-level entries' names (a group's, a folder's path) after the group `name` lands on `target`.
 fn group_after(name: &str, target: Target) -> Vec<String> {
     let mut e = dropping();
