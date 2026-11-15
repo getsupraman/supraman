@@ -157,6 +157,10 @@ pub fn close(window: &Window, cx: &mut App) {
     cx.spawn(async move |cx| {
         #[cfg(windows)]
         if let Some(hwnd) = hwnd {
+            // A modal window's owner, enabled before the window hides, takes the activation back from it.
+            if let Some(owner) = desktop::owner_of(hwnd) {
+                let _ = desktop::set_enabled(owner, true);
+            }
             let _ = desktop::hide_window(hwnd);
             desktop::hand_activation_away(hwnd);
             let started = std::time::Instant::now();

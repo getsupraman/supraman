@@ -7,8 +7,8 @@ use supraman_ui::{banner, button, focus_order};
 use supraman_workman::AuthStatus;
 use supraman_ui::themes::{self, Catalog, TerminalColors};
 use gpui::{
-    AnyElement, App, AppContext as _, Bounds, ClickEvent, Context, Entity, FocusHandle, FontWeight, KeyDownEvent,
-    Pixels, SharedString, Subscription, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowHandle, WindowOptions, div,
+    AnyElement, App, AppContext as _, ClickEvent, Context, Entity, FocusHandle, FontWeight, KeyDownEvent,
+    Pixels, SharedString, Subscription, TitlebarOptions, WeakEntity, Window, WindowHandle, div,
     prelude::*, px, size,
 };
 use theme::ActiveTheme as _;
@@ -105,29 +105,25 @@ fn choose_theme(settings: &mut Settings, name: &str, terminal: TerminalColors) {
     settings.appearance.terminal_colors = terminal.setting();
 }
 
-pub fn open(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Option<&str>, cx: &mut App) -> Option<WindowHandle<SettingsView>> {
-    let bounds = Bounds::centered(None, size(px(760.), px(520.)), cx);
-    cx.open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions {
-                title: Some(SharedString::from("Supraman Settings")),
-                appears_transparent: true,
-                traffic_light_position: None,
-            }),
-            ..Default::default()
-        },
-        |window, cx| {
-            window.on_window_should_close(cx, |window, cx| {
-                crate::tray::close(window, cx);
-                false
-            });
-            let view = cx.new(|cx| SettingsView::new(home, fleet, page, window, cx));
-            let focus = view.read(cx).focus.clone();
-            window.focus(&focus, cx);
-            view
-        },
-    )
+pub fn open(
+    owner: gpui::AnyWindowHandle,
+    home: Option<PathBuf>,
+    fleet: WeakEntity<FleetView>,
+    page: Option<&str>,
+    cx: &mut App,
+) -> Option<WindowHandle<SettingsView>> {
+    let titlebar = TitlebarOptions { title: Some(SharedString::from("Supraman Settings")), appears_transparent: true, traffic_light_position: None };
+    crate::modal::open_over(owner, size(px(760.), px(520.)), titlebar, cx, |window, cx| {
+        window.on_window_should_close(cx, |window, cx| {
+            crate::tray::close(window, cx);
+            false
+        });
+        let view = cx.new(|cx| SettingsView::new(home, fleet, page, window, cx));
+        let focus = view.read(cx).focus.clone();
+        window.focus(&focus, cx);
+        view
+    })
+    .inspect_err(|e| log::warn!("cannot open the settings window: {e:#}"))
     .ok()
 }
 
@@ -480,7 +476,7 @@ impl Render for SettingsView {
             .bg(colors.background)
             .text_color(colors.text)
             .on_key_down(cx.listener(Self::key_down))
-            .child(crate::titlebar::render("Settings", None, &self.hits, window, cx))
+            .child(crate::titlebar::render("Settings", None, false, &self.hits, window, cx))
             .child(div().flex().flex_1().min_h_0().child(nav).child(page))
     }
 }

@@ -6,7 +6,8 @@ use theme::ActiveTheme as _;
 
 pub const HEIGHT: Pixels = px(34.);
 
-pub fn render(title: &'static str, actions: Option<AnyElement>, hits: &HitTargets, window: &Window, cx: &App) -> AnyElement {
+/// `minimizable` false for a modal window, which minimises with its owner.
+pub fn render(title: &'static str, actions: Option<AnyElement>, minimizable: bool, hits: &HitTargets, window: &Window, cx: &App) -> AnyElement {
     let colors = cx.theme().colors();
     div()
         .id("title-bar")
@@ -37,7 +38,7 @@ pub fn render(title: &'static str, actions: Option<AnyElement>, hits: &HitTarget
                 .h_full()
                 .items_center()
                 .children(actions)
-                .child(caption_buttons(hits, window, cx)),
+                .child(caption_buttons(minimizable, hits, window, cx)),
         )
         .into_any_element()
 }
@@ -58,13 +59,13 @@ pub fn icon_button(hits: &HitTargets, key: &'static str, glyph: &'static str, cx
         .child(glyph)
 }
 
-fn caption_buttons(hits: &HitTargets, window: &Window, cx: &App) -> AnyElement {
+fn caption_buttons(minimizable: bool, hits: &HitTargets, window: &Window, cx: &App) -> AnyElement {
     let max = if window.is_maximized() { Caption::Restore } else { Caption::Maximize };
     div()
         .flex()
         .h_full()
         .font_family(fonts::icons())
-        .child(Caption::Minimize.render(hits, cx))
+        .when(minimizable, |d| d.child(Caption::Minimize.render(hits, cx)))
         .child(max.render(hits, cx))
         .child(Caption::Close.render(hits, cx))
         .into_any_element()
