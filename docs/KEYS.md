@@ -22,6 +22,16 @@ paste on Ctrl+V, find on Ctrl+Shift+F, no copy on select, plain-text copy). Code
 | Ctrl+Shift+E | the search box over the tree, its text selected; also from a terminal tab (VS Code's Explorer chord; Ctrl+Shift+F is the terminal's find bar, and a Ctrl+letter belongs to the program in the tab) |
 | F5 | refresh: read the running sessions (`claude agents`) and the closed ones' transcripts now, as the action bar's ↻ does, while no terminal tab is active (no tab, or a Work tab). With a terminal tab active, F5 goes to its program; use ↻ there |
 
+## Dialogs (a question, the schedule Edit)
+
+| Keys | Does |
+|---|---|
+| Tab, Shift+Tab | the next / previous field or button, wrapping; a question opens on its default answer (Cancel when the yes destroys something) |
+| Enter, Space | press the focused button |
+| Esc | Cancel (a report's OK) |
+
+While a dialog shows, nothing behind it takes a key, chord or click: the window's chords, F6 and a terminal's keys wait until it closes, and the focus then goes back where it was.
+
 ## Text inputs (search box, find bar, task box)
 
 One input (`crates/supraman-app/src/text_input.rs`), the keys of a Windows edit box. The task box
