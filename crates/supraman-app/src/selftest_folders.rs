@@ -1,4 +1,5 @@
-//! `--selftest` step 7b's folder rows: one dragged into a group and back out to the top level, the Add menu on a
+//! `--selftest` step 7b's folder rows: one dragged into a group and back out to the top level, the group dragged first
+//! and last, the Add menu on a
 //! right-click below the tree, then its sub folders shown, followed as they come and go, and hidden. A drag needs the window's own mouse dispatch, its drag state and the
 //! rows' drop listeners, which only a running FleetView has.
 
@@ -55,9 +56,42 @@ pub(crate) async fn drags(view: &Entity<FleetView>, root: &Path, name: &str, hom
     if top.last().map(PathBuf::as_path) != Some(root) || group.as_ref().is_none_or(|g| !g.is_empty()) {
         bail!("dropped below the tree: folders.toml's top level {top:?}, {GROUP} {group:?}; expected {} last at the top level", root.display());
     }
+    let group_drags = group_drags(view, home, cx).await?;
     view.update(cx, |v, cx| v.edit_folders(FolderEdit::RemoveGroup { name: GROUP.into(), with_folders: true }, cx));
     until(view, cx, WITHIN, "the group gone from the tree, so the rows' positions are folders.toml's", |v| v.tree().entry(GROUP).is_none().then_some(())).await?;
-    Ok(format!("{rhythm}; {name} dragged onto {GROUP}'s row: into {GROUP}; then below the tree: the top level's end; folders.toml checked after each"))
+    Ok(format!("{rhythm}; {name} dragged onto {GROUP}'s row: into {GROUP}; then below the tree: the top level's end; {group_drags}; folders.toml checked after each"))
+}
+
+/// The group's place among the top-level entries in `entries`.
+fn group_at(entries: &Entries) -> Option<usize> {
+    entries.list.iter().position(|e| e.group_name() == Some(GROUP))
+}
+
+/// The group's row dragged onto the first other top-level row, then below the tree; each drop waits for the window's
+/// read-back of the write, so a drop that writes nothing fails here.
+async fn group_drags(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let group_row = format!("group-row-{GROUP}");
+    let first = view.read_with(cx, |v, _| {
+        v.tree().entries.iter().find(|e| e.name != GROUP).map(|e| if e.group { format!("group-row-{}", e.name) } else { format!("repo-row-{}", e.name) })
+    });
+    let Some(first) = first else { bail!("no top-level row besides {GROUP} to drop it on") };
+    let onto = scrolled_into_view(view, &first, cx).await?.center();
+    drag_from(view, &group_row, onto, None, cx).await?;
+    until(view, cx, WITHIN, "the group first in the window's folders after its drop on the first row", |v| (group_at(&v.listed.entries) == Some(0)).then_some(())).await?;
+    let saved = folders::load(home)?;
+    if group_at(&saved) != Some(0) {
+        bail!("{GROUP} dropped on {first}: folders.toml has it at {:?}; expected first", group_at(&saved));
+    }
+
+    let end = scrolled_into_view(view, END, cx).await?.center();
+    drag_from(view, &group_row, end, None, cx).await?;
+    let last = saved.list.len() - 1;
+    until(view, cx, WITHIN, "the group last in the window's folders after its drop below the tree", |v| (group_at(&v.listed.entries) == Some(last)).then_some(())).await?;
+    let saved = folders::load(home)?;
+    if group_at(&saved) != Some(last) {
+        bail!("{GROUP} dropped below the tree: folders.toml has it at {:?}; expected last ({last})", group_at(&saved));
+    }
+    Ok(format!("{GROUP}'s row dragged onto {first}: first; then below the tree: last"))
 }
 
 /// A right-click on the drop row, then on the empty room under it, each opens the Add menu at the pointer. The room has no
