@@ -52,7 +52,7 @@ impl Sidebar {
             tree_cache: RefCell::new(None),
             left_list: Default::default(),
             reveal_pending: None,
-            left_rows: Rc::new((Rc::new(Tree { entries: Vec::new(), unlisted: None, hidden_stopped: 0 }), Vec::new())),
+            left_rows: Rc::new((Rc::new(Tree::default()), Vec::new())),
             collapsed: left::unlisted::first_collapsed(),
             closed_expanded: HashSet::new(),
             search_marks: HashMap::new(),

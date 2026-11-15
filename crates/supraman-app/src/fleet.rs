@@ -33,7 +33,7 @@ pub struct FolderNode {
     pub sessions: Vec<SessionRow>,
     pub more: usize,
     /// Its scheduled runs' sessions by schedule id ([`supraman_core::schedule::schedule_of_session`]), shown under
-    /// its Schedules; a path listed twice has them on its first row only.
+    /// its Schedules; only the row [`Tree::schedule_row`] names has them.
     pub scheduled: BTreeMap<String, Vec<SessionRow>>,
     /// Its place in folders.toml; `None` for a shown child folder.
     pub pos: Option<Pos>,
@@ -201,13 +201,18 @@ pub fn on_disk(entries: &Entries) -> Disk {
 /// or group's name.
 pub const UNLISTED: &str = ":unlisted";
 pub const UNLISTED_TITLE: &str = "Other sessions";
+/// The name of the entry holding the runs of schedules whose folder has no row: a folder each, named by its folder key.
+pub const UNROWED: &str = ":unrowed";
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Tree {
     pub entries: Vec<EntryNode>,
     /// Other sessions: one folder of the sessions no listed or shown folder holds; `None` while it has none.
     pub unlisted: Option<EntryNode>,
+    /// The runs of schedules whose folder has no row ([`Tree::schedule_row`]), shown under Other schedules.
+    pub unrowed: Option<EntryNode>,
     pub hidden_stopped: usize,
+    pub(crate) schedule_rows: HashMap<String, (usize, usize)>,
 }
 
 impl Tree {
@@ -233,9 +238,25 @@ impl Tree {
         self.entries.iter().find(|e| e.name == name)
     }
 
-    /// Every node holding session rows: the entries, then Other sessions.
+    /// Every node holding session rows: the entries, then Other sessions, then the runs of Other schedules.
     pub fn nodes(&self) -> impl Iterator<Item = &EntryNode> {
-        self.entries.iter().chain(&self.unlisted)
+        self.entries.iter().chain(&self.unlisted).chain(&self.unrowed)
+    }
+
+    /// Where the schedules filed under `folder_key` show: the first row of their folder's path that is not excluded,
+    /// at any depth; `None` puts them under Other schedules.
+    pub fn schedule_row(&self, folder_key: &str) -> Option<(usize, usize)> {
+        self.schedule_rows.get(folder_key).copied()
+    }
+
+    /// The runs of the schedules filed under `folder_key` that have no row.
+    pub fn unrowed_runs(&self, folder_key: &str) -> Option<&BTreeMap<String, Vec<SessionRow>>> {
+        self.unrowed.as_ref()?.folders.iter().find(|f| f.name == folder_key).map(|f| &f.scheduled)
+    }
+
+    /// The folder keys whose runs have no row.
+    pub fn unrowed_keys(&self) -> impl Iterator<Item = &str> {
+        self.unrowed.iter().flat_map(|e| e.folders.iter().map(|f| f.name.as_str()))
     }
 
     /// The `e`th of [`Self::nodes`].
@@ -268,6 +289,11 @@ impl EntryNode {
     /// Other sessions, not a listed entry.
     pub fn unlisted(&self) -> bool {
         self.name == UNLISTED
+    }
+
+    /// Other sessions or the runs of Other schedules: no folder of the user's.
+    pub fn apart(&self) -> bool {
+        self.unlisted() || self.name == UNROWED
     }
 
     /// The rows under the entry's row.
@@ -374,8 +400,8 @@ pub fn build(entries: &Entries, sessions: &[Session], now_ms: i64, show_stopped:
             &read
         }
     };
-    let keys: Vec<String> = entries.folders().map(|f| supraman_core::schedule::folder_key(&f.path)).collect();
-    let rest = b.scheduled(&keys, sessions.to_vec());
+    let rows: HashSet<String> = entries.placed(&disk.shown).map(supraman_core::schedule::folder_key).collect();
+    let rest = b.scheduled(|key| rows.contains(key) || sup.own_names.iter().any(|k| k == key), sessions.to_vec());
     let main_of = |p: &Path| b.main_of(p);
     let (open, gone) = (place_with(&rest, entries, &disk.shown, main_of), place_with(&b.closed, entries, &disk.shown, main_of));
     let placed = Placed { open: open.by_folder, gone: gone.by_folder, disk };
@@ -395,7 +421,28 @@ pub fn build(entries: &Entries, sessions: &[Session], now_ms: i64, show_stopped:
         nodes.push(node);
     }
     let unlisted = b.unlisted(open.unplaced, gone.unplaced);
-    Tree { entries: nodes, unlisted, hidden_stopped: b.hidden.len() }
+    let schedule_rows = schedule_rows(&nodes);
+    let mut unrowed = Vec::new();
+    for (key, runs) in std::mem::take(&mut b.runs) {
+        match schedule_rows.get(&key) {
+            Some(&(e, f)) => nodes[e].folders[f].scheduled = runs,
+            None => unrowed.push(FolderNode { scheduled: runs, ..FolderNode::bare(format!("{UNROWED}/{key}"), key, PathBuf::new(), FolderKind::Plain, None) }),
+        }
+    }
+    unrowed.sort_by(|a, b| a.name.cmp(&b.name));
+    let unrowed = (!unrowed.is_empty()).then(|| EntryNode { name: UNROWED.into(), group: false, folders: unrowed });
+    Tree { entries: nodes, unlisted, unrowed, hidden_stopped: b.hidden.len(), schedule_rows }
+}
+
+/// The one rule of where a folder's schedules show: by folder key, the first row of that path, excluded rows aside.
+fn schedule_rows(nodes: &[EntryNode]) -> HashMap<String, (usize, usize)> {
+    let mut out = HashMap::new();
+    for (e, node) in nodes.iter().enumerate() {
+        for (f, folder) in node.folders.iter().enumerate().filter(|(_, f)| !f.excluded) {
+            out.entry(supraman_core::schedule::folder_key(&folder.path)).or_insert((e, f));
+        }
+    }
+    out
 }
 
 /// The sessions placed by folder, open and closed, and what the disk says of the folders.
@@ -415,7 +462,7 @@ struct Build<'a> {
     keys: HashSet<String>,
     listed: HashSet<String>,
     hidden: HashSet<String>,
-    /// Scheduled runs' rows by folder key and schedule id, each taken by the first row of its folder.
+    /// Scheduled runs' rows by folder key and schedule id, each given to [`schedule_rows`]' row or Other schedules.
     runs: HashMap<String, BTreeMap<String, Vec<SessionRow>>>,
 }
 
@@ -469,11 +516,11 @@ impl<'a> Build<'a> {
             .collect()
     }
 
-    /// The scheduled runs of a listed folder into [`Self::runs`]; the sessions that are not, back.
-    fn scheduled(&mut self, keys: &[String], sessions: Vec<Session>) -> Vec<Session> {
+    /// The scheduled runs of a folder key `ours` claims into [`Self::runs`]; the sessions that are not, back.
+    fn scheduled(&mut self, ours: impl Fn(&str) -> bool, sessions: Vec<Session>) -> Vec<Session> {
         let mut rest = Vec::new();
         for s in sessions {
-            let run = supraman_core::schedule::schedule_of_session(&s.name).filter(|(key, _)| keys.iter().any(|k| k == key)).map(|(key, id)| (key.to_string(), id.to_string()));
+            let run = supraman_core::schedule::schedule_of_session(&s.name).filter(|(key, _)| ours(key)).map(|(key, id)| (key.to_string(), id.to_string()));
             match run {
                 Some((key, id)) => {
                     let r = self.row(s);
@@ -499,7 +546,6 @@ impl<'a> Build<'a> {
         let name = folder_name(&f.path);
         let base = group.map_or_else(|| name.clone(), |g| format!("{g}/{name}"));
         let mut parent = self.folder(base, &f.path, placed);
-        parent.scheduled = self.runs.remove(&supraman_core::schedule::folder_key(&f.path)).unwrap_or_default();
         parent.pos = Some(pos);
         parent.shows_subfolders = f.show_subfolders;
         let mut out = vec![parent];

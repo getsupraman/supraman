@@ -131,7 +131,7 @@ pub fn other_schedule_items(task: &ForeignTask) -> Vec<MenuItem> {
     ]
 }
 
-/// A folder's row; a listed one's also has New task, Show/Hide sub folders and Remove Folder, a top-level one's its
+/// A folder's row; a listed one's also has Show/Hide sub folders and Remove Folder, a top-level one's its
 /// entry's bulk delete. A shown child folder is no entry of folders.toml: Exclude Folder last, an excluded one's only
 /// Include Folder and Open folder. Open Work is dimmed with `work_why_not`.
 pub fn folder_items(entry: &EntryNode, folder: &FolderNode, closed_background: bool, work_why_not: Option<String>) -> Vec<MenuItem> {
@@ -144,9 +144,7 @@ pub fn folder_items(entry: &EntryNode, folder: &FolderNode, closed_background: b
     let place = folder.place();
     let top = !entry.group && folder.listed();
     let mut items = vec![item("new-claude", "New claude here", MenuAction::NewClaude { cwd: folder.path.clone(), title: format!("{place} · claude") })];
-    if folder.listed() {
-        items.extend(new_task_items(&entry.name, Some(&folder.path)));
-    }
+    items.extend(new_task_items(&entry.name, Some(&folder.path)));
     if folder.kind == supraman_core::FolderKind::Git {
         items.push(item("open-git", "Open Git", MenuAction::OpenGit(folder.path.clone())));
     }
@@ -373,12 +371,17 @@ mod tests {
         assert_eq!((items[7].label.as_str(), &items[7].action), ("Hide sub folders", &MenuAction::ShowSubfolders { pos: Pos::top(1), path: r"C:\demo\Alpha".into(), show: false }));
         let child = FolderNode { parent: Some("Alpha".into()), ..folder("Alpha/gaia") };
         let items = folder_items(&top, &child, true, None);
-        assert_eq!(keys(&items), ["new-claude", "open-git", "work", "open-terminal", "open-folder", "details", "exclude-folder"], "a shown child is no entry: no Remove Folder");
-        assert_eq!(items[2].action, MenuAction::Work(Target::Folder(child.path.clone())));
-        assert_eq!((items[6].label.as_str(), &items[6].action), ("Exclude Folder", &MenuAction::ExcludeFolder { parent: Pos::top(1), path: child.path.clone() }), "by its parent's position");
+        assert_eq!(keys(&items), ["new-claude", "new-task", "new-scheduled-task", "open-git", "work", "open-terminal", "open-folder", "details", "exclude-folder"], "a shown child is no entry: no Remove Folder");
+        assert_eq!(items[2].action, MenuAction::NewTask { entry: "Alpha".into(), folder: Some(child.path.clone()), scheduled: true }, "a shown child's own folder");
+        assert_eq!(items[4].action, MenuAction::Work(Target::Folder(child.path.clone())));
+        assert_eq!((items[8].label.as_str(), &items[8].action), ("Exclude Folder", &MenuAction::ExcludeFolder { parent: Pos::top(1), path: child.path.clone() }), "by its parent's position");
+        let member_child = FolderNode { parent: Some("demo/Alpha".into()), ..folder("demo/Alpha/gaia") };
+        let in_group = EntryNode { folders: vec![group.folders[0].clone(), member_child.clone()], ..group.clone() };
+        let items = folder_items(&in_group, &member_child, false, None);
+        assert_eq!(items[2].action, MenuAction::NewTask { entry: "demo".into(), folder: Some(member_child.path.clone()), scheduled: true }, "a group member's shown child's own folder");
         let excluded = FolderNode { excluded: true, ..child.clone() };
         let items = folder_items(&top, &excluded, true, None);
-        assert_eq!(keys(&items), ["include-folder", "open-folder"]);
+        assert_eq!(keys(&items), ["include-folder", "open-folder"], "an excluded row has no New task");
         assert_eq!((items[0].label.as_str(), &items[0].action), ("Include Folder", &MenuAction::IncludeFolder { parent: Pos::top(1), path: child.path.clone() }));
         let schedules = schedules_items("demo", Path::new(r"C:\demo\Alpha"));
         assert_eq!(keys(&schedules), ["new-scheduled-task"]);
