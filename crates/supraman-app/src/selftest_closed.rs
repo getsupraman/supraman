@@ -193,7 +193,7 @@ async fn other_sessions(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWin
     })
     .await?;
     until(view, cx, WITHIN, "Other sessions' row painted", |v| painted(v, "unlisted-row").then_some(())).await?;
-    // folded at the start (`unlisted::first_collapsed`'s test); step 7c's Expand all opened it
+    // folded at the start and by Expand all (`fold::expanded`); an earlier step may have opened it
     if view.read_with(cx, |v, _| v.unlisted_open()) {
         click(view, "unlisted-row", cx).await?;
     }
