@@ -15,7 +15,7 @@ use crate::menu;
 /// Above every other deferred layer, a menu's too.
 pub const PRIORITY: usize = menu::PRIORITY + 1;
 /// The panel's width, or the window's less [`MARGIN`] each side when narrower.
-pub const WIDTH: Pixels = px(440.);
+pub const WIDTH: Pixels = px(520.);
 /// The least room between the panel and the window's edges.
 pub const MARGIN: Pixels = px(24.);
 
