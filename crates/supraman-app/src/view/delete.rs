@@ -15,6 +15,7 @@ use super::menu::{Confirm, Confirmed};
 use crate::fleet::{self, SessionRow};
 
 pub const HIDE_DELETED_MS: i64 = 60_000;
+const CLOSED: &str = "Delete closed sessions";
 
 #[derive(Debug)]
 pub enum Outcome {
@@ -152,7 +153,8 @@ impl FleetView {
             format!("Delete {kind} {}? {what}. This cannot be undone.{foreign}", label(&session)),
             "Delete",
             Confirmed::Delete { session, discard: None },
-        ));
+        )
+        .titled("Delete session"));
     }
 
     pub(super) fn delete_now(&mut self, session: Session, discard: Option<String>, cx: &mut Context<Self>) {
@@ -197,7 +199,8 @@ impl FleetView {
                     ),
                     format!("Discard {commits} and delete"),
                     Confirmed::Delete { session, discard: Some(value) },
-                ))
+                )
+                .titled("Discard unpushed commits"))
             }
             None => self.action_error = Some(format!("claude rm kept {} ({commits}{at}): {}", label(&session), refusal.text)),
         }
@@ -226,7 +229,7 @@ impl FleetView {
             this.update(cx, |this, cx| {
                 let skip = if skipped.is_empty() { String::new() } else { format!(" Skipped {}: {}.", skipped.len(), listed(&skipped)) };
                 this.dialogs.confirm = Some(if sessions.is_empty() {
-                    Confirm::report(format!("No closed background session of {entry} can be deleted.{skip}"))
+                    Confirm::report(format!("No closed background session of {entry} can be deleted.{skip}")).titled(CLOSED)
                 } else {
                     let n = sessions.len();
                     Confirm::ask(
@@ -237,6 +240,7 @@ impl FleetView {
                         format!("Delete {n}"),
                         Confirmed::DeleteClosed { entry, sessions, skipped },
                     )
+                    .titled(CLOSED)
                 });
                 cx.notify();
             })
@@ -276,7 +280,7 @@ impl FleetView {
                 if !failed.is_empty() {
                     text.push_str(&format!(" Failed: {}.", failed.join("; ")));
                 }
-                this.dialogs.confirm = Some(Confirm::report(text));
+                this.dialogs.confirm = Some(Confirm::report(text).titled(CLOSED));
                 cx.notify();
             })
             .ok();

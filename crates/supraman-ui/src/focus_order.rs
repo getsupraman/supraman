@@ -87,6 +87,11 @@ impl Members {
         self.handles.borrow().get(key).cloned()
     }
 
+    /// The key of the kept handle holding the focus.
+    pub fn focused(&self, window: &Window, cx: &App) -> Option<SharedString> {
+        self.handles.borrow().iter().find(|(_, h)| h.contains_focused(window, cx)).map(|(k, _)| k.clone())
+    }
+
     /// This frame's members in order.
     pub fn order(&self) -> FocusOrder {
         FocusOrder::new(self.order.borrow().iter().cloned())

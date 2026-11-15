@@ -1203,7 +1203,7 @@ impl FleetView {
     }
 
     fn dismiss_popup(&mut self) -> bool {
-        self.dialogs.menu.take().is_some() || self.dialogs.confirm.take().is_some()
+        self.dialogs.menu.take().is_some()
     }
 
     pub fn clear_search(&mut self, cx: &mut Context<Self>) {
@@ -1313,7 +1313,7 @@ impl Render for FleetView {
         self.wake_blink();
         self.hits.borrow_mut().clear();
         let colors = cx.theme().colors().clone();
-        supraman_ui::focus::root(div())
+        let root = supraman_ui::focus::root(div())
             .size_full()
             .flex()
             .font_family(supraman_ui::fonts::UI)
@@ -1364,7 +1364,8 @@ impl Render for FleetView {
                     .min_h_0(),
             )
             .children(self.render_menu(cx))
-            .child(self.probe.paint_marker())
+            .child(self.probe.paint_marker());
+        supraman_ui::dialog::over(root, self.render_dialog(cx))
     }
 }
 

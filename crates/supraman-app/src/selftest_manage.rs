@@ -301,19 +301,37 @@ async fn groups(view: &Entity<FleetView>, folder: &Path, home: &Path, cx: &mut A
     let member = format!("repo-row-{GROUP}/{FOLDER}");
     until(view, cx, WITHIN, "the folder's row in the group", |v| painted(v, &member).then_some(())).await?;
 
+    let (details, _) = details_tab(view, &row, GROUP, cx).await?;
     press_painted(view, &row, MouseButton::Right, cx).await?;
     menu_open(view, GROUP, cx).await?;
     click(view, "menu-remove-group", cx).await?;
-    until(view, cx, WITHIN, "Remove Group's question", |v| painted(v, "confirm-alt").then_some(())).await?;
-    click(view, "confirm-alt", cx).await?;
+    remove_by_keys(view, details, cx).await?;
     until(view, cx, WITHIN, "the group's rows gone", |v| (!painted(v, &row) && !painted(v, &member)).then_some(())).await?;
     let left = supraman_core::folders::load(home)?;
     if left.groups().any(|(n, _)| n == GROUP) || left.folders().filter(|f| f.path == folder).count() != 1 {
         bail!("Remove Group with its folders left {left:?}");
     }
     Ok(format!(
-        "Esc on Add Group's new row with {ESCAPED} typed wrote nothing; Add Group {FIRST} typed in place, renamed to {GROUP} in place by Rename…, F2 on the selected row opened the field (Esc closed it), {FOLDER} added into it from its menu, Remove Group's \"Remove its folders too\" left {FOLDER} only at the top level"
+        "Esc on Add Group's new row with {ESCAPED} typed wrote nothing; Add Group {FIRST} typed in place, renamed to {GROUP} in place by Rename…, F2 on the selected row opened the field (Esc closed it), {FOLDER} added into it from its menu, Remove Group's dialog kept Ctrl+W from the Details tab behind it and Tab then Enter took \"Remove its folders too\", which left {FOLDER} only at the top level"
     ))
+}
+
+/// Remove Group's dialog holds the keys: Ctrl+W leaves the Details tab `behind` open, Tab moves from its default
+/// answer to the next, Enter presses that one (Remove its folders too). Why a selftest: the window's layers and focus.
+async fn remove_by_keys(view: &Entity<FleetView>, behind: u64, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let focused = |view: &Entity<FleetView>, cx: &mut AsyncWindowContext| cx.update(|window, cx| view.read(cx).dialogs.dialog.focused(window, cx).map(|k| k.to_string())).ok().flatten();
+    let what = "Remove Group's dialog with its default answer focused";
+    crate::selftest::until_with(cx, WITHIN, what, |cx| (focused(view, cx).as_deref() == Some("confirm-yes")).then_some(())).await?;
+    let ctrl = Modifiers { control: true, ..Default::default() };
+    crate::selftest::keys::keystroke(cx, "w", None, ctrl)?;
+    crate::selftest::drawn(cx).await?;
+    if view.read_with(cx, |v, _| v.tab(behind).is_none() || v.dialogs.confirm.is_none()) {
+        bail!("Ctrl+W behind Remove Group's dialog acted: the Details tab {behind} closed or the question went");
+    }
+    crate::selftest::keys::keystroke(cx, "tab", None, Modifiers::default())?;
+    crate::selftest::until_with(cx, WITHIN, "Tab on Remove Group's next answer", |cx| (focused(view, cx).as_deref() == Some("confirm-alt")).then_some(())).await?;
+    crate::selftest::keys::keystroke(cx, "enter", None, Modifiers::default())?;
+    Ok(())
 }
 
 pub(crate) async fn menu_open(view: &Entity<FleetView>, title: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Vec<SharedString>> {

@@ -294,7 +294,7 @@ async fn other_sessions(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWind
     crate::selftest::until(view, cx, Duration::from_secs(10), "Other sessions folded again", |v| (!v.shown(row)).then_some(())).await
 }
 
-/// Rename on a group's row, its name selected in the field in place, then Remove Group's question over the tree, each closed again.
+/// Rename on a group's row, its name selected in the field in place, then Remove Group's dialog over the dimmed window, each closed again.
 async fn group_dialogs(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let run = |action: crate::view::MenuAction, cx: &mut AsyncWindowContext| cx.update(|window, cx| view.update(cx, |v, cx| v.run_action(action, window, cx)));
     run(crate::view::MenuAction::RenameGroup(GROUP.into()), cx)?;

@@ -55,6 +55,11 @@ pub struct Dialog {
 }
 
 impl Dialog {
+    /// The hit key of the button holding the focus.
+    pub fn focused(&self, window: &Window, cx: &gpui::App) -> Option<SharedString> {
+        self.members.focused(window, cx)
+    }
+
     /// `confirm` as a dialog: its text, then its yes, alt and Cancel under `<key>-yes`, `<key>-alt`, `<key>-cancel`;
     /// the default answer focused as it opens, Esc Cancel (a report's OK).
     pub fn ask<V: 'static, A>(

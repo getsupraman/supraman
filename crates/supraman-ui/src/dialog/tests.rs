@@ -77,7 +77,7 @@ fn holding(view: &Entity<Asking>, cx: &mut VisualTestContext) -> Option<String> 
         if v.inside.is_focused(window) {
             return Some("inside".into());
         }
-        ["yes", "alt", "cancel"].into_iter().find(|k| v.dialog.members.get(&format!("confirm-{k}")).is_some_and(|h| h.is_focused(window))).map(String::from)
+        v.dialog.focused(window, cx).map(|k| k.trim_start_matches("confirm-").to_string())
     })
 }
 
