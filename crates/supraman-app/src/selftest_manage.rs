@@ -291,7 +291,7 @@ async fn groups(view: &Entity<FleetView>, folder: &Path, home: &Path, cx: &mut A
     crate::selftest::keys::keystroke(cx, "f2", None, plain)?;
     until_app(view, cx, WITHIN, "F2's field on the selected group's row", |v, cx| (painted(v, field) && editing(v, cx) == Some(Some(GROUP.into()))).then_some(())).await?;
     crate::selftest::keys::keystroke(cx, "escape", None, plain)?;
-    until_app(view, cx, WITHIN, "F2's field closed on Esc", |v, cx| (editing(v, cx).is_none() && painted(v, &row)).then_some(())).await?;
+    until_app(view, cx, WITHIN, "F2's field closed on Esc", |v, cx| (editing(v, cx).is_none() && !painted(v, field) && painted(v, &row)).then_some(())).await?;
     click(view, &row, cx).await?;
 
     view.update(cx, |v, _| v.dialogs.pick_folder = Some(folder.to_path_buf()));
