@@ -71,6 +71,12 @@ impl FleetView {
         self.sidebar.group_edit.as_ref().map(|g| g.name.read(cx).renaming().map(str::to_string))
     }
 
+    /// What the field in place holds.
+    #[cfg(feature = "selftest")]
+    pub fn group_name_typed(&self, cx: &gpui::App) -> Option<String> {
+        self.sidebar.group_edit.as_ref().map(|g| g.name.read(cx).field().read(cx).text().to_string())
+    }
+
     /// Whether Add Group's new row shows.
     pub(super) fn adding_group(&self, cx: &gpui::App) -> bool {
         self.sidebar.group_edit.as_ref().is_some_and(|g| g.name.read(cx).renaming().is_none())

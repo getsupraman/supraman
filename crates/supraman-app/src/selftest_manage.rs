@@ -248,6 +248,7 @@ async fn add_menu(view: &Entity<FleetView>, item: &str, cx: &mut AsyncWindowCont
 async fn groups(view: &Entity<FleetView>, folder: &Path, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     const FIRST: &str = "selftest-first";
     const GROUP: &str = "selftest-group";
+    const ESCAPED: &str = "selftest-escaped";
     let groups = |home: &Path| supraman_core::folders::load(home).map(|e| e.groups().map(|(n, f)| (n.to_string(), f.len())).collect::<Vec<_>>());
     let before = groups(home)?;
     let field = crate::view::folder_edits::FIELD;
@@ -256,11 +257,10 @@ async fn groups(view: &Entity<FleetView>, folder: &Path, home: &Path, cx: &mut A
 
     add_menu(view, "menu-add-group", cx).await?;
     until_app(view, cx, WITHIN, "Add Group's new row with its field", |v, cx| (painted(v, field) && editing(v, cx) == Some(None)).then_some(())).await?;
+    crate::selftest::keys::type_text(cx, ESCAPED)?;
+    until_app(view, cx, WITHIN, "the name typed in the new row", |v, cx| v.group_name_typed(cx).filter(|t| t == ESCAPED)).await?;
     crate::selftest::keys::keystroke(cx, "escape", None, plain)?;
     until_app(view, cx, WITHIN, "the new row gone on Esc", |v, cx| (editing(v, cx).is_none() && !painted(v, field)).then_some(())).await?;
-    if groups(home)? != before {
-        bail!("Esc on Add Group's new row left folders.toml's groups {:?}, not {before:?}", groups(home)?);
-    }
 
     add_menu(view, "menu-add-group", cx).await?;
     until_app(view, cx, WITHIN, "Add Group's new row again", |v, cx| (painted(v, field) && editing(v, cx) == Some(None)).then_some(())).await?;
@@ -268,8 +268,10 @@ async fn groups(view: &Entity<FleetView>, folder: &Path, home: &Path, cx: &mut A
 "))?;
     let first_row = format!("group-row-{FIRST}");
     until_app(view, cx, WITHIN, "the new group's row", |v, cx| (painted(v, &first_row) && editing(v, cx).is_none()).then_some(())).await?;
-    if !groups(home)?.contains(&(FIRST.to_string(), 0)) {
-        bail!("Add Group {FIRST} left folders.toml's groups {:?}", groups(home)?);
+    let mut expected = before.clone();
+    expected.push((FIRST.to_string(), 0));
+    if groups(home)? != expected {
+        bail!("Esc on a new row named {ESCAPED}, then Add Group {FIRST}, left folders.toml's groups {:?}, not {expected:?}", groups(home)?);
     }
 
     press_painted(view, &first_row, MouseButton::Right, cx).await?;
@@ -310,7 +312,7 @@ async fn groups(view: &Entity<FleetView>, folder: &Path, home: &Path, cx: &mut A
         bail!("Remove Group with its folders left {left:?}");
     }
     Ok(format!(
-        "Esc on Add Group's new row wrote nothing; Add Group {FIRST} typed in place, renamed to {GROUP} in place by Rename…, F2 on the selected row opened the field (Esc closed it), {FOLDER} added into it from its menu, Remove Group's \"Remove its folders too\" left {FOLDER} only at the top level"
+        "Esc on Add Group's new row with {ESCAPED} typed wrote nothing; Add Group {FIRST} typed in place, renamed to {GROUP} in place by Rename…, F2 on the selected row opened the field (Esc closed it), {FOLDER} added into it from its menu, Remove Group's \"Remove its folders too\" left {FOLDER} only at the top level"
     ))
 }
 
