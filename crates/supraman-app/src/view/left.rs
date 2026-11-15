@@ -323,8 +323,6 @@ impl FleetView {
         if let Some(e) = &self.scheduling.other_scan_error {
             notices.push(notice(e.clone(), banner::tinted(status.warning)));
         }
-        notices.extend(self.render_confirm(cx));
-        notices.extend(self.render_schedule_edit(cx));
         if self.listed.error.is_none() && self.polls.refreshes > 0 && tree.entries.is_empty() {
             notices.push(notice("No folders yet. Add one with the folder button above, or:  sm folder add <dir>".into(), banner::plain(cx)));
         }
@@ -1062,11 +1060,6 @@ impl FleetView {
             cx.stop_propagation();
             this.open_row(&title, &row, cx);
         })))
-    }
-
-    fn render_confirm(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let confirm = self.dialogs.confirm.as_ref()?;
-        Some(confirm.render_answer(&self.hits, "confirm", |this: &mut Self, answer, _, cx| this.answer_confirm(answer, cx), cx).mx_3().my_2().into_any_element())
     }
 }
 

@@ -156,7 +156,7 @@ pub fn write(home: &Path, edit: &FolderEdit) -> Result<(String, listed::Read), S
 pub fn remove_group_question(name: &str, folders: usize) -> Confirm {
     let edit = |with_folders| Confirmed::EditFolders(FolderEdit::RemoveGroup { name: name.to_string(), with_folders });
     if folders == 0 {
-        return Confirm::ask(format!("Remove the empty group {name}?"), "Remove Group", edit(false));
+        return Confirm::ask(format!("Remove the empty group {name}?"), "Remove Group", edit(false)).titled("Remove group");
     }
     Confirm::ask(
         format!("Remove the group {name}? Its {} can move to the top level or go from the list with it; no files or sessions are touched.", text::count(folders, "folder", "folders")),
@@ -164,6 +164,7 @@ pub fn remove_group_question(name: &str, folders: usize) -> Confirm {
         edit(false),
     )
     .or("Remove its folders too", edit(true))
+    .titled("Remove group")
 }
 
 impl FleetView {

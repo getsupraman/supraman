@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use supraman_claude::{Claude, Session};
-use gpui::{ClipboardItem, Context, Pixels, Point, Window};
+use gpui::{AnyElement, ClipboardItem, Context, Pixels, Point, Window};
 
 use super::FleetView;
 use super::menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuItem, MenuTarget, folder_items, group_items, is_foremans, other_schedule_items, schedule_items, schedules_items, session_items};
@@ -184,7 +184,16 @@ impl FleetView {
             ),
             "Stop",
             Confirmed::StopSession(session),
-        ));
+        )
+        .titled("Stop session"));
+    }
+
+    /// The question asked, else the schedule Edit form, in its dialog over the whole window.
+    pub(super) fn render_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let Some(confirm) = self.dialogs.confirm.as_ref() else {
+            return self.render_schedule_edit(cx);
+        };
+        Some(self.dialogs.dialog.ask(&self.hits, "confirm", confirm, |this: &mut Self, answer, _, cx| this.answer_confirm(answer, cx), cx))
     }
 
     pub fn answer_confirm(&mut self, answer: Answer, cx: &mut Context<Self>) {

@@ -56,6 +56,12 @@ async fn delete_from_menu(view: &Entity<FleetView>, session_id: &str, name: &str
     if !text.contains(name) || !text.starts_with("Delete ") {
         bail!("the question does not name {name}: {text}");
     }
+    let focused = |cx: &mut AsyncWindowContext| cx.update(|window, cx| view.read(cx).dialogs.dialog.focused(window, cx).map(|k| k.to_string())).ok().flatten();
+    crate::selftest::until_with(cx, Duration::from_secs(5), "the delete dialog on Cancel, its Delete the danger answer", |cx| {
+        let danger = view.read_with(cx, |v, _| v.dialogs.confirm.as_ref().is_some_and(|c| c.danger));
+        (danger && focused(cx).as_deref() == Some("confirm-cancel")).then_some(())
+    })
+    .await?;
     let asked = Instant::now();
     click(view, "confirm-yes", cx).await?;
     until(view, cx, &format!("{name} leaves the tree"), |v| row(v, session_id).is_none().then_some(())).await?;

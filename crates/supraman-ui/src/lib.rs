@@ -6,6 +6,7 @@ pub mod button;
 pub mod clipped;
 pub mod confirm;
 pub mod details;
+pub mod dialog;
 pub mod focus;
 pub mod focus_order;
 pub mod form;

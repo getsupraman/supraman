@@ -8,6 +8,7 @@ use supraman_core::schedule::{self, Clock, Day, ForeignTask, Overlap, Profile, R
 use supraman_core::secret::default_store;
 use supraman_core::process;
 use supraman_ui::button;
+use supraman_ui::dialog::{Button as DialogButton, Panel};
 use supraman_ui::details::{self, Section};
 use supraman_ui::hit::hit_target;
 use supraman_ui::text_input::{InputEvent, TextInput};
@@ -134,6 +135,7 @@ pub struct ScheduleEdit {
     pub max_tokens: Entity<TextInput>,
     pub error: Option<String>,
     saving: bool,
+    dialog: supraman_ui::dialog::Dialog,
     _events: Vec<Subscription>,
 }
 
@@ -306,7 +308,9 @@ impl FleetView {
             format!("Remove schedule {id} from {place}? Its task and its entry go. Its run records stay, and nothing in any folder is touched."),
             "Remove",
             Confirmed::RemoveSchedule { folder_key: folder_key.to_string(), id: id.to_string() },
-        ));
+        )
+        .titled("Remove schedule")
+        .danger());
         cx.notify();
     }
 
@@ -472,18 +476,16 @@ impl FleetView {
             max_tokens,
             error: None,
             saving: false,
+            dialog: supraman_ui::dialog::Dialog::default(),
             _events: events,
         });
         cx.notify();
     }
 
-    fn on_schedule_edit_event(&mut self, event: &InputEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_schedule_edit_event(&mut self, event: &InputEvent, _: &mut Window, cx: &mut Context<Self>) {
         match event {
             InputEvent::Confirm | InputEvent::ConfirmBack | InputEvent::Submit => self.save_schedule_edit(cx),
-            InputEvent::Cancel => {
-                self.scheduling.schedule_edit = None;
-                self.focus.focus(window, cx);
-            }
+            InputEvent::Cancel => self.scheduling.schedule_edit = None,
             InputEvent::Edited | InputEvent::Refused(_) => {
                 if let Some(e) = &mut self.scheduling.schedule_edit {
                     e.error = None;
@@ -611,8 +613,32 @@ impl FleetView {
         Some(details::render(page, &self.hits, cx))
     }
 
+    /// The Edit dialog over the whole window: its fields in Tab order, then Save and Cancel; Esc closes it.
     pub(super) fn render_schedule_edit(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let edit = self.scheduling.schedule_edit.as_ref()?;
+        let mut inputs = vec![&edit.name, &edit.at];
+        if edit.kind == TriggerKind::Interval {
+            inputs.push(&edit.every);
+        }
+        inputs.extend([&edit.max_runtime, &edit.max_tokens]);
+        let fields = inputs.into_iter().map(|f| gpui::Focusable::focus_handle(f.read(cx), cx)).collect();
+        let place = self.schedule_row(&edit.folder_key, &edit.id).map(ScheduleRow::place).unwrap_or_default();
+        let panel = Panel {
+            key: "sched-edit".into(),
+            title: Some(format!("Edit schedule {}", edit.id).into()),
+            body: self.schedule_edit_body(edit, &place, cx).into_any_element(),
+            fields,
+            buttons: vec![
+                DialogButton::new("sched-edit-save", "Save", button::Tone::Neutral, |this: &mut Self, _, cx| this.save_schedule_edit(cx)),
+                DialogButton::new("sched-edit-cancel", "Cancel", button::Tone::Neutral, |this: &mut Self, _, cx| close_schedule_edit(this, cx)),
+            ],
+            first: None,
+            cancel: std::rc::Rc::new(|this: &mut Self, _, cx| close_schedule_edit(this, cx)),
+        };
+        Some(edit.dialog.render(&self.hits, panel, cx))
+    }
+
+    fn schedule_edit_body(&self, edit: &ScheduleEdit, place: &str, cx: &mut Context<Self>) -> gpui::Div {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let label = |text: &'static str| div().flex_none().w(px(88.)).text_xs().text_color(colors.text_muted).child(text);
@@ -620,6 +646,38 @@ impl FleetView {
             div().id(key).relative().flex_1().min_w_0().child(input.clone()).child(hit_target(&self.hits, key.into()))
         };
         let line = |name: &'static str| div().flex().items_center().gap_2().min_w_0().child(label(name));
+        let (kinds, days, profiles, overlaps) = self.schedule_edit_choices(edit, &line, cx);
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .min_w_0()
+            .child(clipped("sched-edit-place", place.to_string(), false).text_xs().text_color(colors.text_muted))
+            .child(line("Name").child(field("sched-edit-name", &edit.name)))
+            .child(kinds)
+            .when(edit.kind == TriggerKind::Weekly, |d| d.child(days))
+            .child(line("At").child(field("sched-edit-at", &edit.at)))
+            .when(edit.kind == TriggerKind::Interval, |d| d.child(line("Interval").child(field("sched-edit-every", &edit.every))))
+            .child(line("Max runtime").child(field("sched-edit-max-runtime", &edit.max_runtime)))
+            .child(line("Max tokens").child(field("sched-edit-max-tokens", &edit.max_tokens)))
+            .child(profiles)
+            .child(overlaps)
+            .child(div().text_xs().text_color(colors.text_muted).child("Everything here but the name is covered: a change makes the schedule pending until Approve."))
+            .children(edit.error.clone().map(|e| {
+                div()
+                    .relative()
+                    .px_1()
+                    .rounded_sm()
+                    .bg(status.error.opacity(0.14))
+                    .text_xs()
+                    .text_color(status.error)
+                    .child(SharedString::from(e))
+                    .child(hit_target(&self.hits, "sched-edit-error".into()))
+            }))
+    }
+
+    /// The Edit dialog's rows of choices: Every, Days, Profile and Overlap.
+    fn schedule_edit_choices(&self, edit: &ScheduleEdit, line: &dyn Fn(&'static str) -> gpui::Div, cx: &mut Context<Self>) -> (gpui::Div, gpui::Div, gpui::Div, gpui::Div) {
         let choice = |key: String, text: &'static str, selected: bool, cx: &mut Context<Self>| {
             button::choice(SharedString::from(key.clone()), text, selected, cx).relative().child(hit_target(&self.hits, key))
         };
@@ -670,61 +728,13 @@ impl FleetView {
                 },
             )));
         }
-        let buttons = div()
-            .flex()
-            .gap_2()
-            .justify_end()
-            .child(button::action(&self.hits, "sched-edit-save", "Save", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                cx.stop_propagation();
-                this.save_schedule_edit(cx);
-            })))
-            .child(button::action(&self.hits, "sched-edit-cancel", "Cancel", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                cx.stop_propagation();
-                this.scheduling.schedule_edit = None;
-                cx.notify();
-            })));
-        Some(
-            div()
-                .id("sched-edit")
-                .relative()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .min_w_0()
-                .mx_3()
-                .my_2()
-                .p_2()
-                .rounded_md()
-                .border_1()
-                .border_color(colors.border_focused)
-                .bg(colors.editor_background)
-                .child(hit_target(&self.hits, "sched-edit".into()))
-                .child(clipped("sched-edit-title", format!("EDIT SCHEDULE · {} · {}", self.schedule_row(&edit.folder_key, &edit.id).map(ScheduleRow::place).unwrap_or_default(), edit.id), false).text_xs().text_color(colors.text_muted))
-                .child(line("Name").child(field("sched-edit-name", &edit.name)))
-                .child(kinds)
-                .when(edit.kind == TriggerKind::Weekly, |d| d.child(days))
-                .child(line("At").child(field("sched-edit-at", &edit.at)))
-                .when(edit.kind == TriggerKind::Interval, |d| d.child(line("Interval").child(field("sched-edit-every", &edit.every))))
-                .child(line("Max runtime").child(field("sched-edit-max-runtime", &edit.max_runtime)))
-                .child(line("Max tokens").child(field("sched-edit-max-tokens", &edit.max_tokens)))
-                .child(profiles)
-                .child(overlaps)
-                .child(div().text_xs().text_color(colors.text_muted).child("Everything here but the name is covered: a change makes the schedule pending until Approve."))
-                .children(edit.error.clone().map(|e| {
-                    div()
-                        .relative()
-                        .px_1()
-                        .rounded_sm()
-                        .bg(status.error.opacity(0.14))
-                        .text_xs()
-                        .text_color(status.error)
-                        .child(SharedString::from(e))
-                        .child(hit_target(&self.hits, "sched-edit-error".into()))
-                }))
-                .child(buttons)
-                .into_any_element(),
-        )
+        (kinds, days, profiles, overlaps)
     }
+}
+
+fn close_schedule_edit(this: &mut FleetView, cx: &mut Context<FleetView>) {
+    this.scheduling.schedule_edit = None;
+    cx.notify();
 }
 
 impl FleetView {
