@@ -14,7 +14,7 @@ use supraman_term::Terminal;
 use supraman_core::platform::process::memory;
 use supraman_ui::mib;
 use gpui::{
-    App, AsyncWindowContext, Bounds, Entity, KeyDownEvent, Keystroke, Modifiers, MouseButton,
+    App, AsyncWindowContext, Bounds, Entity, KeyDownEvent, Keystroke, Modifiers, MouseButton, Point,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, ScrollDelta, ScrollEvent, Window,
     point, px,
 };
@@ -522,6 +522,11 @@ pub(crate) async fn double_click(view: &Entity<FleetView>, key: &str, cx: &mut A
 
 async fn presses(view: &Entity<FleetView>, key: &str, button: MouseButton, count: usize, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let position = scrolled_into_view(view, key, cx).await?.center();
+    press_at(position, button, count, cx)
+}
+
+/// `count` presses at `position` through the window's own input dispatch: a place no hit key names, such as empty room.
+pub(crate) fn press_at(position: Point<Pixels>, button: MouseButton, count: usize, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let modifiers = Modifiers::default();
     cx.update(|window, cx| {
         window.dispatch_event(

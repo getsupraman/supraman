@@ -330,7 +330,7 @@ impl FleetView {
             self.set_left_rows(tree);
             let list = gpui::list(self.sidebar.left_list.state(), cx.processor(|this: &mut Self, ix: usize, _, cx| div().w_full().child(this.render_left_row(ix, cx)).into_any_element())).size_full().pb_4();
             let area = div().id("fleet").relative().child(hit_target(&self.hits, "tree-area".into())).flex().flex_col().flex_1().min_h(relative(TREE_MIN_SHARE)).child(list);
-            self.tree_drop(area, cx)
+            self.tree_room(area, cx)
         } else {
             let body = div()
                 .id("search-results")

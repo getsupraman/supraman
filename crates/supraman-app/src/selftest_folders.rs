@@ -1,19 +1,20 @@
-//! `--selftest` step 7b's folder rows: one dragged into a group and back out to the top level, then its sub folders
-//! shown, followed as they come and go, and hidden. A drag needs the window's own mouse dispatch, its drag state and the
+//! `--selftest` step 7b's folder rows: one dragged into a group and back out to the top level, the Add menu on a
+//! right-click below the tree, then its sub folders shown, followed as they come and go, and hidden. A drag needs the window's own mouse dispatch, its drag state and the
 //! rows' drop listeners, which only a running FleetView has.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail};
-use gpui::{AsyncWindowContext, Entity, MouseButton};
+use gpui::{AsyncWindowContext, Entity, Modifiers, MouseButton, point};
 use supraman_core::folders::{self, Entries, Entry};
 
-use crate::selftest::{click, scrolled_into_view, until};
+use crate::selftest::{click, key, press_at, scrolled_into_view, until};
 use crate::selftest_manage::{menu_open, press_painted, shot};
 use crate::selftest_tabs::drag_from;
 use crate::view::FleetView;
 use crate::view::folder_edits::FolderEdit;
+const END: &str = "tree-drop-end";
 
 const GROUP: &str = "selftest-drag";
 const WITHIN: Duration = Duration::from_secs(10);
@@ -45,7 +46,7 @@ pub(crate) async fn drags(view: &Entity<FleetView>, root: &Path, name: &str, hom
         bail!("dropped on {GROUP}'s row: folders.toml's top level {top:?}, {GROUP} {group:?}; expected {} moved into {GROUP}", root.display());
     }
 
-    let end = scrolled_into_view(view, "tree-drop-end", cx).await?.center();
+    let end = scrolled_into_view(view, END, cx).await?.center();
     drag_from(view, &member, end, None, cx).await?;
     let top_row = format!("repo-row-{name}");
     until(view, cx, WITHIN, "the folder's row at the top level after the drop below the tree", |v| (v.shown(&top_row) && !v.shown(&member)).then_some(())).await?;
@@ -56,6 +57,35 @@ pub(crate) async fn drags(view: &Entity<FleetView>, root: &Path, name: &str, hom
     view.update(cx, |v, cx| v.edit_folders(FolderEdit::RemoveGroup { name: GROUP.into(), with_folders: true }, cx));
     until(view, cx, WITHIN, "the group gone from the tree, so the rows' positions are folders.toml's", |v| v.tree().entry(GROUP).is_none().then_some(())).await?;
     Ok(format!("{GROUP}'s row and {name}'s each {TOP} px with no margin; {name} dragged onto {GROUP}'s row: into {GROUP}; then below the tree: the top level's end; folders.toml checked after each"))
+}
+
+/// A right-click on the drop row, then on the empty room under it, each opens the Add menu at the pointer. The room has no
+/// hit key and the listener is the tree area's, so only the window's own mouse dispatch over a painted FleetView reaches it.
+pub(crate) async fn room_menu(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let end = scrolled_into_view(view, END, cx).await?;
+    let area = view.read_with(cx, |v, _| v.hits.borrow().get("tree-area").map(|h| h.visible)).ok_or_else(|| anyhow!("the tree area is not painted"))?;
+    let room = area.bottom() - end.bottom();
+    if f32::from(room) < 8. {
+        bail!("{} px of room under the drop row; the step needs some to right-click", f32::from(room));
+    }
+    let below = point(end.center().x, end.bottom() + room / 2.);
+    let mut out = Vec::new();
+    for (place, at) in [("the drop row", end.center()), ("the room below it", below)] {
+        crate::selftest::drawn(cx).await?;
+        press_at(at, MouseButton::Right, 1, cx)?;
+        let keys = menu_open(view, "Add", cx).await.map_err(|e| e.context(format!("right-click on {place}")))?;
+        if keys != ["add-folder", "add-group"] {
+            bail!("right-click on {place}: the menu offers {keys:?}, expected add-folder and add-group");
+        }
+        let origin = view.read_with(cx, |v, _| v.dialogs.menu.as_ref().map(|m| m.position));
+        if origin != Some(at) {
+            bail!("right-click on {place} at {at:?}: the menu opened at {origin:?}");
+        }
+        key(cx, "escape", Modifiers::default())?;
+        until(view, cx, WITHIN, "the Add menu closed on Esc", |v| v.dialogs.menu.is_none().then_some(())).await?;
+        out.push(place);
+    }
+    Ok(format!("a right-click on {}: the Add menu (Add Folder…, Add Group…) at the pointer, closed by Esc", out.join(" and on ")))
 }
 
 /// Each top-level row's list item is its painted row alone, `TOP_ROW` high: no margin of its own sets one kind apart.

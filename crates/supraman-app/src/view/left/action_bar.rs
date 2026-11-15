@@ -56,6 +56,11 @@ impl FleetView {
     /// The add button's menu, under the button.
     fn open_add_menu(&mut self, cx: &mut Context<Self>) {
         let position = self.hits.borrow().get("add-folder").map(|h| h.bounds.bottom_left()).unwrap_or_default();
+        self.show_add_menu(position, cx);
+    }
+
+    /// Add Folder… and Add Group… at `position`: the add button's menu, and a right-click below the tree's rows.
+    pub(super) fn show_add_menu(&mut self, position: gpui::Point<Pixels>, cx: &mut Context<Self>) {
         self.dialogs.menu = Some(super::super::menu::ContextMenu::new("Add", position, super::super::menu::add_items()));
         cx.notify();
     }
