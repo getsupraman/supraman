@@ -348,12 +348,41 @@ async fn subfolders(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowCo
     crate::selftest::drawn(cx).await?;
     let shot = capture(out.join("supraman-subfolders.png"), None, cx).await?;
     println!("shot: {}", shot.display());
+    schedules_anywhere(view, &infra, out, cx).await?;
     excluded(view, pos, &infra.join("scripts"), out, cx).await?;
     run(false, cx)?;
     view.read_with(cx, |v, _| v.polls.injected.lock().unwrap_or_else(|e| e.into_inner()).retain(|s| s.session_id != session_id));
     view.update(cx, |v, _| v.polls.poll_nudge.wake());
     crate::selftest::until(view, cx, Duration::from_secs(15), "infra's sub folders hidden", |v| (!v.hits.borrow().contains_key("repo-row-infra/terraform")).then_some(())).await?;
     Ok(())
+}
+
+/// A schedule of infra's shown terraform under its row, and one of a folder below it with no row under Other schedules.
+async fn schedules_anywhere(view: &Entity<FleetView>, infra: &Path, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let (terraform, modules) = (infra.join("terraform"), infra.join("terraform").join("modules"));
+    let filed = [(&terraform, "plan", "Nightly plan"), (&modules, "lint", "Module lint")];
+    for (folder, id, name) in filed {
+        let s: supraman_core::schedule::Schedule = serde_json::from_value(json!({
+            "id": id, "name": name, "trigger": {"kind": "daily", "at": "07:30"}, "action": {"kind": "session", "prompt": {"text": "Check it."}}
+        }))?;
+        supraman_core::schedule::edit(&home(), folder, |all| {
+            all.push(s);
+            Ok(())
+        })?;
+    }
+    let key = |p: &Path| supraman_core::schedule::folder_key(p);
+    let (under, apart) = (format!("schedules-row-{}", key(&terraform)), format!("sched-row-{}/lint", key(&modules)));
+    crate::selftest::until(view, cx, Duration::from_secs(10), "terraform's Schedules and Other schedules", |v| {
+        (v.shown(&under) && v.shown(&format!("sched-row-{}/plan", key(&terraform))) && v.shown("other-schedules-row") && v.shown(&apart)).then_some(())
+    })
+    .await?;
+    crate::selftest::drawn(cx).await?;
+    let shot = capture(out.join("supraman-schedules-anywhere.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    for (folder, ..) in filed {
+        std::fs::remove_file(supraman_core::schedule::file_path(&home(), &key(folder))?)?;
+    }
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the schedules gone", |v| (!v.shown("other-schedules-row")).then_some(())).await
 }
 
 /// infra's scripts excluded and the stopped sessions shown: its row translucent among infra's sub folders, hovered; then included.

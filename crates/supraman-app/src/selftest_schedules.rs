@@ -42,8 +42,18 @@ fn folder_arg() -> String {
 }
 
 pub(crate) fn sm(args: &[&str]) -> anyhow::Result<String> {
+    sm_in(None, args)
+}
+
+/// `sm` started in `cwd`, as a session in that folder starts it.
+fn sm_in(cwd: Option<&Path>, args: &[&str]) -> anyhow::Result<String> {
     let exe = supraman_core::install::sm_exe()?;
-    let out = supraman_core::process::run(supraman_core::process::command(&exe).args(args), WITHIN, supraman_core::process::Kill::Tree)
+    let mut command = supraman_core::process::command(&exe);
+    command.args(args);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    let out = supraman_core::process::run(&mut command, WITHIN, supraman_core::process::Kill::Tree)
         .with_context(|| format!("run {}", exe.display()))?;
     if !out.success() {
         bail!("sm {}: {}{}", args.join(" "), out.stdout, out.stderr);
@@ -122,8 +132,8 @@ fn other_task(folder: &str, name: &str, exec: &str, now: i64) -> TaskState {
     }
 }
 
-/// Task Scheduler's tasks that run claude outside Supraman, under the listed folder holding their working
-/// directory or at the top, read only: a menu of Open in Task Scheduler and Copy action, and no write.
+/// Task Scheduler's tasks that run claude outside Supraman, under the folder row holding their working
+/// directory or under the top-level Other schedules, read only: a menu of Open in Task Scheduler and Copy action, and no write.
 async fn others(view: &Entity<FleetView>, fake: &FakeRegistrar, dir: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     const FOLDER: &str = r"\SelftestOther";
     let ws = ws();
@@ -141,7 +151,7 @@ async fn others(view: &Entity<FleetView>, fake: &FakeRegistrar, dir: &Path, cx: 
         fake.plant_task(t);
     }
     let writes = fake.writes().len();
-    let (group, owned_row, top, loose_row) = (format!("others-row-{ws}"), format!("other-row-{owned}"), "others-row".to_string(), format!("other-row-{loose}"));
+    let (group, owned_row, top, loose_row) = (format!("others-row-{ws}"), format!("other-row-{owned}"), "other-schedules-row".to_string(), format!("other-row-{loose}"));
     view.update(cx, |v, cx| v.scan_other_schedules(cx));
     until(view, cx, WITHIN, "the other schedules painted", |v| [&group, &owned_row, &top, &loose_row].iter().all(|k| painted(v, k)).then_some(())).await.map_err(|e| {
         let state = view.read_with(cx, |v, _| {
@@ -215,6 +225,63 @@ async fn status_is(view: &Entity<FleetView>, want: Status, cx: &mut AsyncWindowC
     until(view, cx, WITHIN, &format!("the row {want:?}"), |v| (row_state(v).map(|s| s.0) == Some(want)).then_some(()))
         .await
         .map_err(|e| e.context(format!("row {:?}, errors {:?}", view.read_with(cx, |v, _| row_state(v)), view.read_with(cx, |v, _| (v.action_error.clone(), v.scheduling.sync_errors.clone())))))
+}
+
+/// The folder's row in the tree, by its path; `None` while it has none.
+fn row_key(v: &FleetView, path: &Path) -> Option<String> {
+    v.tree().folders().find(|(_, f)| f.path == path && !f.excluded).map(|(_, f)| f.key.clone())
+}
+
+/// 10: New scheduled task… on a shown child starts in that child, and a schedule its session adds there is filed
+/// under the child's key and shows under the child's row; with the child hidden it shows under Other schedules.
+/// Needs the menu, the poll of folders.toml and the schedules, and the painted rows.
+async fn anywhere(view: &Entity<FleetView>, home: &Path, dir: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let child = dir.join("child");
+    std::fs::create_dir_all(&child)?;
+    std::fs::write(child.join("gate.cmd"), "@exit /b 0\r\n")?;
+    let show = |show: bool| {
+        supraman_core::folders::edit(home, |e| {
+            match e.list.iter().position(|x| x.group_name() == Some(GROUP)) {
+                Some(at) => e.set_show_subfolders(supraman_core::folders::Pos::member(at, 0), show),
+                None => Ok(()),
+            }
+        })
+    };
+    show(true)?;
+    let row = until(view, cx, WITHIN, "the shown child's row", |v| row_key(v, &child).map(|k| format!("repo-row-{k}")).filter(|k| painted(v, k))).await?;
+    press_painted(view, &row, MouseButton::Right, cx).await?;
+    let keys = until(view, cx, WITHIN, "the child's menu", |v| v.dialogs.menu.as_ref().map(|m| m.items.iter().map(|i| i.key.to_string()).collect::<Vec<_>>())).await?;
+    if !keys.iter().any(|k| k == "new-scheduled-task") {
+        bail!("no New scheduled task… on a shown child: {keys:?}");
+    }
+    click(view, "menu-new-scheduled-task", cx).await?;
+    let started = |v: &FleetView| v.tabs.iter().find(|t| v.start_page(t.id).is_some_and(|p| p.scheduled && p.folder == child)).map(|t| t.id);
+    let tab = until(view, cx, WITHIN, "the scheduled task's page in the child", |v| started(v)).await?;
+    view.update(cx, |v, cx| v.close_tab(tab, cx));
+
+    let key = schedule::folder_key(&child);
+    sm_in(Some(&child), &["schedule", "add", "--id", "here", "--name", "Here", "--every", "daily 09:00", "--script", "gate.cmd"])?;
+    if !schedule::file_path(home, &key)?.is_file() {
+        bail!("sm in the child filed no schedules/{key}.toml");
+    }
+    let (group, sched) = (format!("schedules-row-{key}"), format!("sched-row-{key}/here"));
+    until(view, cx, WITHIN, "the child's Schedules under its row", |v| {
+        let on = v.tree().schedule_row(&key).map(|(e, f)| v.tree().entries[e].folders[f].path.clone());
+        (on.as_deref() == Some(child.as_path()) && painted(v, &group) && painted(v, &sched)).then_some(())
+    })
+    .await?;
+
+    show(false)?;
+    let top = "other-schedules-row";
+    until(view, cx, WITHIN, "the schedule under Other schedules once the child has no row", |v| {
+        let hits = v.hits.borrow();
+        let below = matches!((hits.get(top), hits.get(&sched)), (Some(t), Some(r)) if r.bounds.top() > t.bounds.top());
+        (v.tree().schedule_row(&key).is_none() && !hits.contains_key(&group) && below).then_some(())
+    })
+    .await?;
+    std::fs::remove_file(schedule::file_path(home, &key)?)?;
+    until(view, cx, WITHIN, "Other schedules gone with its last schedule", |v| (!painted(v, top)).then_some(())).await?;
+    Ok(format!("10 New scheduled task… on the shown child starts in it; sm there filed schedules/{key}.toml, its Schedules under the child's row; the child hidden: under Other schedules"))
 }
 
 /// 3c: an approved schedule whose slash command file is edited says so, offers Approve and asks in the Inbox; Approve
@@ -491,6 +558,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     }
 
     out.push(others(view, &fake, &dir, cx).await?);
+    out.push(anywhere(view, home, &dir, cx).await?);
 
     std::fs::remove_file(schedule::file_path(home, &ws)?)?;
     supraman_core::folders::edit(home, |e| e.remove_group(GROUP, true))?;
