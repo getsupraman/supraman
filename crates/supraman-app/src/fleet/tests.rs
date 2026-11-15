@@ -96,7 +96,7 @@ fn show_stopped_keeps_them_last() {
 fn attach_only_for_live_background_sessions() {
     let tree = build(&entries(), &sessions(), NOW, true, &TreeInputs::default());
     let flags: Vec<(&str, bool)> = tree.rows().map(|r| (r.session.name.as_str(), r.attachable)).collect();
-    assert_eq!(flags, [("parked", true), ("busy", true), ("term", false), ("gone", false), ("done", false)]);
+    assert_eq!(flags, [("parked", true), ("busy", true), ("term", false), ("gone", false), ("done", false), ("elsewhere", true)]);
 }
 
 #[test]
@@ -426,4 +426,50 @@ fn a_session_in_a_shown_child_holds_the_child_as_its_folder_and_its_parents_entr
     assert_eq!(names(None), ["infra"], "and only the listed folders otherwise");
     let (group, name) = crate::tab_card::place(Path::new(r"P:\ops\infra\terraform\modules"), &entries, &shown);
     assert_eq!((group.as_deref(), name.as_deref()), (Some("ops"), Some("terraform")), "the tab's card names the child");
+}
+
+fn unlisted(tree: &Tree) -> Option<Vec<String>> {
+    let node = tree.unlisted.as_ref()?;
+    assert!(node.unlisted() && !node.group && node.folders.len() == 1, "one flat folder");
+    Some(node.folders[0].sessions.iter().map(|r| r.session.name.clone()).collect())
+}
+
+#[test]
+fn a_session_outside_every_listed_or_shown_folder_shows_under_other_sessions_only() {
+    let mut larch = FolderEntry::new(r"P:\L");
+    larch.show_subfolders = true;
+    let entries = Entries::new(vec![Entry::Folder(larch), top(r"Q:\gaia")]);
+    let shown = Shown::from([(path_key(Path::new(r"P:\L")), vec![PathBuf::from(r"P:\L\zed")])]);
+    let disk = Disk { shown, ..Disk::default() };
+    let list = rows(&[("aaaa0501", "listed", r"Q:\gaia\src"), ("aaaa0502", "child", r"P:\L\zed\src"), ("aaaa0503", "loose", r"D:\scratch"), ("aaaa0504", "beside", r"Q:\gaiax")]);
+    let tree = build(&entries, &list, NOW, false, &TreeInputs { disk: Some(&disk), ..TreeInputs::default() });
+    assert_eq!(unlisted(&tree), Some(vec!["loose".to_string(), "beside".to_string()]), "a sibling with a common prefix is outside too");
+    let once = |name: &str| tree.rows().filter(|r| r.session.name == name).count();
+    assert_eq!((once("listed"), once("child")), (1, 1), "a listed or shown folder's session shows once, in its folder");
+    assert_eq!(tree.node(tree.entries.len()).name, UNLISTED, "the node after the entries");
+    assert!(tree.folders().all(|(_, f)| f.key != UNLISTED), "no folder row of the tree's");
+
+    let inside = rows(&[("aaaa0601", "listed", r"Q:\gaia")]);
+    assert!(build(&entries, &inside, NOW, false, &TreeInputs { disk: Some(&disk), ..TreeInputs::default() }).unlisted.is_none(), "absent with none");
+}
+
+#[test]
+fn other_sessions_hides_stopped_and_caps_closed_as_a_folder_does() {
+    let mut list = rows(&[("aaaa0701", "live", r"D:\x"), ("aaaa0702", "halted", r"D:\y")]);
+    list[1].state = Some(supraman_claude::SessionState::Stopped);
+    list[1].pid = None;
+    let gone: Vec<Session> = (0..7).map(|i| closed(&format!("eeee000{i}-x"), &format!("old{i}"), r"D:\z", (i + 1) * 3_600_000)).collect();
+    let entries = Entries::new(vec![top(r"Q:\gaia")]);
+    let sup = |expanded| TreeInputs { closed: &gone, expanded, ..TreeInputs::default() };
+
+    let hidden = build(&entries, &list, NOW, false, &sup(None));
+    assert_eq!(unlisted(&hidden), Some(vec!["live".to_string()]));
+    assert_eq!(hidden.hidden_stopped, 1 + 7);
+    let shown = build(&entries, &list, NOW, true, &sup(None));
+    assert_eq!(unlisted(&shown).unwrap(), ["live", "halted", "old0", "old1", "old2", "old3", "old4"]);
+    assert_eq!(shown.unlisted.as_ref().unwrap().folders[0].more, 2);
+    let all = HashSet::from([UNLISTED.to_string()]);
+    assert_eq!(unlisted(&build(&entries, &list, NOW, true, &sup(Some(&all)))).unwrap().len(), 2 + 7, "its More shows the rest");
+
+    assert!(build(&entries, &list[1..], NOW, false, &TreeInputs::default()).unlisted.is_none(), "hidden while none of it shows");
 }

@@ -188,9 +188,16 @@ pub fn on_disk(entries: &Entries) -> Disk {
     Disk { kinds, shown }
 }
 
+/// The name and folder key of the entry holding the sessions no listed or shown folder holds; `:` is in no folder's
+/// or group's name.
+pub const UNLISTED: &str = ":unlisted";
+pub const UNLISTED_TITLE: &str = "Other sessions";
+
 #[derive(Debug)]
 pub struct Tree {
     pub entries: Vec<EntryNode>,
+    /// Other sessions: one folder of the sessions no listed or shown folder holds; `None` while it has none.
+    pub unlisted: Option<EntryNode>,
     pub hidden_stopped: usize,
 }
 
@@ -217,8 +224,18 @@ impl Tree {
         self.entries.iter().find(|e| e.name == name)
     }
 
+    /// Every node holding session rows: the entries, then Other sessions.
+    pub fn nodes(&self) -> impl Iterator<Item = &EntryNode> {
+        self.entries.iter().chain(&self.unlisted)
+    }
+
+    /// The `e`th of [`Self::nodes`].
+    pub fn node(&self, e: usize) -> &EntryNode {
+        self.entries.get(e).unwrap_or_else(|| self.unlisted.as_ref().expect("a node index past the entries is Other sessions"))
+    }
+
     pub fn rows(&self) -> impl Iterator<Item = &SessionRow> {
-        self.entries.iter().flat_map(EntryNode::rows)
+        self.nodes().flat_map(EntryNode::rows)
     }
 }
 
@@ -228,6 +245,10 @@ impl FolderNode {
         self.pos.is_some()
     }
 
+    pub fn row_place(&self, row: &SessionRow) -> String {
+        row_place(&self.key, row)
+    }
+
     /// The folder as a title's first part: `group · name`, or its name alone.
     pub fn place(&self) -> String {
         self.key.replace('/', " · ")
@@ -235,6 +256,11 @@ impl FolderNode {
 }
 
 impl EntryNode {
+    /// Other sessions, not a listed entry.
+    pub fn unlisted(&self) -> bool {
+        self.name == UNLISTED
+    }
+
     /// The rows under the entry's row.
     pub fn session_count(&self) -> usize {
         self.rows().count()
@@ -342,11 +368,8 @@ pub fn build(entries: &Entries, sessions: &[Session], now_ms: i64, show_stopped:
     let keys: Vec<String> = entries.folders().map(|f| supraman_core::schedule::folder_key(&f.path)).collect();
     let rest = b.scheduled(&keys, sessions.to_vec());
     let main_of = |p: &Path| b.main_of(p);
-    let placed = Placed {
-        open: place_with(&rest, entries, &disk.shown, main_of).by_folder,
-        gone: place_with(&b.closed, entries, &disk.shown, main_of).by_folder,
-        disk,
-    };
+    let (open, gone) = (place_with(&rest, entries, &disk.shown, main_of), place_with(&b.closed, entries, &disk.shown, main_of));
+    let placed = Placed { open: open.by_folder, gone: gone.by_folder, disk };
     let mut nodes = Vec::new();
     for (e, entry) in entries.list.iter().enumerate() {
         let node = match entry {
@@ -362,7 +385,8 @@ pub fn build(entries: &Entries, sessions: &[Session], now_ms: i64, show_stopped:
         };
         nodes.push(node);
     }
-    Tree { entries: nodes, hidden_stopped: b.hidden.len() }
+    let unlisted = b.unlisted(open.unplaced, gone.unplaced);
+    Tree { entries: nodes, unlisted, hidden_stopped: b.hidden.len() }
 }
 
 /// The sessions placed by folder, open and closed, and what the disk says of the folders.
@@ -494,6 +518,25 @@ impl<'a> Build<'a> {
         }
         let OnDisk { kind, branch } = placed.disk.kinds.get(&at).cloned().unwrap_or(OnDisk { kind: FolderKind::Plain, branch: None });
         FolderNode { key, name, path: path.to_path_buf(), kind, branch, sessions, more, scheduled: BTreeMap::new(), pos: None, parent: None, shows_subfolders: false }
+    }
+
+    /// Other sessions' node, its rows placed as a folder's; `None` while none shows.
+    fn unlisted(&mut self, open: Vec<Session>, closed: Vec<Session>) -> Option<EntryNode> {
+        let (sessions, more) = self.place(UNLISTED, open, closed);
+        let folder = FolderNode {
+            key: UNLISTED.into(),
+            name: UNLISTED_TITLE.into(),
+            path: PathBuf::new(),
+            kind: FolderKind::Plain,
+            branch: None,
+            sessions,
+            more,
+            scheduled: BTreeMap::new(),
+            pos: None,
+            parent: None,
+            shows_subfolders: false,
+        };
+        (!folder.sessions.is_empty() || more > 0).then(|| EntryNode { name: UNLISTED.into(), group: false, folders: vec![folder] })
     }
 
     /// A folder's rows: the open ones, then the closed ones up to [`CLOSED_CAP`]; and how many that cap left out.
@@ -630,6 +673,12 @@ impl Open {
     pub fn opening(self) -> Opening {
         Opening { icon: self.icon(), hint: self.hint().into(), runs: self.runs() }
     }
+}
+
+/// What a row under the folder `key` is titled and its menu placed by: the key, or under Other sessions the row's own
+/// folder's name.
+pub fn row_place(key: &str, row: &SessionRow) -> String {
+    if key == UNLISTED { folder_name(&row.session.cwd) } else { key.to_string() }
 }
 
 pub fn short_id(session: &Session) -> &str {

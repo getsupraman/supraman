@@ -104,12 +104,12 @@ pub fn with_workman(mut items: Vec<MenuItem>, folder: Option<&Path>, work: &Work
 }
 
 /// The folder a session row is listed under, as the sidebar names it for its menu.
-pub(in crate::view) fn row_folder<'a>(node: &'a EntryNode, session_id: &str) -> &'a str {
-    let is = |row: &crate::fleet::SessionRow| row.session.session_id == session_id;
-    if let Some(id) = node.folders.iter().find_map(|f| f.scheduled.iter().find(|(_, rows)| rows.iter().any(is)).map(|(id, _)| id)) {
-        return id;
+pub(in crate::view) fn row_folder(node: &EntryNode, session_id: &str) -> String {
+    let is = |row: &&crate::fleet::SessionRow| row.session.session_id == session_id;
+    if let Some(id) = node.folders.iter().find_map(|f| f.scheduled.iter().find(|(_, rows)| rows.iter().any(|r| is(&r))).map(|(id, _)| id)) {
+        return id.clone();
     }
-    node.folders.iter().find(|r| r.sessions.iter().any(is)).map_or("", |r| &r.key)
+    node.folders.iter().find_map(|f| f.sessions.iter().find(is).map(|row| f.row_place(row))).unwrap_or_default()
 }
 
 impl FleetView {
@@ -186,11 +186,11 @@ impl FleetView {
 
     fn tab_session_items(&self, tab: &Tab, cx: &Context<Self>) -> Option<(String, Vec<MenuItem>)> {
         let tree = self.tree();
-        tree.entries.iter().find_map(|node| {
+        tree.nodes().find_map(|node| {
             let row = node.rows().find(|r| Self::tab_runs(tab, &r.session))?;
             let folder = row_folder(node, &row.session.session_id);
             let caption = format!("session · {}", crate::fleet::display_name(&row.session));
-            Some((caption, self.session_menu(&node.name, folder, row, None, cx)))
+            Some((caption, self.session_menu(&node.name, &folder, row, None, cx)))
         })
     }
 

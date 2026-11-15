@@ -125,7 +125,7 @@ impl FleetView {
         for r in &w.folders {
             body = body.child(self.render_result_folder(group.clone(), r, usize::from(w.group), cx));
             for hit in &r.sessions {
-                body = body.child(self.render_result_session(&w.name, &r.key, hit, usize::from(w.group) + 1, cx));
+                body = body.child(self.render_result_session(&w.name, &crate::fleet::row_place(&r.key, &hit.row), hit, usize::from(w.group) + 1, cx));
             }
         }
         body
@@ -133,13 +133,17 @@ impl FleetView {
 
     fn render_result_folder(&self, group: Option<String>, r: &FolderHit, level: usize, cx: &mut Context<Self>) -> Stateful<Div> {
         let key = format!("result-repo-{}", r.key);
-        let icon = if r.kind == supraman_core::FolderKind::Git { Icon::GitBranch } else { Icon::Folder };
+        let icon = match r.kind {
+            _ if r.key == crate::fleet::UNLISTED => None,
+            supraman_core::FolderKind::Git => Some(Icon::GitBranch),
+            _ => Some(Icon::Folder),
+        };
         let folder = r.key.clone();
         self.result_row(key.clone(), level, 24., cx)
             .text_sm()
             .when(r.sessions.is_empty(), |d| d.text_color(quiet(cx)))
             .child(disclosure(None, secondary(cx)))
-            .child(icon_slot(&self.hits, &key, Some(icon.slotted(grid::ICON, secondary(cx)).into_any_element())))
+            .child(icon_slot(&self.hits, &key, icon.map(|i| i.slotted(grid::ICON, secondary(cx)).into_any_element())))
             .child(tree_label(&self.hits, &key, highlighted(format!("result-repo-name-{}", r.key), r.name.clone(), &r.name_marks, cx).flex_1()))
             .child(count(r.sessions.len(), cx))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.reveal(group.as_deref(), Some(&folder), cx)))
