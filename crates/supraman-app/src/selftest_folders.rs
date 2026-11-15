@@ -1,6 +1,7 @@
 //! `--selftest` step 7b's folder rows: one dragged into a group and back out to the top level, the group dragged first
 //! and last, the Add menu on a
-//! right-click below the tree, then its sub folders shown, followed as they come and go, and hidden. A drag needs the window's own mouse dispatch, its drag state and the
+//! right-click below the tree, then its sub folders shown, followed as they come and go, one excluded, shown translucent
+//! with the stopped sessions and included again, and hidden. A drag needs the window's own mouse dispatch, its drag state and the
 //! rows' drop listeners, which only a running FleetView has.
 
 use std::path::{Path, PathBuf};
@@ -153,8 +154,8 @@ async fn top_rhythm(view: &Entity<FleetView>, rows: &[(&str, &str)], cx: &mut As
     Ok(format!("{} each a {TOP} px row with no margin, the name a {line} px line", names.iter().map(|(r, _)| r.as_str()).collect::<Vec<_>>().join(", ")))
 }
 
-/// Show sub folders from `root`'s menu, a folder made and one removed under it, then Hide sub folders.
-pub(crate) async fn subfolders(view: &Entity<FleetView>, root: &Path, name: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+/// Show sub folders from `root`'s menu, a folder made and one removed under it, one excluded and included, then Hide sub folders.
+pub(crate) async fn subfolders(view: &Entity<FleetView>, root: &Path, name: &str, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let (a, b) = (root.join("sub-a"), root.join("sub-b"));
     let _ = std::fs::remove_dir_all(&b);
     std::fs::create_dir_all(&a)?;
@@ -180,6 +181,7 @@ pub(crate) async fn subfolders(view: &Entity<FleetView>, root: &Path, name: &str
     shot("folder-subfolders", cx).await;
     std::fs::remove_dir(&a)?;
     until(view, cx, WITHIN, "sub-a's row gone after it was removed", |v| (!v.shown(&child("sub-a"))).then_some(())).await?;
+    let excluded = exclude(view, &b, name, home, cx).await?;
 
     press_painted(view, &row, MouseButton::Right, cx).await?;
     menu_open(view, name, cx).await?;
@@ -190,5 +192,50 @@ pub(crate) async fn subfolders(view: &Entity<FleetView>, root: &Path, name: &str
     click(view, "menu-subfolders", cx).await?;
     until(view, cx, WITHIN, "sub-b's row gone once hidden", |v| (!v.shown(&child("sub-b"))).then_some(())).await?;
     std::fs::remove_dir(&b).map_err(|e| anyhow!("removing {}: {e}", b.display()))?;
-    Ok(format!("Show sub folders on {name}: sub-a's row; sub-b made: its row; sub-a removed: its row gone; Hide sub folders: none"))
+    Ok(format!("Show sub folders on {name}: sub-a's row; sub-b made: its row; sub-a removed: its row gone; {excluded}; Hide sub folders: none"))
+}
+
+/// Whether folders.toml's entries leave `child` out, as the window read them back.
+fn excluded_in(v: &FleetView, child: &Path) -> bool {
+    v.listed.entries.folders().any(|f| f.excludes(child))
+}
+
+/// Exclude Folder on the shown `child`'s row: its row goes; the eye shows it translucent (`excluded-row-`, painted only
+/// by that row's look); its Include Folder brings its row back and folders.toml holds no `excluded`.
+async fn exclude(view: &Entity<FleetView>, child: &Path, name: &str, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let base = supraman_core::paths::folder_name(child);
+    let (row, faint) = (format!("repo-row-{name}/{base}"), format!("excluded-row-{name}/{base}"));
+    let title = format!("{name}/{base}").replace('/', " · ");
+    if view.read_with(cx, |v, _| v.show_stopped) {
+        click(view, "toggle-stopped", cx).await?;
+        until(view, cx, WITHIN, "stopped sessions hidden", |v| (!v.show_stopped).then_some(())).await?;
+    }
+    press_painted(view, &row, MouseButton::Right, cx).await?;
+    let keys = menu_open(view, &title, cx).await?;
+    if keys.last().map(|k| k.as_ref()) != Some("exclude-folder") {
+        bail!("{base}'s menu is {keys:?}, expected Exclude Folder last");
+    }
+    click(view, "menu-exclude-folder", cx).await?;
+    until(view, cx, WITHIN, "the excluded row gone", |v| (excluded_in(v, child) && !v.shown(&row) && !v.shown(&faint)).then_some(())).await?;
+    let saved = std::fs::read_to_string(folders::path(home))?;
+    if !saved.contains("excluded") {
+        bail!("folders.toml holds no excluded path after Exclude Folder: {saved}");
+    }
+    click(view, "toggle-stopped", cx).await?;
+    until(view, cx, WITHIN, "the excluded row shown translucent", |v| (v.show_stopped && v.shown(&faint)).then_some(())).await?;
+    shot("folder-excluded", cx).await;
+    press_painted(view, &faint, MouseButton::Right, cx).await?;
+    let keys = menu_open(view, &title, cx).await?;
+    if keys.iter().map(|k| k.as_ref()).collect::<Vec<_>>() != ["include-folder", "open-folder"] {
+        bail!("the excluded {base}'s menu is {keys:?}, expected Include Folder, Open folder");
+    }
+    click(view, "menu-include-folder", cx).await?;
+    until(view, cx, WITHIN, "the included row back", |v| (!excluded_in(v, child) && v.shown(&row) && !v.shown(&faint)).then_some(())).await?;
+    click(view, "toggle-stopped", cx).await?;
+    until(view, cx, WITHIN, "stopped sessions hidden again", |v| (!v.show_stopped && v.shown(&row)).then_some(())).await?;
+    let saved = std::fs::read_to_string(folders::path(home))?;
+    if saved.contains("excluded") {
+        bail!("folders.toml keeps an excluded path after Include Folder: {saved}");
+    }
+    Ok(format!("Exclude Folder on {base}: folders.toml has it, its row gone; the eye on: {faint} painted; Include Folder: its row back, no excluded"))
 }
