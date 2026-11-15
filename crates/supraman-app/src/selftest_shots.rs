@@ -484,12 +484,33 @@ async fn schedules(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowCon
     crate::selftest::drawn(cx).await?;
     let shot = capture(out.join("supraman-schedules.png"), None, cx).await?;
     println!("shot: {}", shot.display());
+    remove_folder_dialog(view, &api, out, cx).await?;
     supraman_core::schedule::edit(&home(), &api, |all| {
         all.clear();
         Ok(())
     })?;
     crate::selftest::until(view, cx, Duration::from_secs(10), "the schedule gone", |v| v.schedule_row(&key, "nightly").is_none().then_some(())).await?;
     Ok(())
+}
+
+/// Remove Folder on api while its schedule would lose its row: the dialog with its tick box, then ticked; cancelled.
+async fn remove_folder_dialog(view: &Entity<FleetView>, api: &Path, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let key = crate::view::folder_edits::REMOVE_KEY;
+    let pos = view.read_with(cx, |v, _| v.tree().folders().find(|(_, f)| f.path == api && f.listed()).and_then(|(_, f)| f.pos)).ok_or_else(|| anyhow!("no api row"))?;
+    let action = crate::view::MenuAction::RemoveFolder { pos, path: api.to_path_buf() };
+    cx.update(|window, cx| view.update(cx, |v, cx| v.run_action(action, window, cx)))?;
+    let tick = format!("{key}-tick");
+    crate::selftest::until(view, cx, Duration::from_secs(10), "Remove Folder's question", |v| v.shown(&tick).then_some(())).await?;
+    crate::selftest::drawn(cx).await?;
+    let shot = capture(out.join("supraman-remove-folder.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    crate::selftest::click(view, &tick, cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the tick box ticked", |v| v.dialogs.remove.as_ref().is_some_and(|q| q.delete).then_some(())).await?;
+    crate::selftest::drawn(cx).await?;
+    let shot = capture(out.join("supraman-remove-folder-ticked.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    crate::selftest::click(view, &format!("{key}-cancel"), cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the question gone", |v| v.dialogs.remove.is_none().then_some(())).await
 }
 
 /// The Inbox with a schedule's notice beside Workman's cards: the two owners of `supraman_ui::inbox_card`.
