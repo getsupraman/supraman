@@ -285,6 +285,85 @@ async fn anywhere(view: &Entity<FleetView>, home: &Path, dir: &Path, cx: &mut As
     Ok(format!("10 New scheduled task… on the shown child starts in it; sm there filed schedules/{key}.toml, its Schedules under the child's row; the child hidden: under Other schedules, named by its folder"))
 }
 
+/// The folder row's menu opened by a right-click and its Remove Folder picked.
+async fn remove_from_menu(view: &Entity<FleetView>, path: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let row = until(view, cx, WITHIN, "the folder's row", |v| row_key(v, path).map(|k| format!("repo-row-{k}")).filter(|k| painted(v, k))).await?;
+    press_painted(view, &row, MouseButton::Right, cx).await?;
+    until(view, cx, WITHIN, "the folder's menu with Remove Folder", |v| v.dialogs.menu.as_ref().filter(|m| m.items.iter().any(|i| i.key == "remove-folder")).map(|_| ())).await?;
+    click(view, "menu-remove-folder", cx).await
+}
+
+/// 11: Remove Folder asks only while a schedule would lose its row: unticked, the schedule stays and shows under
+/// Other schedules; ticked, its entry and its task go with the folder; a folder with none goes at once. Needs the
+/// dialog, the poll of folders.toml and the schedules, and the fake registrar in the running window.
+async fn removed(view: &Entity<FleetView>, fake: &FakeRegistrar, home: &Path, dir: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let key = crate::view::folder_edits::REMOVE_KEY;
+    let [keep, gone, plain] = ["keep", "gone", "plain"].map(|n| dir.join("removed").join(n));
+    for folder in [&keep, &gone, &plain] {
+        std::fs::create_dir_all(folder)?;
+        std::fs::write(folder.join("gate.cmd"), "@exit /b 0\r\n")?;
+        supraman_core::folders::edit(home, |e| e.add_folder(folder, &supraman_core::folders::Place::Top(usize::MAX)))?;
+    }
+    for (folder, id) in [(&keep, "kept"), (&gone, "goes")] {
+        sm(&["schedule", "add", "--folder", &folder.to_string_lossy(), "--id", id, "--name", id, "--every", "daily 09:00", "--script", "gate.cmd"])?;
+    }
+    let (kk, gk) = (schedule::folder_key(&keep), schedule::folder_key(&gone));
+    let task = format!(r"{}\{gk}\goes", schedule::task_root(home));
+    let rows = [format!("sched-row-{kk}/kept"), format!("sched-row-{gk}/goes")];
+    until(view, cx, WITHIN, "both schedules under their folders' rows", |v| rows.iter().all(|r| painted(v, r)).then_some(())).await?;
+    double_click(view, &format!("sched-row-{gk}/goes"), cx).await?;
+    let approve = format!("sched-page-approve-{gk}/goes");
+    crate::selftest::scrolled_into_view(view, &approve, cx).await?;
+    click(view, &approve, cx).await?;
+    until(view, cx, WITHIN, "the approved schedule's task", |_| fake.paths().contains(&task).then_some(())).await?;
+    if let Some(tab) = view.read_with(cx, |v, _| v.schedule_page(&gk, "goes").map(|(t, _)| t)) {
+        view.update(cx, |v, cx| v.close_tab(tab, cx));
+    }
+
+    remove_from_menu(view, &keep, cx).await?;
+    let tick = format!("{key}-tick");
+    until(view, cx, WITHIN, "Remove Folder's question with its tick box", |v| (painted(v, &tick) && painted(v, &format!("{key}-note"))).then_some(())).await?;
+    let asked = view.read_with(cx, |v, _| v.dialogs.remove.as_ref().map(|q| (q.schedules.len(), q.delete)));
+    if asked != Some((1, false)) {
+        bail!("Remove Folder asked {asked:?}, not 1 schedule unticked");
+    }
+    click(view, &format!("{key}-yes"), cx).await?;
+    let sched = format!("sched-row-{kk}/kept");
+    until(view, cx, WITHIN, "the kept schedule under Other schedules", |v| {
+        let hits = v.hits.borrow();
+        let below = matches!((hits.get("other-schedules-row"), hits.get(&sched)), (Some(t), Some(r)) if r.bounds.top() > t.bounds.top());
+        (row_key(v, &keep).is_none() && v.tree().schedule_row(&kk).is_none() && below).then_some(())
+    })
+    .await?;
+    if schedule::load(home, &keep)?.len() != 1 {
+        bail!("an unticked Remove Folder deleted the schedule");
+    }
+    let kept_toast = view.read_with(cx, |v, _| v.toast.text().map(str::to_string));
+
+    remove_from_menu(view, &gone, cx).await?;
+    until(view, cx, WITHIN, "the second question", |v| painted(v, &tick).then_some(())).await?;
+    click(view, &tick, cx).await?;
+    until(view, cx, WITHIN, "the tick box ticked", |v| v.dialogs.remove.as_ref().is_some_and(|q| q.delete).then_some(())).await?;
+    click(view, &format!("{key}-yes"), cx).await?;
+    until(view, cx, WITHIN, "the folder, the schedule and its task gone", |v| {
+        (row_key(v, &gone).is_none() && v.schedule_row(&gk, "goes").is_none() && !fake.paths().contains(&task)).then_some(())
+    })
+    .await?;
+    if !schedule::load(home, &gone)?.is_empty() || fake.has_folder(&format!(r"{}\{gk}", schedule::task_root(home))) {
+        bail!("a ticked Remove Folder left the entry or the task: {:?}", fake.paths());
+    }
+    let gone_toast = view.read_with(cx, |v, _| v.toast.text().map(str::to_string));
+
+    remove_from_menu(view, &plain, cx).await?;
+    until(view, cx, WITHIN, "the folder without schedules removed", |v| row_key(v, &plain).is_none().then_some(())).await?;
+    if view.read_with(cx, |v, _| v.dialogs.remove.is_some() || v.dialogs.confirm.is_some()) {
+        bail!("Remove Folder asked for a folder without schedules");
+    }
+    std::fs::remove_file(schedule::file_path(home, &kk)?)?;
+    until(view, cx, WITHIN, "Other schedules gone with its last schedule", |v| (!painted(v, "other-schedules-row")).then_some(())).await?;
+    Ok(format!("11 Remove Folder asked for keep's schedule, unticked: under Other schedules, its entry kept ({kept_toast:?}); ticked for gone: entry and task {task} gone ({gone_toast:?}); plain removed unasked"))
+}
+
 /// 3c: an approved schedule whose slash command file is edited says so, offers Approve and asks in the Inbox; Approve
 /// takes the new file and the entry goes. Its own schedule, removed again, so the later steps see one.
 async fn changed_command(view: &Entity<FleetView>, dir: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
@@ -560,6 +639,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
 
     out.push(others(view, &fake, &dir, cx).await?);
     out.push(anywhere(view, home, &dir, cx).await?);
+    out.push(removed(view, &fake, home, &dir, cx).await?);
 
     std::fs::remove_file(schedule::file_path(home, &ws)?)?;
     supraman_core::folders::edit(home, |e| e.remove_group(GROUP, true))?;

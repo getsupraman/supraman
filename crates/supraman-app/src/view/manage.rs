@@ -188,10 +188,10 @@ impl FleetView {
         .titled("Stop session"));
     }
 
-    /// The question asked, else the schedule Edit form, in its dialog over the whole window.
+    /// The question asked, else Remove Folder's or Remove Group's, else the schedule Edit form, in its dialog over the whole window.
     pub(super) fn render_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let Some(confirm) = self.dialogs.confirm.as_ref() else {
-            return self.render_schedule_edit(cx);
+            return self.render_remove_question(cx).or_else(|| self.render_schedule_edit(cx));
         };
         Some(self.dialogs.dialog.ask(&self.hits, "confirm", confirm, |this: &mut Self, answer, _, cx| this.answer_confirm(answer, cx), cx))
     }
