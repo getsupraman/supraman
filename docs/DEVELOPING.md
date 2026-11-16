@@ -82,8 +82,8 @@ and says so; it never retries twice. Dot-sourced (`. scripts/heavy-lock.ps1`), t
 `$run = Get-CargoRun cargo @('build')` then `Find-LinkMembers (Get-Content saved.log) $run.linked` names the members a
 saved log's link errors hold.
 
-A Defender exclusion for `P:\Projects\LarchSys\getsupraman\supraman\target` would stop the failed renames at their source and
-spare every object file a scan; it needs an administrator (the audit's Q1).
+This machine's Defender exclusion of `P:\Projects` covers the target (the audit's Q1); the cleanup above stays for a
+checkout outside it and for any other process holding a session folder.
 
 ## The one known linker warning
 
