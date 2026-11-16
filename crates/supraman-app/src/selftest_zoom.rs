@@ -84,13 +84,18 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     ))
 }
 
-/// Ctrl+`key_name` `times` over once the content area holds the keys (`FleetView::key_down`'s chords), then the size at `want`.
+/// Ctrl+`key_name` `times` over once a key reaches `FleetView::key_down`'s chords in the drawn frame (each look asks for the next),
+/// then the size at `want`.
 async fn pressed(view: &Entity<FleetView>, key_name: &str, times: usize, want: Pixels, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
-    let held = until_with(cx, WITHIN, "the shown tab's content area holding the keys", |cx| {
-        cx.update(|window, cx| view.read(cx).has_keys(window)).ok().filter(|held| *held).map(|_| ())
+    let reach = until_with(cx, WITHIN, "a key reaching the window's chords", |cx| {
+        let reach = cx.update(|window, cx| {
+            window.refresh();
+            view.read(cx).chords_reach(window, cx)
+        });
+        reach.ok().filter(|reach| *reach).map(|_| ())
     })
     .await;
-    held.map_err(|e| anyhow!("{e}; the keys are {}", where_keys(view, cx)))?;
+    reach.map_err(|e| anyhow!("{e}; the keys are {}", where_keys(view, cx)))?;
     let before = view.read_with(cx, |v, _| v.term_look.term_font_size);
     for _ in 0..times {
         key(cx, key_name, Modifiers::control())?;
@@ -106,8 +111,11 @@ fn where_keys(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> String {
     let at = cx.update(|window, cx| {
         let focused = window.focused(cx).is_some();
         let pane = supraman_ui::focus::focused(window, cx);
-        let input = view.read(cx).input_focused(window, cx);
-        format!("in pane {pane:?} (a focused handle: {focused}, a text field: {input})")
+        let v = view.read(cx);
+        let input = v.input_focused(window, cx);
+        let dialog = v.dialogs.dialog.focused(window, cx);
+        let contexts: Vec<String> = window.context_stack().iter().map(|c| format!("{c:?}")).collect();
+        format!("in pane {pane:?} (a focused handle: {focused}, a text field: {input}, a dialog's button: {dialog:?}, key contexts {contexts:?})")
     });
     at.unwrap_or_else(|e| format!("unknown: {e}"))
 }
