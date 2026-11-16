@@ -574,7 +574,7 @@ mod tests {
                 Some((pid, started(pid)?))
             })
         });
-        let err = run(command("cmd").args(["/C", "ping -n 60 127.0.0.1"]), Duration::from_secs(2), Kill::Tree).unwrap_err();
+        let err = run(command("cmd").args(["/C", r#""%SystemRoot%\System32\PING.EXE" -n 60 127.0.0.1"#]), Duration::from_secs(2), Kill::Tree).unwrap_err();
         assert!(matches!(err, RunError::Timeout(_)), "{err:?}");
         let (pid, start) = probe.join().unwrap();
         wait_until(Duration::from_secs(5), polled(Duration::from_millis(50)), || !runs(pid, start));

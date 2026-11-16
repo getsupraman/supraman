@@ -19,13 +19,13 @@ const SCRIPTS: [(&str, &str); 7] = [
     ("exit0.cmd", "@exit /b 0\r\n"),
     ("gate.cmd", "@echo gate output\r\n@echo token %API_TOKEN%\r\n@exit /b 10\r\n"),
     ("fail.cmd", "@echo first line 1>&2\r\n@echo boom %API_TOKEN% 1>&2\r\n@exit /b 1\r\n"),
-    ("slow.cmd", "@echo before the wait 1>&2\r\n@ping -n 30 127.0.0.1 >nul\r\n@exit /b 0\r\n"),
+    ("slow.cmd", "@echo before the wait 1>&2\r\n@\"%SystemRoot%\\System32\\PING.EXE\" -n 30 127.0.0.1 >nul\r\n@exit /b 0\r\n"),
     (
         "env.cmd",
         "@echo %SUPRAMAN_HOME%^|%SUPRAMAN_SCHEDULE%^|%SUPRAMAN_RUN%^|%SUPRAMAN_FOLDER%^|%SUPRAMAN_LAST_RUN%^|%SUPRAMAN_LAST_OUTCOME%^|%CD%> \"%SUPRAMAN_STATE_DIR%\\env.txt\"\r\n@exit /b 0\r\n",
     ),
     ("secret.cmd", "@if \"%API_TOKEN%\"==\"s3cr3t-Value-81f2\" exit /b 10\r\n@exit /b 1\r\n"),
-    ("once.cmd", "@if exist \"%SUPRAMAN_STATE_DIR%\\once\" exit /b 0\r\n@echo x> \"%SUPRAMAN_STATE_DIR%\\once\"\r\n@ping -n 30 127.0.0.1 >nul\r\n@exit /b 0\r\n"),
+    ("once.cmd", "@if exist \"%SUPRAMAN_STATE_DIR%\\once\" exit /b 0\r\n@echo x> \"%SUPRAMAN_STATE_DIR%\\once\"\r\n@\"%SystemRoot%\\System32\\PING.EXE\" -n 30 127.0.0.1 >nul\r\n@exit /b 0\r\n"),
 ];
 
 struct Fixture {
