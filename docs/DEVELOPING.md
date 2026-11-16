@@ -92,6 +92,15 @@ Linking supraman-editor's lib test and `theme_switch` test and supraman-app's bi
 "1 warning". tree-sitter's `wasm` feature brings it, and Zed's `language`, `migrator` and `multi_buffer` turn that feature
 on themselves, so it cannot go without patching Zed. It is harmless and the only warning a build or test of ours prints.
 
+## A test's cmd searches no PATH
+
+`cargo test --workspace` puts every build script's link-search folder (each tree-sitter grammar's `out`, ~60 of them,
+~95 characters each under `target\unit\build`) before the caller's `PATH`, which brings a test's `PATH` to the 8,191
+characters `cmd.exe` can hold; past them cmd finds no program by name, not even System32's (`'ping' is not
+recognized`), while `-p <crate>` and a shorter caller `PATH` stay under. A test's cmd line or `.cmd` script names
+every program it starts by its full path (`"%SystemRoot%\System32\PING.EXE"`, which cmd expands); a script `sm fire`
+runs for a user gets the user's own `PATH` and is not affected.
+
 ## rust-lld is not used
 
 With `linker = "rust-lld.exe"` for `x86_64-pc-windows-msvc`, supraman-editor's tests, its `theme_switch` test and
