@@ -13,7 +13,7 @@ use crate::mappings::mouse::{grid_point, grid_point_and_side};
 use crate::mouse::{Selection, SelectionType};
 use crate::process::{PtyResources, TerminalType};
 use crate::scroll::Scroll;
-use crate::terminal_settings::TerminalConfig;
+use crate::terminal_settings::{TerminalConfig, read_clipboard, write_clipboard};
 use crate::{MaybeNavigationTarget, Point, Terminal, TerminalBounds, get_color_at_index};
 use alacritty_terminal::grid::Dimensions as _;
 use gpui::{ClipboardItem, Context, Pixels, Point as GpuiPoint, Window};
@@ -136,11 +136,11 @@ impl Terminal {
                 cx.emit(Event::BreadcrumbsChanged);
             }
             TerminalBackendEvent::ClipboardStore(data) => {
-                cx.write_to_clipboard(ClipboardItem::new_string(data))
+                write_clipboard(cx, ClipboardItem::new_string(data))
             }
             TerminalBackendEvent::ClipboardLoad(format) => {
                 self.write_to_pty(
-                    match &cx.read_from_clipboard().and_then(|item| item.text()) {
+                    match &read_clipboard(cx).and_then(|item| item.text()) {
                         // The terminal only supports pasting strings, not images.
                         Some(text) => format(text),
                         _ => format(""),
@@ -230,7 +230,7 @@ impl Terminal {
 
                 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 if let Some(selection_text) = selection_text(term) {
-                    cx.write_to_primary(ClipboardItem::new_string(selection_text));
+                    (TerminalConfig::get(cx).clipboard.write_primary)(cx, ClipboardItem::new_string(selection_text));
                 }
 
                 if let Some(selection) = selection {
@@ -263,7 +263,7 @@ impl Terminal {
                 if update_term_selection(term, point, side) {
                     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                     if let Some(selection_text) = selection_text(term) {
-                        cx.write_to_primary(ClipboardItem::new_string(selection_text));
+                        (TerminalConfig::get(cx).clipboard.write_primary)(cx, ClipboardItem::new_string(selection_text));
                     }
 
                     self.selection_head = Some(point);
@@ -274,7 +274,7 @@ impl Terminal {
             InternalEvent::Copy(keep_selection) => {
                 trace!("Copying selection: keep_selection={keep_selection:?}");
                 if let Some(txt) = selection_text(term) {
-                    cx.write_to_clipboard(ClipboardItem::new_string(trim_line_ends(&txt)));
+                    write_clipboard(cx, ClipboardItem::new_string(trim_line_ends(&txt)));
                     if !keep_selection
                         .unwrap_or_else(|| TerminalConfig::get(cx).keep_selection_on_copy)
                     {

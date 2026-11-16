@@ -1,6 +1,6 @@
 //! Copy ref, Open in Workman web and a row's right-click menu.
 
-use gpui::{ClipboardItem, MouseButton, MouseDownEvent, Pixels, Point};
+use gpui::{MouseButton, MouseDownEvent, Pixels, Point};
 use supraman_ui::icon::Icon;
 use supraman_ui::menu::{ContextMenu, item};
 use supraman_ui::{button, open};
@@ -24,7 +24,7 @@ pub(crate) const COPY_SIDE: f32 = 20.;
 
 impl WorkView {
     pub(crate) fn copy_ref(&mut self, item: &ItemRef, cx: &mut Context<Self>) {
-        cx.write_to_clipboard(ClipboardItem::new_string(item.full().to_string()));
+        supraman_ui::clipboard::write_text(cx, item.full().to_string());
         self.toast.show(format!("Copied {}", item.full()), |this: &mut WorkView| &mut this.toast, cx);
     }
 
@@ -46,13 +46,13 @@ impl WorkView {
             RowAction::CopyRef(item) => self.copy_ref(&item, cx),
             RowAction::CopyLink(item) => match self.web_base(cx) {
                 Some(base) => {
-                    cx.write_to_clipboard(ClipboardItem::new_string(web_url(&base, &item)));
+                    supraman_ui::clipboard::write_text(cx, web_url(&base, &item));
                     self.toast.show(format!("Copied the link to {}", item.full()), |this: &mut WorkView| &mut this.toast, cx);
                 }
                 None => self.toast.show_why("Workman is not connected, so there is no link.".into(), |this: &mut WorkView| &mut this.toast, cx),
             },
             RowAction::CopyTitle(item) => {
-                cx.write_to_clipboard(ClipboardItem::new_string(item.title.clone()));
+                supraman_ui::clipboard::write_text(cx, item.title.clone());
                 self.toast.show(format!("Copied the title of {}", item.full()), |this: &mut WorkView| &mut this.toast, cx);
             }
         }

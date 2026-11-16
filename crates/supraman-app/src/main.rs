@@ -13,7 +13,7 @@ mod search;
 #[cfg(feature = "selftest")]
 mod selftest;
 #[cfg(feature = "selftest")]
-mod selftest_clipboard;
+mod selftest_machine;
 #[cfg(feature = "selftest")]
 mod selftest_closed;
 #[cfg(feature = "selftest")]
@@ -296,9 +296,9 @@ fn prepare_selftest(mode: Mode) {
 }
 
 #[cfg(feature = "selftest")]
-fn hold_machine(mode: Mode) -> Option<selftest_clipboard::Held> {
+fn hold_machine(mode: Mode) -> Option<selftest_machine::NamedMutexes> {
     match mode {
-        Mode::Selftest | Mode::SelftestDetachShutdown | Mode::SelftestShots => match selftest_clipboard::hold_machine() {
+        Mode::Selftest | Mode::SelftestDetachShutdown | Mode::SelftestShots => match selftest_machine::hold_machine() {
             Ok(held) => Some(held),
             Err(error) => {
                 println!("FAIL setup: {error:#}");
@@ -360,6 +360,10 @@ fn single_instance(mode: Mode, home: Option<PathBuf>, relaunched: bool) -> Optio
 fn run(mode: Mode, commands: UnboundedSender<Command>, mut received: UnboundedReceiver<Command>, cx: &mut App) {
     supraman_editor::init(supraman_ui::fonts::MONO, 13., cx);
     supraman_ui::init_globals(cx, env!("CARGO_PKG_VERSION"));
+    #[cfg(feature = "selftest")]
+    if mode != Mode::App {
+        supraman_ui::clipboard::use_memory(cx);
+    }
     supraman_ui::stall::watch(cx);
     let home = supraman_core::home_from_env();
     if let Some(home) = home.clone() {

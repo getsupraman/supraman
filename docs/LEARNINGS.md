@@ -6124,3 +6124,22 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **What keeps the word:** the dated migration code (`folders::migrate`, `schedule::migrate`, `sm schedule`'s
   moved line, Approve's `"workspace"` label, the task prune's earlier folders), `end_controllers`, the old role
   strings in mint tests, cargo's own workspace, and claude's `Workspace not trusted` line it parses.
+
+## 2026-11-16 — one clipboard module; the selftests' clipboard is in memory (test-hygiene/2, c2)
+
+- **`supraman_ui::clipboard`** is the one reader and writer: gpui's platform clipboard, or a `Memory` global
+  (`use_memory`) that `main` installs in every selftest mode before the first window. The memory is a `RefCell` in
+  the global, so every call takes `&App`, as gpui's own `write_to_clipboard(&self)` does, and no caller changed shape.
+  gpui tests keep the platform path: `TestAppContext`'s platform clipboard is already in memory.
+- **The vendored terminal** cannot depend on supraman-ui (supraman-ui depends on it), so it reaches the clipboard
+  through `TerminalConfig::clipboard` (`ClipboardRoute`, plain `fn` pointers), which `init_globals` sets to
+  `clipboard::terminal()`. Without an owner a terminal has no clipboard; in supraman-term's own tests the default
+  route is a per-thread slot, so its paste and copy tests keep their assertions.
+- **What went with the shared Windows clipboard:** the `Supraman-selftest-clipboard` mutex and `borrow`, the
+  `Snapshot` save and restore (the CF_DIB round trip of 2026-10's Alt+V finding), `CLIPBOARD_TRIES`/`read_own`'s
+  retries, the sequence-number check of step 7l's drops (now the memory's `writes` count), and the app's
+  `Win32_System_DataExchange`/`Memory` features. The machine lock stays: `selftest_machine.rs` over
+  `selftest/win.rs`'s `mutex::NamedMutexes`.
+- **Zed's editor** copies through gpui itself; no selftest presses Copy in it, so nothing there reaches the OS
+  clipboard during a run. `clipboard::tests::only_this_module_touches_the_clipboard` scans every crate's `src`
+  for the four gpui clipboard calls.

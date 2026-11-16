@@ -10,7 +10,7 @@ mod tests;
 use supraman_core::text::count;
 use std::path::{Path, PathBuf};
 
-use gpui::{AppContext as _, ClipboardItem, Context, Entity, EventEmitter, Render, Window, div, prelude::*};
+use gpui::{AppContext as _, Context, Entity, EventEmitter, Render, Window, div, prelude::*};
 use supraman_gitman::write::commit::{self, Picked, ResetMode};
 use supraman_gitman::write::files::{self as file_writes, Ignore};
 use supraman_gitman::write::rebase::{self, Rebased};
@@ -254,7 +254,7 @@ impl CommitActions {
                 self.open(file.parent().map_or(top, PathBuf::from), cx);
             }
             FileAct::CopyPath(path) => {
-                cx.write_to_clipboard(ClipboardItem::new_string(copied_path(&top, &path)));
+                supraman_ui::clipboard::write_text(cx, copied_path(&top, &path));
                 cx.emit(CommitEvent::Said("Copied the path".into()));
             }
             _ => {}

@@ -145,7 +145,7 @@ impl Terminal {
 
     /// Pastes the clipboard's text; false when it holds none (an image), and the caller sends ^V instead.
     pub fn paste_clipboard(&mut self, cx: &App) -> bool {
-        let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) else {
+        let Some(text) = crate::terminal_settings::read_clipboard(cx).and_then(|c| c.text()) else {
             return false;
         };
         self.paste(&text);
@@ -158,7 +158,7 @@ mod tests {
     use super::*;
     use crate::alacritty::make_content;
     use crate::mouse::Selection;
-    use crate::terminal_settings::{AlternateScroll, CursorShape as SettingsCursorShape};
+    use crate::terminal_settings::{AlternateScroll, CursorShape as SettingsCursorShape, read_clipboard, write_clipboard};
     use crate::test_support::*;
     use crate::{Content, Point, Range, TerminalBuilder, alacritty};
     use gpui::{ClipboardItem, TestAppContext};
@@ -411,14 +411,14 @@ mod tests {
     #[gpui::test]
     async fn test_paste_clipboard_brackets_or_turns_newlines_into_returns(cx: &mut TestAppContext) {
         let terminal = init_terminal_test(cx, b"");
-        cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string("a\r\nb\n".to_string())));
+        cx.update(|cx| write_clipboard(cx, ClipboardItem::new_string("a\r\nb\n".to_string())));
         terminal.update(cx, |terminal, cx| {
             assert!(terminal.paste_clipboard(cx));
             assert_eq!(terminal.take_input_log(), [b"a\rb\r".to_vec()]);
         });
 
         let terminal = init_terminal_test(cx, b"\x1b[?2004h");
-        cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string("x\x1b[201~y".to_string())));
+        cx.update(|cx| write_clipboard(cx, ClipboardItem::new_string("x\x1b[201~y".to_string())));
         terminal.update(cx, |terminal, cx| {
             assert!(terminal.paste_clipboard(cx));
             assert_eq!(
@@ -430,7 +430,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_a_pasted_name_goes_without_a_return_and_leaves_the_clipboard(cx: &mut TestAppContext) {
-        cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string("kept".to_string())));
+        cx.update(|cx| write_clipboard(cx, ClipboardItem::new_string("kept".to_string())));
         let terminal = init_terminal_test(cx, b"");
         terminal.update(cx, |terminal, _| {
             terminal.paste("twin [d923d7]");
@@ -441,7 +441,7 @@ mod tests {
             terminal.paste("twin [d923d7]");
             assert_eq!(terminal.take_input_log(), [b"\x1b[200~twin [d923d7]\x1b[201~".to_vec()]);
         });
-        let kept = cx.update(|cx| cx.read_from_clipboard().and_then(|c| c.text()));
+        let kept = cx.update(|cx| read_clipboard(cx).and_then(|c| c.text()));
         assert_eq!(kept.as_deref(), Some("kept"));
     }
 
@@ -449,7 +449,7 @@ mod tests {
     async fn test_paste_clipboard_leaves_an_image_to_the_caller(cx: &mut TestAppContext) {
         let terminal = init_terminal_test(cx, b"");
         let image = gpui::Image::from_bytes(gpui::ImageFormat::Png, vec![0x89, b'P', b'N', b'G']);
-        cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_image(&image)));
+        cx.update(|cx| write_clipboard(cx, ClipboardItem::new_image(&image)));
         terminal.update(cx, |terminal, cx| {
             assert!(!terminal.paste_clipboard(cx));
             assert!(terminal.take_input_log().is_empty());
@@ -471,7 +471,7 @@ mod tests {
             terminal.copy(None);
             terminal.sync(window, cx);
         });
-        let copied = cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+        let copied = cx.update(|_, cx| read_clipboard(cx).and_then(|item| item.text()));
         assert_eq!(copied.as_deref(), Some("ab\ncd"));
     }
 

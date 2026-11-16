@@ -8,8 +8,7 @@ use supraman_term::Terminal;
 use gpui::{AsyncWindowContext, Entity};
 
 use crate::{
-    selftest::{click, scrolled_into_view, sleep, until, wait_for_tab_terminal},
-    selftest_clipboard::{put_text, sequence, text},
+    selftest::{click, clipboard_text, put_clipboard, scrolled_into_view, sleep, until, wait_for_tab_terminal},
     selftest_tabs::drag_from,
     view::FleetView,
 };
@@ -53,8 +52,8 @@ pub(crate) async fn run(
     until(view, cx, WITHIN, "the plain tab active", |v| (v.active == Some(plain)).then_some(())).await?;
     let terminal = wait_for_tab_terminal(view, plain, WITHIN, cx).await?;
     let (before, _) = prompt_is(&terminal, "the plain shell", PROMPT, cx).await?;
-    put_text(SENTINEL, cx)?;
-    let clipboard = sequence();
+    put_clipboard(SENTINEL, cx)?;
+    let writes = cx.update(|_, cx| supraman_ui::clipboard::writes(cx))?;
     let pane = format!("terminal-{plain}");
     let target = scrolled_into_view(view, &pane, cx).await?.center();
 
@@ -99,9 +98,10 @@ pub(crate) async fn run(
     }
     view.update(cx, |v, cx| v.close_tab(bare, cx));
 
-    let held = text(cx)?;
-    if sequence() != clipboard || held.as_deref() != Some(SENTINEL) {
-        bail!("the drops touched the clipboard: it holds {held:?}, sequence {clipboard} → {}", sequence());
+    let held = clipboard_text(cx)?;
+    let now = cx.update(|_, cx| supraman_ui::clipboard::writes(cx))?;
+    if writes.is_none() || now != writes || held.as_deref() != Some(SENTINEL) {
+        bail!("the drops touched the clipboard: it holds {held:?}, its writes {writes:?} → {now:?}");
     }
     Ok(format!(
         "tab and session row dropped on a pwsh terminal pasted {name:?} without running it; its own tab pasted nothing; \

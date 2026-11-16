@@ -112,7 +112,7 @@ async fn steps(view: &Entity<FleetView>, top: &Path, sub: &Path, cx: &mut AsyncW
 async fn until_with_clipboard(sub: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let want = sub.display().to_string();
     crate::selftest::until_with(cx, WITHIN, "the folder path on the clipboard", |cx| {
-        cx.update(|_, cx| cx.read_from_clipboard().and_then(|c| c.text())).ok().flatten().filter(|t| *t == want)
+        cx.update(|_, cx| supraman_ui::clipboard::text(cx)).ok().flatten().filter(|t| *t == want)
     })
     .await
 }

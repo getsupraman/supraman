@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use gpui::{App, Global, Hsla, black, rgb};
+use gpui::{App, ClipboardItem, Global, Hsla, black, rgb};
 use serde::{Deserialize, Serialize};
 
 /// Windows Terminal's default scheme, Campbell (its defaults.json), as ANSI 0-15: black, red, green,
@@ -100,6 +100,64 @@ pub struct TerminalConfig {
     /// Exported to the child as `TERM_PROGRAM_VERSION`.
     pub program_version: String,
     pub palette: TerminalPalette,
+    pub clipboard: ClipboardRoute,
+}
+
+/// The clipboard a terminal copies to and pastes from, its owner's (`supraman_ui::clipboard::terminal`); without one it has none.
+#[derive(Clone, Copy)]
+pub struct ClipboardRoute {
+    pub read: fn(&App) -> Option<ClipboardItem>,
+    pub write: fn(&App, ClipboardItem),
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    pub read_primary: fn(&App) -> Option<ClipboardItem>,
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    pub write_primary: fn(&App, ClipboardItem),
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_CLIPBOARD: std::cell::RefCell<Option<ClipboardItem>> = const { std::cell::RefCell::new(None) };
+}
+
+impl Default for ClipboardRoute {
+    #[cfg(not(test))]
+    fn default() -> Self {
+        Self {
+            read: |_| None,
+            write: |_, _| {},
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            read_primary: |_| None,
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            write_primary: |_, _| {},
+        }
+    }
+
+    /// This crate's tests have no owner: one clipboard per test thread.
+    #[cfg(test)]
+    fn default() -> Self {
+        Self {
+            read: |_| TEST_CLIPBOARD.with(|c| c.borrow().clone()),
+            write: |_, item| TEST_CLIPBOARD.with(|c| *c.borrow_mut() = Some(item)),
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            read_primary: |_| None,
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            write_primary: |_, _| {},
+        }
+    }
+}
+
+impl std::fmt::Debug for ClipboardRoute {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ClipboardRoute")
+    }
+}
+
+pub(crate) fn read_clipboard(cx: &App) -> Option<ClipboardItem> {
+    (TerminalConfig::get(cx).clipboard.read)(cx)
+}
+
+pub(crate) fn write_clipboard(cx: &App, item: ClipboardItem) {
+    (TerminalConfig::get(cx).clipboard.write)(cx, item)
 }
 
 impl Default for TerminalConfig {
@@ -110,6 +168,7 @@ impl Default for TerminalConfig {
             open_links_in_mouse_mode: true,
             program_version: env!("CARGO_PKG_VERSION").to_string(),
             palette: TerminalPalette::default(),
+            clipboard: ClipboardRoute::default(),
         }
     }
 }

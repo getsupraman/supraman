@@ -1,4 +1,4 @@
-//! `--selftest` step 6b: a real pwsh in a terminal tab: wheel scroll, and Ctrl+C and right-click copy and paste through the system clipboard.
+//! `--selftest` step 6b: a real pwsh in a terminal tab: wheel scroll, and Ctrl+C and right-click copy and paste through the clipboard.
 
 use std::time::{Duration, Instant};
 
@@ -9,18 +9,8 @@ use gpui::{
     MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollEvent, point,
 };
 
-use crate::{
-    selftest::{CLIPBOARD_TRIES, drawn, hex6, key, read_own, select_wheel_line, sleep, until_with},
-    selftest_clipboard::put_text,
-};
+use crate::selftest::{copied, drawn, hex6, key, put_clipboard, select_wheel_line, sleep, until_with};
 
-pub(crate) async fn run(terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let _clipboard = crate::selftest_clipboard::borrow("6b", cx).await?;
-    let saved = crate::selftest_clipboard::Snapshot::take()?;
-    let result = steps(terminal, cx).await;
-    saved.restore()?;
-    result
-}
 
 pub(crate) async fn wheel(terminal: &Entity<Terminal>, position: Point<Pixels>, notches: f32, cx: &mut AsyncWindowContext) -> anyhow::Result<usize> {
     let before = terminal.read_with(cx, |t, _| t.grid_extent().0);
@@ -62,24 +52,17 @@ async fn until(what: &str, within: Duration, cx: &mut AsyncWindowContext, mut do
 
 /// Windows Terminal's copy keys: Ctrl+C with a selection copies and never reaches the shell; right-click copies a
 /// selection, or pastes without one.
-async fn steps(terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+pub(crate) async fn run(terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let ctrl = Modifiers::control();
     let mut report = Vec::new();
 
     let prompt = last_line(terminal, cx);
-    let mut copied = None;
-    let mut text = String::new();
-    for _ in 0..CLIPBOARD_TRIES {
-        (_, text) = select_wheel_line(terminal, cx).await?;
-        put_text("not copied", cx)?;
-        key(cx, "c", ctrl)?;
-        copied = read_own(cx, |c| c == text).await?;
-        if copied.as_deref() == Some(text.as_str()) {
-            break;
-        }
-    }
-    if copied.as_deref() != Some(text.as_str()) {
-        bail!("Ctrl+C with {text:?} selected left the clipboard at {copied:?} ({CLIPBOARD_TRIES} tries)");
+    let (_, text) = select_wheel_line(terminal, cx).await?;
+    put_clipboard("not copied", cx)?;
+    key(cx, "c", ctrl)?;
+    let held = copied(&text, cx).await?;
+    if held.as_deref() != Some(text.as_str()) {
+        bail!("Ctrl+C with {text:?} selected left the clipboard at {held:?}");
     }
     sleep(cx, Duration::from_millis(400)).await;
     let selection = terminal.read_with(cx, |t, _| t.selection_text());
@@ -92,18 +75,12 @@ async fn steps(terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> anyh
     }
     report.push(format!("Ctrl+C with {text:?} selected → clipboard, selection cleared, prompt line unchanged"));
 
-    let mut copied = None;
-    for _ in 0..CLIPBOARD_TRIES {
-        (_, text) = select_wheel_line(terminal, cx).await?;
-        put_text("not copied", cx)?;
-        right_click(terminal, cx)?;
-        copied = read_own(cx, |c| c == text).await?;
-        if copied.as_deref() == Some(text.as_str()) {
-            break;
-        }
-    }
-    if copied.as_deref() != Some(text.as_str()) {
-        bail!("right-click with {text:?} selected left the clipboard at {copied:?} ({CLIPBOARD_TRIES} tries)");
+    let (_, text) = select_wheel_line(terminal, cx).await?;
+    put_clipboard("not copied", cx)?;
+    right_click(terminal, cx)?;
+    let held = copied(&text, cx).await?;
+    if held.as_deref() != Some(text.as_str()) {
+        bail!("right-click with {text:?} selected left the clipboard at {held:?}");
     }
     crate::selftest::drawn(cx).await?;
     if terminal.read_with(cx, |t, _| t.last_content().selection.is_some()) {
@@ -111,18 +88,11 @@ async fn steps(terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> anyh
     }
 
     let marker = format!("fm-rclick-{}", hex6());
-    let mut pasted = false;
-    for _ in 0..CLIPBOARD_TRIES {
-        put_text(&marker, cx)?;
-        right_click(terminal, cx)?;
-        if until("right-click paste echoed", Duration::from_secs(2), cx, |cx| last_line(terminal, cx).contains(&marker)).await.is_ok() {
-            pasted = true;
-            break;
-        }
-    }
-    if !pasted {
-        bail!("right-click: {marker} not echoed at the prompt in {CLIPBOARD_TRIES} tries of 2 s");
-    }
+    put_clipboard(&marker, cx)?;
+    right_click(terminal, cx)?;
+    until("right-click paste echoed", Duration::from_secs(5), cx, |cx| last_line(terminal, cx).contains(&marker))
+        .await
+        .map_err(|e| anyhow::anyhow!("right-click: {marker} not echoed at the prompt: {e}"))?;
     report.push(format!("right-click with a selection → clipboard, cleared; without → pasted {marker}"));
 
     Ok(report.join("; "))

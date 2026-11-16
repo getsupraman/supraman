@@ -3,7 +3,7 @@
 
 use std::rc::Rc;
 
-use gpui::{AnyElement, ClickEvent, ClipboardItem, Context, Div, FontWeight, Hsla, ScrollHandle, SharedString, Window, div, prelude::*, px};
+use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, ScrollHandle, SharedString, Window, div, prelude::*, px};
 use theme::{ActiveTheme as _, ThemeColors};
 
 use crate::banner;
@@ -249,7 +249,7 @@ fn long_line<V: 'static>(text: &str, copy_key: String, hits: &HitTargets, cx: &m
         .bg(cx.theme().colors().element_background)
         .child(div().flex_1().min_w_0().font_family(crate::fonts::MONO).text_sm().child(SharedString::from(text.to_string())))
         .child(button::action(hits, copy_key, "Copy", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-            cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()));
+            crate::clipboard::write_text(cx, copied.clone());
         })))
         .into_any_element()
 }

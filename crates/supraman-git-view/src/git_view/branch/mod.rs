@@ -11,7 +11,7 @@ mod tests;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use gpui::{AppContext as _, ClipboardItem, Context, Entity, EventEmitter, Pixels, Point, Render, Window, div, prelude::*};
+use gpui::{AppContext as _, Context, Entity, EventEmitter, Pixels, Point, Render, Window, div, prelude::*};
 use supraman_gitman::write::branch::{self, CheckedOut, Merged, Plan, Target, relation};
 use supraman_gitman::write::rebase::{self, Autostash, Rebased};
 use supraman_gitman::write::{LockSet, Session, WriteError};
@@ -278,7 +278,7 @@ impl BranchActions {
             RefAct::DeleteBranch(name) => self.delete_branch(name, cx),
             RefAct::DeleteTag(name) => self.ask(Ask::DeleteTag(name), cx),
             RefAct::Copy { text, what } => {
-                cx.write_to_clipboard(ClipboardItem::new_string(text));
+                supraman_ui::clipboard::write_text(cx, text);
                 cx.emit(BranchEvent::Said(format!("Copied {what}")));
             }
             RefAct::RemoveWorktree { path, branch } => {

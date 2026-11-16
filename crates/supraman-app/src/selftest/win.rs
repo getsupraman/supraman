@@ -1,4 +1,4 @@
-//! The selftests' Win32: posted window messages, window captures, the clipboard, CPU times and the foreground window.
+//! The selftests' Win32: posted window messages, window captures, named mutexes, CPU times and the foreground window.
 
 use std::path::Path;
 
@@ -344,57 +344,24 @@ pub fn print_window(_hwnd: isize, _out: &Path) -> anyhow::Result<()> {
 }
 
 #[cfg(windows)]
-pub(crate) mod clipboard {
-    use std::time::{Duration, Instant};
-
+pub(crate) mod mutex {
     use windows::{
         Win32::{
-            Foundation::{CloseHandle, GlobalFree, HANDLE, HGLOBAL, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT},
-            System::{
-                DataExchange::{
-                    CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData, GetClipboardSequenceNumber,
-                    OpenClipboard, SetClipboardData,
-                },
-                Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock},
-                Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject},
-            },
+            Foundation::{CloseHandle, HANDLE, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT},
+            System::Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject},
         },
         core::PCWSTR,
     };
 
-    /// GDI-handle and owner-display formats, which are no HGLOBAL; Windows synthesizes CF_BITMAP again from CF_DIB.
-    const NOT_GLOBAL: [u32; 8] = [2, 3, 9, 14, 0x80, 0x82, 0x83, 0x8E];
-
-    struct Open;
-
-    impl Open {
-        fn new() -> windows::core::Result<Self> {
-            let started = Instant::now();
-            loop {
-                match unsafe { OpenClipboard(None) } {
-                    Ok(()) => return Ok(Open),
-                    Err(e) if started.elapsed() > Duration::from_secs(1) => return Err(e),
-                    Err(_) => std::thread::sleep(Duration::from_millis(20)),
-                }
-            }
-        }
-    }
-
-    impl Drop for Open {
-        fn drop(&mut self) {
-            unsafe { CloseClipboard() }.ok();
-        }
-    }
-
-    /// Named mutexes taken all or none.
-    pub(crate) struct Held {
+    /// Named mutexes taken all or none, released on drop.
+    pub(crate) struct NamedMutexes {
         mutexes: Vec<HANDLE>,
         owned: std::cell::Cell<bool>,
     }
 
-    impl Held {
+    impl NamedMutexes {
         pub(crate) fn open(names: &[&str]) -> windows::core::Result<Self> {
-            let mut held = Held { mutexes: Vec::new(), owned: std::cell::Cell::new(false) };
+            let mut held = NamedMutexes { mutexes: Vec::new(), owned: std::cell::Cell::new(false) };
             for name in names {
                 let wide: Vec<u16> = name.encode_utf16().chain([0]).collect();
                 held.mutexes.push(unsafe { CreateMutexW(None, false, PCWSTR(wide.as_ptr())) }?);
@@ -421,7 +388,7 @@ pub(crate) mod clipboard {
         }
     }
 
-    impl Drop for Held {
+    impl Drop for NamedMutexes {
         fn drop(&mut self) {
             for mutex in &self.mutexes {
                 unsafe {
@@ -433,95 +400,19 @@ pub(crate) mod clipboard {
             }
         }
     }
-
-    pub(crate) struct Snapshot(Vec<(u32, Vec<u8>)>);
-
-    impl Snapshot {
-        pub(crate) fn take() -> windows::core::Result<Self> {
-            let _open = Open::new()?;
-            let mut formats = Vec::new();
-            let mut format = 0;
-            loop {
-                format = unsafe { EnumClipboardFormats(format) };
-                if format == 0 {
-                    break;
-                }
-                if NOT_GLOBAL.contains(&format) {
-                    continue;
-                }
-                let Ok(handle) = (unsafe { GetClipboardData(format) }) else { continue };
-                let global = HGLOBAL(handle.0);
-                let size = unsafe { GlobalSize(global) };
-                let ptr = unsafe { GlobalLock(global) };
-                if ptr.is_null() {
-                    continue;
-                }
-                let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, size) }.to_vec();
-                unsafe { GlobalUnlock(global) }.ok();
-                formats.push((format, bytes));
-            }
-            Ok(Snapshot(formats))
-        }
-
-        pub(crate) fn restore(&self) -> windows::core::Result<()> {
-            set(self.0.iter().map(|(f, b)| (*f, b.as_slice())))
-        }
-    }
-
-    pub(crate) fn sequence() -> u32 {
-        unsafe { GetClipboardSequenceNumber() }
-    }
-
-    fn set<'a>(formats: impl Iterator<Item = (u32, &'a [u8])>) -> windows::core::Result<()> {
-        let _open = Open::new()?;
-        unsafe { EmptyClipboard() }?;
-        for (format, bytes) in formats {
-            let global = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes.len().max(1)) }?;
-            let ptr = unsafe { GlobalLock(global) };
-            if ptr.is_null() {
-                unsafe { GlobalFree(Some(global)) }.ok();
-                continue;
-            }
-            unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr as *mut u8, bytes.len()) };
-            unsafe { GlobalUnlock(global) }.ok();
-            // the clipboard owns the memory once this succeeds
-            if unsafe { SetClipboardData(format, Some(HANDLE(global.0))) }.is_err() {
-                unsafe { GlobalFree(Some(global)) }.ok();
-            }
-        }
-        Ok(())
-    }
 }
 
 #[cfg(not(windows))]
-pub(crate) mod clipboard {
-    pub(crate) struct Held;
+pub(crate) mod mutex {
+    pub(crate) struct NamedMutexes;
 
-    impl Held {
+    impl NamedMutexes {
         pub(crate) fn open(_names: &[&str]) -> anyhow::Result<Self> {
-            Ok(Held)
+            Ok(NamedMutexes)
         }
         pub(crate) fn try_take(&self) -> anyhow::Result<bool> {
             Ok(true)
         }
-    }
-
-    pub(crate) struct Snapshot;
-
-    impl Snapshot {
-        pub(crate) fn take() -> anyhow::Result<Self> {
-            anyhow::bail!("windows only")
-        }
-        pub(crate) fn formats(&self) -> usize {
-            0
-        }
-        pub(crate) fn restore(&self) -> anyhow::Result<()> {
-            Ok(())
-        }
-    }
-
-    pub(crate) fn sequence() -> u32 {
-        0
     }
 }
 

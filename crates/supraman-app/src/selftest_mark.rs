@@ -7,7 +7,7 @@ use supraman_claude::peer;
 use gpui::{AsyncWindowContext, Entity, MouseButton};
 
 use crate::{
-    selftest::{CLIPBOARD_TRIES, cargo_root, click, double_click, lock, press, read_own, run_hex, sleep, until, wait_for_tab_terminal},
+    selftest::{cargo_root, click, copied, double_click, lock, press, put_clipboard, run_hex, sleep, until, wait_for_tab_terminal},
     view::{FleetView, REFRESH_EVERY},
 };
 
@@ -22,13 +22,10 @@ fn marked(v: &FleetView) -> Vec<String> {
 pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let earlier: Vec<u64> = view.read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).collect());
     view.update(cx, |v, cx| earlier.into_iter().for_each(|id| v.close_tab(id, cx)));
-    let _clipboard = crate::selftest_clipboard::borrow("7l", cx).await?;
-    let saved = crate::selftest_clipboard::Snapshot::take()?;
     let name = format!("fm-selftest-{}-mark", run_hex());
     let shell = view.update(cx, |v, _| std::mem::replace(&mut v.shell_args, vec!["-NoLogo".into(), "-NoProfile".into()]));
     let result = check(view, &name, cx).await;
     view.update(cx, |v, _| v.shell_args = shell);
-    saved.restore().ok();
     let killed = lock().as_mut().map(|s| std::mem::take(&mut s.kill)).unwrap_or_default();
     for (pid, start) in killed {
         supraman_core::platform::process::terminate_started(pid, start);
@@ -129,25 +126,19 @@ async fn check(view: &Entity<FleetView>, name: &str, cx: &mut AsyncWindowContext
 async fn copy_send_name(view: &Entity<FleetView>, sid: &str, name: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let row = format!("session-row-{sid}");
     until(view, cx, WITHIN, "the row painted", |v| v.shown(&row).then_some(())).await?;
-    let mut copied = None;
-    for _ in 0..CLIPBOARD_TRIES {
-        crate::selftest_clipboard::put_text("not copied", cx)?;
-        press(view, &row, MouseButton::Right, cx).await?;
-        let shown = until(view, cx, WITHIN, "Copy SendMessage name in the menu", |v| v.hits.borrow().contains_key("menu-copy-send-name").then_some(())).await;
-        if let Err(e) = shown {
-            let menu = view.read_with(cx, |v, _| v.dialogs.menu.as_ref().map(|m| m.items.iter().map(|i| i.key.clone()).collect::<Vec<_>>()));
-            let dir = peer::sessions_dir().unwrap_or_default();
-            let live: Vec<String> = peer::live_entries(&dir, &peer::System).iter().filter(|e| e.name == name).map(|e| format!("{:?}", e)).collect();
-            bail!("{e}: menu {menu:?}; live entries named {name}: {live:?}");
-        }
-        click(view, "menu-copy-send-name", cx).await?;
-        copied = read_own(cx, |c| c == name).await?;
-        if copied.as_deref() == Some(name) {
-            break;
-        }
+    put_clipboard("not copied", cx)?;
+    press(view, &row, MouseButton::Right, cx).await?;
+    let shown = until(view, cx, WITHIN, "Copy SendMessage name in the menu", |v| v.hits.borrow().contains_key("menu-copy-send-name").then_some(())).await;
+    if let Err(e) = shown {
+        let menu = view.read_with(cx, |v, _| v.dialogs.menu.as_ref().map(|m| m.items.iter().map(|i| i.key.clone()).collect::<Vec<_>>()));
+        let dir = peer::sessions_dir().unwrap_or_default();
+        let live: Vec<String> = peer::live_entries(&dir, &peer::System).iter().filter(|e| e.name == name).map(|e| format!("{:?}", e)).collect();
+        bail!("{e}: menu {menu:?}; live entries named {name}: {live:?}");
     }
-    if copied.as_deref() != Some(name) {
-        bail!("the clipboard holds {copied:?}, not {name:?} ({CLIPBOARD_TRIES} tries)");
+    click(view, "menu-copy-send-name", cx).await?;
+    let held = copied(name, cx).await?;
+    if held.as_deref() != Some(name) {
+        bail!("the clipboard holds {held:?}, not {name:?}");
     }
     until(view, cx, WITHIN, "the copy toast painted", |v| {
         (v.toast.text() == Some(format!("Copied {name}").as_str()) && v.hits.borrow().contains_key("toast")).then_some(())
