@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 
 use super::*;
-use migrate::write_workspace;
 
 fn top(path: &str) -> Entry {
     Entry::Folder(FolderEntry::new(path))
@@ -142,36 +141,22 @@ fn move_group_counts_its_index_with_the_group_taken_out_and_refuses_an_unknown_n
 }
 
 #[test]
-fn the_first_load_makes_a_group_of_each_workspace_with_a_duplicate_at_its_first_place_once() {
-    let home = tempfile::tempdir().unwrap();
-    let larchsys = PathBuf::from(r"P:\Projects\LarchSys");
-    let gaia = larchsys.join("gaia");
-    let old = larchsys.join("old");
-    write_workspace(home.path(), "larchsys", &[&larchsys, &gaia, &old]);
-    write_workspace(home.path(), "gaia", &[&gaia, &gaia.join("api")]);
-    std::fs::write(home.path().join("workspaces").join("broken.toml"), "name = ").unwrap();
-
-    let entries = load(home.path()).unwrap();
-    let gaia_s = gaia.to_str().unwrap();
-    let api = gaia.join("api");
-    assert_eq!(
-        entries.list,
-        [group("gaia", &[gaia_s, api.to_str().unwrap()]), group("larchsys", &[larchsys.to_str().unwrap(), larchsys.join("old").to_str().unwrap()])],
-        "by name; gaia is placed in its first group only; the home is no folder"
-    );
-    assert!(path(home.path()).is_file());
-
-    write_workspace(home.path(), "zeta", &[Path::new(r"C:\z")]);
-
-    edit(home.path(), |e| e.remove_group("larchsys", true)).unwrap();
-    let again = load(home.path()).unwrap();
-    assert_eq!(again.list.len(), 1, "folders.toml is read, never migrated again: {:?}", again.list);
-}
-
-#[test]
 fn no_workspaces_is_an_empty_list() {
     let home = tempfile::tempdir().unwrap();
     assert_eq!(load(home.path()).unwrap(), Entries::default());
+}
+
+#[test]
+fn a_fresh_home_is_an_empty_tree_and_a_workspaces_folder_in_it_is_never_read() {
+    let home = tempfile::tempdir().unwrap();
+    let workspaces = home.path().join("workspaces");
+    std::fs::create_dir_all(&workspaces).unwrap();
+    std::fs::write(workspaces.join("gaia.toml"), "name = \"gaia\"\n\n[[folders]]\nname = \"gaia\"\npath = 'P:/gaia'\n").unwrap();
+
+    assert_eq!(load(home.path()).unwrap(), Entries::default());
+    assert_eq!(read(home.path()).unwrap(), Some(Entries::default()), "the empty tree is written");
+    let (entries, ()) = edit(home.path(), |_| Ok(())).unwrap();
+    assert_eq!(entries, Entries::default());
 }
 
 #[test]

@@ -72,7 +72,7 @@ pub fn load_key(home: &Path, key: &str) -> Result<Option<Scheduled>> {
     Ok(Some(Scheduled { folder: file.folder, key: key.into(), schedules: file.schedule }))
 }
 
-/// Every folder's schedules, by key, and a line for each file that cannot be read or holds schedules no folder took.
+/// Every folder's schedules, by key, and a line for each file that cannot be read.
 pub fn load_all(home: &Path) -> (Vec<Scheduled>, Vec<String>) {
     let dir = schedules_dir(home);
     let (mut out, mut errors) = (Vec::new(), Vec::new());
@@ -83,7 +83,6 @@ pub fn load_all(home: &Path) -> (Vec<Scheduled>, Vec<String>) {
             Err(e) => errors.push(e.to_string()),
         }
     }
-    errors.extend(super::migrate::unplaced(home));
     (out, errors)
 }
 
@@ -144,7 +143,7 @@ pub fn edit<T>(home: &Path, folder: &Path, change: impl FnOnce(&mut Vec<Schedule
     })
 }
 
-/// [`edit`] without its rules: for [`super::approve`] and the migration alone.
+/// [`edit`] without its rules: for [`super::approve`] alone.
 pub(super) fn edit_raw<T>(home: &Path, folder: &Path, change: impl FnOnce(&mut Vec<Schedule>) -> Result<T>) -> Result<T> {
     let key = folder_key(folder);
     let path = file_path(home, &key)?;

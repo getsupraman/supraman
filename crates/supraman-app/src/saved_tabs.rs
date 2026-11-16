@@ -21,12 +21,7 @@ pub enum SavedTab {
     /// A hand tab; `session_id` is the full uuid of the claude it runs.
     Claude { title: String, cwd: PathBuf, session_id: Option<String>, name: String },
     Attach { title: String, cwd: PathBuf, id: String, session_id: Option<String>, name: String },
-    /// `workspace` is a tab saved before folders: the group of that name (`saved_target`).
-    Work {
-        title: String,
-        #[serde(alias = "workspace", deserialize_with = "saved_target")]
-        target: Target,
-    },
+    Work { title: String, target: Target },
     Git { title: String, folder: PathBuf },
 }
 
@@ -74,21 +69,6 @@ impl SavedTab {
             started_at: None,
         })
     }
-}
-
-/// A saved Work tab's target, or a workspace's name from before folders as the group of that name; the name's read
-/// goes with folders::migrate in 0.1.19 (backlog/end-controllers-removal).
-fn saved_target<'de, D: serde::Deserializer<'de>>(de: D) -> Result<Target, D::Error> {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Saved {
-        Target(Target),
-        Workspace(String),
-    }
-    Ok(match Saved::deserialize(de)? {
-        Saved::Target(target) => target,
-        Saved::Workspace(name) => Target::Group(name),
-    })
 }
 
 /// A plain tab's program and the arguments it was started with.
@@ -236,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn a_work_tab_comes_back_on_its_folder_or_group_and_one_saved_by_workspace_as_that_group() {
+    fn a_work_tab_comes_back_on_its_folder_or_group() {
         let has = |_: &str, _: &Path| false;
         let (folder, group) = (Target::Folder("C:/code/shop".into()), Target::Group("shop".into()));
         let listed = [folder.clone(), group.clone()];
@@ -248,10 +228,6 @@ mod tests {
         }
         let gone = SavedTab::Work { title: "Work · old".into(), target: Target::Folder("C:/code/old".into()) };
         assert_eq!(plan(&gone, &world), Err("old is no longer listed".into()));
-        let earlier: SavedTab = serde_json::from_value(serde_json::json!({ "kind": "work", "title": "Work · shop", "workspace": "shop" })).unwrap();
-        assert_eq!(plan(&earlier, &world), Ok(Reopen::Work { target: group }), "a workspace's tab is its group's");
-        let earlier: SavedTab = serde_json::from_value(serde_json::json!({ "kind": "work", "title": "Work · x", "workspace": "x" })).unwrap();
-        assert_eq!(plan(&earlier, &world), Err("x is no longer listed".into()), "no group of that name: dropped with why");
     }
 
     #[test]

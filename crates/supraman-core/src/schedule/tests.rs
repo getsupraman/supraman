@@ -714,7 +714,6 @@ fn prune_takes_old_rotated_runs_the_state_of_removed_schedules_and_spent_worktre
 }
 
 mod foreign;
-mod migrate;
 mod registrar;
 
 #[test]

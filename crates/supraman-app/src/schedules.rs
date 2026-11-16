@@ -127,23 +127,16 @@ fn tokens_text(n: u64) -> String {
     }
 }
 
-/// What one [`read`] found: the rows by folder key, the errors as lines, and whether a migration asks for a sync.
+/// What one [`read`] found: the rows by folder key and the errors as lines.
 #[derive(Default)]
 pub struct Read {
     pub rows: BTreeMap<String, Vec<ScheduleRow>>,
     pub errors: Vec<String>,
-    pub resync: bool,
 }
 
-/// Every folder's schedules, after the earlier per-workspace files are moved to their folders (once). Rows of
-/// a file that cannot be read are left out.
+/// Every folder's schedules; rows of a file that cannot be read are left out.
 pub fn read(home: &Path, store: &dyn SecretStore, now_ms: i64) -> Read {
-    let mut errors = Vec::new();
-    if let Err(e) = schedule::migrate(home, store) {
-        errors.push(format!("Cannot move the earlier schedule files to their folders: {e}"));
-    }
-    let (all, notices) = schedule::load_all(home);
-    errors.extend(notices);
+    let (all, mut errors) = schedule::load_all(home);
     let mut rows = BTreeMap::new();
     for found in all.into_iter().filter(|f| !f.schedules.is_empty()) {
         let mut runs = schedule::runs(home, &found.key).unwrap_or_else(|e| {
@@ -156,7 +149,7 @@ pub fn read(home: &Path, store: &dyn SecretStore, now_ms: i64) -> Read {
         let list = found.schedules.into_iter().map(|s| row_of(&found.key, &folder, s, &runs, live.as_deref(), store, now_ms)).collect();
         rows.insert(found.key, list);
     }
-    Read { rows, errors, resync: schedule::schedules_dir(home).join(schedule::RESYNC).exists() }
+    Read { rows, errors }
 }
 
 fn row_of(key: &str, folder: &Path, s: Schedule, runs: &[Run], live: Option<&Path>, store: &dyn SecretStore, now_ms: i64) -> ScheduleRow {
@@ -281,7 +274,6 @@ fn field_words(field: &str) -> String {
     }
     match field {
         "v" => "Format",
-        "workspace" => "Workspace (before folders)",
         "id" => "Id",
         "folder" => "Folder",
         "trigger.kind" => "Trigger",

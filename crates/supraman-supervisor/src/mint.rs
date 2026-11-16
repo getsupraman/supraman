@@ -431,10 +431,6 @@ impl Keeper {
         &self.mcp_dir
     }
 
-    pub(crate) fn home(&self) -> &Path {
-        &self.home
-    }
-
     pub fn store(&self) -> &dyn SecretStore {
         &*self.store
     }

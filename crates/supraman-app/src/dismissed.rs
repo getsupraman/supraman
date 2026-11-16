@@ -6,8 +6,6 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct File {
-    /// Its name before folders goes with folders::migrate in 0.1.19 (backlog/end-controllers-removal).
-    #[serde(alias = "workspaces")]
     folders: BTreeMap<String, BTreeSet<String>>,
 }
 
@@ -99,15 +97,6 @@ mod tests {
         let (again, _) = Dismissed::load_at(Some(file), LOST);
         assert!(again.hides("w", "a"), "read back");
         assert!(!home.path().join("dismissed.json.tmp").exists());
-    }
-
-    #[test]
-    fn a_file_written_before_folders_is_read_by_its_folder_keys() {
-        let home = tempfile::tempdir().unwrap();
-        let file = home.path().join("dismissed.json");
-        std::fs::write(&file, r#"{"workspaces":{"gaia-1a2b3c4d":["run-1"]}}"#).unwrap();
-        let (d, notice) = Dismissed::load_at(Some(file), LOST);
-        assert!(notice.is_none() && d.hides("gaia-1a2b3c4d", "run-1"));
     }
 
     #[test]
