@@ -379,7 +379,7 @@ impl FleetView {
                 }
                 let fkey = supraman_core::schedule::folder_key(&folder.path);
                 if tree.schedule_row(&fkey) == Some((e, f)) {
-                    let tokens = ["schedules-row-", "sched-row-", "sched-state-", "sched-error-", "others-row-"].iter().map(|p| format!("{p}{fkey}")).collect();
+                    let tokens = ["schedules-row-", "sched-row-", "sched-state-", "sched-error-", "sched-approve-", "sched-run-", "others-row-"].iter().map(|p| format!("{p}{fkey}")).collect();
                     rows.push((LeftRow::Schedules(e, f), format!("sched:{fkey}"), tokens));
                 }
                 session_rows(&mut rows, e, f, folder);
