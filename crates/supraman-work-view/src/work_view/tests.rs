@@ -276,7 +276,7 @@ fn click(view: &Entity<WorkView>, key: &str, cx: &mut VisualTestContext) {
 }
 
 fn clipboard(cx: &mut VisualTestContext) -> Option<String> {
-    supraman_ui::clipboard::text(cx)
+    cx.update(|_, cx| supraman_ui::clipboard::text(cx))
 }
 
 #[gpui::test]
