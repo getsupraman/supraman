@@ -15,7 +15,12 @@ pub const SKIPPED: &[&str] = &["node_modules", "target", "bin", "obj", "__pycach
 /// `path`'s direct child folders, sorted by name: no file, no dot or hidden folder, none of [`SKIPPED`];
 /// nothing when it cannot be read. Blocking.
 pub fn subfolders(path: &Path) -> Vec<PathBuf> {
-    let Ok(read) = fs::read_dir(path) else { return Vec::new() };
+    read_subfolders(path).unwrap_or_default()
+}
+
+/// [`subfolders`], `None` when `path` cannot be read. Blocking.
+pub fn read_subfolders(path: &Path) -> Option<Vec<PathBuf>> {
+    let read = fs::read_dir(path).ok()?;
     let mut out: Vec<(String, PathBuf)> = read
         .flatten()
         .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()) || e.path().is_dir())
@@ -27,12 +32,12 @@ pub fn subfolders(path: &Path) -> Vec<PathBuf> {
         })
         .collect();
     out.sort();
-    out.into_iter().map(|(_, p)| p).collect()
+    Some(out.into_iter().map(|(_, p)| p).collect())
 }
 
-/// Each folder that shows its sub folders, read; blocking.
+/// Each folder that shows its sub folders and could be read; blocking.
 pub fn shown(entries: &Entries) -> Shown {
-    entries.folders().filter(|f| f.show_subfolders).map(|f| (path_key(&f.path), subfolders(&f.path))).collect()
+    entries.folders().filter(|f| f.show_subfolders).filter_map(|f| Some((path_key(&f.path), read_subfolders(&f.path)?))).collect()
 }
 
 impl FolderEntry {

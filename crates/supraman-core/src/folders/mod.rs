@@ -1,6 +1,7 @@
 //! `<home>/folders.toml`: the sidebar's ordered folders and named groups, and their one reader and writer.
 
 mod edits;
+mod prune;
 mod subfolders;
 
 use std::fs;
@@ -13,7 +14,8 @@ use crate::paths::path_key;
 use crate::{CoreError, Result};
 
 pub use edits::{Place, Pos};
-pub use subfolders::{SKIPPED, Shown, shown, subfolders};
+pub use prune::{gone_excluded, prune_excluded};
+pub use subfolders::{SKIPPED, Shown, read_subfolders, shown, subfolders};
 
 pub const FILE: &str = "folders.toml";
 
@@ -59,6 +61,13 @@ impl Entry {
     pub fn folders(&self) -> &[FolderEntry] {
         match self {
             Entry::Folder(f) => std::slice::from_ref(f),
+            Entry::Group { folders, .. } => folders,
+        }
+    }
+
+    fn folders_mut(&mut self) -> &mut [FolderEntry] {
+        match self {
+            Entry::Folder(f) => std::slice::from_mut(f),
             Entry::Group { folders, .. } => folders,
         }
     }
@@ -165,10 +174,18 @@ pub fn load(home: &Path) -> Result<Entries> {
 
 /// Load, `change`, save, under `<home>/folders.lock`; nothing is written when `change` refuses.
 pub fn edit<T>(home: &Path, change: impl FnOnce(&mut Entries) -> Result<T>) -> Result<(Entries, T)> {
+    edit_when(home, |entries| change(entries).map(|out| (out, true)))
+}
+
+/// [`edit`], saving only when `change` says it changed something.
+fn edit_when<T>(home: &Path, change: impl FnOnce(&mut Entries) -> Result<(T, bool)>) -> Result<(Entries, T)> {
     let lock = home.join(LOCK);
     let _held = crate::fs::lock_file(&lock).map_err(|e| CoreError::io(&lock, e))?;
     let mut entries = read(home)?.unwrap_or_default();
-    let out = change(&mut entries)?;
+    let (out, changed) = change(&mut entries)?;
+    if !changed {
+        return Ok((entries, out));
+    }
     let file = path(home);
     let text = toml::to_string(&entries).map_err(|source| CoreError::Serialize { name: FILE.into(), source })?;
     crate::fs::write_atomic(&file, text).map_err(|e| CoreError::io(&file, e))?;
