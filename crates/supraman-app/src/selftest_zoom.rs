@@ -10,7 +10,7 @@ use gpui::{AsyncWindowContext, Entity, Modifiers, MouseMoveEvent, Pixels, Platfo
 use supraman_ui::term_element;
 
 use crate::{
-    selftest::{key, sleep, wait_for_tab_terminal},
+    selftest::{key, sleep, until, until_with, wait_for_tab_terminal},
     settings_window::page,
     view::FleetView,
 };
@@ -40,12 +40,8 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     laid_out_at(view, second, &second_term, start, cx).await?;
 
     let ctrl = Modifiers::control();
-    key(cx, "=", ctrl)?;
-    key(cx, "=", ctrl)?;
-    let zoomed = view.read_with(cx, |v, _| v.term_look.term_font_size);
-    if zoomed != start + px(2.) {
-        bail!("Ctrl+= twice in tab {second}: {start:?} → {zoomed:?}");
-    }
+    let zoomed = start + px(2.);
+    pressed(view, "=", 2, zoomed, cx).await.with_context(|| format!("tab {second}"))?;
     let second_ms = laid_out_at(view, second, &second_term, zoomed, cx).await.context("the zoomed tab")?;
     view.update(cx, |v, cx| v.activate_tab(first, cx));
     let first_ms = laid_out_at(view, first, &first_term, zoomed, cx).await.context("the other tab")?;
@@ -73,11 +69,8 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
 
     let settings = settings_page(view, home, first, &first_term, spun, cx).await.context("Settings → Appearance")?;
 
-    key(cx, "0", ctrl)?;
-    let reset = view.read_with(cx, |v, _| v.term_look.term_font_size);
-    if reset != term_element::FONT_SIZE {
-        bail!("Ctrl+0: {spun:?} → {reset:?}, not 14");
-    }
+    let reset = term_element::FONT_SIZE;
+    pressed(view, "0", 1, reset, cx).await.with_context(|| format!("tab {first}"))?;
     laid_out_at(view, first, &first_term, reset, cx).await?;
     saved_as(view, home, 14, cx).await?;
     if std::fs::read_to_string(Settings::path(home))?.contains("font_size") {
@@ -89,6 +82,42 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
          {settings}; Ctrl+0 → 14, saved as unset",
         f32::from(zoomed)
     ))
+}
+
+/// Ctrl+`key_name` `times` over once a key reaches `FleetView::key_down`'s chords in the drawn frame (each look asks for the next),
+/// then the size at `want`.
+async fn pressed(view: &Entity<FleetView>, key_name: &str, times: usize, want: Pixels, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let reach = until_with(cx, WITHIN, "a key reaching the window's chords", |cx| {
+        let reach = cx.update(|window, cx| {
+            window.refresh();
+            view.read(cx).chords_reach(window, cx)
+        });
+        reach.ok().filter(|reach| *reach).map(|_| ())
+    })
+    .await;
+    reach.map_err(|e| anyhow!("{e}; the keys are {}", where_keys(view, cx)))?;
+    let before = view.read_with(cx, |v, _| v.term_look.term_font_size);
+    for _ in 0..times {
+        key(cx, key_name, Modifiers::control())?;
+    }
+    let came = until(view, cx, Duration::from_secs(3), "the font size", |v| (v.term_look.term_font_size == want).then_some(())).await;
+    came.map_err(|_| {
+        let now = view.read_with(cx, |v, _| v.term_look.term_font_size);
+        anyhow!("Ctrl+{key_name} ×{times}: {before:?} → {now:?}, expected {want:?}")
+    })
+}
+
+fn where_keys(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> String {
+    let at = cx.update(|window, cx| {
+        let focused = window.focused(cx).is_some();
+        let pane = supraman_ui::focus::focused(window, cx);
+        let v = view.read(cx);
+        let input = v.input_focused(window, cx);
+        let dialog = v.dialogs.dialog.focused(window, cx);
+        let contexts: Vec<String> = window.context_stack().iter().map(|c| format!("{c:?}")).collect();
+        format!("in pane {pane:?} (a focused handle: {focused}, a text field: {input}, a dialog's button: {dialog:?}, key contexts {contexts:?})")
+    });
+    at.unwrap_or_else(|e| format!("unknown: {e}"))
 }
 
 // Only Escape, the caption ✕ or Alt+F4 close it while the step holds it, and the step sends none of them.

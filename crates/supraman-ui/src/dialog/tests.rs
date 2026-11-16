@@ -13,6 +13,8 @@ struct Asking {
     pane: FocusHandle,
     inside: FocusHandle,
     behind: Vec<String>,
+    popup: Option<FocusHandle>,
+    close_once_open: bool,
     _restore: gpui::Subscription,
 }
 
@@ -28,7 +30,8 @@ impl Render for Asking {
             .on_mouse_down(MouseButton::Left, cx.listener(|this, _: &MouseDownEvent, _, _| this.behind.push("click".into())))
             .child(div().id("inside").size_4().track_focus(&self.inside))
             .child(hit_target(&self.hits, "behind".into()))
-            .child(Pane::new("pane", &self.pane).paint(&self.hits));
+            .child(Pane::new("pane", &self.pane).paint(&self.hits))
+            .children(std::mem::take(&mut self.close_once_open).then(|| closer(cx.weak_entity())));
         let dialog = self.confirm.as_ref().map(|c| {
             self.dialog.ask(&self.hits, "confirm", c, |this: &mut Asking, answer, _, cx| {
                 this.answers.push(answer);
@@ -36,8 +39,23 @@ impl Render for Asking {
                 cx.notify();
             }, cx)
         });
-        over(content, dialog)
+        over(content, dialog).children(self.popup.as_ref().map(|p| div().id("popup").size_4().track_focus(p)))
     }
+}
+
+/// Closes the question once every defer of its first frame has run, before another frame draws: an answer clicked that fast.
+fn closer(view: gpui::WeakEntity<Asking>) -> impl IntoElement {
+    gpui::canvas(|_, _, _| {}, move |_, _, window, cx| {
+        window.defer(cx, move |window, cx| {
+            window.defer(cx, move |_, cx| {
+                view.update(cx, |v, cx| {
+                    v.confirm = None;
+                    cx.notify();
+                })
+                .ok();
+            })
+        })
+    })
 }
 
 fn open(cx: &mut TestAppContext) -> (Entity<Asking>, &mut VisualTestContext) {
@@ -53,6 +71,8 @@ fn open(cx: &mut TestAppContext) -> (Entity<Asking>, &mut VisualTestContext) {
         pane: cx.focus_handle(),
         inside: cx.focus_handle(),
         behind: Vec::new(),
+        popup: None,
+        close_once_open: false,
         _restore: focus::restore_on_loss(window, cx),
     });
     cx.update(|window, _| window.activate_window());
@@ -160,4 +180,24 @@ fn the_panel_is_centred_over_the_whole_window_and_its_text_wraps_inside_it(cx: &
     cx.simulate_resize(size(px(300.), px(200.)));
     let [scrim, panel] = ["confirm-scrim", "confirm-dialog"].map(|k| at(&view, k, cx));
     assert!(panel.left() >= scrim.left() + MARGIN - px(1.) && panel.bottom() <= scrim.bottom() - MARGIN + px(1.), "never past the window: {panel:?} in {scrim:?}");
+}
+
+#[gpui::test]
+fn a_question_closed_before_a_frame_showed_its_focus_gives_the_keys_back(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    let popup = view.update(cx, |v, cx| v.popup.insert(cx.focus_handle()).clone());
+    cx.run_until_parked();
+    cx.update(|window, cx| window.focus(&popup, cx));
+    cx.run_until_parked();
+    assert!(cx.update(|window, _| popup.is_focused(window)), "a menu holds the focus");
+    view.update(cx, |v, cx| {
+        v.popup = None;
+        v.confirm = Some(Confirm::ask("Delete the session?", "Delete", 1).danger());
+        v.close_once_open = true;
+        cx.notify();
+    });
+    assert_eq!(holding(&view, cx).as_deref(), Some("inside"), "the focus back in the pane, not on the closed question's answer");
+    assert!(view.read_with(cx, |v, _| v.confirm.is_none()), "closed before a second frame");
+    cx.simulate_keystrokes("x");
+    assert_eq!(taken(&view, cx).1, ["x"], "a key reaches the pane");
 }

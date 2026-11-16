@@ -124,13 +124,17 @@ impl Dialog {
             .collect();
         let first = panel.first.as_ref().and_then(|k| self.members.get(k)).or_else(|| panel.fields.first().cloned()).or_else(|| self.members.order().first());
         let order = self.members.order();
+        // Focused as it prepaints, before its members, so the frame that first shows it holds the focus (closed unseen, a focus lost all the same).
         let take_focus = {
             let order = order.clone();
-            canvas(|_, _, _| {}, move |_, _, window, cx| {
-                if let Some(first) = first.clone().filter(|_| order.focused(window, cx).is_none()) {
-                    window.defer(cx, move |window, cx| window.focus(&first, cx));
-                }
-            })
+            canvas(
+                move |_, window, cx| {
+                    if let Some(first) = first.clone().filter(|_| order.focused(window, cx).is_none()) {
+                        window.focus(&first, cx);
+                    }
+                },
+                |_, _, _, _| {},
+            )
             .absolute()
             .size_0()
         };
@@ -154,6 +158,7 @@ impl Dialog {
             .shadow(vec![shade(px(4.), px(12.)), shade(px(16.), px(40.))])
             .text_sm()
             .text_color(colors.text)
+            .child(take_focus)
             .on_action(cx.listener(move |this, _: &Dismiss, window, cx| cancel(this, window, cx)))
             .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
                 if e.keystroke.key == "escape" {
@@ -164,7 +169,6 @@ impl Dialog {
             .children(title)
             .child(body)
             .child(button::line().justify_end().flex_wrap().pt_2().children(buttons))
-            .child(take_focus)
             .child(hit_target(hits, format!("{key}-dialog")));
         let shade = if cx.theme().appearance.is_light() { SCRIM_LIGHT } else { SCRIM_DARK };
         deferred(scrim(hits, &key, shade).child(card)).with_priority(PRIORITY).into_any_element()

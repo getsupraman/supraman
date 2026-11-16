@@ -865,6 +865,12 @@ impl FleetView {
         self.focus.is_focused(window)
     }
 
+    /// Whether a key pressed now reaches [`Self::key_down`]'s chords: the drawn frame's dispatch path holds its key context, no text field the keys.
+    #[cfg(feature = "selftest")]
+    pub fn chords_reach(&self, window: &Window, cx: &gpui::App) -> bool {
+        window.context_stack().iter().any(|c| c.contains(KEY_CONTEXT)) && !self.input_focused(window, cx)
+    }
+
     pub fn attach(&mut self, place: &str, session: &Session, cx: &mut Context<Self>) -> u64 {
         self.attach_titled(format!("{place} · {}", fleet::display_name(session)), session, cx)
     }
