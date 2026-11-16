@@ -5,11 +5,11 @@ what each costs. The release itself is docs/RELEASE.md.
 
 ## Where
 
-- **One target dir for every checkout:** `P:\Projects\LarchSys\AutoWork\target` (the main checkout's). Zed's crates
+- **One target dir for every checkout:** `P:\Projects\LarchSys\getsupraman\supraman\target` (the main checkout's). Zed's crates
   take ~15 min cold and the disk holds one copy. `scripts/heavy-lock.ps1` sets `CARGO_TARGET_DIR` to it when the
   shell has none; a target under a `*.worktrees` path builds everything afresh and fails sm's
   `dry_run_prints_the_prompt_the_argv_the_permissions_and_three_fires`.
-- **One unit worktree: `P:\Projects\LarchSys\AutoWork.worktrees\unit`.** Every unit runs in it on a branch of its own
+- **One unit worktree: `P:\Projects\LarchSys\getsupraman\supraman.worktrees\unit`.** Every unit runs in it on a branch of its own
   (`git switch -c <unit> master`), and the controller gates and merges from it too. Cargo names a workspace member's
   artifacts by its path below the workspace root, so two checkouts write the same files: a build in another checkout
   either rebuilds every member (~7 min) or, when its sources are older than the artifacts, links the
@@ -56,7 +56,7 @@ what each costs. The release itself is docs/RELEASE.md.
 
   `--all-targets` saves nothing and builds two more members, so the gate stays as it is: the second build costs about
   one member edit's compile (~23 s here), and it is the one that writes the `target\unit\supraman.exe` the selftest runs.
-- The controller creates the unit worktree once (`git worktree add P:\Projects\LarchSys\AutoWork.worktrees\unit
+- The controller creates the unit worktree once (`git worktree add P:\Projects\LarchSys\getsupraman\supraman.worktrees\unit
   -b <first unit> master`); each later unit starts there with `git switch -c <unit> master` once the last one merged.
 
 ## The clean rule
@@ -82,7 +82,7 @@ and says so; it never retries twice. Dot-sourced (`. scripts/heavy-lock.ps1`), t
 `$run = Get-CargoRun cargo @('build')` then `Find-LinkMembers (Get-Content saved.log) $run.linked` names the members a
 saved log's link errors hold.
 
-A Defender exclusion for `P:\Projects\LarchSys\AutoWork\target` would stop the failed renames at their source and
+A Defender exclusion for `P:\Projects\LarchSys\getsupraman\supraman\target` would stop the failed renames at their source and
 spare every object file a scan; it needs an administrator (the audit's Q1).
 
 ## The one known linker warning

@@ -4,9 +4,9 @@ Native Rust/gpui app over folders of Claude Code sessions: the sessions, their t
 
 ## Building and checking
 
-Which command when, why, and what each costs: `docs/DEVELOPING.md`. Every cargo command runs through `powershell -File scripts/heavy-lock.ps1 cargo …` at BelowNormal: the machine lock, the clean rule, and `CARGO_TARGET_DIR` set to `P:\Projects\LarchSys\AutoWork\target` when the shell has none (never a target under `*.worktrees`).
+Which command when, why, and what each costs: `docs/DEVELOPING.md`. Every cargo command runs through `powershell -File scripts/heavy-lock.ps1 cargo …` at BelowNormal: the machine lock, the clean rule, and `CARGO_TARGET_DIR` set to `P:\Projects\LarchSys\getsupraman\supraman\target` when the shell has none (never a target under `*.worktrees`).
 
-- Work in the one unit worktree `P:\Projects\LarchSys\AutoWork.worktrees\unit`, a branch per unit; the controller gates and merges from it too. A build in any other checkout path rebuilds every member (~7 min).
+- Work in the one unit worktree `P:\Projects\LarchSys\getsupraman\supraman.worktrees\unit`, a branch per unit; the controller gates and merges from it too. A build in any other checkout path rebuilds every member (~7 min).
 - A unit's inner loop: `cargo test --profile unit -p <crate> <filter>`.
 - A unit's gate, and the controller's merge gate: `cargo test --profile unit $(powershell -File scripts/affected.ps1)`, then `cargo build --profile unit --workspace` and `target\unit\supraman.exe --selftest`.
 - Per batch of merged units and before a release: `cargo test --profile unit --workspace`. A release: `cargo test --release --workspace` and `scripts/release.ps1` (docs/RELEASE.md).
