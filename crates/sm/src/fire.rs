@@ -181,7 +181,6 @@ fn fired_cmd(args: &[&str], print: bool, trigger: Fired) -> u8 {
         return EXIT_UNKNOWN;
     };
     let home = Path::new(home);
-    crate::schedule::migrate(home);
     let fingerprint = fingerprint.filter(|_| trigger == Fired::Task);
     let req = Request { home, key, id, trigger, fingerprint };
     let report = fire(&req, &mut RealHost::new(home));

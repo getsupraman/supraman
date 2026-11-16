@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use supraman_claude::Session;
 use supraman_core::{Settings, find_plugin_dir, hook_exe, install_hook_exe};
-use supraman_supervisor::{Absent, Bearer, HAND_ROLE, HttpMinter, Keeper, LaunchConfig, Millis, Unlisted, bearer, end_controllers, revoke_deleted_runs, runs_signed_out, sign_in_generation};
+use supraman_supervisor::{Absent, Bearer, HAND_ROLE, HttpMinter, Keeper, LaunchConfig, Millis, Unlisted, bearer, revoke_deleted_runs, runs_signed_out, sign_in_generation};
 
 pub use supraman_core::sm_allowed_tools;
 
@@ -129,8 +129,6 @@ pub struct Upkeep {
     pub daemon: DaemonWatch,
     daemon_logged: Option<String>,
     pruned_at: Option<Millis>,
-    /// Whether the records a home kept for its workspace controllers were ended ([`end_controllers`]), once per start.
-    controllers_ended: bool,
     /// The scheduled runs' claude sessions missing from the snapshots.
     runs_absent: Absent,
     /// The [+] tabs' claude sessions missing from the snapshots.
@@ -192,14 +190,6 @@ impl Upkeep {
         failed
     }
 
-    fn end_controllers_once(&mut self) -> Vec<String> {
-        if std::mem::replace(&mut self.controllers_ended, true) {
-            return Vec::new();
-        }
-        let auth = self.auth.clone();
-        end_controllers(&Keeper::open(&self.home), &HttpMinter::default(), || Bearer::of(bearer(&auth)))
-    }
-
     #[cfg(test)]
     fn with_auth(self, auth: Arc<supraman_workman::Auth>) -> Self {
         Self { auth, ..self }
@@ -217,7 +207,6 @@ impl Upkeep {
             daemon: DaemonWatch::new(supraman_claude::daemon_mismatch),
             daemon_logged: None,
             pruned_at: None,
-            controllers_ended: false,
             runs_absent: Absent::default(),
             hands_absent: Absent::default(),
             unlisted: Unlisted::default(),
@@ -229,7 +218,7 @@ impl Upkeep {
     pub fn tick(&mut self, observed: &[Session], now: Millis) -> Report {
         let mut report = Report::default();
         self.read_settings(&mut report, now);
-        for ended in self.end_controllers_once().into_iter().chain(self.end_signed_out()).chain(self.end_deleted(observed, now)) {
+        for ended in self.end_signed_out().into_iter().chain(self.end_deleted(observed, now)) {
             log::warn!("{ended}");
         }
         report.daemon_hold = self.daemon.current(now);
@@ -369,46 +358,5 @@ mod tests {
         signed_out(&home, fake.base());
         s.tick(&[], supraman_claude::now_ms());
         assert_eq!(signed_out_marks(&home), [run], "marked for a fresh token after the next sign-in");
-    }
-
-    #[test]
-    fn the_first_tick_ends_a_left_controller_record_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = dir.path().join("home");
-        let fake = supraman_workman::fake::FakeWorkman::start(vec![]);
-        fake.enable_oauth();
-        let sessions = fake.enable_sessions();
-        let auth = crate::test_auth::signed_in(&home, fake.base());
-        let (url, token) = bearer(&auth).unwrap().unwrap();
-        let request = supraman_supervisor::MintRequest {
-            name: "fm-demo-workspace".into(),
-            role: "controller".into(),
-            launched_by: "supraman/demo".into(),
-            origin: "supraman/demo".into(),
-            cwd: r"C:\demo".into(),
-            external_role: "workspace".into(),
-            replace: false,
-            repo: None,
-            claude_session_id: None,
-            takeover_from: None,
-        };
-        let minted = supraman_supervisor::Minter::mint(&HttpMinter::default(), &supraman_core::url::origin(&url), &token, &request).unwrap();
-        let path = home.join("supervisor").join("demo.sessions.json");
-        let mut records = supraman_supervisor::MintedSessions::empty(path.clone());
-        let session = supraman_supervisor::MintedSession { session_id: minted.session_id, role: "workspace".into(), claude_session_id: None, origin: Some(fake.base().into()) };
-        records.insert(&request.name, session);
-        records.save().unwrap();
-        assert!(sessions.token_of("fm-demo-workspace").is_some());
-
-        let mut s = Upkeep::new(home.clone()).with_auth(auth);
-        s.daemon = DaemonWatch::new(|| None);
-        s.tick(&[], supraman_claude::now_ms());
-        assert_eq!(sessions.token_of("fm-demo-workspace"), None, "revoked at the first tick");
-        assert!(!path.exists(), "its record goes");
-        let deletes = || fake.seen().iter().filter(|r| r.method == "DELETE").count();
-        let once = deletes();
-        records.save().unwrap();
-        s.tick(&[], supraman_claude::now_ms());
-        assert_eq!(deletes(), once, "once per start: a later tick leaves the home's files alone");
     }
 }

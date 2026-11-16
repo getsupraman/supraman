@@ -1,7 +1,6 @@
 //! `<home>/folders.toml`: the sidebar's ordered folders and named groups, and their one reader and writer.
 
 mod edits;
-pub(crate) mod migrate;
 mod subfolders;
 
 use std::fs;
@@ -156,8 +155,7 @@ pub fn path(home: &Path) -> PathBuf {
     home.join(FILE)
 }
 
-/// The entries, created once from the workspaces when the file does not exist; a file that does not
-/// parse is an error and stays as it is.
+/// The entries, an empty file written when there is none; a file that does not parse is an error and stays as it is.
 pub fn load(home: &Path) -> Result<Entries> {
     match read(home)? {
         Some(entries) => Ok(entries),
@@ -169,10 +167,7 @@ pub fn load(home: &Path) -> Result<Entries> {
 pub fn edit<T>(home: &Path, change: impl FnOnce(&mut Entries) -> Result<T>) -> Result<(Entries, T)> {
     let lock = home.join(LOCK);
     let _held = crate::fs::lock_file(&lock).map_err(|e| CoreError::io(&lock, e))?;
-    let mut entries = match read(home)? {
-        Some(entries) => entries,
-        None => migrate::from_workspaces(home),
-    };
+    let mut entries = read(home)?.unwrap_or_default();
     let out = change(&mut entries)?;
     let file = path(home);
     let text = toml::to_string(&entries).map_err(|source| CoreError::Serialize { name: FILE.into(), source })?;

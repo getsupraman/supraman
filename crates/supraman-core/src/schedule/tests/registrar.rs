@@ -124,7 +124,7 @@ fn sync_writes_only_its_own_folder_and_leaves_every_other_task_alone() {
 }
 
 #[test]
-fn sync_all_removes_the_tasks_of_folders_without_schedules_and_of_the_earlier_workspaces_only() {
+fn sync_all_removes_the_tasks_of_task_folders_no_folder_key_names_only() {
     let f = fixture();
     let store = MemoryStore::default();
     approved(&f, &store);

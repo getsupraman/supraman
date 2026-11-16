@@ -16,7 +16,6 @@ use crate::{Failure, value};
 pub(crate) const RUN_ROLE: &str = "repo";
 
 pub fn schedule(home: &Path, args: &[&str]) -> Result<(), Failure> {
-    migrate(home);
     let (folder, args) = folder_arg(args)?;
     let at = || folder_of(home, folder);
     match args.as_slice() {
@@ -32,21 +31,6 @@ pub fn schedule(home: &Path, args: &[&str]) -> Result<(), Failure> {
         ["secret", "set", rest @ ..] => secret_set(home, &at()?, rest, &mut std::io::stdin().lock()),
         ["report", rest @ ..] => report(home, rest),
         _ => Err(Failure::Usage("schedule needs add, list, show, edit, pause, resume, remove, dry-run, run, report or secret set".into())),
-    }
-}
-
-/// The earlier per-workspace schedule files moved to their folders' once, what moved said on stderr.
-pub(crate) fn migrate(home: &Path) {
-    match schedule::migrate(home, &*supraman_core::secret::default_store(home)) {
-        Ok(m) => {
-            for (ws, id, folder) in &m.moved {
-                eprintln!("moved schedule {id} of the former workspace {ws} to {}: pending until Approve in the Supraman window", folder.display());
-            }
-            for line in &m.unplaced {
-                eprintln!("warning: {line}");
-            }
-        }
-        Err(e) => eprintln!("warning: cannot move the earlier schedule files to their folders: {e}"),
     }
 }
 

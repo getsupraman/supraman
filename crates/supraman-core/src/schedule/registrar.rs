@@ -99,8 +99,8 @@ pub fn sync_all(registrar: &dyn Registrar, target: &SyncTarget, all: &[Scheduled
     Ok(synced)
 }
 
-/// Deletes every task in a folder of `<task_root>` that `keys` does not name, and those folders once empty; the
-/// tasks of a removed folder's schedules and of the earlier per-workspace folders. Nothing outside the root.
+/// Deletes every task in a folder of `<task_root>` that `keys` does not name (a removed folder's schedules), and those
+/// folders once empty. Nothing outside the root.
 pub fn prune_tasks(registrar: &dyn Registrar, home: &Path, keys: &[String]) -> Result<Vec<String>> {
     let root = task_root(home);
     let below = format!("{root}\\").to_ascii_lowercase();

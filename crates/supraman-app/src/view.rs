@@ -604,9 +604,6 @@ impl FleetView {
         }
         self.occupancy.set_sessions(fleet::live_sessions(&self.sessions, now_ms(), &self.polled.hooks, self.polls.polled_at));
         if let Some(read) = refresh.schedules {
-            if read.resync {
-                self.resync_schedules(cx);
-            }
             self.scheduling.schedules = read.rows;
             self.scheduling.schedule_errors = read.errors;
             supraman_ui::notices::keep_dismissed(&mut self.scheduling.schedule_errors_dismissed, &self.scheduling.schedule_errors);

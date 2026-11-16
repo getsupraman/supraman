@@ -423,55 +423,6 @@ async fn changed_command(view: &Entity<FleetView>, dir: &Path, cx: &mut AsyncWin
     Ok(format!("3c /selftest-gate edited after Approve: the row says {row:?}, the Inbox asks, the tray says {tip:?}, the page shows the approved and the new file's sha256 and offers Approve; approved again, the entry is gone"))
 }
 
-/// 0: an earlier release's per-workspace schedule file moves to its folder's at the poll, pending under the folder's
-/// row with no task, and the earlier workspace's task folder goes; Approve then registers its task under the folder key.
-/// The app's poll does the move and the sync, which no unit test of the core reaches.
-async fn migrated(view: &Entity<FleetView>, fake: &FakeRegistrar, home: &Path, dir: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    const OLD: &str = "selftest-old";
-    const MOVED: &str = "moved";
-    let ws = ws();
-    let root = schedule::task_root(home);
-    let old_task = format!(r"{root}\{OLD}\{MOVED}");
-    fake.plant(&format!(r"{root}\{OLD}"), MOVED, "<Task>an earlier release's</Task>");
-    let workspaces = home.join("workspaces");
-    std::fs::create_dir_all(&workspaces)?;
-    std::fs::write(workspaces.join(format!("{OLD}.toml")), format!("name = \"{OLD}\"\ncreated_at = \"2026-10-28T07:07:16Z\"\n\n[[folders]]\nname = \"gate\"\npath = '{}'\n", dir.display()))?;
-    let table = format!(
-        "version = 1\n\n[[schedule]]\nid = \"{MOVED}\"\nname = \"Moved\"\nfolder = \"gate\"\nstatus = \"active\"\n\n[schedule.trigger]\nkind = \"daily\"\nat = \"06:00\"\n\n[schedule.action]\nkind = \"script\"\nscript = \"gate.cmd\"\n"
-    );
-    std::fs::create_dir_all(home.join("schedules"))?;
-    std::fs::write(home.join("schedules").join(format!("{OLD}.toml")), table)?;
-    let row = format!("sched-row-{ws}/{MOVED}");
-    until(view, cx, WITHIN, "the moved schedule pending under its folder's Schedules", |v| {
-        (v.schedule_row(&ws, MOVED).is_some_and(|r| r.status == Status::Pending) && painted(v, &format!("schedules-row-{ws}")) && painted(v, &row)).then_some(())
-    })
-    .await?;
-    until(view, cx, WITHIN, "the earlier workspace's task gone", |_| (!fake.paths().contains(&old_task) && !fake.has_folder(&format!(r"{root}\{OLD}"))).then_some(())).await?;
-    if home.join("schedules").join(format!("{OLD}.toml")).exists() || !fake.paths().is_empty() {
-        bail!("after the move: the old file stays or a task is registered: {:?}", fake.paths());
-    }
-    let moved_task = format!(r"{root}\{ws}\{MOVED}");
-    let approve = format!("sched-approve-{ws}/{MOVED}");
-    until(view, cx, WITHIN, "Approve on the moved row", |v| painted(v, &approve).then_some(())).await?;
-    click(view, &approve, cx).await?;
-    let page_approve = format!("sched-page-approve-{ws}/{MOVED}");
-    crate::selftest::scrolled_into_view(view, &page_approve, cx).await?;
-    click(view, &page_approve, cx).await?;
-    until(view, cx, WITHIN, "the moved schedule's task registered", |v| {
-        (v.schedule_row(&ws, MOVED).is_some_and(|r| r.status == Status::Active) && fake.paths() == [moved_task.clone()]).then_some(())
-    })
-    .await?;
-    view.update(cx, |v, cx| {
-        if let Some((tab, _)) = v.schedule_page(&ws, MOVED) {
-            v.close_tab(tab, cx);
-        }
-        v.remove_schedule(ws.clone(), MOVED.into(), cx);
-    });
-    until(view, cx, WITHIN, "the moved schedule removed with its task", |v| (v.schedule_row(&ws, MOVED).is_none() && fake.paths().is_empty()).then_some(())).await?;
-    std::fs::remove_file(workspaces.join(format!("{OLD}.toml")))?;
-    Ok(format!("0 an earlier release's {OLD}.toml moved to {ws}.toml: pending under its folder, {old_task} gone; approved, {moved_task} registered; removed"))
-}
-
 pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let fake = registrar();
     let ws = ws();
@@ -486,7 +437,6 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
         Ok(())
     })?;
     let mut out = Vec::new();
-    out.push(migrated(view, &fake, home, &dir, cx).await?);
 
     sm(&["schedule", "add", "--folder", &folder_arg(), "--id", ID, "--name", "Gate", "--every", "weekly mon 09:00", "--script", "gate.cmd", "--prompt", "Fix what the gate found.", "--profile", "edit"])?;
     status_is(view, Status::Pending, cx).await?;

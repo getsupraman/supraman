@@ -157,19 +157,13 @@ impl ScheduleEdit {
     }
 }
 
-/// Every folder's tasks as its schedules say, the tasks of folders without schedules gone, and the migration's
-/// request for a sync answered.
+/// Every folder's tasks as its schedules say, the tasks of folders without schedules gone.
 pub fn sync_now(home: &Path, registrar: &dyn Registrar) -> Result<(), String> {
     let (all, _) = schedule::load_all(home);
     let smw = schedule::smw_exe();
     let store = default_store(home);
     let target = SyncTarget { home, store: &*store, level: supraman_claude::task_run_level(), smw: &smw, now_ms: supraman_core::time::now_ms() };
-    schedule::sync_all(registrar, &target, &all).map_err(|e| format!("Task Scheduler refused the sync: {e}"))?;
-    let resync = schedule::schedules_dir(home).join(schedule::RESYNC);
-    match std::fs::remove_file(&resync) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("Cannot remove {}: {e}", resync.display())),
-        _ => Ok(()),
-    }
+    schedule::sync_all(registrar, &target, &all).map(drop).map_err(|e| format!("Task Scheduler refused the sync: {e}"))
 }
 
 /// The entry of schedule `id` gone from `folder`'s file; its task goes with the next [`sync_now`]. Blocking.
@@ -194,28 +188,6 @@ enum Failed {
 impl FleetView {
     pub fn schedule_row(&self, folder_key: &str, id: &str) -> Option<&ScheduleRow> {
         self.scheduling.schedules.get(folder_key)?.iter().find(|r| r.schedule.id == id)
-    }
-
-    /// The sync a migration of the earlier schedule files asks for: their former task folders go, off the UI thread.
-    pub(super) fn resync_schedules(&mut self, cx: &mut Context<Self>) {
-        let Some(home) = self.home.clone() else { return };
-        if std::mem::replace(&mut self.scheduling.resyncing, true) {
-            return;
-        }
-        let registrar = self.scheduling.registrar.clone();
-        let task = cx.background_executor().spawn(async move { sync_now(&home, &*registrar) });
-        cx.spawn(async move |this, cx| {
-            let synced = task.await;
-            this.update(cx, |this, cx| {
-                this.scheduling.resyncing = false;
-                if let Err(e) = synced {
-                    this.scheduling.sync_errors.insert("tasks/sync".into(), e);
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
     }
 
     /// The folder filed under `folder_key`, as the last poll read it.
@@ -1138,35 +1110,6 @@ impl FleetView {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn approving_a_moved_schedule_registers_its_task_and_the_earlier_workspaces_task_folder_goes() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (home, folder) = (tmp.path().join("home"), tmp.path().join("Alpha"));
-        std::fs::create_dir_all(home.join("workspaces")).unwrap();
-        std::fs::create_dir_all(home.join("schedules")).unwrap();
-        std::fs::create_dir_all(&folder).unwrap();
-        std::fs::write(folder.join("gate.cmd"), "@exit /b 0\r\n").unwrap();
-        let workspace = format!("name = \"demo\"\ncreated_at = \"2026-10-28T07:07:16Z\"\n\n[[folders]]\nname = \"Alpha\"\npath = '{}'\n", folder.display());
-        std::fs::write(home.join("workspaces").join("demo.toml"), workspace).unwrap();
-        let old = "[[schedule]]\nid = \"nightly\"\nfolder = \"Alpha\"\nstatus = \"active\"\ntrigger = { kind = \"daily\", at = \"09:00\" }\naction = { kind = \"script\", script = \"gate.cmd\" }\n";
-        std::fs::write(home.join("schedules").join("demo.toml"), old).unwrap();
-        let store = default_store(&home);
-        assert_eq!(schedule::migrate(&home, &*store).unwrap().moved.len(), 1);
-
-        let fake = schedule::FakeRegistrar::default();
-        let root = schedule::task_root(&home);
-        fake.plant(&format!(r"{root}\demo"), "nightly", "<Task>an earlier release's</Task>");
-        fake.plant(r"\Other", "nightly", "<Task>someone else's</Task>");
-        sync_now(&home, &fake).unwrap();
-        assert_eq!(fake.paths(), [r"\Other\nightly"], "pending: no task of its own, and the earlier workspace's gone");
-        assert!(!schedule::schedules_dir(&home).join(schedule::RESYNC).exists(), "the migration's request is answered");
-
-        schedule::approve(&home, &*store, &folder, "nightly", 1).unwrap();
-        sync_now(&home, &fake).unwrap();
-        let mine = format!(r"{root}\{}\nightly", schedule::folder_key(&folder));
-        assert_eq!(fake.paths(), [r"\Other\nightly".to_string(), mine]);
-    }
 
     fn schedule() -> Schedule {
         toml::from_str::<schedule::ScheduleFile>(
