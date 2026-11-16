@@ -261,3 +261,82 @@ fn placed_leaves_an_excluded_child_out() {
     let g = e.folder_at(Pos::member(1, 0)).unwrap();
     assert_eq!(g.read_children(&shown), [docs, web], "the read children keep it for its row");
 }
+
+fn excluding(home: &Path, parent: &Path, show: bool, children: &[&str]) -> Vec<PathBuf> {
+    let excluded: Vec<PathBuf> = children.iter().map(|c| parent.join(c)).collect();
+    let folder = FolderEntry { path: parent.to_path_buf(), show_subfolders: show, excluded: excluded.clone() };
+    edit(home, |entries| {
+        *entries = Entries::new(vec![Entry::Folder(folder)]);
+        Ok(())
+    })
+    .unwrap();
+    excluded
+}
+
+fn prune_read(home: &Path) -> usize {
+    let entries = load(home).unwrap();
+    prune_excluded(home, &gone_excluded(&entries, &shown(&entries))).unwrap()
+}
+
+fn excluded_now(home: &Path) -> Vec<PathBuf> {
+    load(home).unwrap().folders().next().unwrap().excluded.clone()
+}
+
+#[test]
+fn an_excluded_folder_deleted_is_dropped_and_one_still_there_kept_whether_sub_folders_show_or_not() {
+    for show in [true, false] {
+        let (home, root) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        for d in ["web", "docs"] {
+            std::fs::create_dir(root.path().join(d)).unwrap();
+        }
+        let [web, docs] = <[PathBuf; 2]>::try_from(excluding(home.path(), root.path(), show, &["web", "docs"])).unwrap();
+        assert_eq!(prune_read(home.path()), 0, "both there");
+        std::fs::remove_dir(&web).unwrap();
+        assert_eq!(prune_read(home.path()), 1, "show {show}");
+        assert_eq!(excluded_now(home.path()), [docs], "show {show}");
+    }
+}
+
+#[test]
+fn a_parent_that_cannot_be_read_drops_nothing() {
+    let (home, root) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let parent = root.path().join("gone");
+    for show in [true, false] {
+        let excluded = excluding(home.path(), &parent, show, &["web"]);
+        assert_eq!(prune_read(home.path()), 0, "show {show}");
+        assert_eq!(prune_excluded(home.path(), &excluded).unwrap(), 0, "re-checked under the lock, show {show}");
+        assert_eq!(excluded_now(home.path()), excluded, "show {show}");
+    }
+}
+
+#[test]
+fn a_renamed_folder_drops_its_old_path_and_shows_under_its_new_name() {
+    let (home, root) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    std::fs::create_dir(root.path().join("web")).unwrap();
+    excluding(home.path(), root.path(), true, &["web"]);
+    std::fs::rename(root.path().join("web"), root.path().join("site")).unwrap();
+    assert_eq!(prune_read(home.path()), 1);
+    let entries = load(home.path()).unwrap();
+    let shown = shown(&entries);
+    let f = entries.folders().next().unwrap();
+    assert!(f.excluded.is_empty());
+    assert_eq!(f.children(&shown).collect::<Vec<_>>(), [root.path().join("site").as_path()]);
+}
+
+#[test]
+fn a_folder_made_again_before_the_edit_is_kept_and_nothing_is_written() {
+    let (home, root) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    std::fs::create_dir(root.path().join("web")).unwrap();
+    let excluded = excluding(home.path(), root.path(), true, &["web"]);
+    std::fs::remove_dir(&excluded[0]).unwrap();
+    let entries = load(home.path()).unwrap();
+    let gone = gone_excluded(&entries, &shown(&entries));
+    assert_eq!(gone, excluded);
+    std::fs::create_dir(&excluded[0]).unwrap();
+    let file = path(home.path());
+    let before = (std::fs::read(&file).unwrap(), std::fs::metadata(&file).unwrap().modified().unwrap());
+    assert_eq!(prune_excluded(home.path(), &gone).unwrap(), 0);
+    assert_eq!(excluded_now(home.path()), excluded);
+    let after = (std::fs::read(&file).unwrap(), std::fs::metadata(&file).unwrap().modified().unwrap());
+    assert_eq!(before, after, "no write when nothing is dropped");
+}

@@ -30,9 +30,19 @@ pub fn read(home: Option<&Path>) -> Read {
     };
     let entries = folders::load(home).map(|e| {
         let disk = fleet::on_disk(&e);
+        prune_gone(home, &e, &disk);
         (e, disk)
     }).map_err(|e| e.to_string());
     Read { entries }
+}
+
+/// The excluded paths this read finds gone dropped from folders.toml; the next read shows it.
+fn prune_gone(home: &Path, entries: &Entries, disk: &fleet::Disk) {
+    match folders::prune_excluded(home, &folders::gone_excluded(entries, &disk.shown)) {
+        Ok(0) => {}
+        Ok(n) => log::info!("folders.toml: {n} excluded folder(s) gone, dropped"),
+        Err(e) => log::warn!("folders.toml: the excluded folders gone stay listed: {e}"),
+    }
 }
 
 impl Listed {
@@ -119,6 +129,29 @@ mod tests {
         listed.apply(Read { entries: Err("unreadable".into()) }, 2, 2);
         assert_eq!(listed.error.as_deref(), Some("unreadable"));
 
+    }
+
+    #[test]
+    fn a_read_drops_an_excluded_folder_only_once_its_parent_was_read_without_it() {
+        let (home, root) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (web, missing) = (root.path().join("web"), root.path().join("missing"));
+        std::fs::create_dir(&web).unwrap();
+        let parent = |path: &Path, child: &Path| folders::FolderEntry { path: path.into(), show_subfolders: true, excluded: vec![child.into()] };
+        let listed = Entries::new(vec![folders::Entry::Folder(parent(root.path(), &web)), folders::Entry::Folder(parent(&missing, &missing.join("x")))]);
+        folders::edit(home.path(), |e| {
+            *e = listed.clone();
+            Ok(())
+        })
+        .unwrap();
+        let excluded = || folders::load(home.path()).unwrap().folders().map(|f| f.excluded.len()).collect::<Vec<_>>();
+        let file = folders::path(home.path());
+        let written = std::fs::metadata(&file).unwrap().modified().unwrap();
+        read(Some(home.path()));
+        assert_eq!(std::fs::metadata(&file).unwrap().modified().unwrap(), written, "nothing gone, nothing written");
+        std::fs::remove_dir(&web).unwrap();
+        let first = read(Some(home.path()));
+        assert_eq!(first.entries.unwrap().0, listed, "this read keeps what it read");
+        assert_eq!(excluded(), [0, 1], "the next sees it dropped; an unreadable parent drops nothing");
     }
 
     #[test]
