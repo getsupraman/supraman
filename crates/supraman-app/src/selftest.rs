@@ -1110,7 +1110,21 @@ async fn idle_step(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> any
     Ok(())
 }
 
-pub(crate) use crate::selftest_clipboard::{CLIPBOARD_TRIES, read_own};
+pub(crate) fn clipboard_text(cx: &mut AsyncWindowContext) -> anyhow::Result<Option<String>> {
+    cx.update(|_, cx| supraman_ui::clipboard::text(cx))
+}
+
+pub(crate) fn put_clipboard(text: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    cx.update(|_, cx| supraman_ui::clipboard::write_text(cx, text))
+}
+
+/// The clipboard once it holds `want`, else what it holds after 2 s.
+pub(crate) async fn copied(want: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Option<String>> {
+    match until_with(cx, Duration::from_secs(2), "the copy", |cx| clipboard_text(cx).ok().flatten().filter(|t| t == want)).await {
+        Ok(text) => Ok(Some(text)),
+        Err(_) => clipboard_text(cx),
+    }
+}
 
 pub(crate) fn key(cx: &mut AsyncWindowContext, key: &str, modifiers: Modifiers) -> anyhow::Result<()> {
     let keystroke = Keystroke { modifiers, key: key.into(), key_char: None };

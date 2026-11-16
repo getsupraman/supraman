@@ -1,6 +1,6 @@
 //! The prompt chips of a run or a blocked item: Workman's `/api/v1/prompts`, labels, counts and text as served.
 
-use gpui::{ClipboardItem, FontWeight};
+use gpui::{FontWeight};
 use supraman_ui::button;
 use supraman_ui::fonts;
 use supraman_workman::Prompt;
@@ -122,7 +122,7 @@ impl WorkView {
                                 button::action(&self.hits, format!("work-prompt-{place}-copy"), "Copy", button::Tone::Neutral, button::Fill::Solid, cx)
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+                                        supraman_ui::clipboard::write_text(cx, text.clone());
                                         this.toast.show(format!("Copied the {label} prompt"), |this: &mut WorkView| &mut this.toast, cx);
                                     })),
                             )

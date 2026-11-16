@@ -295,7 +295,7 @@ impl Terminal {
                 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 MouseButton::Middle => {
                     if mode == MouseInputMode::ReportToTerminal
-                        && let Some(item) = cx.read_from_primary()
+                        && let Some(item) = (TerminalConfig::get(cx).clipboard.read_primary)(cx)
                     {
                         let text = item.text().unwrap_or_default();
                         self.paste(&text);

@@ -3,6 +3,7 @@
 pub mod banner;
 mod builtin_glyphs;
 pub mod button;
+pub mod clipboard;
 pub mod clipped;
 pub mod confirm;
 pub mod details;
@@ -59,6 +60,7 @@ pub fn init_globals(cx: &mut App, program_version: &str) {
     theme::init(theme::LoadThemes::JustBase, cx);
     cx.set_global(TerminalConfig {
         program_version: program_version.to_string(),
+        clipboard: clipboard::terminal(),
         ..Default::default()
     });
     themes::apply(cx, None, themes::TerminalColors::Theme, None);

@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use gpui::{AnyElement, App, ClickEvent, ClipboardItem, Div, Entity, FontWeight, Hsla, SharedString, Stateful, Window, div, prelude::*};
+use gpui::{AnyElement, App, ClickEvent, Div, Entity, FontWeight, Hsla, SharedString, Stateful, Window, div, prelude::*};
 use supraman_core::time::now_ms;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
@@ -40,7 +40,7 @@ fn acting(button: Stateful<Div>, card: &Card, on: &OnCard, does: CardAction) -> 
     button.on_click(move |_: &ClickEvent, window, cx| {
         cx.stop_propagation();
         if does == CardAction::Copied {
-            cx.write_to_clipboard(ClipboardItem::new_string(full_ref.clone()));
+            supraman_ui::clipboard::write_text(cx, full_ref.clone());
         }
         on(does, window, cx);
     })

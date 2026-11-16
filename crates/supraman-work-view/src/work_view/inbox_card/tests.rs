@@ -99,7 +99,7 @@ fn copy_puts_the_full_ref_on_the_clipboard_and_each_action_reaches_the_owner(cx:
     let (view, cx) = open(cx);
     let card = view.read_with(cx, |h, _| h.cards.iter().find(|c| c.kind == "done_unverified").cloned().unwrap());
     click(&view, &part_key("copy", &card), cx);
-    assert_eq!(cx.read_from_clipboard().and_then(|c| c.text()), Some("ws/r1/done_unverified".to_string()), "the full ref, never the call or the ref's last part");
+    assert_eq!(cx.update(|_, cx| supraman_ui::clipboard::text(cx)), Some("ws/r1/done_unverified".to_string()), "the full ref, never the call or the ref's last part");
     click(&view, &part_key("web", &card), cx);
     click(&view, &part_key("open", &card), cx);
     click(&view, &work_view::dismiss_key_of(&card.key), cx);

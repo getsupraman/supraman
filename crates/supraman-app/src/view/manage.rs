@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use supraman_claude::{Claude, Session};
-use gpui::{AnyElement, ClipboardItem, Context, Pixels, Point, Window};
+use gpui::{AnyElement, Context, Pixels, Point, Window};
 
 use super::FleetView;
 use super::menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuItem, MenuTarget, folder_items, group_items, is_foremans, other_schedule_items, schedule_items, schedules_items, session_items};
@@ -129,7 +129,7 @@ impl FleetView {
             MenuAction::StopSession(session) => self.ask_stop_foreign(session),
             MenuAction::ToggleStar(session_id) => self.toggle_star(&session_id, cx),
             MenuAction::Copy(text) => {
-                cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+                supraman_ui::clipboard::write_text(cx, text.clone());
                 self.show_toast(format!("Copied {text}"), cx);
             }
             MenuAction::ShowInWork { target, item_id } => {

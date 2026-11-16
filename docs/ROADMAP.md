@@ -49,7 +49,7 @@ These pieces are Windows-only in the same way for macOS and Linux, and the count
 | Claude's live session registry (`~/.claude/sessions/<pid>.json`) | `supraman-claude/src/peer.rs` | The same files; `messagingSocketPath` a Unix domain socket under `$XDG_RUNTIME_DIR/cc-socks/` or `/tmp/cc-socks-<uid>/` | **expected**; the `procStart` format claude writes there: **unknown** |
 | The process memory figure in the status bar | `supraman-ui/src/lib.rs` (`memory`) | Linux: `/proc/self/statm`. macOS: `task_info` (`MACH_TASK_BASIC_INFO`) | **verified**: 0 off Windows |
 | Icon font (`Segoe Fluent Icons` or `Segoe MDL2 Assets`) | `supraman-ui/src/fonts.rs` (`icons`) | A bundled icon font, the same on every platform | **expected**; off Windows it names Segoe Fluent Icons, which is not installed there (**verified**) |
-| Clipboard lock and save/restore around selftests | `supraman-app/src/selftest_clipboard.rs` | Not needed on a private display (Xvfb, or a CI machine's own session); a lock file stays for machines that share one | **expected** |
+| The machine-wide selftest lock (a named mutex) | `supraman-app/src/selftest_machine.rs`, `selftest/win.rs` (`mutex`) | A lock file, as `heavy_job_lock` already is | **expected** |
 | Windows resources: icon, version info, manifest | `supraman-app/assets/supraman.rc`, `supraman.manifest`, `build.rs` | macOS: `Info.plist` and `.icns` in the app bundle. Linux: a `.desktop` file and PNG icons | **expected** |
 | Release script | `scripts/release.ps1` | `cargo xtask release`, the same steps for every target, run in CI on each platform | **expected** |
 
@@ -123,11 +123,10 @@ in `supraman-term` (`alacritty.rs`, `alacritty/hyperlinks.rs`, `pty_info.rs`), c
 | `supraman-core/src/desktop.rs` | 5 |
 | `supraman-claude/src/peer.rs` | 5 |
 | `supraman-claude/src/daemon.rs` | 4 |
-| `supraman-app/src/selftest_clipboard.rs` | 4 |
 | `supraman-term/src/alacritty.rs` | 3 |
 | `supraman-claude/src/launch.rs` | 3 |
 | `supraman-app/src/main.rs` | 3 |
-| 26 more files | 1 or 2 each |
+| 27 more files | 1 or 2 each |
 
 `supraman-core/src/schedule/task_service.rs` has no `cfg` of its own: the whole module is `cfg(windows)` in
 `schedule/mod.rs`, so one site there stands for the Task Scheduler client.

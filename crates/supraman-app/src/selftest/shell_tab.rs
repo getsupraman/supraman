@@ -1,4 +1,4 @@
-//! `--selftest` step 6: a real pwsh in a shell tab, scrolled by the wheel, a line selected by a drag, copied and pasted through the system clipboard.
+//! `--selftest` step 6: a real pwsh in a shell tab, scrolled by the wheel, a line selected by a drag, copied and pasted through the clipboard.
 
 use std::time::{Duration, Instant};
 
@@ -6,7 +6,7 @@ use anyhow::{anyhow, bail};
 use gpui::{AsyncWindowContext, Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, point, px};
 use supraman_term::Terminal;
 
-use super::{CLIPBOARD_TRIES, click, drawn, hex6, key, read_own, sleep, step, until_with, wait_for_tab_terminal};
+use super::{click, copied, drawn, hex6, key, put_clipboard, sleep, step, until_with, wait_for_tab_terminal};
 use crate::view::FleetView;
 
 /// The row is read from the last frame but the drag lands on the grid as it is: it waits for a frame that caught up, and drags again when the grid moved.
@@ -66,57 +66,29 @@ pub(crate) async fn select_wheel_line(terminal: &Entity<Terminal>, cx: &mut Asyn
 }
 
 async fn select_copy_paste(terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let _clipboard = crate::selftest_clipboard::borrow("6b", cx).await?;
-    let saved = crate::selftest_clipboard::Snapshot::take()?;
-    let result = async {
-        let (mut row, mut text) = select_wheel_line(terminal, cx).await?;
-
-        // Another selftest may write the system clipboard at any moment: each read waits for this run's own value, pressing again if a foreign one replaced it.
-        let mut copied = None;
-        for _ in 0..CLIPBOARD_TRIES {
-            // A copy whose OpenClipboard failed (gpui_windows clipboard.rs) still clears the selection.
-            if terminal.read_with(cx, |t, _| t.selection_text()).as_deref() != Some(text.as_str()) {
-                (row, text) = select_wheel_line(terminal, cx).await?;
-            }
-            crate::selftest_clipboard::put_text("not copied", cx)?;
-            key(cx, "c", Modifiers { control: true, shift: true, ..Default::default() })?;
-            copied = read_own(cx, |c| c == text).await?;
-            if copied.as_deref() == Some(text.as_str()) {
-                break;
-            }
-        }
-        if copied.as_deref() != Some(text.as_str()) {
-            bail!("Ctrl+Shift+C with {text:?} selected left the clipboard at {copied:?} ({CLIPBOARD_TRIES} tries)");
-        }
-
-        let marker = format!("fm-paste-{}", hex6());
-        let echoed = |cx: &mut AsyncWindowContext| {
-            let content = terminal.read_with(cx, |t, _| t.get_content());
-            content.lines().rev().find(|l| !l.trim().is_empty()).is_some_and(|l| l.contains(&marker))
-        };
-        let pasted = Instant::now();
-        'paste: for _ in 0..CLIPBOARD_TRIES {
-            crate::selftest_clipboard::put_text(&marker, cx)?;
-            key(cx, "v", Modifiers::control())?;
-            let tried = Instant::now();
-            while tried.elapsed() < Duration::from_secs(2) {
-                if echoed(cx) {
-                    break 'paste;
-                }
-                sleep(cx, Duration::from_millis(50)).await;
-            }
-        }
-        if !echoed(cx) {
-            bail!("Ctrl+V: {marker} not echoed at the prompt in {CLIPBOARD_TRIES} tries of 2 s");
-        }
-        Ok(format!(
-            "drag over row {row} selected {text:?}; Ctrl+Shift+C → clipboard {text:?}; Ctrl+V → {marker} at the prompt after {} ms",
-            pasted.elapsed().as_millis()
-        ))
+    let (row, text) = select_wheel_line(terminal, cx).await?;
+    put_clipboard("not copied", cx)?;
+    key(cx, "c", Modifiers { control: true, shift: true, ..Default::default() })?;
+    let held = copied(&text, cx).await?;
+    if held.as_deref() != Some(text.as_str()) {
+        bail!("Ctrl+Shift+C with {text:?} selected left the clipboard at {held:?}");
     }
-    .await;
-    saved.restore()?;
-    result
+
+    let marker = format!("fm-paste-{}", hex6());
+    let echoed = |cx: &mut AsyncWindowContext| {
+        let content = terminal.read_with(cx, |t, _| t.get_content());
+        content.lines().rev().find(|l| !l.trim().is_empty()).is_some_and(|l| l.contains(&marker))
+    };
+    let pasted = Instant::now();
+    put_clipboard(&marker, cx)?;
+    key(cx, "v", Modifiers::control())?;
+    if until_with(cx, Duration::from_secs(5), "the paste echoed", |cx| echoed(cx).then_some(())).await.is_err() {
+        bail!("Ctrl+V: {marker} not echoed at the prompt in 5 s");
+    }
+    Ok(format!(
+        "drag over row {row} selected {text:?}; Ctrl+Shift+C → clipboard {text:?}; Ctrl+V → {marker} at the prompt after {} ms",
+        pasted.elapsed().as_millis()
+    ))
 }
 
 

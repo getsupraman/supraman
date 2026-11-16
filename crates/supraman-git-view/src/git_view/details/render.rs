@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use gpui::{AnyElement, App, ClickEvent, ClipboardItem, Context, Div, FontWeight, Hsla, Render, SharedString, Window, div, prelude::*, px};
+use gpui::{AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla, Render, SharedString, Window, div, prelude::*, px};
 use supraman_core::time;
 use supraman_gitman::short_sha;
 use supraman_ui::button;
@@ -60,7 +60,7 @@ impl CommitPanel {
                 .rounded_sm()
                 .child(short_sha(&shown.sha).to_string())
                 .tooltip(Tooltip::text("Copy the full sha"))
-                .on_click(move |_: &ClickEvent, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(sha.to_string()))),
+                .on_click(move |_: &ClickEvent, _, cx| supraman_ui::clipboard::write_text(cx, sha.to_string())),
         )
     }
 
@@ -88,7 +88,7 @@ impl CommitPanel {
             .tooltip(Tooltip::text("Copy the message"))
             .on_click(move |_: &ClickEvent, _, cx| {
                 cx.stop_propagation();
-                cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+                supraman_ui::clipboard::write_text(cx, text.clone());
             });
         let content = div()
             .id("commit-message")

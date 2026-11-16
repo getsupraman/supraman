@@ -8,7 +8,7 @@ use std::{
 };
 
 use gpui::{
-    App, AvailableSpace, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity, EntityInputHandler, EventEmitter,
+    App, AvailableSpace, Bounds, Context, CursorStyle, ElementId, ElementInputHandler, Entity, EntityInputHandler, EventEmitter,
     FocusHandle, Focusable, GlobalElementId, KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     LineLayout, PaintQuad, Pixels, Point, ScrollEvent, SharedString, Style, Subscription, Task, TextRun, UTF16Selection, UnderlineStyle,
     Window, WrappedLine, actions, div, fill, point, prelude::*, px, relative, size,
@@ -974,21 +974,21 @@ impl TextInput {
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         let s = self.line.selection();
         if !s.is_empty() && !self.masked {
-            cx.write_to_clipboard(ClipboardItem::new_string(self.line.text()[s].to_string()));
+            crate::clipboard::write_text(cx, self.line.text()[s].to_string());
         }
     }
 
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
         let s = self.line.selection();
         if !s.is_empty() && !self.masked {
-            cx.write_to_clipboard(ClipboardItem::new_string(self.line.text()[s.clone()].to_string()));
+            crate::clipboard::write_text(cx, self.line.text()[s.clone()].to_string());
             self.line.replace(s, "", EditKind::Other);
             self.edited(window, cx);
         }
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+        if let Some(text) = crate::clipboard::text(cx) {
             let text = pasted(&text, self.multi_line);
             self.insert(None, &text, EditKind::Other, window, cx);
         }
