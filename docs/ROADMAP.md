@@ -1,7 +1,7 @@
 # Roadmap
 
-After the public release, the next apps are **Gitman** and **Fileman**, built as plugin apps next to
-Supraman (roadmap/3). Then come macOS and Linux. Supraman runs on Windows today. This page lists every piece that
+GitMan is Supraman's Git tab. The next app is **FileMan**, built as a plugin app next to Supraman
+(roadmap/3). Then come macOS and Linux. Supraman runs on Windows today. This page lists every piece that
 is Windows-only, where it is, and what takes its place on each platform. It is the starting point for the porting
 units roadmap/macos-port and roadmap/linux-port.
 
@@ -57,7 +57,7 @@ These pieces are Windows-only in the same way for macOS and Linux, and the count
 
 | Windows-only piece | Where it lives | macOS counterpart | State |
 |---|---|---|---|
-| Task Scheduler over COM, a task folder per workspace (`WindowsRegistrar`, `sync`) | `supraman-core/src/schedule/task_service.rs`, `task_xml.rs`, `registrar.rs`, `supraman-claude` `task_run_level` | A launchd agent per schedule in `~/Library/LaunchAgents`, its label under one prefix per home (`ai.supraman.<hex8>.<ws>.<id>`), loaded with `launchctl bootstrap gui/<uid>`; `Registrar` stays the seam, `FakeRegistrar` the tests' | **expected**. `StartCalendarInterval` has no time zone and no "every N minutes from a start", so `next_fire` decides and each run arms the next |
+| Task Scheduler over COM, a task folder per folder key (`WindowsRegistrar`, `sync`) | `supraman-core/src/schedule/task_service.rs`, `task_xml.rs`, `registrar.rs`, `supraman-claude` `task_run_level` | A launchd agent per schedule in `~/Library/LaunchAgents`, its label under one prefix per home (`ai.supraman.<hex8>.<key>.<id>`), loaded with `launchctl bootstrap gui/<uid>`; `Registrar` stays the seam, `FakeRegistrar` the tests' | **expected**. `StartCalendarInterval` has no time zone and no "every N minutes from a start", so `next_fire` decides and each run arms the next |
 | Other tools' tasks that run claude (`foreign`) | `supraman-core/src/schedule/foreign.rs` | The user's launchd agents and `crontab -l`, read only | **expected** |
 | DPAPI secret store (a file per key under `<home>/oauth/secrets`) | `supraman-core/src/secret.rs` (`FileStore`, `default_store`), `supraman-workman/src/secret.rs` | Keychain (`Security.framework`, a generic password per key, service `ai.supraman.<hex8>`) behind `SecretStore` | **expected**; off Windows `default_store` is a `MemoryStore`, so sign-in does not survive a restart (**verified**) |
 | Tray icon and its menu, light and dark taskbar icons | `supraman-app/src/tray.rs`, `main.rs` (`tray_state`) | A menu bar item (`NSStatusItem`, through `tray-icon`'s macOS backend) with a template image | **expected**; no tray off Windows today (**verified**) |

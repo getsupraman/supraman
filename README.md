@@ -3,36 +3,45 @@
   <img alt="Supraman" src="crates/supraman-app/assets/brand/lockups/supraman-lockup-on-light.svg" height="48">
 </picture>
 
-**Supraman** is a Windows desktop app for running several Claude Code sessions at once. You give it the folders
-you work in. It keeps the sessions each workspace wants running, lists every Claude Code session on the machine
-by workspace and folder, and puts whatever needs you in one Inbox. You can open any session in a terminal tab.
-It is for developers who already use Claude Code's `claude` CLI and have more sessions than terminal windows.
-Supraman runs on your machine and is open source (GPL-3.0-or-later).
+**Supraman** is a Windows desktop app for running several Claude Code sessions at once. You list the folders you
+work in, alone or in groups. It shows every Claude Code session on the machine under the folder it runs in, opens
+any of them in a terminal tab, and puts whatever needs you in one Inbox. A repository gets a Git tab, and with
+Workman a folder or group gets a Work tab. It is for developers who already use Claude Code's `claude` CLI and
+have more sessions than terminal windows. Supraman runs on your machine and is open source (GPL-3.0-or-later).
 
-![The main window: an Inbox with two Workman items above the workspace tree, one session blocked on a permission prompt](docs/images/supraman-main.png)
+![The main window: an Inbox with two Workman items above the folder tree, a group "demo" with three folders and a top-level folder "infra", each session with its state, one waiting on a permission prompt, and Other sessions folded at the bottom](docs/images/supraman-main.png)
 
-![A session's Details tab: its state, where it runs, and the actions from its menu](docs/images/supraman-details.png)
+![A session's Details tab: its state, where it runs (group, folder, branch), and its actions: Open, Stop, Copy name, Copy id, Star](docs/images/supraman-details.png)
 
 *The screenshots show fixture data: `supraman.exe --selftest-shots` makes them on a hidden desktop.*
 
 ## What it does
 
-- **Supervises sessions.** A workspace says which sessions it wants. Supraman launches them with `claude --bg`,
-  resumes a stopped one, and reports one that fails to start.
-- **Shows every session.** All Claude Code sessions on the machine, background and interactive, grouped by
-  workspace and folder, with their state (running, blocked, idle, stopped) and a Details tab for each.
-- **One Inbox.** A session waiting on a permission prompt, a question a session sent you, a launch that failed,
-  a blocked task in Workman, a scheduled run that failed.
-- **Terminal tabs.** Attach to a session in a tab, or open a new one with **+**.
-- **Git tab.** A folder's commit graph with its branches and tags, each commit's message and files, a file's
-  diff side by side or inline, and the work in progress, following the repository as it changes. It only reads:
-  stage and commit in your own git tool.
-- **Schedules.** Recurring work that runs on this machine (a slash command or a prompt, with a permission
-  profile and caps). Nothing runs until you approve it in the window.
-- **Workman.** Sign in once and every session Supraman launches gets its own Workman token, and the Inbox shows
-  the work items that need you.
-- **`sm`**, a command-line tool for the same things: `sm workspace add <dir>`, `sm sessions`, `sm schedule …`,
-  `sm --help` for the rest.
+- **Folders and groups.** The sidebar lists the folders you add, at the top level or in a group. A folder's
+  **Show sub folders** lists its sub folders as rows of their own, and **Exclude Folder** leaves one of them out.
+  A session shows under the deepest listed folder that holds its working folder; the rest show under
+  **Other sessions**.
+- **Sessions.** Every Claude Code session on the machine, background and interactive, with its state (working,
+  waiting, idle, interrupted, stopped, closed) and a Details tab. **Open** attaches to a running session in a
+  terminal tab or resumes a stopped one.
+- **Tabs.** On a folder, **New claude here** starts `claude` in a tab, **Open terminal here** a shell, and
+  **New task…** a prompt that starts a session with it. **+** opens a shell; its menu picks one of the
+  machine's shells (PowerShell, cmd, a Developer prompt, a WSL distro).
+- **One Inbox.** The Workman items that need you (a question, a blocked task), a scheduled run that failed, and a
+  schedule waiting for your approval.
+- **Git tab.** **Open Git** on a repository's folder: the commit graph with its branches, tags, stashes, other
+  worktrees and the sessions working in them; a commit's message and files; a file's diff side by side or inline.
+  It writes too: stage, unstage and discard files, hunks or lines; commit and amend; create, rename, check out and
+  delete branches and tags; merge, rebase, cherry-pick, revert and reset; resolve conflicts; stash and pop; fetch,
+  pull and push; add remotes and worktrees. **Undo** and **Redo** take back a commit, a checkout, a discard and
+  the like. It fetches in the background and follows the repository as it changes.
+- **Work tab.** **Open Work** on a folder or group: its Workman projects, their runs and items with their
+  criteria and evidence, and the latest activity. It only reads; your sessions write to Workman.
+- **Schedules.** Recurring work that runs on this machine (a slash command or a prompt, with a permission profile
+  and caps), listed under its folder. Nothing runs until you click **Approve** on the schedule's page.
+- **Workman.** Sign in once and every session Supraman launches gets its own Workman token.
+- **`sm`**, a command-line tool for the same things: `sm folder add <dir>`, `sm group add <name>`,
+  `sm sessions`, `sm schedule …`; `sm --help` lists them all.
 
 ## Install
 
@@ -42,7 +51,8 @@ Supraman runs on your machine and is open source (GPL-3.0-or-later).
 - Claude Code's `claude` CLI on your `PATH`, version 2.1.308 or newer. Supraman is tested with 2.1.310; it
   refuses an older CLI and runs a newer one, with a warning in the toolbar when the minor version is newer than
   the tested one ([version policy](docs/RELEASE.md#claude-cli-version-policy)).
-- PowerShell for terminal tabs: **+** and "Open terminal here" start PowerShell 7 (`pwsh`) when it is on your
+- For the Git tab, git 2.36 or newer on your `PATH` (Git for Windows).
+- PowerShell for terminal tabs: **+** and **Open terminal here** start PowerShell 7 (`pwsh`) when it is on your
   `PATH`, else the Windows PowerShell that comes with Windows. Supraman looks once, at start: a `pwsh` installed
   while it runs is used after a restart.
 
@@ -59,23 +69,24 @@ folder.
 
 ## First steps
 
-1. **Add a workspace.** The window starts empty. Click the folder button at the top of the left panel:
-   **From a parent folder…** lists the folders in the one you pick, each ticked, to keep or leave out;
-   **Custom workspace…** starts empty, and you add folders by path or Browse. Later, **Edit folders…** changes
-   them and **Rescan…** offers the new subfolders of the parent folder. From a shell: `sm workspace add <dir>`.
-2. **Open a session.** Click **+** for a PowerShell tab and run `claude` in it, or attach to a running session from
-   the tree. Sessions you start elsewhere show up in the tree too.
+1. **Add a folder.** The window starts empty. Click the folder button at the top of the left panel:
+   **Add Folder…** picks a folder and **Add Group…** names a group; a group's own **Add Folder…** puts a folder
+   in it. Drag a folder's row to move it. From a shell: `sm folder add <dir>` and `sm group add <name>`.
+2. **Open a session.** Click **New claude here** on a folder, or **+** for a shell and run `claude` in it, or open
+   a running session from the tree. Sessions you start elsewhere show up in the tree too.
 3. **Sign in to Workman** (optional): **Settings → Workman → Sign in** opens your browser. Without it everything
-   above works, and sessions run without Workman.
-4. **Schedule work** (optional): ask a session to schedule something; the plugin's `/supraman:supraman-scheduler`
-   skill adds it with `sm schedule add`. It shows in the Schedules group as pending until you click **Approve**.
+   but the Work tab works, and sessions run without Workman.
+4. **Schedule work** (optional): **New scheduled task…** on a folder asks a session to set it up; the plugin's
+   `/supraman:supraman-scheduler` skill adds it with `sm schedule add`. It shows under its folder as pending until
+   you click **Approve**.
 
 ## Updating
 
 Supraman checks GitHub Releases at start and once a day. When a newer release is out it shows
 "Supraman *version* is available"; **Update** downloads it, checks it against the release's signed manifest
-(ed25519), replaces the install and restarts. Sessions keep running in the background meanwhile. Turn the
-check off in **Settings → About**. How it works: [docs/RELEASE.md](docs/RELEASE.md#how-supraman-updates-itself).
+(ed25519), replaces the install and restarts. Sessions keep running in the background meanwhile. Turn
+**Check for updates** off in **Settings → About**. How it works:
+[docs/RELEASE.md](docs/RELEASE.md#how-supraman-updates-itself).
 
 ## Build from source
 
@@ -90,21 +101,23 @@ target\release\supraman.exe
 - Selftests: `target\release\supraman.exe --selftest` drives the real app on a hidden desktop of its own, so
   you can keep typing while it runs. It needs the `claude` CLI and launches one short session of its own.
 - A release folder and zip: `scripts\release.ps1` ([docs/RELEASE.md](docs/RELEASE.md)).
-- How the crates fit together: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+- How the crates fit together: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); the keys: [docs/KEYS.md](docs/KEYS.md).
 
 The app is a native Rust app built on [gpui](https://github.com/zed-industries/zed).
 
 ## Roadmap
 
-Supraman runs on Windows today. Next come **Gitman** and **Fileman**, then macOS and Linux. What is Windows-only,
-and what takes its place on each platform: [docs/ROADMAP.md](docs/ROADMAP.md).
+Supraman runs on Windows today. GitMan is its Git tab; next comes **FileMan**, then macOS and Linux. What is
+Windows-only, and what takes its place on each platform: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Family
 
 - **Supraman**: runs and watches your Claude Code sessions (this repository).
 - **Workman**: the work tracker your sessions plan and report in
-  ([github.com/getsupraman/workman](https://github.com/getsupraman/workman)). Supraman shows its board and Inbox.
-- **Gitman** and **Fileman**: planned.
+  ([github.com/getsupraman/workman](https://github.com/getsupraman/workman)). Supraman shows its projects in the
+  Work tab and the items that need you in the Inbox.
+- **GitMan**: the Git tab, part of Supraman.
+- **FileMan**: planned.
 
 ## Licence
 

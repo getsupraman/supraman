@@ -19,9 +19,15 @@ use crate::{
 };
 
 pub const GROUP: &str = "demo";
-/// The fixture's folders, under the shots home: a `.git` each with its branch, no repo.
+/// On the selftest home's drive, so the shots show a short path and none of this machine's folders.
+fn shots_dir() -> PathBuf {
+    let home = home();
+    home.ancestors().last().unwrap_or(&home).join("supraman-shots")
+}
+
+/// The fixture's folders: a `.git` each with its branch, no repo.
 fn root() -> PathBuf {
-    home().join("demo")
+    shots_dir().join("demo")
 }
 const FOLDERS: [(&str, &str); 4] = [("api", "main"), ("web", "feature/login"), ("docs", "main"), ("infra", "main")];
 
@@ -52,6 +58,11 @@ pub fn prepare() -> anyhow::Result<()> {
     remove_dir_retrying(&home).with_context(|| format!("cannot clear {}", home.display()))?;
     std::fs::create_dir_all(&home)?;
     unsafe { std::env::set_var(supraman_core::HOME_VAR, &home) };
+    let shots = shots_dir();
+    if shots.exists() {
+        bail!("{} exists already; --selftest-shots makes and removes it, so move it away first", shots.display());
+    }
+    *crate::selftest::lock() = Some(crate::selftest::Scratch { dirs: vec![shots], session_name: None, kill: Vec::new(), transcripts: Vec::new() });
     let root = root();
     for (name, branch) in FOLDERS {
         let git = root.join(name).join(".git");
@@ -216,25 +227,22 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     sleep(cx, Duration::from_millis(1500)).await;
     let main = capture(out.join("supraman-main.png"), None, cx).await?;
     println!("shot: {}", main.display());
+    let target = MenuTarget::Session {
+        entry: GROUP.to_string(),
+        place: format!("{GROUP}/api"),
+        session_id: "d0000002-0000-4000-8000-00000000de00".to_string(),
+    };
+    let tab = view.update(cx, |v, cx| v.open_details(target, cx)).ok_or_else(|| anyhow!("no Details tab for demo-api"))?;
+    sleep(cx, Duration::from_millis(1500)).await;
+    let details = capture(out.join("supraman-details.png"), None, cx).await?;
+    println!("shot: {}", details.display());
+    view.update(cx, |v, cx| v.close_tab(tab, cx));
     inbox(view, &out, cx).await?;
     schedules(view, &out, cx).await?;
     sidebar_shown(view, &out, cx).await?;
     group_dialogs(view, &out, cx).await?;
     subfolders(view, &out, cx).await?;
     other_sessions(view, &out, cx).await?;
-
-    let target = MenuTarget::Session {
-        entry: GROUP.to_string(),
-        place: format!("{GROUP}/api"),
-        session_id: "d0000002-0000-4000-8000-00000000de00".to_string(),
-    };
-    let tab = view.update(cx, |v, cx| v.open_details(target, cx));
-    if tab.is_none() {
-        bail!("no Details tab for demo-api");
-    }
-    sleep(cx, Duration::from_millis(1500)).await;
-    let details = capture(out.join("supraman-details.png"), None, cx).await?;
-    println!("shot: {}", details.display());
 
     let work = view.update(cx, |v, cx| {
         let tab = v.open_work(crate::work_view::Target::Group(GROUP.into()), cx);
