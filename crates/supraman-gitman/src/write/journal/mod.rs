@@ -1,9 +1,8 @@
 //! GitMan's undo journal: HEAD's reflog merged with [`JOURNAL`]'s, whose marker commits keep each snapshot alive.
 
+mod reflog;
 mod restore;
 mod walk;
-
-use std::path::Path;
 
 use super::{Call, LockSet, Session, WriteError, Writer};
 use crate::history::short_sha;
@@ -205,25 +204,17 @@ fn done(verb: &str, action: &str, stashed: bool) -> Done {
     Done { toast: format!("{verb} {action}{stashed}") }
 }
 
-fn log(path: &Path) -> Result<Vec<Line>, WriteError> {
-    match std::fs::read(path) {
-        Ok(bytes) => Ok(walk::parse_log(&text(&bytes))),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(source) => Err(WriteError::io("read", &path)(source)),
-    }
-}
-
 /// The kind of HEAD's newest reflog line, if it is one the journal knows.
 pub fn newest_kind(s: &Session) -> Result<Option<Kind>, WriteError> {
     Ok(head_log(s)?.pop().and_then(|l| Kind::of(&l.message)))
 }
 
 fn head_log(s: &Session) -> Result<Vec<Line>, WriteError> {
-    log(&s.writer().dirs().git_dir.join("logs").join("HEAD"))
+    reflog::lines(s, "HEAD")
 }
 
 fn read(s: &Session) -> Result<Vec<Item>, WriteError> {
-    let journal = log(&s.writer().dirs().git_dir.join("logs").join(JOURNAL))?;
+    let journal = reflog::lines(s, JOURNAL)?;
     let entries: Vec<Entry> = journal.iter().filter_map(Entry::parse).collect();
     Ok(walk::items(&head_log(s)?, &entries))
 }

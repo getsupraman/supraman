@@ -12,6 +12,13 @@ pub struct Dirs {
     pub common_dir: PathBuf,
 }
 
+impl Dirs {
+    /// Whether the refs and their reflogs live in reftable (`extensions.refStorage`), which keeps no `logs/` files.
+    pub fn reftable(&self) -> bool {
+        self.common_dir.join("reftable").is_dir()
+    }
+}
+
 pub fn dirs(repo: &Repo) -> Result<Dirs, GitError> {
     if let Some(dirs) = repo.known_dirs() {
         return Ok(dirs.clone());

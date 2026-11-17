@@ -293,3 +293,78 @@ fn undo_says_when_a_snapshot_is_gone() {
     assert!(matches!(refused, Refused::Gone(_)), "{refused}");
     assert!(refused.to_string().contains("probably garbage-collected"), "{refused}");
 }
+
+/// A fixture whose refs are in reftable, none on a git that keeps none there.
+fn reftable() -> Option<Fixture> {
+    Fixture::reftable().map_err(|why| eprintln!("skipped: {why}")).ok()
+}
+
+#[test]
+fn undo_and_redo_of_a_commit_on_reftable() {
+    let Some(f) = reftable() else { return };
+    assert!(f.dir.join(".git/reftable").is_dir() && !f.dir.join(".git/logs/HEAD").exists(), "no reflog files");
+    write(&f, |s| git(s, &["commit", "-q", "--no-verify", "-m", "Before"]));
+    assert_eq!(preview(&f).undo_tooltip(), "Undo commit \"Before\"");
+    round_trip(&f, |s| {
+        git(s, &["commit", "-q", "--no-verify", "--allow-empty", "-m", "Staged work"])?;
+        journal::record(s, Action::Commit, None)
+    }, "commit \"Staged work\"");
+}
+
+#[test]
+fn undo_and_redo_of_a_checkout_a_hard_reset_and_a_discard_on_reftable() {
+    let Some(f) = reftable() else { return };
+    let paths: Vec<String> = ["a.txt", "b.txt", "u.txt", "s.txt", "new.txt", "renamed.txt"].map(String::from).to_vec();
+    round_trip(&f, |s| journal::discard(s, &paths), "discard \"a.txt\" (and 5 other files)");
+    round_trip(&f, |s| {
+        let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+        let snapshot = s.snapshot(&refs, "Before reset")?;
+        git(s, &["reset", "-q", "--hard", "HEAD~1"])?;
+        journal::record(s, Action::Reset { hard: true }, Some(&snapshot))
+    }, "reset to \"Merge feature\"");
+    git_in(&f.git, &f.dir, &["stash", "push", "-q", "--include-untracked"], &[], None);
+    round_trip(&f, |s| {
+        git(s, &["checkout", "-q", "stale"])?;
+        journal::record(s, Action::Checkout, None)
+    }, "checkout from \"main\" to \"stale\"");
+}
+
+#[test]
+fn a_linked_worktree_on_reftable_keeps_a_journal_of_its_own() {
+    let Some(f) = reftable() else { return };
+    let main = preview(&f);
+    let wt = f.side();
+    Writer::open(&wt).unwrap().run(LockSet::undo(), |s| {
+        git(s, &["commit", "-q", "--no-verify", "--allow-empty", "-m", "Side"])?;
+        journal::discard(s, &["a.txt".to_string()])
+    }).unwrap();
+    let side = || journal::preview(&Writer::open(&wt).unwrap()).unwrap().undo_tooltip();
+    assert_eq!(side(), "Undo discard \"a.txt\"");
+    assert_eq!(Fixture::undo(&wt).unwrap().toast, "Undid discard \"a.txt\"");
+    assert_eq!(Fixture::undo(&wt).unwrap().toast, "Undid commit \"Side\"");
+    assert_eq!(f.at(&f.worktree, &["rev-parse", "HEAD"]), f.sha("second"));
+    assert_eq!(preview(&f), main, "the main checkout's journal is its own");
+}
+
+#[test]
+fn an_entry_recorded_before_the_refs_moved_to_reftable_is_still_undone() {
+    if supraman_gitman::fixture::system_git().version < supraman_gitman::fixture::REFTABLE {
+        return eprintln!("skipped: no reftable");
+    }
+    let f = Fixture::copy();
+    let before = state(&f);
+    write(&f, |s| {
+        git(s, &["commit", "-q", "--no-verify", "-m", "Staged work"])?;
+        journal::record(s, Action::Commit, None)?;
+        journal::discard(s, &["u.txt".to_string()])
+    });
+    git_in(&f.git, &f.dir, &["worktree", "remove", "--force", &f.worktree.to_string_lossy()], &[], None);
+    let migrated = supraman_gitman::fixture::run_git(&f.git, &f.dir, &["refs", "migrate", "--ref-format=reftable"], &[], None);
+    if !migrated.success() {
+        return eprintln!("skipped: {}", String::from_utf8_lossy(&migrated.stderr));
+    }
+    assert!(!f.dir.join(".git/logs/HEAD").exists(), "the reflogs moved into reftable");
+    assert_eq!(Fixture::undo(&f.repo()).unwrap().toast, "Undid discard \"u.txt\"");
+    assert_eq!(Fixture::undo(&f.repo()).unwrap().toast, "Undid commit \"Staged work\"");
+    assert_eq!(state(&f), before);
+}

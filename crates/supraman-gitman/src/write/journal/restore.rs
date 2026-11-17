@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use super::walk::{Again, Item, Kind, UNDO, is_zero};
-use super::{Action, Payload, Refused, log, payload, record, rewrite};
+use super::{Action, Payload, Refused, payload, record, reflog, rewrite};
 use crate::parse::{nul_records, text};
 use crate::write::{Call, Session, WriteError};
 
@@ -166,10 +166,8 @@ fn stash_all(s: &Session, action: &str, allowed: bool, untracked: bool) -> Resul
 /// Takes out the newest line of HEAD's and its branch's reflog when it is the reset just run, which moved nothing.
 pub(crate) fn drop_noop_reset(s: &Session) -> Result<(), WriteError> {
     let branch = text(&s.run(&Call::new(&["symbolic-ref", "-q", "HEAD"]))?.stdout).trim().to_string();
-    let logs = s.writer().dirs().git_dir.join("logs");
-    let common = s.writer().dirs().common_dir.join("logs");
-    for (name, file) in [("HEAD".to_string(), logs.join("HEAD")), (branch.clone(), common.join(&branch))].into_iter().filter(|(n, _)| !n.is_empty()) {
-        let newest = log(&file)?.pop();
+    for name in ["HEAD", branch.as_str()].into_iter().filter(|n| !n.is_empty()) {
+        let newest = reflog::lines(s, name)?.pop();
         if newest.is_some_and(|l| l.old == l.new && l.message == "reset: moving to HEAD") {
             s.output(&Call::new(&["reflog", "delete", &format!("{name}@{{0}}")]))?;
         }

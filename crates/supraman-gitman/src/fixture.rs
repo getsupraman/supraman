@@ -9,7 +9,7 @@ use supraman_core::process::{self, Kill};
 use supraman_core::testing::{polled, wait_until};
 use tempfile::TempDir;
 
-use crate::{Git, Located, Repo};
+use crate::{Git, Located, Repo, Version};
 
 mod media;
 #[cfg(test)]
@@ -20,6 +20,9 @@ pub use media::{MEDIA_FILES, png};
 const AUTHOR: (&str, &str) = ("Ada Fixture", "ada@example.test");
 const FIRST_TIME: i64 = 1_700_000_000;
 const TIMEOUT: Duration = Duration::from_secs(300);
+
+/// The first git whose `init` takes `--ref-format=reftable`.
+pub const REFTABLE: Version = Version { major: 2, minor: 45, patch: 0 };
 
 /// The system git, or a panic naming why a test cannot run.
 pub fn system_git() -> Git {
@@ -121,12 +124,24 @@ impl Fixture {
         Fixture::of(tempfile::tempdir_in(parent).expect("temp dir"))
     }
 
-    fn of(temp: TempDir) -> Fixture {
+    /// [`Fixture::new`] with its refs in reftable; why not on a git below [`REFTABLE`].
+    pub fn reftable() -> Result<Fixture, String> {
         let git = system_git();
+        if git.version < REFTABLE {
+            return Err(format!("git {} keeps no refs in reftable (from {REFTABLE})", git.version));
+        }
+        Ok(Fixture::built(tempfile::tempdir().expect("temp dir"), git, &["--ref-format=reftable"]))
+    }
+
+    fn of(temp: TempDir) -> Fixture {
+        Fixture::built(temp, system_git(), &[])
+    }
+
+    fn built(temp: TempDir, git: Git, init: &[&str]) -> Fixture {
         let dir = temp.path().join("repo");
         let worktree = temp.path().join("wt");
         let mut f = Fixture { git, temp, dir, worktree, shas: BTreeMap::new(), time: FIRST_TIME };
-        f.history();
+        f.history(init);
         f.remote_and_worktree();
         f.work_in_progress();
         f.media();
@@ -231,9 +246,9 @@ impl Fixture {
         self.shas.insert(label, sha);
     }
 
-    fn history(&mut self) {
+    fn history(&mut self, init: &[&str]) {
         let temp = self.temp.path().to_path_buf();
-        git_in(&self.git, &temp, &["init", "-q", "-b", "main", "repo"], &[], None);
+        git_in(&self.git, &temp, &[&["init", "-q", "-b", "main"][..], init, &["repo"]].concat(), &[], None);
         for (key, value) in [("user.name", AUTHOR.0), ("user.email", AUTHOR.1), ("core.autocrlf", "false"), ("commit.gpgsign", "false"), ("tag.gpgsign", "false")] {
             self.git(&["config", key, value]);
         }
