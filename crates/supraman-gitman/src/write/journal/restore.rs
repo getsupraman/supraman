@@ -33,6 +33,10 @@ pub(super) fn undo(s: &Session, item: &Item, kind: Kind, action: &str, stash: bo
             branch_back(s, item)?;
             Ok(false)
         }
+        Kind::Elsewhere => {
+            move_elsewhere(s, item, true)?;
+            Ok(false)
+        }
     }
 }
 
@@ -76,7 +80,35 @@ pub(super) fn redo(s: &Session, again: &Again, action: &str, stash: bool) -> Res
             delete_branch(s, &name)?;
             Ok(false)
         }
+        Kind::Elsewhere => {
+            move_elsewhere(s, original, false)?;
+            Ok(false)
+        }
     }
+}
+
+/// An [`Action::Elsewhere`]'s branch put back to `from` (`undo`) or on to `to` again; HEAD, index and files untouched.
+fn move_elsewhere(s: &Session, item: &Item, undo: bool) -> Result<(), Refused> {
+    let payload = payload(s, item)?.ok_or_else(|| gone(item))?;
+    let Action::Elsewhere { what, branch, from, to } = &payload.action else { return Err(gone(item)) };
+    let (now, target) = if undo { (to, from) } else { (from, to) };
+    let stale = |why: String| Refused::Stale { what: format!("{} {what}", if undo { "undo" } else { "redo" }), why };
+    let full = format!("refs/heads/{branch}");
+    if s.verify(&full)?.as_ref() != Some(now) {
+        return Err(stale(format!("{branch} moved since")));
+    }
+    let head = text(&s.run(&Call::new(&["symbolic-ref", "-q", "HEAD"]))?.stdout).trim().to_string();
+    let refs = crate::refs(s.writer().repo()).map_err(WriteError::from)?;
+    if head == full || crate::write::branch::held_elsewhere(&refs, &s.writer().dirs().top, branch).is_some() {
+        return Err(stale(format!("{branch} is checked out")));
+    }
+    if !object_exists(s, target)? {
+        return Err(Refused::Gone(format!("the commit {}", crate::history::short_sha(target))));
+    }
+    let message = if undo { format!("{UNDO}{}", item.label) } else { item.label.clone() };
+    s.output(&Call::new(&["update-ref", "-m", &message, &full, target, now]))?;
+    rewrite(s, &item.label, &payload, undo)?;
+    Ok(())
 }
 
 /// Where HEAD went when the newest undo ran.

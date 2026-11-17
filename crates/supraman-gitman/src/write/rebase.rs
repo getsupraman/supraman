@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use super::journal::{self, Action};
 use super::conflicts::conflicted;
+use super::branch::{Away, go_back};
 use super::stash::{self, Applied};
 use super::{Call, Session, WriteError};
 use crate::history::short_sha;
@@ -32,9 +33,30 @@ struct Marker {
     from: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     autostash: Option<Autostashed>,
-    /// A rebase of a branch other than HEAD's is not kept for Undo.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    unrecorded: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    elsewhere: Option<Elsewhere>,
+}
+
+/// A rebase of a branch other than HEAD's: the checkout it goes `back` to, a branch or a sha.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct Elsewhere {
+    branch: String,
+    onto: String,
+    back: String,
+}
+
+impl Marker {
+    fn away(&self) -> Option<Away> {
+        self.elsewhere.as_ref().map(|e| Away { back: e.back.clone(), autostash: self.autostash.clone() })
+    }
+
+    /// The checkout before back and the autostash popped there.
+    fn finish(&self, s: &Session) -> Result<Autostash, WriteError> {
+        match self.away() {
+            Some(away) => go_back(s, &away),
+            None => Ok(pop(s, self.autostash.as_ref())),
+        }
+    }
 }
 
 /// The work in progress a write stashed as `name` to put back after it.
@@ -88,7 +110,7 @@ pub fn reword(s: &Session, sha: &str, message: &str) -> Result<Rebased, WriteErr
     start(s, &format!("{sha}^"), &branch, Some((&todo, message)), &autostash_name(sha))
 }
 
-/// Rebases `branch` onto `onto` with git's own todo; recorded for Undo only when `branch` is HEAD's.
+/// Rebases `branch` onto `onto` with git's own todo, recorded for Undo; another branch than HEAD's is checked out for it, then the checkout before put back.
 pub fn onto(s: &Session, branch: &str, onto: &str) -> Result<Rebased, WriteError> {
     if operation_state(&s.writer().dirs().git_dir) != OperationState::None {
         return Err(WriteError::Refused(super::UNDER_WAY));
@@ -96,12 +118,23 @@ pub fn onto(s: &Session, branch: &str, onto: &str) -> Result<Rebased, WriteError
     start(s, onto, branch, None, &format!("GitMan autostash before rebasing {branch}"))
 }
 
+/// Where HEAD is when `branch` is not HEAD's branch, to go back to after rebasing it onto `base`.
+fn elsewhere(s: &Session, base: &str, branch: &str) -> Result<Option<Elsewhere>, WriteError> {
+    let head = text(&s.run(&Call::new(&["symbolic-ref", "-q", "--short", "HEAD"]))?.stdout).trim().to_string();
+    if head == branch {
+        return Ok(None);
+    }
+    let back = if head.is_empty() { s.rev("HEAD^{commit}")? } else { head };
+    let onto = if base.len() >= 40 && base.bytes().all(|b| b.is_ascii_hexdigit()) { short_sha(base).to_string() } else { base.to_string() };
+    Ok(Some(Elsewhere { branch: branch.to_string(), onto, back }))
+}
+
 /// `rebase -i <base> <branch>`, with `script`'s todo and message copied in by its editors, else git's own todo.
 pub(crate) fn start(s: &Session, base: &str, branch: &str, script: Option<(&str, &str)>, stash_name: &str) -> Result<Rebased, WriteError> {
     let from = s.rev(&format!("refs/heads/{branch}"))?;
-    let head = text(&s.run(&Call::new(&["symbolic-ref", "-q", "--short", "HEAD"]))?.stdout).trim().to_string();
+    let elsewhere = elsewhere(s, base, branch)?;
     let autostash = autostash(s, stash_name)?;
-    let marker = Marker { from, autostash, unrecorded: head != branch };
+    let marker = Marker { from, autostash, elsewhere };
     let prepared = script.map(|(todo, message)| Prepared::new(&s.writer().dirs().git_dir, todo, message)).transpose()?;
     let rebase = match &prepared {
         Some(prepared) => Call::new(&[REBASE_PINS, &["rebase", "-i", base, branch]].concat()).env("GIT_SEQUENCE_EDITOR", copy_over(&prepared.todo)).editor(copy_over(&prepared.message)),
@@ -146,7 +179,7 @@ pub fn skip(s: &Session) -> Result<Rebased, WriteError> {
 pub fn abort(s: &Session) -> Result<Rebased, WriteError> {
     let marker = read_marker(s);
     s.output(&Call::new(&["rebase", "--abort"]))?;
-    let autostash = marker.map_or(Autostash::None, |m| pop(s, m.autostash.as_ref()));
+    let autostash = marker.map_or(Ok(Autostash::None), |m| m.finish(s))?;
     Ok(Rebased::Done { head: s.rev("HEAD")?, autostash })
 }
 
@@ -171,10 +204,12 @@ fn stepped(s: &Session, marker: Option<Marker>, what: &str, out: &supraman_core:
     Err(failed(what, out, None))
 }
 
-/// A finished rebase of GitMan's: the autostash popped, then recorded with a snapshot Undo puts back.
+/// A finished rebase of GitMan's: the autostash popped, then recorded with a snapshot Undo puts back; another branch's with its tips alone.
 fn done(s: &Session, marker: &Marker) -> Result<Rebased, WriteError> {
-    let autostash = pop(s, marker.autostash.as_ref());
-    if marker.unrecorded {
+    let autostash = marker.finish(s)?;
+    if let Some(Elsewhere { branch, onto, .. }) = &marker.elsewhere {
+        let to = s.rev(&format!("refs/heads/{branch}"))?;
+        journal::record(s, Action::Elsewhere { what: format!("rebase \"{branch}\" onto \"{onto}\""), branch: branch.clone(), from: marker.from.clone(), to }, None)?;
         return Ok(Rebased::Done { head: s.rev("HEAD")?, autostash });
     }
     let status = crate::status(s.writer().repo())?;
@@ -204,11 +239,12 @@ pub(crate) fn pop(s: &Session, autostash: Option<&Autostashed>) -> Autostash {
     }
 }
 
-/// The autostash back after a reword that did not happen; what to add to its error when it stays.
+/// The checkout and autostash back after a rebase that did not happen; what to add to its error when they are not.
 fn put_back(s: &Session, marker: &Marker) -> Option<String> {
-    match pop(s, marker.autostash.as_ref()) {
-        Autostash::Kept { name, why } => Some(format!("Your changes stay in the stash \"{name}\": {why}")),
-        _ => None,
+    match marker.finish(s) {
+        Ok(Autostash::Kept { name, why }) => Some(format!("Your changes stay in the stash \"{name}\": {why}")),
+        Ok(_) => None,
+        Err(e) => Some(format!("The checkout before could not be put back: {e}")),
     }
 }
 

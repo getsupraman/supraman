@@ -5,6 +5,7 @@ use std::collections::HashMap;
 /// The journal ref's line that parks it on the rest commit after each entry.
 pub(super) const REST: &str = "rest";
 pub(super) const UNDO: &str = "undo: ";
+pub(super) const ELSEWHERE: &str = "elsewhere: ";
 
 /// One reflog line.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,12 +59,13 @@ pub enum Kind {
     Rebase,
     Discard,
     DeleteBranch,
+    Elsewhere,
 }
 
 impl Kind {
     /// The kind a reflog message or a journal label names; git's own rebase lines are none.
     pub fn of(label: &str) -> Option<Kind> {
-        const PREFIXES: [(&str, Kind); 7] = [
+        const PREFIXES: [(&str, Kind); 8] = [
             ("commit: ", Kind::Commit),
             ("commit (amend): ", Kind::Amend),
             ("checkout: moving from ", Kind::Checkout),
@@ -71,12 +73,13 @@ impl Kind {
             ("rebase: from ", Kind::Rebase),
             ("discard: ", Kind::Discard),
             ("delete branch: ", Kind::DeleteBranch),
+            (ELSEWHERE, Kind::Elsewhere),
         ];
         PREFIXES.iter().find(|(p, _)| label.starts_with(p)).map(|(_, k)| *k)
     }
 
     pub fn moves_head(self) -> bool {
-        !matches!(self, Kind::Discard | Kind::DeleteBranch)
+        !matches!(self, Kind::Discard | Kind::DeleteBranch | Kind::Elsewhere)
     }
 }
 
@@ -164,7 +167,7 @@ pub fn items(head: &[Line], journal: &[Entry]) -> Vec<Item> {
     let mut items = Vec::new();
     let mut lines = head.iter().rev().peekable();
     while let Some(line) = lines.next() {
-        let mut own = None;
+        let (mut own, mut away) = (None, false);
         for entry in anchored.remove(line.fingerprint().as_str()).unwrap_or_default() {
             let (undo, label) = split_undo(&entry.label);
             match Kind::of(label) {
@@ -173,8 +176,15 @@ pub fn items(head: &[Line], journal: &[Entry]) -> Vec<Item> {
                         own = Some(entry.clone());
                     }
                 }
-                _ => items.push(Item::of_entry(entry)),
+                kind => {
+                    away |= !undo && kind == Some(Kind::Elsewhere) && line.message.starts_with("checkout: moving from ");
+                    items.push(Item::of_entry(entry));
+                }
             }
+        }
+        if away {
+            swallow_away(line, &mut lines);
+            continue;
         }
         if own.is_none() && line.noop_reset() {
             continue;
@@ -192,6 +202,17 @@ pub fn items(head: &[Line], journal: &[Entry]) -> Vec<Item> {
     let unanchored = journal.iter().rev().filter(|e| anchored.contains_key(e.anchor.as_str()));
     items.extend(unanchored.filter(|e| Kind::of(split_undo(&e.label).1).is_some_and(|k| !k.moves_head())).map(Item::of_entry));
     items
+}
+
+/// The HEAD lines of an [`Kind::Elsewhere`] write ending at `back` (its checkout back): down to the line that left where it went back to.
+fn swallow_away<'a>(back: &Line, lines: &mut std::iter::Peekable<impl Iterator<Item = &'a Line>>) {
+    const MADE: [&str; 4] = ["checkout: moving from ", "merge ", "rebase", "reset: moving to HEAD"];
+    let left = |l: &Line| l.old == back.new && (l.message.starts_with("checkout: moving from ") || l.message.starts_with("rebase (start)"));
+    while lines.peek().is_some_and(|l| MADE.iter().any(|m| l.message.starts_with(m))) {
+        if left(lines.next().expect("peeked")) {
+            return;
+        }
+    }
 }
 
 /// What Undo would act on.
@@ -310,6 +331,25 @@ mod tests {
         assert_eq!(all.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(), ["rebase: from a", "commit: A"]);
         assert_eq!(all[0].from.as_deref(), Some("a"));
         assert!(matches!(walk(&all).undo, Some(Next::Undo(_, Kind::Rebase))));
+    }
+
+    #[test]
+    fn a_write_elsewhere_takes_its_checkouts_and_merge_down_to_where_head_left() {
+        let head = [
+            line("a", "s", 1, "commit: Side"),
+            line("s", "s", 2, "reset: moving to HEAD"),
+            line("s", "t", 3, "checkout: moving from side to stale"),
+            line("t", "m", 4, "merge feature: Merge made by the 'ort' strategy."),
+            line("m", "s", 5, "checkout: moving from stale to side"),
+        ];
+        let journal = [entry("elsewhere: merge \"feature\" into \"stale\"", &head[4])];
+        let all = items(&head, &journal);
+        assert_eq!(all.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(), ["elsewhere: merge \"feature\" into \"stale\"", "commit: Side"]);
+        assert!(matches!(walk(&all).undo, Some(Next::Undo(_, Kind::Elsewhere))));
+        let undone = [entry("elsewhere: merge \"feature\" into \"stale\"", &head[4]), entry("undo: elsewhere: merge \"feature\" into \"stale\"", &head[4])];
+        let w = walk(&items(&head, &undone));
+        assert!(matches!(w.undo, Some(Next::Undo(ref i, Kind::Commit)) if i.label == "commit: Side"), "not the checkouts");
+        assert_eq!(w.redo.map(|a| a.kind), Some(Kind::Elsewhere));
     }
 
     #[test]

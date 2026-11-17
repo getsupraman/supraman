@@ -7,6 +7,7 @@ mod conflicts;
 mod fixture_copy;
 mod fixture_env;
 mod journal;
+mod journal_elsewhere;
 mod lines;
 mod locate;
 mod paging;
