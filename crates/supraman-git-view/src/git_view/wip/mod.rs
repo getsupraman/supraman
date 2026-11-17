@@ -10,7 +10,7 @@ mod render;
 #[cfg(test)]
 pub(crate) mod tests;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -42,6 +42,7 @@ pub(crate) struct Shown {
     pub(crate) state: OperationState,
     pub(crate) under_way: Option<UnderWay>,
     pub(crate) conflicts: HashMap<String, Conflict>,
+    pub(crate) resolved: BTreeSet<String>,
 }
 
 impl Shown {
@@ -241,7 +242,7 @@ impl WipPanel {
                         list.paths.select(None);
                     }
                 }
-                let shown = Shown { branch: l.branch, track: l.track, total: l.total, conflicted: l.conflicted, unstaged: l.unstaged, staged: l.staged, state: l.state, under_way: l.under_way, conflicts: l.conflicts };
+                let shown = Shown { branch: l.branch, track: l.track, total: l.total, conflicted: l.conflicted, unstaged: l.unstaged, staged: l.staged, state: l.state, under_way: l.under_way, conflicts: l.conflicts, resolved: l.resolved };
                 if before != Some(shown.state) {
                     self.fill_merge_message(&shown, cx);
                 }

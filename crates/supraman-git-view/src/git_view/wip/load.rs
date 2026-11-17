@@ -1,7 +1,7 @@
 //! What the WIP panel reads, blocking: the status split into conflicted, unstaged and staged files, each a list and a tree.
 
 use supraman_core::text::count;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use supraman_gitman::{ChangeKind, Conflict, EntryKind, FileChange, OperationState, Repo, Status, UnderWay};
 use supraman_ui::tree::{Order, Tree};
@@ -74,6 +74,7 @@ pub(crate) struct Loaded {
     pub(crate) state: OperationState,
     pub(crate) under_way: Option<UnderWay>,
     pub(crate) conflicts: HashMap<String, Conflict>,
+    pub(crate) resolved: BTreeSet<String>,
 }
 
 /// `1 file change`, `3 file changes`.
@@ -137,5 +138,6 @@ pub(crate) fn of_status(status: &Status, order: Order) -> Loaded {
         state: status.state,
         under_way: status.under_way.clone(),
         conflicts,
+        resolved: status.resolved.clone(),
     }
 }

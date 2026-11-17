@@ -79,6 +79,18 @@ fn a_merge_conflict_selects_the_wip_row_and_the_panel_resolves_unresolves_takes_
 }
 
 #[gpui::test]
+fn mark_conflicted_shows_on_the_file_this_merge_left_conflicted_and_not_on_one_git_merged(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    f.conflict();
+    let (view, cx) = open_as(&f.worktree, occupancy::Live::default(), cx);
+    assert!(paths(&shown(&view, cx), Section::Staged).contains(&"b.txt".to_string()), "git merged b.txt by itself");
+    assert!(!painted(&view, "wip-unresolve-b.txt", cx), "nothing to mark conflicted while a.txt is still conflicted");
+    click(&view, "wip-take-incoming-a.txt", cx);
+    assert!(painted(&view, "wip-unresolve-a.txt", cx), "the file this merge left conflicted");
+    assert!(!painted(&view, "wip-unresolve-b.txt", cx), "none on the file git merged");
+}
+
+#[gpui::test]
 fn a_conflict_appearing_later_selects_the_wip_row(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let (view, cx) = open_as(&f.worktree, occupancy::Live::default(), cx);
