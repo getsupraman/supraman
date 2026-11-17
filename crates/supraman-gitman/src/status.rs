@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::sync::{Mutex, PoisonError};
 
@@ -100,6 +100,8 @@ pub struct Status {
     pub state: OperationState,
     /// The sides of the operation under way.
     pub under_way: Option<UnderWay>,
+    /// The paths this operation left unmerged and that are resolved now (the index's resolve-undo), while one is under way.
+    pub resolved: BTreeSet<String>,
 }
 
 /// The work in progress: staged, unstaged and untracked files, and a merge or rebase under way.
@@ -128,7 +130,17 @@ fn read_status(repo: &Repo, git_dir: &std::path::Path, optional_locks: bool) -> 
     status.state = operation_state(git_dir);
     status.operation = operation(status.state);
     status.under_way = under_way(repo, git_dir, status.state, status.branch.head.as_deref())?;
+    if status.state != OperationState::None {
+        let unmerged: HashSet<&str> = status.entries.iter().filter(|e| e.kind == EntryKind::Unmerged).map(|e| e.path.as_str()).collect();
+        let undo = repo.read(&["ls-files", "--resolve-undo", "-z"], None, |out| Ok(resolve_undo(out)))?;
+        status.resolved = undo.into_iter().filter(|p| !unmerged.contains(p.as_str())).collect();
+    }
     Ok(status)
+}
+
+/// The paths of `ls-files --resolve-undo -z`'s `mode sha stage\tpath` records; git clears them as the next operation, or a reset, starts.
+fn resolve_undo(out: &[u8]) -> BTreeSet<String> {
+    nul_records(out).map(text).filter_map(|r| Some(r.split_once('\t')?.1.to_string())).collect()
 }
 
 fn operation(state: OperationState) -> Option<Operation> {

@@ -197,3 +197,41 @@ fn mark_conflicted_restores_the_stages_of_a_stopped_rebase() {
     write(&f, |s| conflicts::mark_conflicted(s, &paths(&["c.txt"]))).unwrap();
     assert_eq!(f.at(&f.worktree, &["ls-files", "-u"]), before);
 }
+
+fn resolved(f: &Fixture) -> Vec<String> {
+    state(f).resolved.into_iter().collect()
+}
+
+#[test]
+fn the_status_names_only_the_paths_this_operation_left_unmerged_once_resolved() {
+    let f = Fixture::copy();
+    f.conflict();
+    assert!(state(&f).entries.iter().any(|e| e.path == "b.txt" && e.kind != EntryKind::Unmerged), "git merged b.txt by itself");
+    assert_eq!(resolved(&f), Vec::<String>::new(), "still conflicted");
+    std::fs::write(f.worktree.join("a.txt"), b"resolved\n").unwrap();
+    write(&f, |s| conflicts::mark_resolved(s, None, false)).unwrap();
+    assert_eq!(resolved(&f), paths(&["a.txt"]));
+
+    write(&f, |s| conflicts::mark_conflicted(s, &paths(&["a.txt"]))).unwrap();
+    assert_eq!(resolved(&f), Vec::<String>::new(), "conflicted again");
+    write(&f, |s| conflicts::take(s, &paths(&["a.txt"]), Side::Incoming)).unwrap();
+    assert_eq!(resolved(&f), paths(&["a.txt"]), "after Take incoming");
+
+    write(&f, |s| wip::commit(s, "Merge main into side\n", false, true)).unwrap();
+    assert_eq!(resolved(&f), Vec::<String>::new(), "nothing under way once committed");
+    assert!(f.at(&f.worktree, &["ls-files", "--resolve-undo"]).contains("a.txt"), "git keeps the record until the next operation starts");
+}
+
+#[test]
+fn a_deleted_side_taken_and_a_rebase_s_resolved_file_are_read_too() {
+    let f = Fixture::copy();
+    f.delete_conflict();
+    write(&f, |s| conflicts::take(s, &paths(&["b.txt"]), Side::Incoming)).unwrap();
+    assert_eq!(resolved(&f), paths(&["b.txt"]), "a side taken that deleted the file");
+
+    let f = Fixture::copy();
+    stopped_rebase(&f);
+    std::fs::write(f.worktree.join("c.txt"), b"three\n").unwrap();
+    write(&f, |s| conflicts::mark_resolved(s, None, false)).unwrap();
+    assert_eq!(resolved(&f), paths(&["c.txt"]));
+}
