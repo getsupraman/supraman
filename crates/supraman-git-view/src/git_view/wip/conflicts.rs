@@ -144,10 +144,10 @@ impl WipPanel {
             .children(buttons.into_iter().map(|b| button::reveal(b, group.clone(), false)))
     }
 
-    /// A resolved file's Mark Conflicted on hover, where the operation's commits say its stages.
+    /// A resolved file's Mark Conflicted on hover, only on one this operation left conflicted (`Status::resolved`).
     pub(super) fn resolved_tail(&mut self, path: &str, group: SharedString, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let shown = self.shown()?;
-        if !matches!(shown.state, OperationState::Merge | OperationState::Rebase { .. } | OperationState::CherryPick { .. } | OperationState::Revert { .. }) {
+        if !shown.resolved.contains(path) || !matches!(shown.state, OperationState::Merge | OperationState::Rebase { .. } | OperationState::CherryPick { .. } | OperationState::Revert { .. }) {
             return None;
         }
         let (busy, paths) = (self.busy(cx), vec![path.to_string()]);
