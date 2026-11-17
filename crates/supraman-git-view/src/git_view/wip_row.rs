@@ -6,6 +6,7 @@ use gpui::{AnyElement, App, Div, MouseButton, MouseDownEvent, SharedString, Wind
 use gpui::Context;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
+use supraman_ui::clipped::clipped;
 use supraman_ui::text_input;
 use supraman_gitman::WipCounts;
 use theme::ActiveTheme as _;
@@ -14,13 +15,15 @@ use super::colours::Palette;
 use super::wip::conflicts::conflicts_sentence;
 use super::{GitView, Selected, cells, keys};
 
-/// The WIP row's summary field's width (GitKraken's).
+/// The WIP row's summary field's least width (GitKraken's).
 const FIELD: f32 = 140.;
 pub(crate) const FIELD_KEY: &str = "git-wip-field";
+pub(crate) const STILL_KEY: &str = "git-wip-still";
+pub(crate) const COUNTS_KEY: &str = "git-wip-counts";
 
 impl GitView {
     /// The summary's field and the counts; `// WIP` and the counts until the field is made.
-    pub(super) fn wip_message(&mut self, ix: usize, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn wip_message(&mut self, ix: usize, palette: &Palette, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         if let Some(conflicts) = self.wip.map(|w| w.conflicted).filter(|n| *n > 0) {
             let rows = self.pages.read(cx).rows.clone();
             return cells::wip_message(&rows[ix], conflict_node(conflicts, "git-conflict-node".into(), &self.hits, palette, cx), "", palette);
@@ -30,21 +33,38 @@ impl GitView {
         let rows = self.pages.read(cx).rows.clone();
         let row = &rows[ix];
         let Some(input) = input else { return cells::message(ix, row, Some(counts.as_str()), palette, &self.hits) };
-        if self.selected(cx) != Some(Selected::Wip) {
-            let summary = input.read(cx).text().to_string();
-            return cells::wip_message(row, div().relative().flex_none().child(still_field(summary, palette, cx)).child(hit_target(&self.hits, FIELD_KEY.into())), SharedString::from(counts), palette);
-        }
+        let focused = input.read(cx).is_focused(window);
+        let selected = self.selected(cx) == Some(Selected::Wip);
+        let shown = if focused { input.into_any_element() } else { still_field(input.read(cx).text(), palette, cx).into_any_element() };
         let order = self.wip_panel.read(cx).message_order(true, cx).unwrap_or_default();
         let field = div()
             .relative()
-            .w(px(FIELD))
-            .flex_none()
+            .w_full()
             .key_context(keys::MESSAGE_CONTEXT)
             .on_action(cx.listener(|this, _: &keys::StageAllAndCommit, _, cx| this.wip_panel.update(cx, |p, cx| p.commit(true, cx))))
-            .on_mouse_down(MouseButton::Left, cx.listener(|_, _: &MouseDownEvent, _, cx| cx.stop_propagation()))
-            .child(input)
+            .when(selected, |d| {
+                d.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        if !focused {
+                            this.focus_field(window, cx);
+                        }
+                    }),
+                )
+            })
+            .child(shown)
             .child(hit_target(&self.hits, FIELD_KEY.into()));
-        cells::wip_message(row, order.on(div().flex_none()).child(field), SharedString::from(counts), palette)
+        let counts = div().relative().child(SharedString::from(counts)).child(hit_target(&self.hits, COUNTS_KEY.into()));
+        cells::wip_message(row, order.on(div().flex().flex_1().min_w(px(FIELD))).child(field), counts, palette)
+    }
+
+    /// A click on the selected row's still field gives it the keys.
+    fn focus_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(input) = self.wip_panel.read(cx).composer().map(|c| c.row.clone()) {
+            input.update(cx, |i, cx| i.focus(window, cx));
+        }
+        cx.notify();
     }
 
     /// Ctrl+Shift+S: every file staged, the WIP row selected and its summary given the keyboard.
@@ -114,10 +134,10 @@ pub(super) fn conflict_node(n: u32, key: String, hits: &HitTargets, palette: &Pa
         .child(hit_target(hits, key))
 }
 
-/// The field as the row shows it until the row is selected: a click on it selects the row.
-fn still_field(summary: String, palette: &Palette, cx: &App) -> Div {
-    let (text, colour) = if summary.is_empty() { ("// WIP".to_string(), palette.muted) } else { (summary, palette.text) };
-    text_input::quiet_frame(false, cx).w(px(FIELD)).flex_none().whitespace_nowrap().text_color(colour).child(SharedString::from(text))
+/// The field while it does not hold the keys: the summary from its start, cut with an ellipsis, `// WIP` muted while empty.
+fn still_field(summary: &str, palette: &Palette, cx: &App) -> Div {
+    let (text, colour) = if summary.is_empty() { ("// WIP", palette.muted) } else { (summary, palette.text) };
+    text_input::quiet_frame(false, cx).w_full().text_color(colour).child(clipped(STILL_KEY, text.to_string(), false))
 }
 
 #[cfg(test)]
