@@ -59,6 +59,8 @@ pub(crate) struct FileFacts<'a> {
     pub(crate) exists: bool,
     /// A merge, rebase, cherry-pick, revert or am is under way.
     pub(crate) under_way: bool,
+    /// The tab's gate's why while it is busy.
+    pub(crate) busy: Option<&'static str>,
 }
 
 fn file(key: String, label: impl Into<String>, act: FileAct) -> MenuItem<RefAct> {
@@ -150,7 +152,13 @@ fn commit_items(sha: &str, stash: Option<&str>, f: &FileFacts) -> Vec<MenuItem<R
     }
     let what = if c.folder { "folder" } else { "file" };
     match stash {
-        Some(stash) => vec![file(format!("file-apply-{}", c.path), format!("Apply stashed {what}"), FileAct::ApplyStashed { sha: stash.to_string(), files: f.files.clone() })],
+        Some(stash) => {
+            let apply = file(format!("file-apply-{}", c.path), format!("Apply stashed {what}"), FileAct::ApplyStashed { sha: stash.to_string(), files: f.files.clone() });
+            vec![match f.busy {
+                Some(why) => apply.dimmed(why),
+                None => apply,
+            }]
+        }
         None => vec![file(format!("file-restore-{}", c.path), format!("Restore {what} from this commit"), FileAct::Restore { sha: sha.to_string(), paths: paths(&f.files) })],
     }
 }
@@ -167,7 +175,7 @@ mod tests {
 
     fn labels(from: Listed, path: &str, folder: bool, files: &[FileChange], exists: bool, under_way: bool) -> Vec<String> {
         let click = FileClick { from, path: path.into(), folder, position: point(gpui::px(0.), gpui::px(0.)) };
-        let facts = FileFacts { click: &click, files: covered(files, path, folder), exists, under_way };
+        let facts = FileFacts { click: &click, files: covered(files, path, folder), exists, under_way, busy: None };
         items(&facts).into_iter().map(|i| format!("{}{}", i.section.map_or(String::new(), |s| format!("| {s} ")), i.label)).collect()
     }
 
@@ -196,5 +204,14 @@ mod tests {
         let stash = Listed::Commit { sha: "i".into(), stash: Some("s".into()) };
         assert_eq!(labels(stash, "a.txt", false, &all, false, false), ["Apply stashed file", "|  Copy path"]);
         assert_eq!(labels(Listed::Commit { sha: "c".into(), stash: None }, "other.txt", false, &all, true, false)[0], "Open with the default program", "an unchanged file of View all files");
+    }
+
+    #[test]
+    fn a_stashs_apply_is_dimmed_with_the_gates_why_while_busy() {
+        let all = [change(ChangeKind::Modified, "a.txt")];
+        let click = FileClick { from: Listed::Commit { sha: "i".into(), stash: Some("s".into()) }, path: "a.txt".into(), folder: false, position: point(gpui::px(0.), gpui::px(0.)) };
+        let dimmed = |busy| items(&FileFacts { click: &click, files: all.to_vec(), exists: false, under_way: false, busy })[0].dimmed.clone();
+        assert_eq!(dimmed(Some("Working…")).as_deref(), Some("Working…"));
+        assert_eq!(dimmed(None), None);
     }
 }

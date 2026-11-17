@@ -153,6 +153,13 @@ impl WriteGate {
         self.running.as_ref().map(|_| WORKING)
     }
 
+    /// Busy with no write behind it while `held`, so a test's frames and parked work keep it busy.
+    #[cfg(test)]
+    pub(crate) fn hold(&mut self, held: bool, cx: &mut Context<Self>) {
+        self.running = held.then(|| Job { ticket: 0, words: "Holding".into(), started: Instant::now(), cancel: Cancel::default() });
+        cx.notify();
+    }
+
     /// The write under way once it has run [`CANCEL_AFTER`]: its words and its whole seconds.
     pub(crate) fn long(&self) -> Option<(&str, u64)> {
         let job = self.running.as_ref()?;

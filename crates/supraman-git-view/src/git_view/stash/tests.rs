@@ -5,7 +5,8 @@ use supraman_gitman::fixture::{Fixture, MAIN_STASH};
 use supraman_gitman::stashes;
 
 use crate::git_view::stash_bar::{NOTHING_TO_POP, NOTHING_TO_STASH, POP_KEY, STASH_KEY};
-use crate::git_view::test_support::redraw;
+use crate::git_view::test_support::{redraw, repaint};
+use crate::git_view::write_gate::WORKING;
 use crate::git_view::test_support::{Opts, click, open as open_tab, press, select_wip, toast};
 use crate::git_view::*;
 use crate::occupancy;
@@ -145,4 +146,33 @@ fn a_wip_files_stash_button_asks_and_a_stashs_file_applies_to_the_work_tree(cx: 
     click(&view, "commit-apply-new.txt", cx);
     assert_eq!(std::fs::read_to_string(f.dir.join("new.txt")).unwrap(), "rename me\nline 2 on feature\nline 3\nline 4\n");
     assert_eq!(toast(&view, cx).as_deref(), Some("Applied 1 file from the stash"));
+}
+
+#[gpui::test]
+fn a_stashs_apply_file_is_dimmed_with_the_gates_why_while_it_is_busy_and_applies_once_free(cx: &mut TestAppContext) {
+    use supraman_ui::tooltip::LAST_SHOWN;
+    let f = Fixture::copy();
+    let (view, cx) = open(&f.dir, occupancy::Live::default(), cx);
+    let feature = f.sha("stash_feature_index").to_string();
+    view.update(cx, |v, cx| v.select_sha(&feature, cx));
+    cx.run_until_parked();
+    let before = std::fs::read_to_string(f.dir.join("new.txt")).ok();
+    let gate = view.read_with(cx, |v, _| v.gate().clone());
+    gate.update(cx, |g, cx| g.hold(true, cx));
+    let at = repaint(&view, cx).borrow().get("commit-apply-new.txt").expect("Apply File is laid out").bounds.center();
+    LAST_SHOWN.with(|l| l.borrow_mut().take());
+    cx.simulate_mouse_move(at, None, gpui::Modifiers::none());
+    cx.executor().advance_clock(std::time::Duration::from_secs(2));
+    cx.run_until_parked();
+    assert_eq!(LAST_SHOWN.with(|l| l.borrow().clone()).as_deref(), Some(WORKING), "dimmed with the gate's why");
+    click(&view, "commit-apply-new.txt", cx);
+    assert_eq!(std::fs::read_to_string(f.dir.join("new.txt")).ok(), before, "a click while busy applies nothing");
+
+    gate.update(cx, |g, cx| g.hold(false, cx));
+    click(&view, "commit-apply-new.txt", cx);
+    assert_eq!(std::fs::read_to_string(f.dir.join("new.txt")).unwrap(), "rename me
+line 2 on feature
+line 3
+line 4
+");
 }
