@@ -71,7 +71,7 @@ impl GitView {
         cx.spawn(async move |this, cx| {
             let exists = exists.await;
             this.update(cx, |this, cx| {
-                let facts = FileFacts { click: &click, files, exists, under_way };
+                let facts = FileFacts { click: &click, files, exists, under_way, busy: this.gate.read(cx).busy() };
                 let title = click.path.rsplit('/').next().unwrap_or(&click.path).to_string();
                 let menu = items(&facts);
                 this.branch.update(cx, |b, cx| b.show_menu(title, menu, click.position, cx));
