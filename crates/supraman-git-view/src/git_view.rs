@@ -786,7 +786,7 @@ impl GitView {
         cx.notify();
     }
 
-    fn cell(&mut self, ix: usize, col: usize, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+    fn cell(&mut self, ix: usize, col: usize, palette: &Palette, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let rows = self.pages.read(cx).rows.clone();
         let Some(row) = rows.get(ix) else {
             let footer = if col == 2 { self.pages.read(cx).page_error.clone().unwrap_or_else(|| "Loading more commits…".into()) } else { String::new() };
@@ -807,7 +807,7 @@ impl GitView {
                 }
             },
             1 => graph::cell(ix, row, !row.row.refs.is_empty(), palette, &self.hits),
-            2 if row.wip() => return self.wip_message(ix, palette, cx),
+            2 if row.wip() => return self.wip_message(ix, palette, window, cx),
             2 => cells::message(ix, row, None, palette, &self.hits),
             3 => cells::date(ix, row, palette, &self.hits),
             _ => cells::sha(ix, row, palette, &self.hits),
@@ -825,7 +825,7 @@ impl GitView {
         let all = columns(self.graph_max);
         let (cols, widths): (Vec<Column>, Vec<Pixels>) = shown.iter().map(|i| (all[*i].clone(), self.widths[*i])).unzip();
         let (painted, resized) = (shown.clone(), shown);
-        Table::new(TABLE, &self.table, &self.hits, cols, &widths, rows + footer, move |this: &mut GitView, ix, col, _, cx| this.cell(ix, painted[col], &palette, cx))
+        Table::new(TABLE, &self.table, &self.hits, cols, &widths, rows + footer, move |this: &mut GitView, ix, col, window, cx| this.cell(ix, painted[col], &palette, window, cx))
             .row_height(px(graph::ROW))
             .inset(px(graph::GAP / 2.))
             .footer(footer)

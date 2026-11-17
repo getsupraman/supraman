@@ -96,6 +96,15 @@ pub(crate) fn show(cx: &mut VisualTestContext) {
     cx.update(|_, _| ());
 }
 
+/// The holder's view laid out at `width` × `height` from the next frame.
+pub(crate) fn resize(width: f32, height: f32, cx: &mut VisualTestContext) {
+    let holder = cx.update(|window, _| window.root::<Holder<GitView>>()).flatten().expect("a Git tab's holder");
+    holder.update(cx, |h, cx| {
+        h.size = (width, height);
+        cx.notify();
+    });
+}
+
 /// A Git tab of `folder`, its first load done.
 pub(crate) fn open<'a>(folder: &Path, opts: Opts, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
     let (view, cx) = open_unchecked(folder, opts, cx);
