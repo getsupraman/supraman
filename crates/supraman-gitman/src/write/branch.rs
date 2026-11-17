@@ -383,7 +383,12 @@ pub fn merge(s: &Session, source: &str, into: &str) -> Result<Merged, WriteError
         let kept = put_back(s, stashed.as_ref());
         return Err(GitError::Failed { args: "checkout".into(), code: out.code, stderr: [text(&out.stderr).trim().to_string()].into_iter().chain(kept).collect::<Vec<_>>().join("\n") }.into());
     }
-    merge_here(s, source, Some(Away { back, autostash: stashed }))
+    let merged = merge_here(s, source, Some(Away { back, autostash: stashed }))?;
+    if let Merged::Done(_) = merged {
+        let to = s.rev(&format!("refs/heads/{into}"))?;
+        journal::record(s, Action::Elsewhere { what: format!("merge \"{source}\" into \"{into}\""), branch: into.to_string(), from: into_sha, to }, None)?;
+    }
+    Ok(merged)
 }
 
 fn merge_here(s: &Session, source: &str, away: Option<Away>) -> Result<Merged, WriteError> {
@@ -405,7 +410,7 @@ fn merge_here(s: &Session, source: &str, away: Option<Away>) -> Result<Merged, W
 }
 
 /// The checkout before an [`Away`] put back and its stash popped.
-fn go_back(s: &Session, away: &Away) -> Result<Autostash, WriteError> {
+pub(crate) fn go_back(s: &Session, away: &Away) -> Result<Autostash, WriteError> {
     let detached = s.verify(&format!("refs/heads/{}", away.back))?.is_none();
     let args: Vec<&str> = if detached { vec!["checkout", "-q", "--detach", &away.back, "--"] } else { vec!["checkout", "-q", &away.back, "--"] };
     s.output(&Call::new(&args))?;

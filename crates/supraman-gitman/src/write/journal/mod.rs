@@ -12,7 +12,7 @@ use crate::parse::text;
 pub use restore::{delete_branch, discard, discard_from_index};
 pub(crate) use restore::drop_noop_reset;
 pub use walk::Kind;
-use walk::{Entry, Item, Line, Next, REST, UNDO};
+use walk::{ELSEWHERE, Entry, Item, Line, Next, REST, UNDO};
 
 pub const JOURNAL: &str = "refs/worktree/supraman/undo";
 
@@ -37,6 +37,8 @@ pub enum Action {
         left: Vec<(String, String)>,
     },
     DeleteBranch { name: String, sha: String, remote: Option<String>, merge: Option<String> },
+    /// A merge into or rebase of `branch` while another checkout was HEAD's, checked out and back for it; `what` its words.
+    Elsewhere { what: String, branch: String, from: String, to: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -224,6 +226,7 @@ fn label(s: &Session, action: &Action) -> Result<String, WriteError> {
         Action::Rebase { from } => return Ok(format!("rebase: from {from}")),
         Action::Discard { paths, .. } => return Ok(discard_label(paths)),
         Action::DeleteBranch { name, .. } => return Ok(format!("delete branch: {name}")),
+        Action::Elsewhere { what, .. } => return Ok(format!("{ELSEWHERE}{what}")),
         Action::Commit => Kind::Commit,
         Action::Amend => Kind::Amend,
         Action::Checkout => Kind::Checkout,
@@ -272,6 +275,7 @@ fn friendly(s: &Session, item: &Item) -> Result<String, WriteError> {
             }
         }
         Some(Kind::DeleteBranch) => quoted("delete branch", &label["delete branch: ".len()..]),
+        Some(Kind::Elsewhere) => label[ELSEWHERE.len()..].to_string(),
         None => label.to_string(),
     })
 }
