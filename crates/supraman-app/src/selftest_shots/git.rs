@@ -200,11 +200,14 @@ pub(super) async fn shot(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWin
         (p.commit.as_ref().is_some_and(|(sha, _)| *sha == merged) && v.hits.borrow().contains_key("commit-sha")).then_some(())
     })
     .await?;
-    let away = cx.update(|window, _| window.viewport_size())?;
-    mv(gpui::point(away.width - gpui::px(4.), away.height - gpui::px(4.)), cx)?;
+    let window = cx.update(|window, _| window.viewport_size())?;
+    let wide = gpui::size(window.width * 1.4, window.height);
+    crate::selftest_git::resize(view, wide, cx).await?;
+    mv(gpui::point(wide.width - gpui::px(4.), wide.height - gpui::px(4.)), cx)?;
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-git.png"), None, cx).await?;
     println!("shot: {}", shot.display());
+    crate::selftest_git::resize(view, window, cx).await?;
     leave(view, tab, &dir, cx).await
 }
 
