@@ -18,6 +18,8 @@ use crate::{
     view::{FleetView, MenuTarget, TabKind},
 };
 
+mod git;
+
 pub const GROUP: &str = "demo";
 /// On the selftest home's drive, so the shots show a short path and none of this machine's folders.
 fn shots_dir() -> PathBuf {
@@ -265,6 +267,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     println!("shot: {}", shot.display());
     crate::selftest::click(view, "work-tab-overview", cx).await?;
     work_pages(view, &work, &out, cx).await?;
+    git::shot(view, &out, cx).await?;
     git_palette(view, &out, cx).await?;
     tab_overflow(view, &out, cx).await?;
     settings_pages(view, &out, cx).await

@@ -64,7 +64,7 @@ pub(crate) async fn tap(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindo
     click(view, key, cx).await
 }
 
-fn row_key(git: &Probe, sha: &str) -> anyhow::Result<String> {
+pub(crate) fn row_key(git: &Probe, sha: &str) -> anyhow::Result<String> {
     git.row_of(sha).map(|ix| format!("git-row-{ix}")).ok_or_else(|| anyhow!("no row of {sha}"))
 }
 
