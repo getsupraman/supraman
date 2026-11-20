@@ -13,6 +13,8 @@ have more sessions than terminal windows. Supraman runs on your machine and is o
 
 ![A session's Details tab: its state, where it runs (group, folder, branch), and its actions: Open, Stop, Copy name, Copy id, Star](docs/images/supraman-details.png)
 
+![A repository's Git tab: its commit graph with branches, merges, a tag, stashes and origin's main ahead and behind, its sessions as agent rows on the checkout and the linked worktree they work in, and a selected merge's message and files in the commit panel](docs/images/supraman-git.png)
+
 *The screenshots show fixture data: `supraman.exe --selftest-shots` makes them on a hidden desktop.*
 
 ## What it does
