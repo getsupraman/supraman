@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use supraman_claude::{Health, Kind, Status};
-use supraman_ui::details::Section;
+use supraman_ui::patterns::details::Section;
 
 use crate::fleet::{self, SessionRow, State};
 use supraman_core::text::capitalised;
@@ -217,7 +217,7 @@ fn worktree(cwd: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use supraman_claude::{Health, parse};
-    use supraman_ui::details::text;
+    use supraman_ui::patterns::details::text;
 
     use super::*;
     use crate::fleet::{HookSignal, SessionRow};
@@ -308,7 +308,7 @@ mod tests {
         assert!(page.contains("\nLast activity  turn ended 12 s ago\n"), "{page}");
         assert!(page.contains("\nOpen the Work tab to see what it claims."), "{page}");
         assert!(page.ends_with("\nNo transcript found under claude's projects folder."), "{page}");
-        assert!(sections[0].lines.contains(&supraman_ui::details::Line::Link { label: "Started by".into(), value: "a run of schedule nightly".into(), target: "nightly".into() }));
+        assert!(sections[0].lines.contains(&supraman_ui::patterns::details::Line::Link { label: "Started by".into(), value: "a run of schedule nightly".into(), target: "nightly".into() }));
         assert_eq!(session_pill(&r, true), "Waiting");
     }
 

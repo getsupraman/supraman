@@ -35,9 +35,9 @@ use theme::ActiveTheme as _;
 
 use supraman_ui::focus;
 use supraman_ui::hit::{HitTargets, hit_target};
-use supraman_ui::menu::ContextMenu;
-use supraman_ui::placeholder::placeholder;
-use supraman_ui::toast::ToastSlot;
+use supraman_ui::controls::menu::ContextMenu;
+use supraman_ui::patterns::placeholder::placeholder;
+use supraman_ui::surfaces::toast::ToastSlot;
 use supraman_core::open::Link;
 use supraman_workman::status::WorkmanStatus;
 
@@ -289,7 +289,7 @@ pub struct WorkView {
     list_scroll: ScrollHandle,
     detail_scroll: ScrollHandle,
     pub(crate) activity: activity::Activity,
-    pub(crate) palette: Option<Entity<supraman_ui::palette::Palette<find::Found>>>,
+    pub(crate) palette: Option<Entity<supraman_ui::list::palette::Palette<find::Found>>>,
     palette_sub: Option<Subscription>,
     pub(crate) search_reads: u64,
     /// What every relative time here is measured from: `now_ms`, or a fixture's fixed time.

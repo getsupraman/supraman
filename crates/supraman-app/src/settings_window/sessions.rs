@@ -1,8 +1,7 @@
 //! The settings window's Sessions page: the busy limit, elevation and the reopened tabs, `[sessions]`.
 
 use gpui::{AnyElement, Context, SharedString, div, prelude::*};
-use supraman_ui::button;
-use supraman_ui::settings_page::row;
+use supraman_ui::patterns::settings_page::row;
 use theme::ActiveTheme as _;
 
 use super::SettingsView;
@@ -21,7 +20,7 @@ impl SettingsView {
 
     pub(super) fn render_sessions(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let n = self.settings.sessions.max_working;
-        let stepper = button::stepper(&self.hits, "settings-max", n.to_string(), &self.members, move |this: &mut Self, by, _, cx| {
+        let stepper = supraman_ui::controls::stepper::stepper(&self.hits, "settings-max", n.to_string(), &self.members, move |this: &mut Self, by, _, cx| {
             this.set_max_working(n.saturating_add_signed(by as isize), cx);
         }, cx);
         let admin = self.settings.sessions.run_as_admin;

@@ -4,10 +4,10 @@
 use gpui::{AnyElement, ClickEvent, Context, SharedString, div, prelude::*, px};
 use supraman_core::paths::path_key;
 use supraman_gitman::{RefKind, WorktreeRow, WorktreeWip};
-use supraman_ui::button;
+use supraman_ui::controls::button;
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::controls::tooltip::Tooltip;
 
 use super::branch::OpenGit;
 use super::colours::Palette;

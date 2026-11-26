@@ -16,7 +16,7 @@ use supraman_gitman::write::files::{self as file_writes, Ignore};
 use supraman_gitman::write::rebase::{self, Rebased};
 use supraman_gitman::write::{LockSet, Resource, Session, WriteError, journal};
 use supraman_gitman::short_sha;
-use supraman_ui::confirm::{Answer, Confirm};
+use supraman_ui::surfaces::confirm::{Answer, Confirm};
 use supraman_ui::hit::HitTargets;
 
 use files::FileAct;

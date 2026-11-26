@@ -7,7 +7,7 @@ use gpui::Context;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
 use supraman_ui::clipped::clipped;
-use supraman_ui::text_input;
+use supraman_ui::text::input;
 use supraman_gitman::WipCounts;
 use theme::ActiveTheme as _;
 
@@ -137,7 +137,7 @@ pub(super) fn conflict_node(n: u32, key: String, hits: &HitTargets, palette: &Pa
 /// The field while it does not hold the keys: the summary from its start, cut with an ellipsis, `// WIP` muted while empty.
 fn still_field(summary: &str, palette: &Palette, cx: &App) -> Div {
     let (text, colour) = if summary.is_empty() { ("// WIP", palette.muted) } else { (summary, palette.text) };
-    text_input::quiet_frame(false, cx).w_full().text_color(colour).child(clipped(STILL_KEY, text.to_string(), false))
+    input::quiet_frame(false, cx).w_full().text_color(colour).child(clipped(STILL_KEY, text.to_string(), false))
 }
 
 #[cfg(test)]

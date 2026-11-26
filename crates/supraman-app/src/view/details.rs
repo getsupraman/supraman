@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use gpui::{AnyElement, ClickEvent, Context, ScrollHandle, SharedString, div, prelude::*};
-use supraman_ui::{button, session};
-use supraman_ui::details::{self, Section};
+use supraman_ui::{controls::button, patterns::session};
+use supraman_ui::patterns::details::{self, Section};
 use theme::ActiveTheme as _;
 
 use super::menu::{MenuAction, MenuItem, MenuTarget, group_items};

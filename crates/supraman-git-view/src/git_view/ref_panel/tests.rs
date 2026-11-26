@@ -525,7 +525,7 @@ impl gpui::Render for Narrow {
 #[gpui::test]
 fn a_narrow_panel_cuts_a_worktrees_folder_and_a_stashs_branch_before_their_names_and_shows_the_whole_text(cx: &mut TestAppContext) {
     use supraman_ui::clipped::cut_at;
-    use supraman_ui::tooltip::LAST_SHOWN;
+    use supraman_ui::controls::tooltip::LAST_SHOWN;
     cx.update(|cx| supraman_ui::init_globals(cx, "test"));
     let hits = HitTargets::default();
     let mut refs = refs();

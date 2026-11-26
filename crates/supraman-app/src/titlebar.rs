@@ -1,5 +1,5 @@
 use gpui::{AnyElement, App, Div, FontWeight, Pixels, Stateful, Window, WindowControlArea, div, prelude::*, px};
-use supraman_ui::button;
+use supraman_ui::controls::button;
 use supraman_ui::fonts;
 use supraman_ui::hit::HitTargets;
 use theme::ActiveTheme as _;

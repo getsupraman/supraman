@@ -5,11 +5,11 @@ use std::collections::HashMap;
 use gpui::{AnyElement, ClickEvent, Context, Hsla, SharedString, div, prelude::*, px};
 use supraman_core::paths::path_key;
 use supraman_gitman::Worktree;
-use supraman_ui::button;
+use supraman_ui::controls::button;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::{self, Icon};
 use supraman_ui::themes::secondary;
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::controls::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
 use super::marks::MARK;

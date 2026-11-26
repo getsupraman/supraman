@@ -8,13 +8,13 @@ use theme::ActiveTheme as _;
 
 use crate::hit::HitTargets;
 use crate::icon::Icon;
-use crate::menu::{ContextMenu, MenuItem, item};
-use crate::palette::{Entry, Palette};
+use crate::controls::menu::{ContextMenu, MenuItem, item};
+use crate::list::palette::{Entry, Palette};
 use crate::split::StackState;
-use crate::table::TableState;
-use crate::text_input::TextInput;
-use crate::toast::ToastSlot;
-use crate::tree::TreeState;
+use crate::list::table::TableState;
+use crate::text::input::TextInput;
+use crate::surfaces::toast::ToastSlot;
+use crate::list::tree::TreeState;
 use crate::tokens;
 
 mod dnd;
@@ -238,9 +238,9 @@ pub struct Gallery {
     pub(crate) menu: ContextMenu<()>,
     /// The lists' table row menu, open in its frame.
     pub(crate) row_menu: Option<ContextMenu<()>>,
-    pub(crate) dialog: crate::dialog::Dialog,
+    pub(crate) dialog: crate::surfaces::dialog::Dialog,
     /// The prompts section's: a question, a danger question, a form, the upstream prompt.
-    pub(crate) prompts: [crate::dialog::Dialog; 4],
+    pub(crate) prompts: [crate::surfaces::dialog::Dialog; 4],
     pub(crate) stack: StackState,
     pub(crate) scroll: ScrollHandle,
     pub(crate) scrolls: sections::Scrolls,
@@ -287,7 +287,7 @@ impl Gallery {
             Sample { key: "gamma", text: "Gamma sample row", dimmed: Some("Not available here") },
             Sample { key: "delta", text: "Delta sample row", dimmed: None },
         ];
-        let paint: crate::palette::Paint<Sample> = Rc::new(sections::palette_row);
+        let paint: crate::list::palette::Paint<Sample> = Rc::new(sections::palette_row);
         let palette_hits = hits.clone();
         let palette = cx.new(|cx| {
             let mut palette = Palette::new("kit-palette", palette_hits, rows.to_vec(), paint, window, cx);
@@ -316,7 +316,7 @@ impl Gallery {
             menu,
             row_menu: None,
             dialog: Default::default(),
-            prompts: std::array::from_fn(|_| crate::dialog::Dialog::in_tab(cx.focus_handle())),
+            prompts: std::array::from_fn(|_| crate::surfaces::dialog::Dialog::in_tab(cx.focus_handle())),
             stack: StackState::default(),
             scroll: ScrollHandle::new(),
             scrolls: sections::Scrolls::default(),
@@ -426,7 +426,7 @@ fn menu_items() -> Vec<MenuItem<()>> {
 
 /// The menu a lists frame shows open at the middle of its table's second row, as a right-click there opens it.
 fn row_menu(hits: &HitTargets) -> ContextMenu<()> {
-    let anchor = crate::table::row_hit("kit-table-b", "1");
+    let anchor = crate::list::table::row_hit("kit-table-b", "1");
     let at = hits.borrow().get(&anchor).map(|h| h.bounds.center()).unwrap_or_default();
     let items = vec![item("kit-row-open", "Open", ()), item("kit-row-copy", "Copy name", ()).icon(Icon::Copy), item("kit-row-remove", "Remove", ()).rule()];
     ContextMenu::new("Row 2", at, items).anchored(anchor)

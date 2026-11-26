@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use gpui::{Entity, Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px};
 use supraman_gitman::fixture::{Fixture, git_in};
-use supraman_ui::tree::Order;
+use supraman_ui::list::tree::Order;
 
 use super::*;
 use crate::git_view::GitView;

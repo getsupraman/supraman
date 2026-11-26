@@ -1,7 +1,7 @@
 //! The graph's column header menu (docs/research/gitkraken-12.6.1.md §B); the hidden columns are kept in the layout file.
 
 use gpui::{AnyElement, Context, Pixels, Point};
-use supraman_ui::menu::{ContextMenu, MenuItem, item};
+use supraman_ui::controls::menu::{ContextMenu, MenuItem, item};
 use supraman_runtime::save_off_thread;
 
 use super::{GitView, columns, layout};
@@ -35,7 +35,7 @@ impl GitView {
             .collect();
         items.push(item("column-default", "Reset columns to default", ColumnAct::Default).rule());
         items.push(item("column-compact", "Compact layout", ColumnAct::Compact));
-        self.column_menu = Some(ContextMenu::new("Columns", position, items).anchored(supraman_ui::table::header_hit(super::TABLE)));
+        self.column_menu = Some(ContextMenu::new("Columns", position, items).anchored(supraman_ui::list::table::header_hit(super::TABLE)));
         cx.notify();
     }
 

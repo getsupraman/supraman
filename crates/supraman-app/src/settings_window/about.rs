@@ -1,8 +1,8 @@
 //! The settings window's About page: this build, the update check, the claude CLI, the poll and the home.
 
 use gpui::{AnyElement, App, Context, Hsla, SharedString, div, prelude::*, px};
-use supraman_ui::settings_page::row;
-use supraman_ui::banner;
+use supraman_ui::patterns::settings_page::row;
+use supraman_ui::surfaces::banner;
 use theme::ActiveTheme as _;
 
 use super::SettingsView;

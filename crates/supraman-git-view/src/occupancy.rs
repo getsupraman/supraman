@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use supraman_core::paths::within;
 use supraman_gitman::write::Occupancy;
 use supraman_runtime::nudge::{Nudge, Nudged, nudge};
-pub use supraman_ui::session::LiveSession;
+pub use supraman_ui::patterns::session::LiveSession;
 
 #[derive(Default)]
 struct Shared {

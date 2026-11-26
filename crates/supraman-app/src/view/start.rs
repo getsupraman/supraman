@@ -5,11 +5,11 @@ use std::rc::Rc;
 
 use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, FontWeight, ScrollHandle, SharedString, Subscription, Window, div, prelude::*, px};
 use supraman_core::paths::path_key;
-use supraman_ui::banner;
-use supraman_ui::button;
-use supraman_ui::details::{self, Section};
+use supraman_ui::surfaces::banner;
+use supraman_ui::controls::button;
+use supraman_ui::patterns::details::{self, Section};
 use supraman_ui::hit::hit_target;
-use supraman_ui::text_input::{InputEvent, TextInput};
+use supraman_ui::text::input::{InputEvent, TextInput};
 use theme::ActiveTheme as _;
 
 use super::schedules::At;

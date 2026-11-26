@@ -127,7 +127,7 @@ async fn row_details(view: &Entity<FleetView>, own: &Session, root: &Path, cx: &
         })
         .await?;
     }
-    if let Some(card) = supraman_ui::hover_card::LAST_CARD.with(|l| l.borrow_mut().take()) {
+    if let Some(card) = supraman_ui::surfaces::hover_card::LAST_CARD.with(|l| l.borrow_mut().take()) {
         bail!("a hover card showed during the Details checks: {card:?}");
     }
     view.update(cx, |v, cx| {
@@ -166,23 +166,23 @@ async fn no_card_on(view: &Entity<FleetView>, row: &str, icon: &str, cx: &mut As
     let position = point(bounds.left() + px(4.), bounds.top() + px(6.));
     crate::selftest_left::move_to(point(px(1.), px(1.)), cx)?;
     sleep(cx, Duration::from_millis(100)).await;
-    supraman_ui::hover_card::LAST_CARD.with(|l| l.borrow_mut().take());
+    supraman_ui::surfaces::hover_card::LAST_CARD.with(|l| l.borrow_mut().take());
     let started = Instant::now();
     // past the card's 500 ms delay; no gpui test builds FleetView's sidebar, so only the window can show a card's absence
     while started.elapsed() < Duration::from_millis(800) {
         crate::selftest_left::move_to(position, cx)?;
         sleep(cx, Duration::from_millis(50)).await;
     }
-    if let Some(card) = supraman_ui::hover_card::LAST_CARD.with(|l| l.borrow_mut().take()) {
+    if let Some(card) = supraman_ui::surfaces::hover_card::LAST_CARD.with(|l| l.borrow_mut().take()) {
         bail!("resting on {row} at {position:?} showed the card {card:?}");
     }
     let at = crate::selftest::scrolled_into_view(view, icon, cx).await?.center();
-    supraman_ui::tooltip::LAST_SHOWN.with(|l| l.borrow_mut().take());
+    supraman_ui::controls::tooltip::LAST_SHOWN.with(|l| l.borrow_mut().take());
     let started = Instant::now();
     loop {
         crate::selftest_left::move_to(at, cx)?;
         sleep(cx, Duration::from_millis(50)).await;
-        if supraman_ui::tooltip::LAST_SHOWN.with(|l| l.borrow().is_some()) {
+        if supraman_ui::controls::tooltip::LAST_SHOWN.with(|l| l.borrow().is_some()) {
             break;
         }
         if started.elapsed() > WITHIN {
@@ -190,7 +190,7 @@ async fn no_card_on(view: &Entity<FleetView>, row: &str, icon: &str, cx: &mut As
         }
     }
     crate::selftest_left::move_to(point(px(1.), px(1.)), cx)?;
-    if let Some(card) = supraman_ui::hover_card::LAST_CARD.with(|l| l.borrow_mut().take()) {
+    if let Some(card) = supraman_ui::surfaces::hover_card::LAST_CARD.with(|l| l.borrow_mut().take()) {
         bail!("resting on {icon} showed the card {card:?}");
     }
     Ok(())

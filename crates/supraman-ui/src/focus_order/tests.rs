@@ -1,7 +1,7 @@
 use gpui::{Context, Entity, FocusHandle, Focusable, KeyDownEvent, TestAppContext, VisualTestContext, Window, div, prelude::*};
 
 use super::*;
-use crate::text_input::TextInput;
+use crate::text::input::TextInput;
 
 struct Form {
     fields: [Entity<TextInput>; 2],
@@ -20,7 +20,7 @@ impl Form {
 impl Render for Form {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let hits = crate::hit::HitTargets::default();
-        let button = crate::button::Button::new(&hits, "ok").label("OK").fill(crate::button::Fill::Outline).focus(&self.button, cx.listener(|this, _: &Press, _, _| this.pressed += 1));
+        let button = crate::controls::button::Button::new(&hits, "ok").label("OK").fill(crate::controls::button::Fill::Outline).focus(&self.button, cx.listener(|this, _: &Press, _, _| this.pressed += 1));
         let form = self.order(cx).on(div().id("form").children(self.fields.iter().cloned()).child(button));
         let outside = div().id("outside").track_focus(&self.outside).on_key_down(cx.listener(|this, e: &KeyDownEvent, _, _| this.outside_keys.push(e.keystroke.key.clone())));
         div().size_full().child(form).child(outside)
@@ -30,7 +30,7 @@ impl Render for Form {
 fn form(cx: &mut TestAppContext) -> (Entity<Form>, &mut VisualTestContext) {
     cx.update(|cx| {
         crate::init_globals(cx, "test");
-        crate::text_input::bind_keys(cx);
+        crate::text::input::bind_keys(cx);
     });
     let (view, cx) = cx.add_window_view(|window, cx| Form {
         fields: [cx.new(|cx| TextInput::new("one", None, window, cx)), cx.new(|cx| TextInput::new("two", None, window, cx).multi_line())],

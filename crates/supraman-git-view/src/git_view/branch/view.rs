@@ -6,7 +6,7 @@ use std::sync::Arc;
 use gpui::{App, Context, Entity, Pixels, Point, SharedString, Window};
 use supraman_gitman::write::branch::Target;
 use supraman_gitman::{RefGroup, RefKind, Refs, Status};
-use supraman_ui::menu::item;
+use supraman_ui::controls::menu::item;
 
 use super::menu::{Dragged, RefAct, Subject};
 use super::{BranchActions, BranchEvent, NameAsk};
@@ -206,7 +206,7 @@ impl GitView {
 }
 
 /// A pill's Solo and Hide: those of its branches' rows in the ref panel.
-pub(crate) fn pill_graph_items(panel: &Entity<RefPanel>, group: &RefGroup, cx: &App) -> Vec<supraman_ui::menu::MenuItem<RefAct>> {
+pub(crate) fn pill_graph_items(panel: &Entity<RefPanel>, group: &RefGroup, cx: &App) -> Vec<supraman_ui::controls::menu::MenuItem<RefAct>> {
     let (locals, remotes, _) = split(group);
     let path = locals.first().map(|l| format!("local/{l}")).or_else(|| remotes.first().map(|r| format!("remote/{r}")));
     path.map(|p| panel.read(cx).menu_items(&p).into_iter().map(|i| item(i.key, i.label, RefAct::Panel(i.action))).collect()).unwrap_or_default()

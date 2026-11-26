@@ -8,7 +8,7 @@ use supraman_gitman::write::rebase::{Autostash, Rebased};
 use supraman_gitman::write::wip::{self, Step};
 use supraman_gitman::write::{LockSet, Resource, Session, WriteError};
 use supraman_gitman::{ChangeKind, FileChange};
-use supraman_ui::confirm::Confirm;
+use supraman_ui::surfaces::confirm::Confirm;
 
 use super::compose::{self, Act};
 use super::{Section, WipPanel, sections};

@@ -6,8 +6,8 @@ use gpui::{AnyElement, App, ClickEvent, Div, Entity, FontWeight, Hsla, SharedStr
 use supraman_core::time::now_ms;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
-use supraman_ui::inbox_card::{self as shared, InboxCard};
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::patterns::inbox_card::{self as shared, InboxCard};
+use supraman_ui::controls::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
 use crate::work_view::cards::{self, Card};

@@ -6,11 +6,11 @@ use gpui::{AnyElement, App, Context, Div, Entity, Focusable as _, Hsla, IntoElem
 use theme::ActiveTheme as _;
 
 use super::{Gallery, Sample};
-use crate::button::{self, Button, ButtonSplit, Fill, Size, Tone};
-use crate::checkbox::Checkbox;
+use crate::controls::button::{self, Button, ButtonSplit, Fill, Size, Tone};
+use crate::controls::checkbox::Checkbox;
 use crate::label::{Label, LabelMark};
 use crate::hit::hit_target;
-use crate::text_input::TextInput;
+use crate::text::input::TextInput;
 use crate::icon::Icon;
 use crate::marks::{Activity, Mark};
 use crate::tokens;
@@ -102,14 +102,14 @@ pub fn toggles(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
         .child(Checkbox::new(hits, "kit-check-disabled", false).label("Disabled").disabled(Some("Why it cannot change now")))
         .child(Label::new("tick, read only").mark(LabelMark::Tick(true)));
     let fg = cx.theme().colors().text_muted;
-    let pills = row().child(button::pill(hits, "kit-pill", "pill", fg, cx)).child(button::pill(hits, "kit-pill-accent", "accent", cx.theme().colors().text_accent, cx));
+    let pills = row().child(crate::controls::pill::pill(hits, "kit-pill", "pill", fg, cx)).child(crate::controls::pill::pill(hits, "kit-pill-accent", "accent", cx.theme().colors().text_accent, cx));
     let segments = [
-        crate::segmented::Segment::new("one").label("One"),
-        crate::segmented::Segment::new("two").icon(Icon::ListTree).label("Two"),
-        crate::segmented::Segment::new("three").icon(Icon::ListFlat),
+        crate::controls::segmented::Segment::new("one").label("One"),
+        crate::controls::segmented::Segment::new("two").icon(Icon::ListTree).label("Two"),
+        crate::controls::segmented::Segment::new("three").icon(Icon::ListFlat),
     ];
-    let segmented = crate::segmented::segmented(hits, "kit-seg", &segments, 0, |_: &mut Gallery, _, _, _| {}, cx);
-    let stepper = button::stepper(hits, "kit-stepper", "20", &g.members, |_: &mut Gallery, _, _, _| {}, cx);
+    let segmented = crate::controls::segmented::segmented(hits, "kit-seg", &segments, 0, |_: &mut Gallery, _, _, _| {}, cx);
+    let stepper = crate::controls::stepper::stepper(hits, "kit-stepper", "20", &g.members, |_: &mut Gallery, _, _, _| {}, cx);
     let list = div().flex().flex_col().gap(tokens::space::S).w(width(14.)).children((0..3).map(|i| {
         button::choice(hits, format!("kit-choice-{i}"), format!("Choice {}", i + 1), i == 0, cx)
     }));
@@ -129,13 +129,13 @@ pub fn toggles(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
 pub fn inputs(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
     let i = &g.inputs;
     let field = |caption: &str, input: AnyElement| div().flex().items_center().gap(tokens::space::XL).child(div().w(width(9.)).text_size(tokens::text::BODY).child(caption.to_string())).child(div().w(width(22.)).child(input));
-    let quiet = crate::text_input::quiet_frame(false, cx).w_full().child(div().px(tokens::space::S).child("A quiet field's still copy"));
+    let quiet = crate::text::input::quiet_frame(false, cx).w_full().child(div().px(tokens::space::S).child("A quiet field's still copy"));
     let form_fields = vec![
-        (SharedString::from("Name"), crate::form::input(&g.hits, "kit-form-name", &i.form_name)),
-        (SharedString::from("Address"), crate::form::input(&g.hits, "kit-form-url", &i.form_url)),
+        (SharedString::from("Name"), crate::surfaces::form::input(&g.hits, "kit-form-name", &i.form_name)),
+        (SharedString::from("Address"), crate::surfaces::form::input(&g.hits, "kit-form-url", &i.form_url)),
     ];
     let fields = div().flex().flex_col().gap(tokens::space::L).children(form_fields.into_iter().map(|(label, input)| field(&label, input)));
-    let row_sample = crate::settings_page::row("A setting", "What the setting does, in one line under its title.", Button::new(&g.hits, "kit-setting").label("Change").size(Size::Medium).into_any_element(), None, cx);
+    let row_sample = crate::patterns::settings_page::row("A setting", "What the setting does, in one line under its title.", Button::new(&g.hits, "kit-setting").label("Change").size(Size::Medium).into_any_element(), None, cx);
     div()
         .flex()
         .flex_col()
@@ -169,16 +169,16 @@ pub fn palette(g: &Gallery) -> AnyElement {
 
 pub fn lists(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
     let table = |n: usize, id: &str, caption_text: &str, cx: &mut Context<Gallery>| {
-        let columns = vec![crate::table::Column::new("name", "Name", gpui::px(60.), gpui::px(180.)), crate::table::Column::new("size", "Size", gpui::px(40.), gpui::px(80.))];
+        let columns = vec![crate::list::table::Column::new("name", "Name", gpui::px(60.), gpui::px(180.)), crate::list::table::Column::new("size", "Size", gpui::px(40.), gpui::px(80.))];
         let widths = [gpui::px(180.), gpui::px(80.)];
-        let grid = crate::table::Table::new(id.to_string(), &g.tables[n], &g.hits, columns, &widths, 6, |_: &mut Gallery, ix, col, _, _| {
+        let grid = crate::list::table::Table::new(id.to_string(), &g.tables[n], &g.hits, columns, &widths, 6, |_: &mut Gallery, ix, col, _, _| {
             let text = if col == 0 { format!("Row {}", ix + 1) } else { format!("{} KB", (ix + 1) * 3) };
             div().px(tokens::space::L).child(text).into_any_element()
         });
         group(caption_text, cx).child(div().h(width(13.)).w(width(18.)).border(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border).child(grid.render(cx)))
     };
     let tree = |n: usize, id: &str, caption_text: &str, cx: &mut Context<Gallery>| {
-        let list = crate::tree::TreeList::new(id.to_string(), &g.trees[n], &g.hits, |_: &mut Gallery, row: crate::tree::Row<'_, (), usize>, _, _| div().child(row.name.clone()).into_any_element());
+        let list = crate::list::tree::TreeList::new(id.to_string(), &g.trees[n], &g.hits, |_: &mut Gallery, row: crate::list::tree::Row<'_, (), usize>, _, _| div().child(row.name.clone()).into_any_element());
         group(caption_text, cx).child(div().h(width(16.)).w(width(16.)).border(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border).child(list.render(cx)))
     };
     let selected = Some(crate::themes::selection(cx.theme().colors(), true));
@@ -257,14 +257,14 @@ pub fn splits(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
 /// The upstream prompt's shape: the remote picked, then the branch on it.
 fn upstream(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
     let hits = &g.hits;
-    let segments = [crate::segmented::Segment::new("origin").label("origin"), crate::segmented::Segment::new("fork").label("fork")];
-    let remotes = crate::segmented::segmented(hits, "kit-upstream", &segments, 0, |_: &mut Gallery, _, _, _| {}, cx);
+    let segments = [crate::controls::segmented::Segment::new("origin").label("origin"), crate::controls::segmented::Segment::new("fork").label("fork")];
+    let remotes = crate::controls::segmented::segmented(hits, "kit-upstream", &segments, 0, |_: &mut Gallery, _, _, _| {}, cx);
     let muted = crate::themes::secondary(cx.theme().colors());
-    let line = div().flex().items_center().gap(tokens::space::L).child(remotes).child(div().text_color(muted).child("/")).child(crate::form::input(hits, "kit-upstream-field", &g.inputs.upstream));
+    let line = div().flex().items_center().gap(tokens::space::L).child(remotes).child(div().text_color(muted).child("/")).child(crate::surfaces::form::input(hits, "kit-upstream-field", &g.inputs.upstream));
     let body = div().flex().flex_col().gap(tokens::space::XL).child("Push main with no upstream to").child(line);
-    let ok = crate::dialog::Button::new("kit-upstream-ok", "Push", Tone::Neutral, |_: &mut Gallery, _, _| {});
-    let cancel = crate::dialog::Button::new("kit-upstream-cancel", "Cancel", Tone::Neutral, |_: &mut Gallery, _, _| {});
-    let panel = crate::dialog::Panel {
+    let ok = crate::surfaces::dialog::Button::new("kit-upstream-ok", "Push", Tone::Neutral, |_: &mut Gallery, _, _| {});
+    let cancel = crate::surfaces::dialog::Button::new("kit-upstream-cancel", "Cancel", Tone::Neutral, |_: &mut Gallery, _, _| {});
+    let panel = crate::surfaces::dialog::Panel {
         key: "kit-upstream".into(),
         title: Some("Set upstream".into()),
         body: body.into_any_element(),
@@ -279,47 +279,47 @@ fn upstream(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
 }
 
 pub fn dialog(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
-    let question = crate::confirm::Confirm::ask("Remove the sample? Its words cannot be brought back.", "Remove", ()).or("Keep a copy", ()).danger().titled("Remove the sample");
-    let behind = div().size_full().p(tokens::space::XXL).child(crate::placeholder::placeholder("What lies behind", ["The scrim covers it."], cx));
+    let question = crate::surfaces::confirm::Confirm::ask("Remove the sample? Its words cannot be brought back.", "Remove", ()).or("Keep a copy", ()).danger().titled("Remove the sample");
+    let behind = div().size_full().p(tokens::space::XXL).child(crate::patterns::placeholder::placeholder("What lies behind", ["The scrim covers it."], cx));
     let shown = g.dialog.ask(&g.hits, "kit-dialog", &question, |_: &mut Gallery, _, _, _| {}, cx);
-    crate::dialog::over(behind, Some(shown)).into_any_element()
+    crate::surfaces::dialog::over(behind, Some(shown)).into_any_element()
 }
 
 pub fn prompts(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
     let hits = &g.hits;
     let status = cx.theme().status().clone();
-    let question = crate::confirm::Confirm::ask("Apply the sample change here?", "Apply", ()).or("Apply elsewhere", ());
+    let question = crate::surfaces::confirm::Confirm::ask("Apply the sample change here?", "Apply", ()).or("Apply elsewhere", ());
     let asked = g.prompts[0].ask(hits, "kit-ask", &question, |_: &mut Gallery, _, _, _| {}, cx);
-    let danger = crate::confirm::Confirm::ask("Discard the sample change? It cannot be brought back.", "Discard", ()).danger();
+    let danger = crate::surfaces::confirm::Confirm::ask("Discard the sample change? It cannot be brought back.", "Discard", ()).danger();
     let danger = g.prompts[1].ask(hits, "kit-ask-danger", &danger, |_: &mut Gallery, _, _, _| {}, cx);
-    let form = crate::form::Form {
+    let form = crate::surfaces::form::Form {
         key: "kit-form".into(),
         title: "Add Sample".into(),
         ok: "Add".into(),
         why: None,
         running: false,
-        answers: crate::form::Answers { ok: |_: &mut Gallery, _| {}, close: |_: &mut Gallery, _| {} },
+        answers: crate::surfaces::form::Answers { ok: |_: &mut Gallery, _| {}, close: |_: &mut Gallery, _| {} },
     };
-    let fields = vec![(SharedString::from("Name"), crate::form::input(hits, "kit-form-name", &g.inputs.form_name)), (SharedString::from("Address"), crate::form::input(hits, "kit-form-url", &g.inputs.form_url))];
+    let fields = vec![(SharedString::from("Name"), crate::surfaces::form::input(hits, "kit-form-name", &g.inputs.form_name)), (SharedString::from("Address"), crate::surfaces::form::input(hits, "kit-form-url", &g.inputs.form_url))];
     let members = vec![g.inputs.form_name.focus_handle(cx), g.inputs.form_url.focus_handle(cx)];
     let form = form.render(&g.prompts[2], hits, fields, members, None, cx);
     let upstream = upstream(g, cx);
     let frame = |caption: &str, prompt: AnyElement, cx: &App| {
-        let behind = div().size_full().p(tokens::space::XXL).child(crate::placeholder::placeholder("The tab behind", ["Its keys wait."], cx));
-        group(caption, cx).child(div().w(width(36.)).h(width(20.)).border(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border).child(crate::dialog::over(behind, Some(prompt))))
+        let behind = div().size_full().p(tokens::space::XXL).child(crate::patterns::placeholder::placeholder("The tab behind", ["Its keys wait."], cx));
+        group(caption, cx).child(div().w(width(36.)).h(width(20.)).border(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border).child(crate::surfaces::dialog::over(behind, Some(prompt))))
     };
     let dismiss = |key: String, cx: &App| Button::new(hits, key).icon(Icon::Close.svg(tokens::icon::S, cx.theme().colors().text_muted)).icon_only(gpui::px(18.));
-    let notices = crate::notices::render(vec![(Kind, "A plain notice with its ×".to_string()), (Kind, "Another notice".to_string())], status.warning, dismiss, |_: &mut Gallery, _, _, _| {}, cx);
+    let notices = crate::surfaces::notices::render(vec![(Kind, "A plain notice with its ×".to_string()), (Kind, "Another notice".to_string())], status.warning, dismiss, |_: &mut Gallery, _, _, _| {}, cx);
     let banners = div()
         .flex()
         .flex_col()
         .gap(tokens::space::L)
         .w(width(30.))
-        .child(crate::banner::tinted(status.info).child("tinted: info"))
-        .child(crate::banner::tinted(status.success).child("tinted: success"))
-        .child(crate::banner::tinted(status.error).child("tinted: error"))
-        .child(crate::banner::plain(cx).child("plain"))
-        .child(crate::banner::tinted(status.warning).child(crate::banner::marked(Icon::Warning.svg(tokens::icon::M, status.warning), "marked: a mark beside text that wraps in the room left, short of a dismissable ×")))
+        .child(crate::surfaces::banner::tinted(status.info).child("tinted: info"))
+        .child(crate::surfaces::banner::tinted(status.success).child("tinted: success"))
+        .child(crate::surfaces::banner::tinted(status.error).child("tinted: error"))
+        .child(crate::surfaces::banner::plain(cx).child("plain"))
+        .child(crate::surfaces::banner::tinted(status.warning).child(crate::surfaces::banner::marked(Icon::Warning.svg(tokens::icon::M, status.warning), "marked: a mark beside text that wraps in the room left, short of a dismissable ×")))
         .children(notices);
     let toast = div().relative().w(width(30.)).h(width(4.)).border(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border).children(g.toast.render(hits, "kit-toast", cx));
     div()
@@ -335,7 +335,7 @@ pub fn prompts(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct Kind;
 
-impl crate::notices::NoticeKind for Kind {
+impl crate::surfaces::notices::NoticeKind for Kind {
     fn tag(self) -> &'static str {
         "kit"
     }
@@ -343,29 +343,29 @@ impl crate::notices::NoticeKind for Kind {
 
 pub fn cards(g: &Gallery, window: &mut Window, cx: &mut Context<Gallery>) -> AnyElement {
     let hits = &g.hits;
-    let card = crate::hover_card::tooltip(|| crate::hover_card::HoverCard { title: "A hover card".into(), rows: vec![("label", "value".into()), ("another", "longer value".into())] })(window, cx);
-    let tooltip = (crate::tooltip::Tooltip::text("A plain tooltip"))(window, cx);
+    let card = crate::surfaces::hover_card::tooltip(|| crate::surfaces::hover_card::HoverCard { title: "A hover card".into(), rows: vec![("label", "value".into()), ("another", "longer value".into())] })(window, cx);
+    let tooltip = (crate::controls::tooltip::Tooltip::text("A plain tooltip"))(window, cx);
     let sections = [
-        crate::details::Section::new("facts", "Facts").row("Label", "Value").path("Path", std::path::Path::new("C:/samples/folder/file.txt")).link("Link", "a sample link", "sample"),
-        crate::details::Section::new("checks", "Checks").check(true, "A ticked line", Some("Its note".into())).check(false, "An open line", None),
-        crate::details::Section::new("text", "Text").text("A paragraph of plain words.").long("long text\n  in the mono font"),
+        crate::patterns::details::Section::new("facts", "Facts").row("Label", "Value").path("Path", std::path::Path::new("C:/samples/folder/file.txt")).link("Link", "a sample link", "sample"),
+        crate::patterns::details::Section::new("checks", "Checks").check(true, "A ticked line", Some("Its note".into())).check(false, "An open line", None),
+        crate::patterns::details::Section::new("text", "Text").text("A paragraph of plain words.").long("long text\n  in the mono font"),
     ];
     let actions = vec![Button::new(hits, "kit-details-act").label("Act").into_any_element()];
-    let page = crate::details::Page { key: "kit-details", title: "A details page".into(), pill: Some(("state".into(), cx.theme().status().success)), sections: &sections, actions, scroll: &g.scroll, on_link: None, top: None, over: None, bar: None };
-    let page = div().w(width(24.)).h(width(30.)).border(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border).child(crate::details::render(page, hits, cx));
-    let fg = crate::inbox_card::icon_color(cx);
+    let page = crate::patterns::details::Page { key: "kit-details", title: "A details page".into(), pill: Some(("state".into(), cx.theme().status().success)), sections: &sections, actions, scroll: &g.scroll, on_link: None, top: None, over: None, bar: None };
+    let page = div().w(width(24.)).h(width(30.)).border(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border).child(crate::patterns::details::render(page, hits, cx));
+    let fg = crate::patterns::inbox_card::icon_color(cx);
     let status = cx.theme().status().clone();
     let inbox = |key: &str, color: Hsla, badge: &str| {
-        crate::inbox_card::InboxCard::new(key, color, badge.to_string(), "A card's title, long enough to wrap over its two lines and then be cut at the end")
+        crate::patterns::inbox_card::InboxCard::new(key, color, badge.to_string(), "A card's title, long enough to wrap over its two lines and then be cut at the end")
             .context("context")
             .line("line", "A one-line line", false)
             .line("muted", "A muted line", true)
-            .action(crate::inbox_card::action(hits, format!("{key}-copy"), key.to_string(), Icon::Copy.svg(tokens::icon::M, fg), "Copy", cx))
-            .primary(crate::inbox_card::primary(hits, format!("{key}-open"), "Open", cx))
+            .action(crate::patterns::inbox_card::action(hits, format!("{key}-copy"), key.to_string(), Icon::Copy.svg(tokens::icon::M, fg), "Copy", cx))
+            .primary(crate::patterns::inbox_card::primary(hits, format!("{key}-open"), "Open", cx))
             .render(hits, cx)
     };
     let cards = div().flex().flex_col().gap(tokens::space::L).w(width(22.)).child(inbox("kit-inbox-a", status.warning, "question")).child(inbox("kit-inbox-b", status.error, "failed")).child(inbox("kit-inbox-c", status.info, "note"));
-    let placeholder = div().w(width(20.)).h(width(8.)).border(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border).flex().child(crate::placeholder::placeholder("Nothing to show", ["A muted detail line.", "Another."], cx).size_full());
+    let placeholder = div().w(width(20.)).h(width(8.)).border(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border).flex().child(crate::patterns::placeholder::placeholder("Nothing to show", ["A muted detail line.", "Another."], cx).size_full());
     let left = div().flex().flex_col().gap(tokens::space::XL).w(width(20.)).child(group("hover_card", cx).child(card)).child(group("tooltip", cx).child(tooltip)).child(group("placeholder", cx).child(placeholder));
     row().items_start().child(left).child(group("details page", cx).child(page)).child(group("inbox cards: warning, error, info kinds", cx).child(cards)).into_any_element()
 }
@@ -441,7 +441,7 @@ pub fn text(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
 /// The scroll section's scrollers.
 #[derive(Default)]
 pub struct Scrolls {
-    list: crate::keyed_list::KeyedList,
+    list: crate::list::keyed_list::KeyedList,
     grid: gpui::UniformListScrollHandle,
 }
 

@@ -7,13 +7,13 @@ use std::sync::Arc;
 
 use gpui::{AppContext as _, ClickEvent, Context, Div, EventEmitter, Render, SharedString, Window, div, prelude::*, px};
 use supraman_gitman::{FileChange, WorktreeWip};
-use supraman_ui::button;
+use supraman_ui::controls::button;
 use supraman_ui::clipped::path_label;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
 use supraman_runtime::stall;
 use supraman_ui::themes::secondary;
-use supraman_ui::tree::Order;
+use supraman_ui::list::tree::Order;
 use theme::ActiveTheme as _;
 
 use super::cells;

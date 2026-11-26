@@ -86,7 +86,7 @@ use supraman_ui::{init_globals, term_element};
 struct SpikeView {
     terminal: Option<Entity<Terminal>>,
     focus: FocusHandle,
-    blink: Entity<supraman_ui::blink::Blink>,
+    blink: Entity<supraman_ui::text::blink::Blink>,
     _blink: [gpui::Subscription; 4],
     probe: FrameProbe,
 }
@@ -223,7 +223,7 @@ fn main() {
             move |window, cx| {
                 let view = cx.new(|cx| {
                     let focus = cx.focus_handle();
-                    let (blink, following) = supraman_ui::blink::Blink::follow(&focus, window, cx);
+                    let (blink, following) = supraman_ui::text::blink::Blink::follow(&focus, window, cx);
                     SpikeView { terminal: None, focus, blink, _blink: following, probe: FrameProbe::default() }
                 });
                 let focus = view.read(cx).focus.clone();

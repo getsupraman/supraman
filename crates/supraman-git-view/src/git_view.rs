@@ -47,15 +47,15 @@ use gpui::{AnyElement, App, AppContext as _, Context, Div, Entity, EventEmitter,
 use supraman_gitman::write::Occupancy;
 use supraman_gitman::{Repo, WipCounts, WorktreeRow};
 use supraman_ui::hit::{HitTargets, hit_target};
-use supraman_ui::{banner, button, focus};
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::{surfaces::banner, controls::button, focus};
+use supraman_ui::controls::tooltip::Tooltip;
 use supraman_ui::icon::Icon;
-use supraman_ui::placeholder::placeholder;
+use supraman_ui::patterns::placeholder::placeholder;
 use supraman_ui::split::SplitPane;
 use supraman_runtime::stall;
 use supraman_runtime::save_off_thread;
-use supraman_ui::table::{self, Column, Table, TableState};
-use supraman_ui::toast::ToastSlot;
+use supraman_ui::list::table::{self, Column, Table, TableState};
+use supraman_ui::surfaces::toast::ToastSlot;
 use theme::ActiveTheme as _;
 
 use cells::ref_cell;
@@ -218,7 +218,7 @@ pub struct GitView {
     _remote_events: Subscription,
     _gate_events: [Subscription; 2],
     hidden_columns: Vec<String>,
-    column_menu: Option<supraman_ui::menu::ContextMenu<columns::ColumnAct>>,
+    column_menu: Option<supraman_ui::controls::menu::ContextMenu<columns::ColumnAct>>,
     /// The commit summary takes the keyboard on the next frame.
     focus_summary: bool,
     /// The tab's own: a click on nothing focusable in it keeps the keyboard in the tab's key context.
@@ -1010,6 +1010,6 @@ impl Render for GitView {
             )
             .children(self.render_find().map(|f| deferred(f).with_priority(supraman_ui::tokens::Layer::OverPrompt.priority())))
             .children(self.render_column_menu(cx));
-        supraman_ui::dialog::over(tab, prompt)
+        supraman_ui::surfaces::dialog::over(tab, prompt)
     }
 }

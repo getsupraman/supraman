@@ -4,7 +4,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
-use supraman_ui::hover_card::LAST_CARD;
+use supraman_ui::surfaces::hover_card::LAST_CARD;
 use gpui::{AsyncWindowContext, Entity, Modifiers, MouseMoveEvent, PlatformInput, point, px};
 
 use crate::{

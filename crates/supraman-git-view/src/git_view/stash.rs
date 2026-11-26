@@ -6,13 +6,13 @@ use gpui::{Focusable as _, AppContext as _, Context, Entity, EventEmitter, Pixel
 use supraman_gitman::write::stash::{self, Applied};
 use supraman_gitman::write::{LockSet, Session, WriteError};
 use supraman_gitman::FileChange;
-use supraman_ui::button;
-use supraman_ui::confirm::Confirm;
-use supraman_ui::dialog::{Button as DialogButton, Panel};
-use supraman_ui::form;
+use supraman_ui::controls::button;
+use supraman_ui::surfaces::confirm::Confirm;
+use supraman_ui::surfaces::dialog::{Button as DialogButton, Panel};
+use supraman_ui::surfaces::form;
 use supraman_ui::hit::HitTargets;
-use supraman_ui::menu::{ContextMenu, MenuItem, item};
-use supraman_ui::text_input::{InputEvent, TextInput};
+use supraman_ui::controls::menu::{ContextMenu, MenuItem, item};
+use supraman_ui::text::input::{InputEvent, TextInput};
 
 use super::write_gate::{Verb, WriteGate, Writes, Written};
 use supraman_core::text::capitalised;

@@ -13,7 +13,7 @@ use crate::hit::{HitTargets, hit_target};
 use crate::icon::Icon;
 use crate::label::Label;
 use crate::tokens::{self, radius, space, stroke};
-use crate::tooltip::Tooltip;
+use crate::controls::tooltip::Tooltip;
 
 type OnClick = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 type OnPress = Rc<dyn Fn(&Press, &mut Window, &mut App)>;

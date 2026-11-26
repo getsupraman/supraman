@@ -4,7 +4,7 @@
 use gpui::{App, ClickEvent, Context, Div, ElementId, FocusHandle, KeyDownEvent, SharedString, StyleRefinement, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
-use crate::button::segment;
+use crate::controls::button::segment;
 use crate::hit::HitTargets;
 use crate::icon::Icon;
 use crate::tokens;
@@ -33,7 +33,7 @@ impl Segment {
 }
 
 /// The group; each option paints under `<id>-<key>`, and a click on one not chosen calls `on_change` with
-/// its index. It is one keyboard member, as [`crate::button::choices`] is: the arrows pick the option before or after
+/// its index. It is one keyboard member, as [`crate::controls::button::choices`] is: the arrows pick the option before or after
 /// the chosen one, and it wears [`crate::focus::ring`] while its focus came by keyboard ([`Segmented::focus`]).
 pub fn segmented<V: 'static>(
     hits: &HitTargets,
@@ -68,7 +68,7 @@ pub fn segmented<V: 'static>(
         }
         cx.stop_propagation();
         crate::focus::keyed(window, cx);
-        if let Some(to) = crate::button::neighbour(Some(chosen), count, back) {
+        if let Some(to) = crate::controls::button::neighbour(Some(chosen), count, back) {
             on_change(this, to, window, cx);
             cx.notify();
         }

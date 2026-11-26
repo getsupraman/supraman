@@ -1,15 +1,15 @@
 //! The middle column's run page: breadcrumb, done line, prompt chips, squares, filter and a row per item.
 
 use gpui::{ClickEvent, FontWeight};
-use supraman_ui::placeholder::placeholder;
+use supraman_ui::patterns::placeholder::placeholder;
 use supraman_ui::clipped::clamped;
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
 use supraman_ui::marks::{dot, squares};
-use supraman_ui::segmented::{Segment, segmented};
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::controls::segmented::{Segment, segmented};
+use supraman_ui::controls::tooltip::Tooltip;
 use supraman_ui::label::{Label, LabelMark};
-use supraman_ui::{button, fonts, tokens};
+use supraman_ui::{controls::button, fonts, tokens};
 use supraman_workman::BoardRow;
 
 use super::actions::COPY_SIDE;

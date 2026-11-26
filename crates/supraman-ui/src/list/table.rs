@@ -12,7 +12,7 @@ use crate::clipped::clipped;
 use crate::hit::{HitTargets, hit_target};
 use crate::icon::Icon;
 use crate::split::{DraggedDivider, handle};
-use crate::tooltip::Tooltip;
+use crate::controls::tooltip::Tooltip;
 use crate::tokens;
 
 mod widths;

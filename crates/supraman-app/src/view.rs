@@ -17,15 +17,15 @@ use supraman_runtime::nudge::{self, Nudge, Nudged};
 use supraman_core::open::{self, Link};
 use supraman_core::timeline;
 use supraman_ui::hit::{HitTargets, hit_target};
-use supraman_ui::text_input::{InputEvent, TextInput};
-use supraman_ui::hover_card;
+use supraman_ui::text::input::{InputEvent, TextInput};
+use supraman_ui::surfaces::hover_card;
 use supraman_ui::icon::Icon;
 use supraman_ui::split::SplitPane;
 use supraman_ui::tabs::{TabHeader, tab_strip};
-use supraman_ui::toast::ToastSlot;
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::surfaces::toast::ToastSlot;
+use supraman_ui::controls::tooltip::Tooltip;
 use supraman_runtime::frames::FrameProbe;
-use supraman_ui::{button, term_element};
+use supraman_ui::{controls::button, term_element};
 use gpui::{
     AnyElement, AnyWindowHandle, App, ClickEvent, Context, Entity, FocusHandle,
     KeyBinding, KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseDownEvent, Pixels, Render, ScrollEvent, SharedString, Window,
@@ -607,7 +607,7 @@ impl FleetView {
         if let Some(read) = refresh.schedules {
             self.scheduling.schedules = read.rows;
             self.scheduling.schedule_errors = read.errors;
-            supraman_ui::notices::keep_dismissed(&mut self.scheduling.schedule_errors_dismissed, &self.scheduling.schedule_errors);
+            supraman_ui::surfaces::notices::keep_dismissed(&mut self.scheduling.schedule_errors_dismissed, &self.scheduling.schedule_errors);
             let (_, save) = self.scheduling.waiting_dismissed.prune_keys(&crate::schedules::waiting_keys(&self.scheduling.schedules));
             self.save_pruned(save, "Cannot save the dismissed approvals", cx);
             self.find_asked_schedules();
@@ -627,7 +627,7 @@ impl FleetView {
         }
         self.term_look.shell_default.ticked(report.terminal);
         self.polled.upkeep_errors = report.errors;
-        supraman_ui::notices::keep_dismissed(&mut self.polled.upkeep_dismissed, &self.polled.upkeep_errors);
+        supraman_ui::surfaces::notices::keep_dismissed(&mut self.polled.upkeep_dismissed, &self.polled.upkeep_errors);
         self.polled.daemon_hold = report.daemon_hold;
         self.polls.ticks += 1;
     }
@@ -1369,7 +1369,7 @@ impl Render for FleetView {
             )
             .children(self.render_menu(cx))
             .child(self.probe.paint_marker());
-        supraman_ui::dialog::over(root, self.render_dialog(cx))
+        supraman_ui::surfaces::dialog::over(root, self.render_dialog(cx))
     }
 }
 

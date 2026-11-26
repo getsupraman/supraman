@@ -5,7 +5,7 @@ use gpui::{Context, Entity, Modifiers, Render, TestAppContext, VisualTestContext
 
 use super::*;
 use crate::hit::HitTargets;
-use crate::tooltip::LAST_SHOWN;
+use crate::controls::tooltip::LAST_SHOWN;
 
 struct Holder {
     hits: HitTargets,

@@ -4,7 +4,7 @@ use supraman_core::text::count;
 use std::collections::{BTreeSet, HashMap};
 
 use supraman_gitman::{ChangeKind, Conflict, EntryKind, FileChange, OperationState, Repo, Status, UnderWay};
-use supraman_ui::tree::{Order, Tree};
+use supraman_ui::list::tree::{Order, Tree};
 
 use crate::git_view::details::sort_changes;
 use supraman_gitman::WipCounts;

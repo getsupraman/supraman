@@ -1,7 +1,8 @@
 use std::collections::HashSet;
 
 use supraman_claude::now_ms;
-use supraman_ui::matcher::{count, highlighted};
+use supraman_ui::controls::badge::count;
+use supraman_ui::matcher::highlighted;
 use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, SharedString, Stateful, div, prelude::*, px};
 
 use supraman_ui::icon::Icon;
@@ -88,7 +89,7 @@ impl FleetView {
     }
 
     fn result_row(&self, key: String, level: usize, h: f32, cx: &mut Context<Self>) -> Stateful<Div> {
-        self.sidebar_row(supraman_ui::button::RowKeys::one(key.into()), None, cx)
+        self.sidebar_row(supraman_ui::controls::button::RowKeys::one(key.into()), None, cx)
             .flex()
             .flex_none()
             .items_center()

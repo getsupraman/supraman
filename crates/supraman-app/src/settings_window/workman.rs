@@ -1,8 +1,8 @@
 //! The settings window's Workman page: the sign-in status, the server URL and the MCP server name.
 
 use gpui::{AnyElement, App, Context, Div, Focusable as _, Hsla, SharedString, div, prelude::*, px};
-use supraman_ui::settings_page::row;
-use supraman_ui::{banner, button};
+use supraman_ui::patterns::settings_page::row;
+use supraman_ui::{surfaces::banner, controls::button};
 use supraman_workman::AuthStatus;
 use supraman_workman::status::{RECHECK_EVERY, WorkmanStatus};
 use theme::ActiveTheme as _;

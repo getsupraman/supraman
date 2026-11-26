@@ -4,7 +4,7 @@ use gpui::{Pixels, Point, SharedString};
 use supraman_gitman::write::conflicts::Side;
 use supraman_gitman::write::files::{Ignore, ignorable};
 use supraman_gitman::{ChangeKind, FileChange};
-use supraman_ui::menu::{MenuItem, item};
+use supraman_ui::controls::menu::{MenuItem, item};
 
 use super::CommitAct;
 use crate::git_view::branch::menu::RefAct;

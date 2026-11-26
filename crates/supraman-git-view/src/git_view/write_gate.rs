@@ -10,8 +10,8 @@ use gpui::{AnyElement, App, AppContext as _, Context, Entity, EventEmitter, Focu
 use supraman_gitman::Repo;
 use supraman_gitman::OperationState;
 use supraman_gitman::write::{Cancel, Left, LockSet, Occupancy, Session, WriteError, Writer, left};
-use supraman_ui::confirm::{Answer, Confirm};
-use supraman_ui::dialog::Dialog;
+use supraman_ui::surfaces::confirm::{Answer, Confirm};
+use supraman_ui::surfaces::dialog::Dialog;
 use supraman_ui::hit::HitTargets;
 
 /// Why a write cannot start while another runs.

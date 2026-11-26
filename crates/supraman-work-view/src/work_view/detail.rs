@@ -4,11 +4,11 @@ use std::rc::Rc;
 
 use gpui::{FontWeight, Hsla};
 use supraman_core::time::{near, rfc3339_local, rfc3339_ms};
-use supraman_ui::placeholder::placeholder;
-use supraman_ui::details::{self, Section};
+use supraman_ui::patterns::placeholder::placeholder;
+use supraman_ui::patterns::details::{self, Section};
 use supraman_ui::hit::hit_target;
-use supraman_ui::segmented::{Segment, segmented};
-use supraman_ui::{banner, fonts};
+use supraman_ui::controls::segmented::{Segment, segmented};
+use supraman_ui::{surfaces::banner, fonts};
 use supraman_workman::{BriefFor, ItemPage, Report, Verification};
 
 use super::item::holder_session;

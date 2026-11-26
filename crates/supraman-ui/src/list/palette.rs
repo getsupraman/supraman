@@ -12,11 +12,11 @@ use theme::ActiveTheme as _;
 
 use crate::hit::{HitTargets, hit_target};
 use crate::icon::Icon;
-use crate::keyed_list::KeyedList;
+use crate::list::keyed_list::KeyedList;
 use crate::matcher::subsequence;
-use crate::text_input::{self, InputEvent, TextInput};
-use crate::tooltip::Tooltip;
-use crate::button;
+use crate::text::input::{self, InputEvent, TextInput};
+use crate::controls::tooltip::Tooltip;
+use crate::controls::button;
 use crate::label::{Label, LabelMark};
 use crate::tokens;
 
@@ -416,8 +416,8 @@ impl<T: Entry> Render for Palette<T> {
             .overflow_hidden()
             .child(hit_target(&self.hits, self.id.to_string()))
             .child(crate::focus::popup([self.input.focus_handle(cx)]))
-            .on_action(cx.listener(|this, _: &text_input::Up, _, cx| this.step(-1, cx)))
-            .on_action(cx.listener(|this, _: &text_input::Down, _, cx| this.step(1, cx)))
+            .on_action(cx.listener(|this, _: &input::Up, _, cx| this.step(-1, cx)))
+            .on_action(cx.listener(|this, _: &input::Down, _, cx| this.step(1, cx)))
             .on_key_down(cx.listener(|this, e: &gpui::KeyDownEvent, _, cx| {
                 let Some(crate::list::Key::Step(step @ (crate::list::Step::Pages(_) | crate::list::Step::First | crate::list::Step::Last))) = crate::list::key_of(&e.keystroke) else { return };
                 if matches!(step, crate::list::Step::First | crate::list::Step::Last) && !e.keystroke.modifiers.control {
@@ -426,7 +426,7 @@ impl<T: Entry> Render for Palette<T> {
                 cx.stop_propagation();
                 this.go(step, cx);
             }))
-            .capture_action(cx.listener(|this, _: &text_input::Backspace, _, cx| {
+            .capture_action(cx.listener(|this, _: &input::Backspace, _, cx| {
                 if this.mode.is_some() && this.query(cx).is_empty() {
                     this.leave_mode(cx);
                     cx.stop_propagation();

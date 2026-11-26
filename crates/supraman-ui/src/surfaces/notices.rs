@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use gpui::{App, ClickEvent, Context, Div, Hsla, SharedString, prelude::*};
 
-use crate::banner;
+use crate::surfaces::banner;
 
 pub trait NoticeKind: Copy + Ord + 'static {
     /// The kind's part of its × key ([`dismiss_key`]).
@@ -35,7 +35,7 @@ pub fn remove_one(list: &mut Vec<String>, text: &str) {
 pub fn render<V: 'static, K: NoticeKind>(
     notices: Vec<(K, String)>,
     color: Hsla,
-    dismiss: impl Fn(String, &App) -> crate::button::Button,
+    dismiss: impl Fn(String, &App) -> crate::controls::button::Button,
     on_dismiss: impl Fn(&mut V, K, &str, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> Vec<Div> {

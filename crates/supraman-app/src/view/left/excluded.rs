@@ -16,7 +16,7 @@ impl FleetView {
         let tree_key = format!("repo-{key}");
         let icon = if folder.kind == supraman_core::FolderKind::Git { Icon::GitFolder } else { Icon::Folder };
         let menu_key = key.clone();
-        let keys = supraman_ui::button::RowKeys { id: format!("excluded:{key}").into(), group: format!("excluded-group-{key}").into(), hit: format!("excluded-row-{key}").into() };
+        let keys = supraman_ui::controls::button::RowKeys { id: format!("excluded:{key}").into(), group: format!("excluded-group-{key}").into(), hit: format!("excluded-row-{key}").into() };
         self.sidebar_row(keys, Some(&super::fold::folder(&key)), cx)
             .flex()
             .flex_none()

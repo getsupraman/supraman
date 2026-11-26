@@ -9,7 +9,7 @@ use crate::focus_order::Press;
 use crate::hit::{HitTargets, hit_target};
 use crate::label::{Label, LabelMark};
 use crate::tokens;
-use crate::tooltip::Tooltip;
+use crate::controls::tooltip::Tooltip;
 
 type OnToggle = Rc<dyn Fn(&bool, &mut Window, &mut App)>;
 
@@ -74,7 +74,7 @@ impl RenderOnce for Checkbox {
         let colors = cx.theme().colors();
         let (on, disabled) = (self.checked, self.why.is_some());
         let hover = if on { colors.text_accent } else { colors.border_selected };
-        let square = crate::button::tick(on, colors.text_accent, cx).relative().when(!disabled, |d| d.group_hover(key.clone(), move |s| s.border_color(hover))).child(hit_target(&self.hits, format!("{key}-square")));
+        let square = crate::controls::button::tick(on, colors.text_accent, cx).relative().when(!disabled, |d| d.group_hover(key.clone(), move |s| s.border_color(hover))).child(hit_target(&self.hits, format!("{key}-square")));
         let label = match self.label {
             Some(words) => {
                 let words = crate::clipped::clipped(format!("{key}-label"), words, false).flex_shrink(1.).child(hit_target(&self.hits, format!("{key}-label")));

@@ -1,8 +1,8 @@
-//! A question before an action that cannot be taken back, or a report with only its OK, asked in a [`crate::dialog`].
+//! A question before an action that cannot be taken back, or a report with only its OK, asked in a [`crate::surfaces::dialog`].
 
 use gpui::SharedString;
 
-use crate::button;
+use crate::controls::button;
 use crate::hit::HitTargets;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,7 +70,7 @@ impl<A> Confirm<A> {
     }
 }
 
-/// Every answer of a question and every button of a [`crate::dialog`]: a `button::Button` at `button::Size::Medium`, the
+/// Every answer of a question and every button of a [`crate::surfaces::dialog`]: a `button::Button` at `button::Size::Medium`, the
 /// message's text size; the dialog makes the default one Solid, the rest Outline.
 pub fn answer(hits: &HitTargets, key: impl Into<SharedString>, words: impl Into<SharedString>, tone: button::Tone) -> button::Button {
     button::Button::new(hits, key).label(words).tone(tone).size(button::Size::Medium)

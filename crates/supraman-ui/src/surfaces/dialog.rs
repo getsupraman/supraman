@@ -7,8 +7,8 @@ use std::rc::Rc;
 use gpui::{AnyElement, BoxShadow, Context, Div, FocusHandle, KeyDownEvent, Pixels, SharedString, Window, canvas, deferred, div, point, prelude::*, px};
 use theme::ActiveTheme as _;
 
-use crate::button;
-use crate::confirm::{self, Answer, Confirm};
+use crate::controls::button;
+use crate::surfaces::confirm::{self, Answer, Confirm};
 use crate::focus::{self, Pane};
 use crate::focus_order::{Dismiss, Members};
 use crate::hit::{HitTargets, hit_target};
@@ -264,7 +264,7 @@ fn title_line<V: 'static>(hits: &HitTargets, panel: &Panel<V>, cx: &mut Context<
     let close = panel.close.clone().map(|close| {
         let cancel = panel.cancel.clone();
         let muted = crate::themes::secondary(cx.theme().colors());
-        button::Button::new(hits, close).icon(Icon::Close.svg(tokens::icon::M, muted)).icon_only(tokens::control::MEDIUM.height).tooltip(crate::tooltip::Tooltip::text("Close (Esc)")).on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| cancel(this, window, cx)))
+        button::Button::new(hits, close).icon(Icon::Close.svg(tokens::icon::M, muted)).icon_only(tokens::control::MEDIUM.height).tooltip(crate::controls::tooltip::Tooltip::text("Close (Esc)")).on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| cancel(this, window, cx)))
     });
     (title.is_some() || close.is_some()).then(|| div().flex().items_center().gap(tokens::space::L).children(title).children(close.map(|c| div().ml_auto().child(c))))
 }

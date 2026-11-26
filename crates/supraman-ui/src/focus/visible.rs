@@ -5,7 +5,7 @@ use gpui::{App, BorderStyle, DispatchPhase, FocusHandle, Global, IntoElement, Mo
 use theme::ActiveTheme as _;
 
 use super::state;
-use crate::button::RING;
+use crate::controls::button::RING;
 
 struct Keys(#[allow(dead_code)] Subscription);
 

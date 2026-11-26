@@ -1,6 +1,7 @@
 use gpui::{Context, Pixels, Render, TestAppContext, VisualTestContext, Window, rems};
 
 use super::*;
+use crate::controls::{pill::pill, stepper::stepper};
 
 struct Row {
     hits: HitTargets,
@@ -8,7 +9,7 @@ struct Row {
 
 impl Render for Row {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let row = div().flex().text_xs().child(crate::checkbox::Checkbox::new(&self.hits, "tick", true).label("View all files"));
+        let row = div().flex().text_xs().child(crate::controls::checkbox::Checkbox::new(&self.hits, "tick", true).label("View all files"));
         div().flex().flex_col().gap_2().p_2().child(row).child(div().flex().child(pill(&self.hits, "pill", "main", gpui::red(), cx)))
     }
 }
@@ -212,7 +213,7 @@ fn every_size_stands_at_its_height_with_its_letters_on_its_middle(cx: &mut TestA
             assert!(crate::ink::level(button.center().y, label.center().y + below), "{key}: the letters on the middle: {button:?} {label:?} by {below:?}");
         }
     }
-    assert_eq!(Size::Medium.height(), crate::text_input::SINGLE_HEIGHT, "a medium button as high as a one-line field");
+    assert_eq!(Size::Medium.height(), crate::text::input::SINGLE_HEIGHT, "a medium button as high as a one-line field");
     let (plain, with) = (bounds(&hits, "Medium"), bounds(&hits, "Medium-icon"));
     assert_eq!(with.left() - plain.right(), GAP + px(2.), "a line's buttons one gap apart, border to border");
 }
@@ -290,7 +291,7 @@ impl Render for Stepped {
             this.n += by;
             cx.notify();
         }, cx);
-        let row = crate::settings_page::row("Busy sessions at most", "How many may work at once.", control.into_any_element(), None, cx);
+        let row = crate::patterns::settings_page::row("Busy sessions at most", "How many may work at once.", control.into_any_element(), None, cx);
         self.members.order().on(div().id("page").w(px(600.)).child(row))
     }
 }

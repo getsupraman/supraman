@@ -8,7 +8,7 @@ use supraman_gitman::write::remote::PullChoice;
 
 use super::bar::{PULL_KEY, PULL_MENU_KEY, PUSH_KEY};
 use super::{DETACHED, NO_REMOTE, add};
-use supraman_ui::confirm::Answer;
+use supraman_ui::surfaces::confirm::Answer;
 use crate::git_view::test_support::{self, Opts, click, keys, redraw, toast};
 use crate::git_view::*;
 
@@ -118,7 +118,7 @@ fn a_detached_head_dims_push_and_pull_but_not_a_fetch_and_no_remote_dims_both(cx
 
 /// The palette's Remote commands as its top list shows them: key, words and why each is dimmed.
 fn palette_remote(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<(String, String, Option<String>)> {
-    use supraman_ui::palette::Entry as _;
+    use supraman_ui::list::palette::Entry as _;
     view.update_in(cx, |v, window, cx| v.open_find(None, window, cx));
     cx.simulate_input("remote");
     cx.run_until_parked();
@@ -298,7 +298,7 @@ fn owned(answers: &[(&str, bool)]) -> Vec<(String, bool)> {
 }
 
 fn key(view: &Entity<GitView>, keys: &str, cx: &mut VisualTestContext) {
-    assert_eq!(test_support::pane_focused(cx).as_deref(), Some(supraman_ui::dialog::PANE), "the prompt takes the keyboard before {keys}");
+    assert_eq!(test_support::pane_focused(cx).as_deref(), Some(supraman_ui::surfaces::dialog::PANE), "the prompt takes the keyboard before {keys}");
     cx.simulate_keystrokes(keys);
     cx.run_until_parked();
     redraw(view, cx);

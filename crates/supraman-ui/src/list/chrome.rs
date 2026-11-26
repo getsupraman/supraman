@@ -5,7 +5,7 @@
 use gpui::{App, Div, Hsla, Pixels, SharedString, Stateful, div, prelude::*};
 use theme::ActiveTheme as _;
 
-use crate::button::RowKeys;
+use crate::controls::button::RowKeys;
 use crate::hit::{HitTargets, hit_target};
 use crate::state::{Fills, State, resolve};
 

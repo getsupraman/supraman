@@ -2,7 +2,7 @@
 
 use gpui::{Focusable as _, AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla, IntoElement, Render, Window, div, prelude::*, px};
 use supraman_gitman::short_sha;
-use supraman_ui::button;
+use supraman_ui::controls::button;
 use supraman_ui::clipped;
 use supraman_ui::focus;
 use supraman_ui::hit::hit_target;
@@ -12,8 +12,8 @@ use supraman_ui::matcher::highlighted;
 use supraman_ui::split::{Pane, Stack};
 use supraman_runtime::stall;
 use supraman_ui::tokens;
-use supraman_ui::tooltip::Tooltip;
-use supraman_ui::tree::{Item, LEAD, Row, TreeList};
+use supraman_ui::controls::tooltip::Tooltip;
+use supraman_ui::list::tree::{Item, LEAD, Row, TreeList};
 use theme::ActiveTheme as _;
 
 use super::marks::MARK;

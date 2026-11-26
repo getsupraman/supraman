@@ -4,7 +4,7 @@ use gpui::{ClickEvent, Context, Div, SharedString, div, prelude::*};
 use supraman_gitman::OperationState;
 use supraman_gitman::write::conflicts::Sequence;
 use supraman_gitman::write::wip::Step;
-use supraman_ui::button;
+use supraman_ui::controls::button;
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
 use theme::ActiveTheme as _;
@@ -14,7 +14,7 @@ use super::render::live;
 use super::actions::noun;
 use super::{Ask, Shown, WipPanel};
 use crate::git_view::keys::{MESSAGE_CONTEXT, StageAllAndCommit};
-use supraman_ui::checkbox::Checkbox;
+use supraman_ui::controls::checkbox::Checkbox;
 
 pub(super) const AREA: &str = "wip-commit-area";
 

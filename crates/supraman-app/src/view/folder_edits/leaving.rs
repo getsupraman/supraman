@@ -8,15 +8,15 @@ use gpui::{AnyElement, Context, FocusHandle, SharedString, div, prelude::*};
 use supraman_core::paths::{folder_name, path_key};
 use supraman_core::schedule::folder_key;
 use supraman_core::text;
-use supraman_ui::button;
-use supraman_ui::dialog::{Button as DialogButton, Dialog, Panel};
+use supraman_ui::controls::button;
+use supraman_ui::surfaces::dialog::{Button as DialogButton, Dialog, Panel};
 use supraman_ui::hit::hit_target;
 use theme::ActiveTheme as _;
 
 use super::FolderEdit;
 use crate::fleet::Tree;
 use crate::view::FleetView;
-use supraman_ui::checkbox::Checkbox;
+use supraman_ui::controls::checkbox::Checkbox;
 
 /// The question's hit keys: `<KEY>-tick`, `-text`, `-note`, `-yes`, `-alt`, `-cancel` and the dialog's own.
 pub const KEY: &str = "remove-folder";

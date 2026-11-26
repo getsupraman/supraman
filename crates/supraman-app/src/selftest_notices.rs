@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::bail;
 use gpui::{AsyncWindowContext, Entity};
 
-use supraman_ui::notices::dismiss_key;
+use supraman_ui::surfaces::notices::dismiss_key;
 
 use crate::{
     selftest::{click, until},

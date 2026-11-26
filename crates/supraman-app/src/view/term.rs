@@ -8,7 +8,7 @@ use gpui::{AnyElement, App, Context, Entity, Keystroke, MouseButton, MouseDownEv
 use theme::ActiveTheme as _;
 
 use super::{FleetView, hit_target};
-use crate::text_input::{InputEvent, TextInput};
+use supraman_ui::text::input::{InputEvent, TextInput};
 use supraman_ui::term_element::{self, FONT_SIZE, TermFont, step_font_size};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -7,11 +7,11 @@ use std::rc::Rc;
 use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, ScrollHandle, SharedString, Window, div, prelude::*, px};
 use theme::{ActiveTheme as _, ThemeColors};
 
-use crate::banner;
-use crate::button;
+use crate::surfaces::banner;
+use crate::controls::button;
 use crate::clipped::path_label;
 use crate::hit::{HitTargets, hit_target};
-use crate::text_input::TextView;
+use crate::text::input::TextView;
 use crate::tokens;
 
 const LABEL: f32 = 128.;

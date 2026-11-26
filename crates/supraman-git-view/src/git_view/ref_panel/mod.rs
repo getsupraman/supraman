@@ -1,4 +1,4 @@
-//! The Git tab's left panel: the refs in five sections on [`supraman_ui::tree`], filtered, hidden or soloed; it reads nothing itself.
+//! The Git tab's left panel: the refs in five sections on [`supraman_ui::list::tree`], filtered, hidden or soloed; it reads nothing itself.
 
 mod entries;
 mod marks;
@@ -15,10 +15,10 @@ use std::sync::Arc;
 use gpui::{Context, Entity, EventEmitter, FocusHandle, Pixels, SharedString, Subscription, Window, px};
 use supraman_gitman::{BranchStatus, Refs, Worktree};
 use supraman_ui::hit::HitTargets;
-use supraman_ui::menu::ContextMenu;
-use supraman_ui::text_input::{self, TextInput};
+use supraman_ui::controls::menu::ContextMenu;
+use supraman_ui::text::input::{self, TextInput};
 use supraman_ui::split::StackState;
-use supraman_ui::tree::Tree;
+use supraman_ui::list::tree::Tree;
 
 use super::GitSizes;
 use super::stash::{StashAct, StashRef};
@@ -336,6 +336,6 @@ impl RefPanel {
     }
 
     fn filter_box(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<TextInput> {
-        self.filter.get_or_insert_with(|| text_input::filter_box("Filter refs", Self::set_filter, window, cx)).0.clone()
+        self.filter.get_or_insert_with(|| input::filter_box("Filter refs", Self::set_filter, window, cx)).0.clone()
     }
 }

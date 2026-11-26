@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use gpui::{AnyElement, App, ClickEvent, Div, SharedString, Stateful, Window, prelude::*, px};
 
-use crate::button::{Button, Fill, Tone};
+use crate::controls::button::{Button, Fill, Tone};
 use crate::hit::HitTargets;
 use crate::icon::Icon;
 use crate::label::Label;
@@ -40,7 +40,7 @@ pub struct Opening {
 
 /// Every session's Open: `opening`'s icon and the word Open, its hint as tooltip; dimmed with the hint as why, its click a no-op, while it cannot run.
 pub fn open(hits: &HitTargets, key: impl Into<SharedString>, opening: &Opening, fill: Fill, on_open: impl Fn(&mut Window, &mut App) + 'static, cx: &App) -> Stateful<Div> {
-    let button = Button::new(hits, key).icon(opening.icon).label("Open").tone(Tone::Neutral).fill(fill).tooltip(crate::tooltip::Tooltip::text(opening.hint.clone()));
+    let button = Button::new(hits, key).icon(opening.icon).label("Open").tone(Tone::Neutral).fill(fill).tooltip(crate::controls::tooltip::Tooltip::text(opening.hint.clone()));
     if !opening.runs {
         return button.dimmed_if(true).build(cx);
     }

@@ -1,4 +1,4 @@
-//! The buttons ([`Button`], [`ButtonSplit`]), the tick mark, choices and pills. Each takes `key` as its element id, its hover group and its [`hit_target`] key.
+//! The buttons ([`Button`], [`ButtonSplit`]), the tick mark and choices. Each takes `key` as its element id, its hover group and its [`hit_target`] key.
 
 use gpui::{App, Context, Div, FocusHandle, Hsla, Pixels, SharedString, Stateful, StyleRefinement, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
@@ -13,7 +13,7 @@ mod build;
 
 pub use build::{Button, ButtonSplit, Glyph};
 
-fn base(hits: &HitTargets, key: SharedString, hover: impl FnOnce(StyleRefinement) -> StyleRefinement, active: Hsla) -> Stateful<Div> {
+pub(crate) fn base(hits: &HitTargets, key: SharedString, hover: impl FnOnce(StyleRefinement) -> StyleRefinement, active: Hsla) -> Stateful<Div> {
     keyed(hits, RowKeys::one(key), hover, active)
 }
 
@@ -169,50 +169,6 @@ const TINT_HOVER: f32 = 0.3;
 const SOLID_HOVER: f32 = 0.85;
 const SOLID_ACTIVE: f32 = 0.7;
 
-/// − `value` +: two [`Size::Medium`] buttons of `members`' Tab order under `<key>-dec` and `<key>-inc`, `step` given -1 or 1
-/// by a click, Space or Enter; the value between them bold, its letters on theirs, under `<key>-value`.
-pub fn stepper<V: 'static>(
-    hits: &HitTargets,
-    key: &str,
-    value: impl Into<SharedString>,
-    members: &crate::focus_order::Members,
-    step: impl Fn(&mut V, i32, &mut Window, &mut Context<V>) + Clone + 'static,
-    cx: &mut Context<V>,
-) -> Div {
-    let mut one = |by: i32, part: &str, words: &'static str| {
-        let key = format!("{key}-{part}");
-        let step = step.clone();
-        let focus = members.handle(key.clone(), cx);
-        Button::new(hits, key).label(words).size(Size::Medium).acting(&focus, move |this, window, cx| step(this, by, window, cx), cx)
-    };
-    let (dec, inc) = (one(-1, "dec", "−"), one(1, "inc", "+"));
-    let value = Label::element(div().relative().child(value.into()).child(hit_target(hits, format!("{key}-value")))).centred();
-    let value = div().min_w(STEPPER_VALUE).flex().justify_center().text_size(Size::Medium.control().text.size).font_weight(gpui::FontWeight::BOLD).child(value);
-    Button::line().child(dec).child(value).child(inc)
-}
-
-/// The least width of a stepper's value, so a step from 9 to 10 moves neither button.
-const STEPPER_VALUE: Pixels = px(28.);
-
-/// A quiet outlined pill in `fg`, lit on hover; its label's letters centred, painted under `<key>-label`.
-pub fn pill(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<SharedString>, fg: Hsla, cx: &App) -> Stateful<Div> {
-    let colors = cx.theme().colors();
-    let key = key.into();
-    let label = Label::element(div().relative().child(label.into()).child(hit_target(hits, format!("{key}-label")))).centred();
-    base(hits, key, |s| s.bg(colors.element_hover).border_color(colors.border).text_color(colors.text), colors.element_active)
-        .flex()
-        .flex_none()
-        .items_center()
-        .h(tokens::control::SMALL.height)
-        .px(space::L)
-        .rounded(radius::S)
-        .border(stroke::HAIRLINE)
-        .border_color(colors.border_variant)
-        .text_size(tokens::text::SMALL)
-        .text_color(fg)
-        .child(label)
-}
-
 /// A [`TICK`] square, checked and filled with `fill` while `on`, the same size either way; a read-only mark on its own.
 pub fn tick(on: bool, fill: Hsla, cx: &App) -> Div {
     let colors = cx.theme().colors();
@@ -274,7 +230,7 @@ pub fn neighbour(at: Option<usize>, n: usize, back: bool) -> Option<usize> {
     }
 }
 
-/// One option of a [`crate::segmented`] group: [`choice`]'s fills, `icon` and `label`, under `key`.
+/// One option of a [`crate::controls::segmented`] group: [`choice`]'s fills, `icon` and `label`, under `key`.
 pub fn segment(hits: &HitTargets, key: impl Into<SharedString>, icon: Option<Icon>, label: Option<SharedString>, selected: bool, cx: &App) -> Stateful<Div> {
     let key = key.into();
     let colors = cx.theme().colors();

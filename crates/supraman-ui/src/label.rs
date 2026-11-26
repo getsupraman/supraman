@@ -16,7 +16,7 @@ pub enum LabelMark {
     /// The caller's own size and colour.
     Svg(Svg),
     Dot(Mark),
-    /// [`crate::button::tick`] in the accent colour: a read-only tick box.
+    /// [`crate::controls::button::tick`] in the accent colour: a read-only tick box.
     Tick(bool),
     Element(AnyElement),
 }
@@ -184,7 +184,7 @@ impl Label {
             Some(LabelMark::Icon(icon)) => Some(icon.svg(self.icon_px(), color).into_any_element()),
             Some(LabelMark::Svg(svg)) => Some(svg.into_any_element()),
             Some(LabelMark::Dot(mark)) => Some(crate::marks::dot(mark).into_any_element()),
-            Some(LabelMark::Tick(on)) => Some(crate::button::tick(on, cx.theme().colors().text_accent, cx).into_any_element()),
+            Some(LabelMark::Tick(on)) => Some(crate::controls::button::tick(on, cx.theme().colors().text_accent, cx).into_any_element()),
             Some(LabelMark::Element(el)) => Some(el),
         };
         let hit = self.hit.as_ref().map(|(hits, key)| hit_target(hits, format!("{key}-mark")));

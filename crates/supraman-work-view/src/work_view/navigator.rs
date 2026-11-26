@@ -4,7 +4,7 @@ use gpui::{ClickEvent, FontWeight};
 use supraman_ui::clipped::clipped;
 use supraman_ui::icon::Icon;
 use supraman_ui::marks::progress_line;
-use supraman_ui::{button, hit::hit_target};
+use supraman_ui::{controls::button, hit::hit_target};
 use supraman_workman::{OverviewRun, Rollup};
 
 use super::projects::{active, closed_runs};
@@ -43,7 +43,7 @@ impl WorkView {
             .rounded_sm()
             .text_sm()
             .child(Label::new(label.to_string()).mark(LabelMark::Svg(icon.svg(14., colors.icon_muted))).gap(tokens::space::L).flex_1())
-            .children(badge.filter(|n| *n > 0).map(|n| supraman_ui::matcher::alert_count(n, cx)))
+            .children(badge.filter(|n| *n > 0).map(|n| supraman_ui::controls::badge::alert_count(n, cx)))
     }
 
     pub(super) fn render_navigator(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -59,7 +59,7 @@ impl WorkView {
             .child(clipped("work-nav-name", self.name(), false).flex_1().text_sm().font_weight(FontWeight::SEMIBOLD))
             .child(
                 button::Button::new(&self.hits, "work-nav-shut").icon(Icon::ChevronLeft.svg(14., colors.icon_muted)).icon_only(px(20.))
-                    .tooltip(supraman_ui::tooltip::Tooltip::text("Hide the navigator"))
+                    .tooltip(supraman_ui::controls::tooltip::Tooltip::text("Hide the navigator"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_nav(cx))),
             );
         let overview = self.nav_entry("work-nav-overview", Icon::Home, "Overview", None, cx)
@@ -174,7 +174,7 @@ impl WorkView {
             .bg(colors.panel_background)
             .child(
                 button::Button::new(&self.hits, "work-nav-open").icon(Icon::ChevronRight.svg(14., colors.icon_muted)).icon_only(px(20.))
-                    .tooltip(supraman_ui::tooltip::Tooltip::text("Show the navigator"))
+                    .tooltip(supraman_ui::controls::tooltip::Tooltip::text("Show the navigator"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_nav(cx))),
             )
             .into_any_element()

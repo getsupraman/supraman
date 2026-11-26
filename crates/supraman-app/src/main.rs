@@ -105,7 +105,7 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicI32, Ordering};
 
-use supraman_ui::text_input;
+use supraman_ui::text::input;
 use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use gpui::{AnyWindowHandle, App, AppContext as _, Bounds, Entity, SharedString, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, px, size};
@@ -379,7 +379,7 @@ fn run(mode: Mode, commands: UnboundedSender<Command>, mut received: UnboundedRe
         log::warn!("{problem}");
     }
     view::bind_keys(cx);
-    text_input::bind_keys(cx);
+    input::bind_keys(cx);
     git_view::bind_keys(cx);
     cx.on_window_closed(|cx, _| {
         if cx.windows().is_empty() {

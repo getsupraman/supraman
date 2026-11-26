@@ -4,12 +4,12 @@ use std::rc::Rc;
 
 use gpui::{AnyElement, ClickEvent, Context, Div, Render, SharedString, Window, div, prelude::*, px};
 use supraman_gitman::{ChangeKind, FileChange};
-use supraman_ui::banner;
-use supraman_ui::button;
+use supraman_ui::surfaces::banner;
+use supraman_ui::controls::button;
 use supraman_ui::hit::HitTargets;
 use supraman_ui::icon::Icon;
 use supraman_runtime::stall;
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::controls::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
 use super::{Ask, Branch, Section, Shown, State, WipPanel, file_changes};

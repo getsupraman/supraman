@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use supraman_gitman::{Amendable, ChangeKind, Details, FileChange, Repo, Stash, WipCounts};
-use supraman_ui::tree::{Order, Tree};
+use supraman_ui::list::tree::{Order, Tree};
 
 /// A file's change in this commit; `None` on a file the commit left as it was.
 pub(crate) type Mark = Option<ChangeKind>;

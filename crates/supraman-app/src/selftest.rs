@@ -575,7 +575,7 @@ pub(crate) async fn scrolled_into_view(view: &Entity<FleetView>, key: &str, cx: 
             if let Some(hit) = view.read_with(cx, |v, _| v.hits.borrow().get(key).copied()) {
                 break hit;
             }
-            // the sidebar paints only the rows in view (supraman_ui::keyed_list)
+            // the sidebar paints only the rows in view (supraman_ui::list::keyed_list)
             if !revealed && missing.elapsed() > Duration::from_millis(300) {
                 revealed = true;
                 claimed = view.update(cx, |v, cx| {

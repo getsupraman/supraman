@@ -34,7 +34,7 @@ fn held() -> Option<Box<dyn std::any::Any + Send>> {
 fn start(home: Option<&Path>, settings: BackgroundSettings, cx: &mut TestAppContext) {
     cx.update(|cx| {
         supraman_ui::init_globals(cx, "test");
-        supraman_ui::text_input::bind_keys(cx);
+        supraman_ui::text::input::bind_keys(cx);
         bind_keys(cx);
         let mut bg = Background::new(home.map(Path::to_path_buf));
         bg.on = true;

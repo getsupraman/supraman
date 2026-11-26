@@ -18,8 +18,8 @@ fn prompt(view: &Entity<GitView>, form: &str, cx: &mut VisualTestContext) -> (Bo
     assert_eq!((scrim.origin, scrim.size.width), (toolbar.origin, toolbar.size.width), "{form}: the scrim from the tab's top across it");
     assert!(scrim.bottom() >= graph.bottom(), "{form}: down to the tab's bottom: {scrim:?} {graph:?}");
     assert!((panel.center() - scrim.center()).x.abs() < px(1.) && (panel.center() - scrim.center()).y.abs() < px(1.), "{form}: centred: {panel:?} {scrim:?}");
-    let margin = supraman_ui::dialog::MARGIN - px(1.);
-    assert!(panel.left() >= scrim.left() + margin && panel.right() <= scrim.right() - margin && panel.size.width <= supraman_ui::dialog::WIDTH, "{form}: within the tab: {panel:?} {scrim:?}");
+    let margin = supraman_ui::surfaces::dialog::MARGIN - px(1.);
+    assert!(panel.left() >= scrim.left() + margin && panel.right() <= scrim.right() - margin && panel.size.width <= supraman_ui::surfaces::dialog::WIDTH, "{form}: within the tab: {panel:?} {scrim:?}");
     (scrim, panel)
 }
 

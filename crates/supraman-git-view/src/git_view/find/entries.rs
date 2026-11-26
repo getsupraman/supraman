@@ -11,8 +11,8 @@ use supraman_ui::icon::Icon;
 use supraman_ui::label::{Label, LabelMark};
 use supraman_ui::tokens;
 use supraman_ui::matcher::highlighted;
-use supraman_ui::palette::{Entry, Fit, Marks, Rank, fuzzy, marks_in, path_fuzzy, ranked_by};
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::list::palette::{Entry, Fit, Marks, Rank, fuzzy, marks_in, path_fuzzy, ranked_by};
+use supraman_ui::controls::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
 use super::super::load::GraphRow;

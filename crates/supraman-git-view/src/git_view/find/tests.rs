@@ -1,6 +1,6 @@
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use supraman_gitman::fixture::Fixture;
-use supraman_ui::palette::Entry as _;
+use supraman_ui::list::palette::Entry as _;
 
 use super::entries::{Command, GitEntry};
 use super::*;

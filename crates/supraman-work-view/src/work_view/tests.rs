@@ -163,8 +163,8 @@ thread_local! {
     static SESSIONS_OPENED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
-fn attach_opening() -> supraman_ui::session::Opening {
-    supraman_ui::session::Opening { icon: supraman_ui::icon::Icon::Attach, hint: "Attach in a new tab".into(), runs: true }
+fn attach_opening() -> supraman_ui::patterns::session::Opening {
+    supraman_ui::patterns::session::Opening { icon: supraman_ui::icon::Icon::Attach, hint: "Attach in a new tab".into(), runs: true }
 }
 
 fn record(link: &Link, _: &mut App) {
@@ -207,7 +207,7 @@ fn folders() -> Vec<std::path::PathBuf> {
 fn open(cx: &mut TestAppContext) -> Opened<'_> {
     cx.update(|cx| {
         supraman_ui::init_globals(cx, "test");
-        supraman_ui::text_input::bind_keys(cx);
+        supraman_ui::text::input::bind_keys(cx);
     });
     let fake = served();
     let client = Client::new(fake.base(), "fake-test-reader");
@@ -218,7 +218,7 @@ fn open(cx: &mut TestAppContext) -> Opened<'_> {
             i.use_repo_of(repo_of);
             i.set_targets(vec![(Target::Group("w".into()), folders())], folders(), cx)
         });
-        let live = vec![supraman_ui::session::LiveSession {
+        let live = vec![supraman_ui::patterns::session::LiveSession {
             name: "fm-w-ra".into(),
             claude_session_id: "uuid-live".into(),
             cwd: Default::default(),

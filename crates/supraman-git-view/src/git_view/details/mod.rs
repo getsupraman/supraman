@@ -16,9 +16,9 @@ use gpui::{AppContext as _, Context, Entity, EventEmitter, Pixels, ScrollHandle,
 use supraman_gitman::{Amendable, FileChange, Person, Repo, Stash};
 use supraman_ui::hit::HitTargets;
 use supraman_runtime::stall;
-use supraman_ui::table::TableState;
-use supraman_ui::text_input::{self, TextInput};
-use supraman_ui::tree::{Order, TreeState};
+use supraman_ui::list::table::TableState;
+use supraman_ui::text::input::{self, TextInput};
+use supraman_ui::list::tree::{Order, TreeState};
 
 pub(crate) use files::{kind_word, mark_icon};
 pub(crate) use load::Mark;
@@ -428,7 +428,7 @@ impl CommitPanel {
     }
 
     fn filter_box(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<TextInput> {
-        self.filter.get_or_insert_with(|| text_input::filter_box("Filter files", Self::set_filter, window, cx)).0.clone()
+        self.filter.get_or_insert_with(|| input::filter_box("Filter files", Self::set_filter, window, cx)).0.clone()
     }
 
     #[cfg(test)]

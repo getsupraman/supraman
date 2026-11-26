@@ -263,7 +263,7 @@ fn a_detached_heads_older_commit_says_to_check_out_a_branch(cx: &mut TestAppCont
     assert!(!painted(&view, EDIT_KEY, cx));
 }
 
-fn inputs(view: &Entity<GitView>, cx: &mut VisualTestContext) -> [Entity<supraman_ui::text_input::TextInput>; 2] {
+fn inputs(view: &Entity<GitView>, cx: &mut VisualTestContext) -> [Entity<supraman_ui::text::input::TextInput>; 2] {
     panel(view, cx).read_with(cx, |p, _| {
         let m = p.message_inputs().expect("the message's inputs");
         [m.summary.clone(), m.description.clone()]
@@ -279,7 +279,7 @@ fn message_layout(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<Str
     out
 }
 
-fn press_at(input: &Entity<supraman_ui::text_input::TextInput>, offset: usize, clicks: usize, view: &Entity<GitView>, cx: &mut VisualTestContext) {
+fn press_at(input: &Entity<supraman_ui::text::input::TextInput>, offset: usize, clicks: usize, view: &Entity<GitView>, cx: &mut VisualTestContext) {
     let position = input.read_with(cx, |i, _| i.painted_at(offset)).expect("painted");
     let (button, modifiers) = (gpui::MouseButton::Left, gpui::Modifiers::none());
     cx.simulate_event(gpui::MouseDownEvent { position, button, modifiers, click_count: clicks, first_mouse: false });

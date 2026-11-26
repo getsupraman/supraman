@@ -96,8 +96,8 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
         window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: None, modifiers: Modifiers::default() }), cx);
     })?;
     if crate::selftest_manage::shooting() {
-        supraman_ui::tooltip::LAST_SHOWN.with(|l| l.borrow_mut().take());
-        until_with(cx, WITHIN, "collapse-all's tooltip shown", |_| supraman_ui::tooltip::LAST_SHOWN.with(|l| l.borrow().is_some()).then_some(())).await?;
+        supraman_ui::controls::tooltip::LAST_SHOWN.with(|l| l.borrow_mut().take());
+        until_with(cx, WITHIN, "collapse-all's tooltip shown", |_| supraman_ui::controls::tooltip::LAST_SHOWN.with(|l| l.borrow().is_some()).then_some(())).await?;
         drawn(cx).await?;
         shot("m5-13-bar-tooltip", cx).await;
     }

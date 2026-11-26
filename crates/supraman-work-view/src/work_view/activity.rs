@@ -2,11 +2,11 @@
 
 use gpui::{ClickEvent, FontWeight};
 use supraman_core::time::{self, rfc3339_ms};
-use supraman_ui::placeholder::placeholder;
+use supraman_ui::patterns::placeholder::placeholder;
 use supraman_ui::hit::hit_target;
 use supraman_ui::clipped::clipped;
 use supraman_ui::icon::Icon;
-use supraman_ui::{button, fonts};
+use supraman_ui::{controls::button, fonts};
 use supraman_workman::{JournalEvent, JournalQuery};
 
 use super::actions::COPY_SIDE;

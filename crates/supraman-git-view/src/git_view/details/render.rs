@@ -5,12 +5,12 @@ use std::rc::Rc;
 use gpui::{AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla, Render, SharedString, Window, div, prelude::*, px};
 use supraman_core::time;
 use supraman_gitman::short_sha;
-use supraman_ui::button;
+use supraman_ui::controls::button;
 use supraman_ui::fonts;
 use supraman_ui::icon::Icon;
 use supraman_ui::split::HeightBar;
 use supraman_runtime::stall;
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::controls::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
 use super::files::{self, kind_word};
@@ -19,7 +19,7 @@ use crate::git_view::colours::{Palette, blend};
 use crate::git_view::commit::files::{FileClick, Listed};
 use crate::git_view::graph::avatar;
 use crate::git_view::load::initials;
-use supraman_ui::checkbox::Checkbox;
+use supraman_ui::controls::checkbox::Checkbox;
 
 /// The panel and the message box as steps of the theme's text over its editor background.
 pub(crate) const PANEL_STEP: f32 = 0.025;
@@ -44,7 +44,7 @@ fn person_colour(email: &str) -> usize {
 }
 
 pub(crate) fn placeholder(title: &str, detail: Option<&str>, cx: &App) -> AnyElement {
-    supraman_ui::placeholder::placeholder(title.to_string(), detail.map(str::to_string), cx).pt_8().px_4().into_any_element()
+    supraman_ui::patterns::placeholder::placeholder(title.to_string(), detail.map(str::to_string), cx).pt_8().px_4().into_any_element()
 }
 
 impl CommitPanel {

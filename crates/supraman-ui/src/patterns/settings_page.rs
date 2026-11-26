@@ -4,7 +4,7 @@
 use gpui::{AnyElement, App, ClickEvent, Context, FontWeight, Hsla, IntoElement, ParentElement as _, SharedString, Styled as _, div, prelude::*};
 use theme::ActiveTheme as _;
 
-use crate::button;
+use crate::controls::button;
 use crate::hit::HitTargets;
 use crate::label::{Label, LabelMark};
 use crate::tokens;

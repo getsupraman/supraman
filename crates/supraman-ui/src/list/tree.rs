@@ -9,7 +9,7 @@ use crate::hit::{HitTargets, hit_target};
 use crate::icon::Icon;
 use crate::label::{Label, LabelMark};
 use crate::matcher::find_all;
-use crate::table::{CELL_PAD, Column, Table, TableState};
+use crate::list::table::{CELL_PAD, Column, Table, TableState};
 use crate::tokens;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

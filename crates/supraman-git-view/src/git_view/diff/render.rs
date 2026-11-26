@@ -2,14 +2,14 @@
 
 use gpui::{AnyElement, ClickEvent, Context, Div, SharedString, Window, div, prelude::*, px};
 use supraman_gitman::ChangeKind;
-use supraman_ui::button;
+use supraman_ui::controls::button;
 use supraman_ui::clipped::path_label;
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
-use supraman_ui::placeholder::placeholder;
-use supraman_ui::segmented::{Segment, segmented};
+use supraman_ui::patterns::placeholder::placeholder;
+use supraman_ui::controls::segmented::{Segment, segmented};
 use supraman_runtime::stall;
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::controls::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
 use super::image::{self, Picture};

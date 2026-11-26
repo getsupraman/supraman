@@ -38,7 +38,7 @@ impl Renewals {
         }
         self.failed.retain(|name, _| checked.kept.contains(name));
         let current: Vec<String> = self.failed.values().cloned().collect();
-        supraman_ui::notices::keep_dismissed(&mut self.dismissed, &current);
+        supraman_ui::surfaces::notices::keep_dismissed(&mut self.dismissed, &current);
         self.failed != before
     }
 

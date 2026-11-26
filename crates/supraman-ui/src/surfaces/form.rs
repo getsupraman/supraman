@@ -6,10 +6,10 @@ use std::rc::Rc;
 
 use gpui::{AnyElement, AppContext as _, Context, Entity, FocusHandle, SharedString, Subscription, Window, div, prelude::*};
 
-use crate::button;
-use crate::dialog::{Button, Dialog, Panel};
+use crate::controls::button;
+use crate::surfaces::dialog::{Button, Dialog, Panel};
 use crate::hit::{HitTargets, hit_target};
-use crate::text_input::{InputEvent, TextInput};
+use crate::text::input::{InputEvent, TextInput};
 use crate::themes::secondary;
 use crate::tokens;
 use theme::ActiveTheme as _;

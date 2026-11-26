@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use supraman_core::Settings;
-use supraman_ui::settings_page::{SettingsPage, SettingsPages};
-use supraman_ui::{banner, button, focus_order};
+use supraman_ui::patterns::settings_page::{SettingsPage, SettingsPages};
+use supraman_ui::{surfaces::banner, controls::button, focus_order};
 use supraman_workman::AuthStatus;
 use supraman_ui::themes::{self, Catalog, TerminalColors};
 use gpui::{
@@ -14,7 +14,7 @@ use gpui::{
 use theme::ActiveTheme as _;
 
 use supraman_ui::hit::HitTargets;
-use supraman_ui::text_input::{InputEvent, TextInput};
+use supraman_ui::text::input::{InputEvent, TextInput};
 use crate::view::FleetView;
 use crate::workman_setup::ServerCheck;
 use supraman_workman::status::WorkmanStatus;

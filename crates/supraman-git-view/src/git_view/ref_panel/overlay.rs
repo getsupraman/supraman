@@ -2,7 +2,7 @@
 
 use gpui::{AnyElement, Context, FocusHandle, KeyDownEvent, MouseDownEvent, Pixels, Point, Window, deferred, div, prelude::*, px};
 use supraman_ui::hit::hit_target;
-use supraman_ui::tree::{Tree, TreeList, TreeState};
+use supraman_ui::list::tree::{Tree, TreeList, TreeState};
 use theme::ActiveTheme as _;
 
 use super::marks::MARK;

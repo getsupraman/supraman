@@ -4,15 +4,15 @@ use std::rc::Rc;
 
 use gpui::{AnyElement, App, ClickEvent, Context, Div, Hsla, MouseButton, MouseDownEvent, Pixels, Point, SharedString, Stateful, Window, div, prelude::*, px};
 use supraman_gitman::ChangeKind;
-use supraman_ui::button;
+use supraman_ui::controls::button;
 use supraman_ui::clipped::{clipped, path_label};
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
 use supraman_ui::label::{Label, LabelMark};
-use supraman_ui::segmented::{Segment, segmented};
-use supraman_ui::table::{Column, Table, TableState};
-use supraman_ui::tooltip::Tooltip;
-use supraman_ui::tree::{Item, LEAD, Order, Row, TreeList, TreeState};
+use supraman_ui::controls::segmented::{Segment, segmented};
+use supraman_ui::list::table::{Column, Table, TableState};
+use supraman_ui::controls::tooltip::Tooltip;
+use supraman_ui::list::tree::{Item, LEAD, Order, Row, TreeList, TreeState};
 use theme::ActiveTheme as _;
 
 use super::{FileView, Mark};
@@ -35,7 +35,7 @@ pub(crate) type OnMenu<V> = Rc<dyn Fn(&mut V, &str, bool, SharedString, Point<Pi
 /// `row` taking a right-click for `menu`.
 fn menu_row<V: 'static>(row: AnyElement, menu: &Option<OnMenu<V>>, list: &str, path: &str, folder: bool, cx: &mut Context<V>) -> AnyElement {
     let Some(menu) = menu.clone() else { return row };
-    let (path, anchor) = (path.to_string(), SharedString::from(supraman_ui::table::row_hit(list, path)));
+    let (path, anchor) = (path.to_string(), SharedString::from(supraman_ui::list::table::row_hit(list, path)));
     div()
         .size_full()
         .flex()
@@ -134,7 +134,7 @@ pub(crate) fn tree_list<V: 'static>(
 ) -> Stateful<Div> {
     let (painter, marker) = (hits.clone(), hits.clone());
     let id = format!("{list}-tree");
-    let group = supraman_ui::table::row_group(&id);
+    let group = supraman_ui::list::table::row_group(&id);
     let menu_list = id.clone();
     TreeList::new(id, tree, hits, move |this: &mut V, row, _, cx| {
         let kind = match row.item {
@@ -178,7 +178,7 @@ pub(crate) fn path_list<V: 'static>(
     let (paint, keys, painter) = (file.clone(), file.clone(), hits.clone());
     let column = [Column::new("path", "", px(0.), px(0.))];
     let id = format!("{list}-files");
-    let group = supraman_ui::table::row_group(&id);
+    let group = supraman_ui::list::table::row_group(&id);
     let menu_list = id.clone();
     Table::new(id, state, hits, column, &[px(0.)], len, move |this: &mut V, ix, _, _, cx| {
         paint(ix).map_or_else(|| div().into_any_element(), |(path, kind)| {

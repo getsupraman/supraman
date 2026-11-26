@@ -6,10 +6,10 @@ use gpui::{AnyElement, App, ClickEvent, Div, FontWeight, Hsla, SharedString, Sta
 use supraman_core::time;
 use theme::ActiveTheme as _;
 
-use crate::button::{self, Button};
+use crate::controls::button::{self, Button};
 use crate::clipped::{clamped, clipped, clipped_with};
 use crate::hit::{HitTargets, hit_target};
-use crate::tooltip::Tooltip;
+use crate::controls::tooltip::Tooltip;
 use crate::label::{Label, LabelMark};
 use crate::tokens;
 

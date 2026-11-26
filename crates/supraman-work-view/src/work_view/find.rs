@@ -6,7 +6,7 @@ use std::rc::Rc;
 use gpui::{FontWeight, Hsla};
 use supraman_ui::fonts;
 use supraman_ui::matcher::highlighted;
-use supraman_ui::palette::{Entry, Palette, PaletteEvent, marks_in};
+use supraman_ui::list::palette::{Entry, Palette, PaletteEvent, marks_in};
 use supraman_workman::{ItemStatus, SearchHit};
 
 use super::*;

@@ -182,13 +182,13 @@ pub(crate) fn acting(pill: Div, key: String, ix: usize, group: &RefGroup, at: us
 }
 
 /// The cell of a row whose name field stands in place of its pills.
-pub(crate) fn naming(ix: usize, field: gpui::Entity<supraman_ui::text_input::TextInput>, hits: &HitTargets) -> AnyElement {
+pub(crate) fn naming(ix: usize, field: gpui::Entity<supraman_ui::text::input::TextInput>, hits: &HitTargets) -> AnyElement {
     div().relative().size_full().flex().items_center().child(hit_target(hits, format!("git-refs-{ix}"))).child(div().w_full().child(field)).into_any_element()
 }
 
 pub(crate) fn refs(ix: usize, row: &GraphRow, view: RefCellView, selected: bool, palette: &Palette, hits: &HitTargets, cx: &mut Context<GitView>) -> AnyElement {
     let colour = row.row.colour;
-    let group = supraman_ui::table::row_group(super::TABLE);
+    let group = supraman_ui::list::table::row_group(super::TABLE);
     let mut cell = div()
         .id(SharedString::from(format!("git-refs-{ix}")))
         .relative()

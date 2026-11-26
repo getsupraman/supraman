@@ -13,7 +13,7 @@ use crate::git_view::test_support::{self, Opts, painted, press, redraw, repaint}
 use super::super::{GitView, Selected};
 use super::{AgentMenu, OpenAgent, PageAction, SessionPage, SessionPages};
 use supraman_ui::icon::Icon;
-use supraman_ui::session::Opening;
+use supraman_ui::patterns::session::Opening;
 use crate::occupancy::{Live, LiveSession};
 
 fn open<'a>(folder: PathBuf, live: Live, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {

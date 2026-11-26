@@ -1,7 +1,7 @@
 //! The prompt chips of a run or a blocked item: Workman's `/api/v1/prompts`, labels, counts and text as served.
 
 use gpui::{FontWeight};
-use supraman_ui::button;
+use supraman_ui::controls::button;
 use supraman_ui::fonts;
 use supraman_workman::Prompt;
 

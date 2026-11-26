@@ -265,24 +265,34 @@ The terminal is a text consumer like any other:
 
 ```
 supraman-ui/src/
-  tokens.rs            §3
+  tokens.rs tokens/    §3 the decisions by role; roles/ the colour roles
   state.rs             §4.1 interaction state + resolve
-  popup.rs             §4.2 anchors, registry
-  focus/ focus_order/  §4.3
-  scroll/              §4.4 ScrollArea, Scrollbar, ScrollbarHandle (ported)
-  text/                §4.5 TextInput, TextView, TextBox, Blink
-  list/                §4.6 core; table/, tree/, palette/ on it
-  dnd.rs               §4.7 Sortable, DropZone (split's divider stays in split/)
+  popup.rs             §4.2 anchors, one popup per layer
+  focus.rs focus/      §4.3 request, popup, ring, visible, panes
+  focus_order.rs       §4.3 a form's Tab order, Members
+  scroll.rs scroll/    §4.4 area, Scrollbar, ScrollbarHandle (bar.rs ported)
+  text/                §4.5 input (TextInput, TextView: line, element, edit, view), blink
+  list.rs list/        §4.6 the core (chrome, nav); table, tree, palette, keyed_list on it
+  dnd.rs               §4.7 source, Sortable, DropZone (split's divider stays in split.rs)
   label.rs ink.rs      §4.8
-  controls/            button, checkbox, segmented, stepper, pill, badge, menu, select, tooltip
-  surfaces/            dialog (Prompt), toast, banner, hover_card, form
-  patterns/            details page, settings page row, placeholder
-  gallery.rs           §10
+  controls/            button (Button, ButtonSplit, tick, choice, segment, row), badge, checkbox,
+                       menu, pill, segmented, stepper, tooltip
+  surfaces/            dialog (the Prompt), confirm, form, toast, banner, notices, hover_card
+  patterns/            details page, settings_page (registry, page list, row), placeholder,
+                       inbox_card, session (lead, Open)
+  clipped.rs marks.rs matcher.rs icon.rs fonts.rs hit.rs clipboard.rs folder_picker.rs
+  split.rs tabs/ term_element/ themes/
+  gallery.rs gallery/  §10
 ```
 
-Not UI, moved out to `supraman-core` (or their own small crate): `open`, `stall`, `nudge`, `store`,
-the logger in `lib.rs`. Feature content leaves the kit: `inbox_card`'s and `session`'s words and
-mapping go to their features, built on kit cards and labels.
+Not UI, out of the kit: `supraman-core` holds what needs no gpui (`open`, the link and path policy;
+`logging`, the logger and panic hook; `timeline`, the startup clock and phase lines). `supraman-runtime`
+holds what needs gpui but draws nothing (`nudge`, `stall`, `frames`, `save_off_thread`,
+`open_off_thread`): an executor, a window's frame or a background spawn, which `supraman-core` cannot
+name since `sm` builds it without gpui. Feature content leaves the kit: an Inbox card takes its colour
+from its owner (Workman's kinds in `work_view::inbox_card::kind_color`, a schedule's in
+`view/schedules.rs`), the palette its placeholder and caption; `ratchet::tests` holds the kit's
+string literals free of feature words and its manifest free of feature crates.
 
 Controls become builder structs (`Button::new(hits, key).label(…).size(…).tone(…)`) implementing
 `IntoElement` (`RenderOnce`, and `Styled` so a caller's layout follows the kit's own), in place of 30 free functions with

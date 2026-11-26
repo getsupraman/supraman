@@ -2,9 +2,9 @@
 
 use gpui::{App, ClickEvent, Context, Div, Entity, SharedString, div, prelude::*};
 use supraman_gitman::write::remote::PullChoice;
-use supraman_ui::button;
+use supraman_ui::controls::button;
 use supraman_ui::icon::Icon;
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::controls::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
 use super::{Button, RemoteActions, RemoteEvent};

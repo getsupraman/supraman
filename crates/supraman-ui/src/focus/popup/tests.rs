@@ -2,13 +2,13 @@ use std::rc::Rc;
 
 use gpui::{AnyElement, Context, Entity, Focusable as _, Modifiers, MouseButton, Render, Subscription, TestAppContext, VisualTestContext, Window, div, point, prelude::*, px};
 
-use crate::dialog::{self, Dialog, Panel};
+use crate::surfaces::dialog::{self, Dialog, Panel};
 use crate::focus::{request, restore_on_loss, root};
-use crate::form::{self, Answers, Form};
+use crate::surfaces::form::{self, Answers, Form};
 use crate::hit::HitTargets;
-use crate::menu::{ContextMenu, item};
-use crate::palette::{Entry, Palette, PaletteEvent, Paint};
-use crate::text_input::TextInput;
+use crate::controls::menu::{ContextMenu, item};
+use crate::list::palette::{Entry, Palette, PaletteEvent, Paint};
+use crate::text::input::TextInput;
 
 #[derive(Clone)]
 struct E(&'static str);
@@ -87,7 +87,7 @@ impl Host {
                 this.dialog = None;
                 cx.notify();
             };
-            let ok = dialog::Button::new("d-ok", "OK", crate::button::Tone::Neutral, shut);
+            let ok = dialog::Button::new("d-ok", "OK", crate::controls::button::Tone::Neutral, shut);
             let panel = Panel { key: "d".into(), title: None, body: div().into_any_element(), fields: Vec::new(), buttons: vec![ok], first: None, default: None, close: None, cancel: Rc::new(shut) };
             return Some(dialog.render(&self.hits, panel, cx));
         }
@@ -113,7 +113,7 @@ fn host(cx: &mut TestAppContext) -> (Entity<Host>, &mut VisualTestContext) {
     cx.update(|cx| {
         crate::init_globals(cx, "test");
         crate::focus_order::bind_keys(cx);
-        crate::text_input::bind_keys(cx);
+        crate::text::input::bind_keys(cx);
     });
     let (view, cx) = cx.add_window_view(|window, cx| {
         let field = cx.new(|cx| TextInput::new("Field", None, window, cx));

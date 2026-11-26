@@ -7,9 +7,9 @@ use supraman_gitman::write::conflicts::Sequence;
 use supraman_ui::focus_order::FocusOrder;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
-use supraman_ui::text_input::{InputEvent, TextInput};
-use supraman_ui::tooltip::Tooltip;
-use supraman_ui::{banner, button};
+use supraman_ui::text::input::{InputEvent, TextInput};
+use supraman_ui::controls::tooltip::Tooltip;
+use supraman_ui::{surfaces::banner, controls::button};
 use theme::ActiveTheme as _;
 
 use super::WipPanel;

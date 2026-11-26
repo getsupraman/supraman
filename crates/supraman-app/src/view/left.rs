@@ -6,8 +6,8 @@ use std::{
 
 use supraman_claude::{Health, now_ms};
 use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, SharedString, Stateful, div, prelude::*, px, relative, rems};
-use supraman_ui::banner;
-use supraman_ui::button;
+use supraman_ui::surfaces::banner;
+use supraman_ui::controls::button;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::dnd;
 use supraman_ui::tabs::DraggedSession;
@@ -15,7 +15,7 @@ use theme::ActiveTheme as _;
 
 use supraman_ui::icon::Icon;
 use supraman_ui::marks;
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::controls::tooltip::Tooltip;
 use super::{Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE, MAX_WORKING_LIMIT};
 use supraman_ui::clipped::clipped;
 use crate::settings_window::page;
@@ -303,7 +303,7 @@ impl FleetView {
                 banner::tinted(status.warning),
             ));
         }
-        let plain = supraman_ui::notices::render(
+        let plain = supraman_ui::surfaces::notices::render(
             self.plain_notices(cx),
             status.warning,
             |key, cx| glyph_button(&self.hits, key, Icon::Close, "Dismiss", cx),
@@ -348,7 +348,7 @@ impl FleetView {
         }
     }
 
-    /// The sidebar's rows in order: a key each and the tokens its hit keys contain (supraman_ui::keyed_list).
+    /// The sidebar's rows in order: a key each and the tokens its hit keys contain (supraman_ui::list::keyed_list).
     fn set_left_rows(&mut self, tree: &Rc<fleet::Tree>, cx: &gpui::App) {
         let mut rows = Vec::new();
         for (e, entry) in tree.entries.iter().enumerate() {
@@ -438,7 +438,7 @@ impl FleetView {
     }
 
     #[cfg(feature = "selftest")]
-    pub fn left_list(&self) -> &supraman_ui::keyed_list::KeyedList {
+    pub fn left_list(&self) -> &supraman_ui::list::keyed_list::KeyedList {
         &self.sidebar.left_list
     }
 

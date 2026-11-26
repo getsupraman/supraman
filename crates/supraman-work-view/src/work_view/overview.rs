@@ -3,11 +3,11 @@
 use supraman_core::text::count;
 use gpui::{ClickEvent, FontWeight, Hsla};
 use supraman_core::time::{self, rfc3339_ms};
-use supraman_ui::placeholder::placeholder;
+use supraman_ui::patterns::placeholder::placeholder;
 use supraman_ui::hit::hit_target;
 use supraman_ui::marks::{Mark, dot};
 use supraman_ui::clipped::clipped;
-use supraman_ui::{button, fonts};
+use supraman_ui::{controls::button, fonts};
 use supraman_workman::{Claim, Honesty, OverviewRun, Rollup};
 
 use super::cards::{self, Card};
@@ -17,7 +17,7 @@ use super::projects::{active, closed_runs};
 use super::state::StateKey;
 use super::*;
 use supraman_ui::label::Label;
-use supraman_ui::banner;
+use supraman_ui::surfaces::banner;
 use supraman_ui::tokens;
 
 pub(crate) const NEEDS_SHOWN: usize = 5;
@@ -169,7 +169,7 @@ impl WorkView {
                             .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(format!("{} · {}", c.badge, c.ref_))));
                         banner::marked(dot(Mark::Filled(crate::work_view::inbox_card::kind_color(&c.kind, cx))), text).flex_1().min_w_0().text_sm()
                     })
-                    .children(c.since.and_then(|at| supraman_ui::inbox_card::when(format!("work-overview-needs-when-{}", c.ref_), at, now, cx)).map(|w| w.text_xs()))
+                    .children(c.since.and_then(|at| supraman_ui::patterns::inbox_card::when(format!("work-overview-needs-when-{}", c.ref_), at, now, cx)).map(|w| w.text_xs()))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.open_from_inbox(id.clone(), cx))),
             );
         }

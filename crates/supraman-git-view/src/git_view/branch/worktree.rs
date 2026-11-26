@@ -8,13 +8,13 @@ use std::rc::Rc;
 use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, FocusHandle, Focusable, SharedString, Subscription, Window, deferred, div, prelude::*};
 use supraman_gitman::write::LockSet;
 use supraman_gitman::write::branch::{self, name_problem};
-use supraman_ui::button;
+use supraman_ui::controls::button;
 use supraman_ui::focus_order::{FocusOrder, NextField, Press, PreviousField};
 use supraman_ui::folder_picker::pick_folder;
-use supraman_ui::form::{self, Answers, Form};
+use supraman_ui::surfaces::form::{self, Answers, Form};
 use supraman_ui::icon::Icon;
-use supraman_ui::palette::{Palette, PaletteEvent};
-use supraman_ui::text_input::TextInput;
+use supraman_ui::list::palette::{Palette, PaletteEvent};
+use supraman_ui::text::input::TextInput;
 use supraman_ui::themes::secondary;
 use theme::ActiveTheme as _;
 

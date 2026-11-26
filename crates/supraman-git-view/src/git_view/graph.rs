@@ -5,7 +5,7 @@ use supraman_gitman::{Edge, EdgeKind};
 use supraman_ui::fonts;
 use supraman_ui::hit::{Hit, HitTargets, hit_target};
 use supraman_ui::icon::Icon;
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::controls::tooltip::Tooltip;
 
 use super::colours::Palette;
 use super::load::GraphRow;

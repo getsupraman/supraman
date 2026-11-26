@@ -72,7 +72,7 @@ impl<A> MenuItem<A> {
         Self { dimmed: Some(why.into()), ..self }
     }
 
-    /// A tick box before the label ([`crate::button::tick`]).
+    /// A tick box before the label ([`crate::controls::button::tick`]).
     pub fn ticked(self, on: bool) -> Self {
         Self { ticked: Some(on), ..self }
     }
@@ -324,7 +324,7 @@ fn entry<V: 'static, A: Clone + 'static>(
         (None, None) => None,
     };
     let label = Label::new(SharedString::from(it.label.clone())).mark_if(mark).gap(tokens::space::L).flex_1().hit(hits, key.clone());
-    let label = if lead { label.slot(crate::button::TICK) } else { label };
+    let label = if lead { label.slot(crate::controls::button::TICK) } else { label };
     let shortcut = it.shortcut.clone().map(|s| div().flex_none().text_size(tokens::text::SMALL).text_color(colors.text_muted).child(s));
     let chevron = (!it.submenu.is_empty()).then(|| Icon::ChevronRight.svg(tokens::icon::S, colors.text_muted));
     let mut row = div()
@@ -353,7 +353,7 @@ fn entry<V: 'static, A: Clone + 'static>(
         }
     });
     row = match &it.dimmed {
-        Some(why) => row.text_color(colors.text_disabled).tooltip(crate::tooltip::Tooltip::text(why.clone())).on_click(|_, _, cx| cx.stop_propagation()),
+        Some(why) => row.text_color(colors.text_disabled).tooltip(crate::controls::tooltip::Tooltip::text(why.clone())).on_click(|_, _, cx| cx.stop_propagation()),
         None => {
             let (nav, items, acts) = (nav.clone(), items.clone(), acts.clone());
             row.cursor_pointer().on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {

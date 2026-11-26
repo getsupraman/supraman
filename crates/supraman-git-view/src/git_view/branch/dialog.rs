@@ -2,15 +2,15 @@
 
 use gpui::{Focusable as _, AnyElement, AppContext as _, Context, Entity, FocusHandle, SharedString, Subscription, Window, div, prelude::*};
 use supraman_gitman::write::branch::name_problem;
-use supraman_ui::button;
-use supraman_ui::dialog::{Button as DialogButton, Panel};
-use supraman_ui::form;
+use supraman_ui::controls::button;
+use supraman_ui::surfaces::dialog::{Button as DialogButton, Panel};
+use supraman_ui::surfaces::form;
 use supraman_ui::hit::hit_target;
-use supraman_ui::text_input::{InputEvent, TextInput};
+use supraman_ui::text::input::{InputEvent, TextInput};
 use theme::ActiveTheme as _;
 
 use super::BranchActions;
-use supraman_ui::checkbox::Checkbox;
+use supraman_ui::controls::checkbox::Checkbox;
 
 /// What a name is asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]

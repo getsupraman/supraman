@@ -17,7 +17,7 @@ use supraman_term::{
 };
 use theme::{ActiveTheme, Theme};
 
-use crate::blink::Blink;
+use crate::text::blink::Blink;
 use crate::builtin_glyphs::{self, Mark};
 
 pub const FONT_SIZE: Pixels = px(14.);
@@ -962,7 +962,7 @@ fn convert_color(fg: &Color, theme: &Theme) -> Hsla {
     }
 }
 
-/// [`crate::palette`] of `theme`, built once per theme id ([`crate::themes`]).
+/// [`crate::list::palette`] of `theme`, built once per theme id ([`crate::themes`]).
 fn palette(theme: &Theme) -> std::rc::Rc<supraman_term::terminal_settings::TerminalPalette> {
     thread_local! {
         static PALETTE: std::cell::RefCell<Option<(String, std::rc::Rc<supraman_term::terminal_settings::TerminalPalette>)>> =

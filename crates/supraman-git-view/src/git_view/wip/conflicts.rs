@@ -4,10 +4,10 @@ use supraman_core::text::count;
 use gpui::{Context, Div, SharedString, div, prelude::*, px};
 use supraman_gitman::write::conflicts::{self, Marked, Sequence, Side};
 use supraman_gitman::{OperationState, UnderWay};
-use supraman_ui::button;
+use supraman_ui::controls::button;
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::controls::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
 use super::actions::{Doing, Kept, index_write};

@@ -15,7 +15,7 @@ use gpui::{
 };
 use theme::ActiveTheme as _;
 
-use crate::blink::Blink;
+use crate::text::blink::Blink;
 use crate::tokens;
 use element::{Layout, TextElement};
 pub use line::{EditKind, LineRows, LineText, Rows, filtered, pasted, row_of};

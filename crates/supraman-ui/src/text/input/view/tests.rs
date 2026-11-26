@@ -7,7 +7,7 @@ use gpui::{
 
 use super::*;
 use crate::hit::{HitTargets, hit_target};
-use crate::text_input::{InputEvent, TextInput};
+use crate::text::input::{InputEvent, TextInput};
 
 const TEXT: &str = "alpha beta gamma\nsecond line here";
 const WRAPPING: &str = "fix(dolomiti): skipass error codes are camelCase on the wire and in the widget, so errors show translated";
@@ -29,7 +29,7 @@ impl Render for Holder {
 fn holder<'a>(text: &str, cx: &'a mut TestAppContext) -> (Entity<Holder>, &'a mut VisualTestContext) {
     cx.update(|cx| {
         crate::init_globals(cx, "test");
-        crate::text_input::bind_keys(cx);
+        crate::text::input::bind_keys(cx);
     });
     let text = text.to_string();
     let (view, cx) = cx.add_window_view(move |window, cx| {

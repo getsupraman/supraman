@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use gpui::{App, Context, Pixels, Point};
 use supraman_core::paths::git_at;
-use supraman_ui::menu::item;
+use supraman_ui::controls::menu::item;
 
 use crate::fleet::EntryNode;
 use crate::view::menu::{ContextMenu, MenuAction, MenuItem};

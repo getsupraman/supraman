@@ -7,9 +7,9 @@ use gpui::{AnyElement, ClickEvent, Context, Pixels, SharedString, div, prelude::
 use supraman_core::shells::ShellSetting;
 use supraman_core::Scrollbars;
 use supraman_core::{DEFAULT_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, TabKeys};
-use supraman_ui::settings_page::row;
+use supraman_ui::patterns::settings_page::row;
 use supraman_ui::themes::{self, TerminalColors};
-use supraman_ui::{button, term_element};
+use supraman_ui::{controls::button, term_element};
 use theme::ActiveTheme as _;
 
 use super::{SettingsView, choose_theme};
@@ -227,7 +227,7 @@ impl SettingsView {
         self.shown_font_size.set(size);
         let font_size = match size {
             Some(size) => {
-                let stepper = button::stepper(&self.hits, "settings-term-font", format!("{}", f32::from(size)), &self.members, move |this: &mut Self, by, _, cx| {
+                let stepper = supraman_ui::controls::stepper::stepper(&self.hits, "settings-term-font", format!("{}", f32::from(size)), &self.members, move |this: &mut Self, by, _, cx| {
                     this.set_term_font_size(size + px(by as f32), cx);
                 }, cx);
                 let reset = self.control("settings-term-font-reset", "Reset", |this, _, cx| this.set_term_font_size(term_element::FONT_SIZE, cx), cx);
