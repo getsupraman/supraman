@@ -8,7 +8,7 @@ use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
 use supraman_ui::placeholder::placeholder;
 use supraman_ui::segmented::{Segment, segmented};
-use supraman_ui::stall;
+use supraman_runtime::stall;
 use supraman_ui::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 

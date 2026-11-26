@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use supraman_ui::nudge::Nudge;
+use supraman_runtime::nudge::Nudge;
 
 /// Workman's sign-in around its status: the notice dismissed, the recheck, a sign-in under way and the servers synced or left.
 pub struct WorkmanState {

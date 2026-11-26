@@ -8,7 +8,7 @@ use std::time::Duration;
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
 use supraman_core::paths::path_key;
 use supraman_core::watch::{Watch, Watcher};
-use supraman_ui::nudge::{self, Nudge, Nudged};
+use supraman_runtime::nudge::{self, Nudge, Nudged};
 
 use super::super::FleetView;
 

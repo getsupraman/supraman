@@ -42,6 +42,11 @@ pub fn count(n: usize, one: &str, many: &str) -> String {
 }
 
 /// A byte count in the user's words: `512 B`, `1.5 KB`, `12 MB` (1 KB = 1,024 bytes, as Explorer counts).
+/// A memory size in MiB with its byte count, a selftest's report line.
+pub fn mib(bytes: usize) -> String {
+    format!("{:.1} MiB ({bytes} B)", bytes as f64 / (1024.0 * 1024.0))
+}
+
 pub fn byte_size(bytes: u64) -> String {
     const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
     if bytes < 1024 {

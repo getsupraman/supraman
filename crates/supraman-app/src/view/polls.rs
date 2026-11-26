@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 use gpui::Context;
 use supraman_claude::{Session, list_sessions, now_ms};
 use supraman_core::EventReader;
-use supraman_ui::nudge::{self, Nudge, Nudged};
-use supraman_ui::timeline;
+use supraman_runtime::nudge::{self, Nudge, Nudged};
+use supraman_core::timeline;
 
 use super::{FleetView, Refresh, listed};
 use crate::fleet;
@@ -51,7 +51,7 @@ impl Polls {
             store: None,
             hands,
         };
-        timeline("window", Duration::ZERO);
+        timeline::phase("window", Duration::ZERO);
         FleetView::start_polling(poller, woken, cx);
         let (transcripts_nudge, transcripts_nudged) = nudge::nudge();
         let polls = Self {
@@ -137,9 +137,9 @@ impl Poller {
             _ => None,
         };
         if self.first {
-            timeline("folders done", registry_took);
-            timeline(&format!("list_sessions done ({} rows)", sessions.as_ref().and_then(|s| s.as_ref().ok()).map_or(0, Vec::len)), list_took);
-            timeline("main repos and events done", took - registry_took - list_took);
+            timeline::phase("folders done", registry_took);
+            timeline::phase(&format!("list_sessions done ({} rows)", sessions.as_ref().and_then(|s| s.as_ref().ok()).map_or(0, Vec::len)), list_took);
+            timeline::phase("main repos and events done", took - registry_took - list_took);
         }
         Refresh {
             folder_writes,
@@ -160,7 +160,7 @@ impl Poller {
         let sessions = self.snapshot.take()?;
         let report = self.upkeep.as_mut()?.tick(&sessions, now_ms());
         if first {
-            timeline("upkeep tick done", ticking.elapsed());
+            timeline::phase("upkeep tick done", ticking.elapsed());
         }
         Some(report)
     }

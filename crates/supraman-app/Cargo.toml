@@ -29,6 +29,7 @@ supraman-git-view = { path = "../supraman-git-view" }
 supraman-work-view = { path = "../supraman-work-view" }
 supraman-supervisor = { path = "../supraman-supervisor" }
 supraman-term = { path = "../supraman-term" }
+supraman-runtime = { path = "../supraman-runtime" }
 supraman-ui = { path = "../supraman-ui" }
 supraman-workman = { path = "../supraman-workman" }
 futures = "0.3.34"

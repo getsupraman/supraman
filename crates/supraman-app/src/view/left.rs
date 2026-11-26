@@ -227,7 +227,7 @@ impl FleetView {
     }
 
     pub(super) fn render_left(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let _stall = supraman_ui::stall::section("render: left");
+        let _stall = supraman_runtime::stall::section("render: left");
         let colors = cx.theme().colors().clone();
         let tree = self.tree();
 

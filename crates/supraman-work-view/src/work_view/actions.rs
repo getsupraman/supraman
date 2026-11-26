@@ -3,7 +3,8 @@
 use gpui::{MouseButton, MouseDownEvent, Pixels, Point};
 use supraman_ui::icon::Icon;
 use supraman_ui::menu::{ContextMenu, item};
-use supraman_ui::{button, open};
+use supraman_core::open;
+use supraman_ui::button;
 
 use super::*;
 

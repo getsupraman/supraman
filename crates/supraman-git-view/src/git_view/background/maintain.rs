@@ -9,7 +9,7 @@ use gpui::{App, AsyncApp};
 use supraman_core::fs::{load_json_or_notice, lock_file};
 use supraman_core::store::{JsonStore, Save};
 use supraman_gitman::write::{LockSet, Writer, maintain};
-use supraman_ui::nudge::Nudged;
+use supraman_runtime::nudge::Nudged;
 
 use super::{Background, HeavyLock, IDLE, Step};
 

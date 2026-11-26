@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use gpui::{AnyElement, App, AppContext as _, Context, Entity, SharedString, Subscription, Window, div, prelude::*, px};
 use supraman_ui::palette::{Entry as _, Mode, Palette, PaletteEvent, Rank};
-use supraman_ui::store::save_off_thread;
+use supraman_runtime::save_off_thread;
 
 use super::GitView;
 use super::details::FileView;

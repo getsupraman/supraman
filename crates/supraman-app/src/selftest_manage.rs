@@ -375,7 +375,7 @@ fn pumping_open(path: &Path) -> Result<(), String> {
         win::pump_messages();
         std::thread::sleep(Duration::from_millis(5));
     }
-    supraman_ui::open::open(path.as_os_str())
+    supraman_core::open::open(path.as_os_str())
 }
 
 /// Open folder on a missing folder while foreground tasks arrive: the refusal comes back as the action error.

@@ -38,7 +38,7 @@ use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::menu::ContextMenu;
 use supraman_ui::placeholder::placeholder;
 use supraman_ui::toast::ToastSlot;
-use supraman_ui::open::Link;
+use supraman_core::open::Link;
 use supraman_workman::status::WorkmanStatus;
 
 pub(crate) use actions::RowAction;

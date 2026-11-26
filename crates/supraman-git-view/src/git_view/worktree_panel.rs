@@ -11,7 +11,7 @@ use supraman_ui::button;
 use supraman_ui::clipped::path_label;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
-use supraman_ui::stall;
+use supraman_runtime::stall;
 use supraman_ui::themes::secondary;
 use supraman_ui::tree::Order;
 use theme::ActiveTheme as _;

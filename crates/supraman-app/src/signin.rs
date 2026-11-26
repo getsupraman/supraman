@@ -47,7 +47,7 @@ pub fn forget_own_credentials() -> Vec<String> {
 }
 
 fn open_system_browser(url: &str) -> Result<(), String> {
-    use supraman_ui::open;
+    use supraman_core::open;
     open::allowed(url, &open::WEB_SCHEMES).map_err(|_| format!("{url} is not a web address"))?;
     open::open(std::ffi::OsStr::new(url))
 }

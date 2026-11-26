@@ -279,9 +279,9 @@ impl CommitActions {
         .detach();
     }
 
-    /// Opens `path` with its handler off the UI thread, unless [`supraman_ui::open::document`] refuses it.
+    /// Opens `path` with its handler off the UI thread, unless [`supraman_core::open::document`] refuses it.
     fn open(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        let checked = cx.background_spawn(async move { supraman_ui::open::document(&path).and_then(|()| supraman_ui::open::open(path.as_os_str())) });
+        let checked = cx.background_spawn(async move { supraman_core::open::document(&path).and_then(|()| supraman_core::open::open(path.as_os_str())) });
         cx.spawn(async move |this, cx| {
             if let Err(why) = checked.await {
                 this.update(cx, |_, cx| cx.emit(CommitEvent::Why(why))).ok();

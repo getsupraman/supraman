@@ -13,9 +13,9 @@ use supraman_term::{
     MouseInputMode, Terminal, TerminalBuilder, TerminalMode,
     terminal_settings::{AlternateScroll, CursorShape},
 };
-use supraman_ui::nudge::{self, Nudge, Nudged};
-use supraman_ui::open::{self, Link};
-use supraman_ui::timeline;
+use supraman_runtime::nudge::{self, Nudge, Nudged};
+use supraman_core::open::{self, Link};
+use supraman_core::timeline;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::text_input::{InputEvent, TextInput};
 use supraman_ui::hover_card;
@@ -24,7 +24,8 @@ use supraman_ui::split::SplitPane;
 use supraman_ui::tabs::{TabHeader, tab_strip};
 use supraman_ui::toast::ToastSlot;
 use supraman_ui::tooltip::Tooltip;
-use supraman_ui::{FrameProbe, button, term_element};
+use supraman_runtime::frames::FrameProbe;
+use supraman_ui::{button, term_element};
 use gpui::{
     AnyElement, AnyWindowHandle, App, ClickEvent, Context, Entity, FocusHandle,
     KeyBinding, KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseDownEvent, Pixels, Render, ScrollEvent, SharedString, Window,
@@ -422,7 +423,7 @@ impl FleetView {
     fn check_loaded(&mut self, cx: &gpui::App) {
         if !self.loaded && self.loading(cx).is_empty() {
             self.loaded = true;
-            timeline("every source done", Duration::ZERO);
+            timeline::phase("every source done", Duration::ZERO);
         }
     }
 
@@ -457,7 +458,7 @@ impl FleetView {
                     })
                     .await;
                 if let Some(started) = first.take() {
-                    timeline("workman status done", started.elapsed());
+                    timeline::phase("workman status done", started.elapsed());
                 }
                 let alive = this.update(cx, |this, cx| {
                     if this.workman != status {
@@ -564,7 +565,7 @@ impl FleetView {
     }
 
     fn apply(&mut self, refresh: Refresh, cx: &mut Context<Self>) {
-        let _stall = supraman_ui::stall::section("poll: apply");
+        let _stall = supraman_runtime::stall::section("poll: apply");
         let before = (self.sessions.clone(), self.listing.main_repos.clone(), self.polled.hooks.clone(), self.polls.polled_at);
         let listed_changed = self.listed.apply(refresh.listed, refresh.folder_writes, self.polls.folder_writes.load(Ordering::SeqCst));
         if listed_changed {
@@ -656,7 +657,7 @@ impl FleetView {
     }
 
     fn build_tree(&self, now: i64) -> Tree {
-        let _stall = supraman_ui::stall::section("tree");
+        let _stall = supraman_runtime::stall::section("tree");
         let own_names = self.own_names();
         let sup = TreeInputs {
             hooks: Some(&self.polled.hooks),
@@ -1303,12 +1304,12 @@ fn placeholder(text: String, cx: &gpui::App) -> AnyElement {
 
 impl Render for FleetView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let _stall = supraman_ui::stall::section("render");
+        let _stall = supraman_runtime::stall::section("render");
         tree_check::RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.probe.on_render(window);
         if !self.painted_sessions && self.polls.sessions_read {
             self.painted_sessions = true;
-            timeline("first paint with sessions", Duration::ZERO);
+            timeline::phase("first paint with sessions", Duration::ZERO);
         }
         crate::selftest_seams::injected_frame_sleep();
         self.persist_tabs(cx);
@@ -1506,7 +1507,7 @@ mod tests {
             ("javascript:alert(1)", "javascript"),
             ("no-scheme", ""),
         ] {
-            assert_eq!(link_target(&MaybeNavigationTarget::Url(uri.into())), Err(supraman_ui::open::refused(scheme)), "{uri}");
+            assert_eq!(link_target(&MaybeNavigationTarget::Url(uri.into())), Err(supraman_core::open::refused(scheme)), "{uri}");
         }
     }
 

@@ -7,7 +7,7 @@ use gpui::{App, AsyncApp, Context, EntityId, Entity};
 use supraman_core::paths::path_key;
 use supraman_gitman::WorktreeWip;
 use supraman_gitman::write::{LockSet, Writer};
-use supraman_ui::nudge::Nudged;
+use supraman_runtime::nudge::Nudged;
 
 use super::{Background, IDLE, Step};
 use crate::git_view::GitView;

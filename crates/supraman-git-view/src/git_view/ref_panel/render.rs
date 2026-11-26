@@ -10,7 +10,7 @@ use supraman_ui::icon::Icon;
 use supraman_ui::label::{Label, LabelMark};
 use supraman_ui::matcher::highlighted;
 use supraman_ui::split::{Pane, Stack};
-use supraman_ui::stall;
+use supraman_runtime::stall;
 use supraman_ui::tokens;
 use supraman_ui::tooltip::Tooltip;
 use supraman_ui::tree::{Item, LEAD, Row, TreeList};

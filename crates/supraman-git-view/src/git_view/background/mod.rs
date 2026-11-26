@@ -16,7 +16,7 @@ use supraman_core::paths::path_key;
 use supraman_gitman::write::remote::{self, Fetched};
 use supraman_gitman::write::{LockSet, WriteError, Writer};
 use supraman_gitman::BackgroundSettings;
-use supraman_ui::nudge::{self, Nudge, Nudged};
+use supraman_runtime::nudge::{self, Nudge, Nudged};
 
 use super::GitView;
 

@@ -10,11 +10,11 @@ use gpui::{AppContext as _, Context};
 use supraman_core::install;
 use supraman_core::platform::fs::exe_name;
 use supraman_core::update::Version;
-use supraman_ui::nudge::{self, Nudge};
+use supraman_runtime::nudge::{self, Nudge};
 use supraman_workman::updates::{self, Available, Checked, Downloaded, Outcome, Source};
 
 use crate::view::{Confirm, Confirmed, FleetView};
-use supraman_ui::open::Link;
+use supraman_core::open::Link;
 
 pub type UpdateAction = fn(&mut FleetView, &Available, &mut Context<FleetView>);
 
@@ -255,9 +255,9 @@ impl FleetView {
     }
 
     pub fn open_web(&mut self, url: &str, cx: &mut Context<Self>) {
-        match supraman_ui::open::allowed(url, &supraman_ui::open::WEB_SCHEMES) {
+        match supraman_core::open::allowed(url, &supraman_core::open::WEB_SCHEMES) {
             Ok(()) => (self.open_link_with)(&Link::Url(url.to_string()), cx),
-            Err(scheme) => self.pane_toast.show_why(supraman_ui::open::refused(&scheme), |v: &mut Self| &mut v.pane_toast, cx),
+            Err(scheme) => self.pane_toast.show_why(supraman_core::open::refused(&scheme), |v: &mut Self| &mut v.pane_toast, cx),
         }
     }
 

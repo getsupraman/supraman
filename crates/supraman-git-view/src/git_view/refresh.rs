@@ -8,7 +8,7 @@ use futures::StreamExt as _;
 use gpui::{AnyElement, App, AppContext as _, Context, Pixels, SharedString, Subscription, Task, Window, px};
 use supraman_gitman::{FIRST_PAGE, Layout, Repo, Status};
 use supraman_ui::hit::SNAP;
-use supraman_ui::stall;
+use supraman_runtime::stall;
 
 use super::live::{self, FOCUS_DELAY, Live, Refresh};
 use super::load::{self, First, GraphRow, Kept};

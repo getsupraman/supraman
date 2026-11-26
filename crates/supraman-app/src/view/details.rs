@@ -124,7 +124,7 @@ impl FleetView {
     }
 
     pub(super) fn refresh_details(&mut self, cx: &mut Context<Self>) {
-        let _stall = supraman_ui::stall::section("poll: refresh_details");
+        let _stall = supraman_runtime::stall::section("poll: refresh_details");
         if !self.tabs.iter().any(|t| matches!(&t.kind, TabKind::Details(p) if matches!(p.target, MenuTarget::Session { .. }))) {
             return;
         }

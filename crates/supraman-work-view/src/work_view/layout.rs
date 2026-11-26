@@ -6,7 +6,7 @@ use gpui::{Context, Pixels, px};
 use serde::{Deserialize, Serialize};
 use supraman_core::store::JsonStore;
 use supraman_ui::split::SplitPane;
-use supraman_ui::store::save_off_thread;
+use supraman_runtime::save_off_thread;
 
 use super::WorkView;
 

@@ -79,7 +79,9 @@ fn shell_for(mode: &Mode) -> util::shell::Shell {
 }
 
 use supraman_core::platform::process::memory;
-use supraman_ui::{FrameProbe, init_globals, mib, ms_since_start, percentile, term_element};
+use supraman_core::{text::mib, timeline::ms_since_start};
+use supraman_runtime::frames::{FrameProbe, percentile};
+use supraman_ui::{init_globals, term_element};
 
 struct SpikeView {
     terminal: Option<Entity<Terminal>>,
@@ -180,9 +182,9 @@ fn kill_tree(child: &mut Child) {
 }
 
 fn main() {
-    supraman_ui::process_start();
+    supraman_core::timeline::process_start();
     let mode = parse_args();
-    supraman_ui::init_logger(None);
+    supraman_core::logging::init_logger(None);
     println!("terminal: supraman-term");
 
     if matches!(mode, Mode::Selftest(Load::External)) {

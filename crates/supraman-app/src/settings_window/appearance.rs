@@ -74,7 +74,7 @@ impl SettingsView {
                 async move { std::fs::create_dir_all(&dir) }
             });
             match made.await {
-                Ok(()) => cx.update(|cx| supraman_ui::open::open_off_thread(dir, cx).detach()),
+                Ok(()) => cx.update(|cx| supraman_runtime::open_off_thread(dir, cx).detach()),
                 Err(e) => {
                     this.update(cx, |this, cx| {
                         this.error = Some(format!("Cannot create {}: {e}", dir.display()));

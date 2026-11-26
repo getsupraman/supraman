@@ -2,7 +2,7 @@
 
 use gpui::{AnyElement, Context, Pixels, Point};
 use supraman_ui::menu::{ContextMenu, MenuItem, item};
-use supraman_ui::store::save_off_thread;
+use supraman_runtime::save_off_thread;
 
 use super::{GitView, columns, layout};
 

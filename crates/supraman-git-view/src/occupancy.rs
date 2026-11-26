@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use supraman_core::paths::within;
 use supraman_gitman::write::Occupancy;
-use supraman_ui::nudge::{Nudge, Nudged, nudge};
+use supraman_runtime::nudge::{Nudge, Nudged, nudge};
 pub use supraman_ui::session::LiveSession;
 
 #[derive(Default)]

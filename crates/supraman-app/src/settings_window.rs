@@ -384,9 +384,9 @@ impl SettingsView {
                 async move { path.exists() }
             });
             if exists.await {
-                cx.update(|cx| supraman_ui::open::open_off_thread(path, cx).detach());
+                cx.update(|cx| supraman_runtime::open_off_thread(path, cx).detach());
             } else {
-                this.update(cx, |this, cx| this.change_then(|_| {}, move |_, cx| supraman_ui::open::open_off_thread(path, cx).detach(), cx)).ok();
+                this.update(cx, |this, cx| this.change_then(|_| {}, move |_, cx| supraman_runtime::open_off_thread(path, cx).detach(), cx)).ok();
             }
         })
         .detach();

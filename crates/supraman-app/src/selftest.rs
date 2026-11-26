@@ -12,7 +12,7 @@ use supraman_core::folders::{Entries, Entry, FolderEntry};
 use supraman_core::process;
 use supraman_term::Terminal;
 use supraman_core::platform::process::memory;
-use supraman_ui::mib;
+use supraman_core::text::mib;
 use gpui::{
     App, AsyncWindowContext, Bounds, Entity, KeyDownEvent, Keystroke, Modifiers, MouseButton, Point,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, ScrollDelta, ScrollEvent, Window,
@@ -315,11 +315,11 @@ pub(crate) fn teardown_errors() -> Vec<String> {
 }
 
 pub(crate) fn log_offset() -> u64 {
-    std::fs::metadata(log_dir().join(supraman_ui::LOG_FILE)).map_or(0, |m| m.len())
+    std::fs::metadata(log_dir().join(supraman_core::logging::LOG_FILE)).map_or(0, |m| m.len())
 }
 
 pub(crate) fn teardown_errors_since(offset: u64) -> Vec<String> {
-    teardown_lines(&std::fs::read(log_dir().join(supraman_ui::LOG_FILE)).unwrap_or_default(), offset)
+    teardown_lines(&std::fs::read(log_dir().join(supraman_core::logging::LOG_FILE)).unwrap_or_default(), offset)
 }
 
 fn teardown_lines(bytes: &[u8], offset: u64) -> Vec<String> {
@@ -936,7 +936,7 @@ const PAINTED_AFTER_LIST: f64 = 150.0;
 
 /// The startup phase lines in the log, each source's line required; with how long the first list took to paint.
 fn startup_timeline() -> anyhow::Result<(String, f64)> {
-    let log = String::from_utf8_lossy(&std::fs::read(log_dir().join(supraman_ui::LOG_FILE)).unwrap_or_default()).into_owned();
+    let log = String::from_utf8_lossy(&std::fs::read(log_dir().join(supraman_core::logging::LOG_FILE)).unwrap_or_default()).into_owned();
     let phases: Vec<&str> = log.lines().filter_map(|l| l.split_once("] startup ").map(|(_, phase)| phase)).collect();
     let at = |phase: &str| {
         phases.iter().find(|p| p.starts_with(phase)).and_then(|p| p.rsplit_once("(at +")?.1.strip_suffix(" ms)")?.parse::<f64>().ok())

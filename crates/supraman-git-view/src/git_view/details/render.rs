@@ -9,7 +9,7 @@ use supraman_ui::button;
 use supraman_ui::fonts;
 use supraman_ui::icon::Icon;
 use supraman_ui::split::HeightBar;
-use supraman_ui::stall;
+use supraman_runtime::stall;
 use supraman_ui::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 

@@ -15,7 +15,7 @@ use std::sync::Arc;
 use gpui::{AppContext as _, Context, Entity, EventEmitter, Pixels, ScrollHandle, SharedString, Subscription, Window, px};
 use supraman_gitman::{Amendable, FileChange, Person, Repo, Stash};
 use supraman_ui::hit::HitTargets;
-use supraman_ui::stall;
+use supraman_runtime::stall;
 use supraman_ui::table::TableState;
 use supraman_ui::text_input::{self, TextInput};
 use supraman_ui::tree::{Order, TreeState};

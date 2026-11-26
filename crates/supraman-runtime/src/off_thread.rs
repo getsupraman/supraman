@@ -1,4 +1,6 @@
-use gpui::Context;
+use std::ffi::OsString;
+
+use gpui::{App, Context, Task};
 use supraman_core::store::Save;
 
 /// Writes `save` on the background executor, then hands its outcome to `done` on the owner.
@@ -9,4 +11,10 @@ pub fn save_off_thread<V: 'static>(save: Option<Save>, cx: &mut Context<V>, done
         this.update(cx, |this, cx| done(this, saved, cx)).ok();
     })
     .detach();
+}
+
+/// [`supraman_core::open::open`] on the background executor.
+pub fn open_off_thread(target: impl Into<OsString>, cx: &App) -> Task<Result<(), String>> {
+    let target = target.into();
+    cx.background_executor().spawn(async move { supraman_core::open::open(&target) })
 }

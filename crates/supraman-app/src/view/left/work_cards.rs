@@ -19,9 +19,9 @@ impl FleetView {
             CardAction::Open => {
                 self.open_work_item(card.target.clone(), &card.item_id, cx);
             }
-            CardAction::Web => match card.url.as_deref().map(|url| supraman_ui::open::allowed(url, &supraman_ui::open::WEB_SCHEMES).map(|()| url)) {
-                Some(Ok(url)) => supraman_ui::open::open_off_thread(url.to_string(), cx).detach(),
-                Some(Err(scheme)) => self.toast.show_why(supraman_ui::open::refused(&scheme), |this: &mut Self| &mut this.toast, cx),
+            CardAction::Web => match card.url.as_deref().map(|url| supraman_core::open::allowed(url, &supraman_core::open::WEB_SCHEMES).map(|()| url)) {
+                Some(Ok(url)) => supraman_runtime::open_off_thread(url.to_string(), cx).detach(),
+                Some(Err(scheme)) => self.toast.show_why(supraman_core::open::refused(&scheme), |this: &mut Self| &mut this.toast, cx),
                 None => {}
             },
             CardAction::Copied => self.toast.show(format!("Copied {}", card.full_ref), |this: &mut Self| &mut this.toast, cx),

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use gpui::Context;
 use supraman_term::MaybeNavigationTarget;
-use supraman_ui::open::{self, Link};
+use supraman_core::open::{self, Link};
 use util::paths::PathWithPosition;
 
 use super::FleetView;

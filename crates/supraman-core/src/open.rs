@@ -1,8 +1,7 @@
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use gpui::{App, Task};
-use supraman_core::platform::open::runs;
+use crate::platform::open::runs;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Link {
@@ -38,7 +37,7 @@ pub fn document(path: &Path) -> Result<(), String> {
         return Ok(());
     }
     let name = path.file_name().map_or_else(|| path.to_string_lossy(), |n| n.to_string_lossy());
-    match runs(&name, &supraman_core::platform::shell::pathext()) {
+    match runs(&name, &crate::platform::shell::pathext()) {
         Some(false) => Ok(()),
         Some(true) => Err(refused_file(&name)),
         None => Err(refused_bare(&name)),
@@ -66,13 +65,7 @@ pub fn file_url_path(url: &str) -> Result<PathBuf, String> {
 
 /// Opens an [`allowed`] URL or a [`document`] path with its handler; never on the UI thread, where ShellExecuteW's pump re-enters gpui.
 pub fn open(target: &OsStr) -> Result<(), String> {
-    supraman_core::platform::open::open(target)
-}
-
-/// [`open`] on the background executor.
-pub fn open_off_thread(target: impl Into<OsString>, cx: &App) -> Task<Result<(), String>> {
-    let target = target.into();
-    cx.background_executor().spawn(async move { open(&target) })
+    crate::platform::open::open(target)
 }
 
 #[cfg(test)]
