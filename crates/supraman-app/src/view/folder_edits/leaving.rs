@@ -188,6 +188,8 @@ impl FleetView {
             fields: vec![q.tick.clone()],
             buttons,
             first: Some(format!("{KEY}-yes").into()),
+            default: Some(format!("{KEY}-yes").into()),
+            close: None,
             cancel: std::rc::Rc::new(|this: &mut Self, _, cx| this.answer_remove(None, cx)),
         };
         Some(q.dialog.render(&self.hits, panel, cx))

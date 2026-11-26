@@ -1,6 +1,6 @@
 //! The buttons ([`Button`], [`ButtonSplit`]) and the tick boxes, choices and pills. Each takes `key` as its element id, its hover group and its [`hit_target`] key.
 
-use gpui::{App, BoxShadow, Context, Div, ElementId, FocusHandle, Hsla, Pixels, SharedString, Stateful, StyleRefinement, Window, div, point, prelude::*, px};
+use gpui::{App, Context, Div, ElementId, FocusHandle, Hsla, Pixels, SharedString, Stateful, StyleRefinement, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
 use crate::focus_order::{BUTTON_CONTEXT, Press};
@@ -81,7 +81,7 @@ pub enum Tone {
     Danger,
 }
 
-/// Solid for a form's main answer (Enter's), Outline for the rest; a question's answers are all Solid (`confirm::answer`).
+/// Solid, the default; every answer of a prompt is Solid (`confirm::answer`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fill {
     Solid,
@@ -123,11 +123,6 @@ pub const GAP: Pixels = space::L;
 
 /// How far a ring (the focus's, a default answer's) stands out of its button.
 pub const RING: Pixels = stroke::FOCUS;
-
-/// A [`RING`]-wide ring in `color` around a box.
-pub(crate) fn ring(color: Hsla) -> BoxShadow {
-    BoxShadow { color, offset: point(Pixels::ZERO, Pixels::ZERO), blur_radius: Pixels::ZERO, spread_radius: RING, inset: false }
-}
 
 /// A [`Button`]'s colours: its fill, border and text, its fill and text hovered, and its fill pressed.
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -2,7 +2,6 @@
 
 mod agent_rows;
 pub mod background;
-mod band;
 pub mod branch;
 mod cap;
 mod cells;
@@ -19,6 +18,7 @@ mod live;
 mod load;
 mod pages;
 pub mod probe;
+mod prompt;
 mod refresh;
 mod seek;
 pub(crate) mod ref_panel;
@@ -87,8 +87,6 @@ const GRAPH_MIN: f32 = 320.;
 const PANEL_MIN: f32 = 260.;
 /// The ref panel shrinks this much faster than the graph and the commit panel beside it.
 const REFS_SHRINK: f32 = 1000.;
-/// The open form's width, laid over the graph at the ref panel's right edge.
-pub(crate) const FORM_WIDTH: f32 = 320.;
 /// The hit keys of the ref panel's, the graph's and the commit panel's places.
 pub(crate) const REFS_PANE: &str = "git-refs-pane";
 pub(crate) const GRAPH_PANE: &str = "git-graph-pane";
@@ -199,7 +197,6 @@ pub struct GitView {
     viewer: Entity<viewer::Viewer>,
     /// The viewer closed since the last frame and the graph takes the keyboard on the next.
     focus_graph: bool,
-    band: band::Band,
     /// The panels' read of a selection a key moved, waiting for the key to come up.
     settle: Option<Task<()>>,
     right_waits: Option<keys::Waiting>,
@@ -242,11 +239,11 @@ impl GitView {
     /// `occupancy`: the live sessions working in it.
     pub fn open_with(folder: PathBuf, home: Option<PathBuf>, hits: HitTargets, occupancy: Arc<dyn Occupancy>, cx: &mut App) -> Entity<GitView> {
         cx.new(|cx| {
-            let gate = cx.new(|_| WriteGate::new(occupancy));
+            let focus = cx.focus_handle();
+            let gate = cx.new(|_| WriteGate::new(occupancy).in_tab(focus.clone()));
             let panel = cx.new(|cx| CommitPanel::new(hits.clone(), gate.clone(), None, cx));
             let wip_panel = cx.new(|cx| WipPanel::new(hits.clone(), gate.clone(), cx));
             let worktree_panel = cx.new(|cx| WorktreePanel::new(hits.clone(), cx));
-            let focus = cx.focus_handle();
             let ref_panel = cx.new(|cx| RefPanel::new(hits.clone(), cx));
             let events = [cx.subscribe(&panel, Self::panel_event), cx.subscribe(&wip_panel, Self::panel_event), cx.subscribe(&ref_panel, Self::ref_event), cx.subscribe(&worktree_panel, Self::worktree_event)];
             let undo = cx.new(|cx| UndoBar::new(gate.clone(), hits.clone(), cx));
@@ -288,7 +285,6 @@ impl GitView {
                 _panel_events: events,
                 viewer: cx.new(|_| viewer::Viewer::default()),
                 focus_graph: false,
-                band: band::Band::new(cx),
                 settle: None,
                 right_waits: None,
                 follow: refresh::Follow::default(),
@@ -879,12 +875,8 @@ impl GitView {
             Some(view) => view.into_any_element(),
             None => self.render_graph(cx),
         };
-        let form = self.render_form(cx).map(|form| {
-            let border = cx.theme().colors().border;
-            deferred(div().absolute().top_0().bottom_0().left_0().w(px(FORM_WIDTH)).max_w_full().occlude().border_r_1().border_color(border).child(form)).with_priority(supraman_ui::tokens::Layer::Form.priority())
-        });
-        let toast = self.toast.render(&self.hits, "git-toast", cx).map(|t| deferred(t).with_priority(supraman_ui::tokens::Layer::OverForm.priority()));
-        let table = div().relative().flex_1().min_w_0().h_full().child(first).child(hit_target(&self.hits, GRAPH_PANE.into())).child(pane.paint(&self.hits)).children(form).children(toast);
+        let toast = self.toast.render(&self.hits, "git-toast", cx).map(|t| deferred(t).with_priority(supraman_ui::tokens::Layer::OverPrompt.priority()));
+        let table = div().relative().flex_1().min_w_0().h_full().child(first).child(hit_target(&self.hits, GRAPH_PANE.into())).child(pane.paint(&self.hits)).children(toast);
         let panel = div().relative().flex_shrink(1.).min_w_0().flex().flex_col().w(self.panel_width).h_full().track_focus(&self.panel_focus).child(self.render_panel(cx)).child(hit_target(&self.hits, PANEL_PANE.into()));
         let panel = panel.child(focus::Pane::new(FOCUS_PANEL, &self.panel_focus).paint(&self.hits));
         let split = SplitPane { id: "git-split".into(), min_first: px(GRAPH_MIN), min_second: px(PANEL_MIN), default: PANEL_WIDTH }
@@ -894,11 +886,6 @@ impl GitView {
             }, |this: &mut GitView, cx| this.keep_layout(cx), cx)
             .size_full();
         self.with_refs(split.into_any_element(), cx)
-    }
-
-    /// Add Remote, Edit Remote or Create Worktree, the one form open.
-    fn render_form(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        self.remote.update(cx, |r, cx| r.render_add(cx)).or_else(|| self.branch.update(cx, |b, cx| b.render_add_worktree(cx)))
     }
 
     /// `rest` right of the ref panel, which in a narrow tab gives its width before the graph and commit panel do.
@@ -982,13 +969,13 @@ impl Render for GitView {
         self.wip_panel.update(cx, |p, cx| p.ensure_composer(window, cx));
         self.branch.update(cx, |b, cx| b.ensure_dialog(window, cx));
         self.take_focus_summary(window, cx);
-        let band = self.band(window, cx).map(|b| supraman_ui::confirm::cover(b, TOOLBAR * 2.));
+        let prompt = self.prompt(window, cx);
         let content = match &self.load {
             Load::Loading => notice("Reading the history…", self.folder.display().to_string(), cx).into_any_element(),
             Load::Problem(problem) => self.problem(problem, cx),
             Load::Ready => self.render_split(cx),
         };
-        div()
+        let tab = div()
             .size_full()
             .track_focus(&self.focus)
             .key_context(keys::TAB_CONTEXT)
@@ -1021,8 +1008,8 @@ impl Render for GitView {
                     .children(self.follow_notice(cx))
                     .child(div().flex_1().min_h_0().child(content)),
             )
-            .children(band.map(|b| deferred(b).with_priority(supraman_ui::tokens::Layer::OverForm.priority())))
-            .children(self.render_find().map(|f| deferred(f).with_priority(supraman_ui::tokens::Layer::OverForm.priority())))
-            .children(self.render_column_menu(cx))
+            .children(self.render_find().map(|f| deferred(f).with_priority(supraman_ui::tokens::Layer::OverPrompt.priority())))
+            .children(self.render_column_menu(cx));
+        supraman_ui::dialog::over(tab, prompt)
     }
 }

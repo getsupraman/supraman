@@ -620,7 +620,7 @@ async fn git_palette(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowC
     git_wip(view, &git, out, cx).await?;
     git_add_remote(view, out, cx).await?;
     git_add_worktree(view, out, cx).await?;
-    git_band(view, out, cx).await?;
+    git_prompt(view, out, cx).await?;
     git_agent(view, &dir, &fixture.worktree, out, cx).await?;
     git_worktree_tab(view, &dir, &fixture.worktree, out, cx).await?;
     git_pills(view, out, cx).await?;
@@ -739,7 +739,7 @@ async fn git_worktree_tab(view: &Entity<FleetView>, dir: &Path, side: &Path, out
     Ok(())
 }
 
-/// The REMOTE header hovered, its + in the count's place; then Add Remote, and Edit Remote of `origin` filled in, in the form slot beside the ref panel.
+/// The REMOTE header hovered, its + in the count's place; then Add Remote, and Edit Remote of `origin` filled in, in the tab's prompt.
 async fn git_add_remote(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let header = crate::selftest::until(view, cx, Duration::from_secs(10), "the REMOTE header", |v| v.hits.borrow().get("refpanel-row-remote").map(|h| h.bounds)).await?;
     cx.update(|window, cx| {
@@ -755,6 +755,7 @@ async fn git_add_remote(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWind
     let shot = capture(out.join("supraman-git-add-remote.png"), None, cx).await?;
     println!("shot: {}", shot.display());
     crate::selftest::click(view, "git-add-remote-close", cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "Add Remote closed", |v| (!v.hits.borrow().contains_key("git-add-remote-scrim")).then_some(())).await?;
     crate::selftest::press(view, "refpanel-row-remote/origin", MouseButton::Right, cx).await?;
     crate::selftest::until(view, cx, Duration::from_secs(10), "origin's menu", |v| v.hits.borrow().contains_key("menu-remote-edit-origin").then_some(())).await?;
     crate::selftest::click(view, "menu-remote-edit-origin", cx).await?;
@@ -762,10 +763,11 @@ async fn git_add_remote(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWind
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-git-edit-remote.png"), None, cx).await?;
     println!("shot: {}", shot.display());
-    crate::selftest::click(view, "git-edit-remote-close", cx).await
+    crate::selftest::click(view, "git-edit-remote-close", cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the prompt closed", |v| (!v.hits.borrow().contains_key("git-edit-remote-scrim")).then_some(())).await
 }
 
-/// The WORKTREES header hovered, its + in the count's place beside Refresh; then Create Worktree in the form slot beside the ref panel, its reference's picker shown, then shut.
+/// The WORKTREES header hovered, its + in the count's place beside Refresh; then Create Worktree in the tab's prompt, its reference's picker shown, then shut.
 async fn git_add_worktree(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let header = crate::selftest::until(view, cx, Duration::from_secs(10), "the WORKTREES header", |v| v.hits.borrow().get("refpanel-row-worktrees").map(|h| h.bounds)).await?;
     cx.update(|window, cx| {
@@ -786,17 +788,18 @@ async fn git_add_worktree(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWi
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-git-add-worktree-form.png"), None, cx).await?;
     println!("shot: {}", shot.display());
-    crate::selftest::click(view, "git-add-worktree-close", cx).await
+    crate::selftest::click(view, "git-add-worktree-close", cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the prompt closed", |v| (!v.hits.borrow().contains_key("git-add-worktree-scrim")).then_some(())).await
 }
 
-/// The worktree's removal asked in the band over the toolbar; its look (the attention fill against the panels, the answers' colours) is what René judges, which no unit test shows.
-async fn git_band(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+/// The worktree's removal asked in the tab's prompt; its look (the scrim over the tab, the panel, the answers and the default's ring) is what René judges, which no unit test shows.
+async fn git_prompt(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     crate::selftest::press(view, "refpanel-name-local/side", MouseButton::Right, cx).await?;
     crate::selftest::until(view, cx, Duration::from_secs(10), "the branch's menu", |v| v.hits.borrow().contains_key("menu-worktree-remove").then_some(())).await?;
     crate::selftest::click(view, "menu-worktree-remove", cx).await?;
-    crate::selftest::until(view, cx, Duration::from_secs(10), "the band over the toolbar", |v| v.hits.borrow().contains_key("git-ref-ask-band").then_some(())).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the prompt over the tab", |v| v.hits.borrow().contains_key("git-ref-ask-dialog").then_some(())).await?;
     sleep(cx, Duration::from_millis(800)).await;
-    let shot = capture(out.join("supraman-git-band.png"), None, cx).await?;
+    let shot = capture(out.join("supraman-git-prompt.png"), None, cx).await?;
     println!("shot: {}", shot.display());
     crate::selftest::click(view, "git-ref-ask-cancel", cx).await
 }

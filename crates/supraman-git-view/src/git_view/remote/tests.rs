@@ -16,17 +16,16 @@ fn open<'a>(folder: &Path, home: &Path, cx: &'a mut TestAppContext) -> (Entity<G
     test_support::open(folder, Opts::default().home(home).size(1400., 900.), cx)
 }
 
-/// The band `key` over the toolbar, twice its height, `inline` on one line with its text.
-fn inline(view: &Entity<GitView>, key: &str, inline: &[&str], cx: &mut VisualTestContext) {
+/// The prompt `key` over the tab, `parts` inside its panel.
+fn prompted(view: &Entity<GitView>, key: &str, parts: &[&str], cx: &mut VisualTestContext) {
     let hits = view.read_with(cx, |v, _| v.hits.clone());
     hits.borrow_mut().clear();
     redraw(view, cx);
     let at = |k: &str| hits.borrow().get(k).map(|h| h.bounds).unwrap_or_else(|| panic!("{k} is painted"));
-    let (toolbar, band, text) = (at("git-toolbar"), at(&format!("{key}-band")), at(&format!("{key}-text")));
-    assert_eq!((band.origin, band.size.width), (toolbar.origin, toolbar.size.width), "{key}: over the toolbar");
-    assert_eq!(band.size.height, toolbar.size.height * 2., "{key}: one line in {:?}", toolbar.size.width);
-    for k in inline {
-        assert!((at(k).center().y - text.center().y).abs() < px(1.), "{k} on the text's line");
+    let (toolbar, scrim, panel) = (at("git-toolbar"), at(&format!("{key}-scrim")), at(&format!("{key}-dialog")));
+    assert_eq!((scrim.origin, scrim.size.width), (toolbar.origin, toolbar.size.width), "{key}: over the tab");
+    for k in parts {
+        assert!(panel.contains(&at(k).center()), "{k} in {key}'s panel");
     }
 }
 
@@ -250,7 +249,7 @@ fn a_branch_without_upstream_is_pushed_after_the_dialog_chooses_one(cx: &mut Tes
     assert_eq!(dialog, Some(("topic".into(), "origin".into())));
     view.update(cx, |v, cx| v.remote.update(cx, |r, cx| r.upstream_dialog().unwrap().type_in("shared/topic", cx)));
     redraw(&view, cx);
-    inline(&view, "git-upstream", &["git-upstream-origin", "git-upstream-field", "git-upstream-ok", "git-upstream-cancel"], cx);
+    prompted(&view, "git-upstream", &["git-upstream-origin", "git-upstream-field", "git-upstream-ok", "git-upstream-cancel"], cx);
     click(&view, "git-upstream-ok", cx);
     assert_eq!(f.at(&f.temp.path().join("origin.git"), &["rev-parse", "shared/topic"]), sha);
     assert_eq!(f.at(&mine, &["rev-parse", "--abbrev-ref", "topic@{upstream}"]), "origin/shared/topic");
@@ -278,7 +277,7 @@ fn sshs_passphrase_prompt_answers_through_the_dialog_and_is_kept_only_when_remem
         view.update(cx, |v, cx| v.remote.update(cx, |r, cx| r.heard(0, super::Heard::Asked(a), cx)));
         redraw(&view, cx);
         view.update(cx, |v, cx| v.remote.update(cx, |r, cx| r.prompting().unwrap().type_in(typed, cx)));
-        inline(&view, "git-askpass", &["git-askpass-field", "git-askpass-ok", "git-askpass-cancel"], cx);
+        prompted(&view, "git-askpass", &["git-askpass-field", "git-askpass-ok", "git-askpass-cancel"], cx);
         if remember {
             click(&view, "git-askpass-remember", cx);
         }
@@ -299,7 +298,7 @@ fn owned(answers: &[(&str, bool)]) -> Vec<(String, bool)> {
 }
 
 fn key(view: &Entity<GitView>, keys: &str, cx: &mut VisualTestContext) {
-    assert!(cx.update(|window, cx| view.read(cx).band_focused(window)), "the band takes the keyboard before {keys}");
+    assert_eq!(test_support::pane_focused(cx).as_deref(), Some(supraman_ui::dialog::PANE), "the prompt takes the keyboard before {keys}");
     cx.simulate_keystrokes(keys);
     cx.run_until_parked();
     redraw(view, cx);

@@ -251,6 +251,30 @@ pub fn splits(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
         .into_any_element()
 }
 
+/// The upstream prompt's shape: the remote picked, then the branch on it.
+fn upstream(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
+    let hits = &g.hits;
+    let segments = [crate::segmented::Segment::new("origin").label("origin"), crate::segmented::Segment::new("fork").label("fork")];
+    let remotes = crate::segmented::segmented(hits, "kit-upstream", &segments, 0, |_: &mut Gallery, _, _, _| {}, cx);
+    let muted = crate::themes::secondary(cx.theme().colors());
+    let line = div().flex().items_center().gap(tokens::space::L).child(remotes).child(div().text_color(muted).child("/")).child(crate::form::input(hits, "kit-upstream-field", &g.inputs.upstream));
+    let body = div().flex().flex_col().gap(tokens::space::XL).child("Push main with no upstream to").child(line);
+    let ok = crate::dialog::Button::new("kit-upstream-ok", "Push", Tone::Neutral, |_: &mut Gallery, _, _| {});
+    let cancel = crate::dialog::Button::new("kit-upstream-cancel", "Cancel", Tone::Neutral, |_: &mut Gallery, _, _| {});
+    let panel = crate::dialog::Panel {
+        key: "kit-upstream".into(),
+        title: Some("Set upstream".into()),
+        body: body.into_any_element(),
+        fields: vec![g.inputs.upstream.focus_handle(cx)],
+        buttons: vec![ok, cancel],
+        first: None,
+        default: Some("kit-upstream-ok".into()),
+        close: None,
+        cancel: std::rc::Rc::new(|_: &mut Gallery, _, _| {}),
+    };
+    g.prompts[3].render(hits, panel, cx)
+}
+
 pub fn dialog(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
     let question = crate::confirm::Confirm::ask("Remove the sample? Its words cannot be brought back.", "Remove", ()).or("Keep a copy", ()).danger().titled("Remove the sample");
     let behind = div().size_full().p(tokens::space::XXL).child(crate::placeholder::placeholder("What lies behind", ["The scrim covers it."], cx));
@@ -262,21 +286,25 @@ pub fn prompts(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
     let hits = &g.hits;
     let status = cx.theme().status().clone();
     let question = crate::confirm::Confirm::ask("Apply the sample change here?", "Apply", ()).or("Apply elsewhere", ());
-    let band = question.render_band(hits, "kit-band", |_: &mut Gallery, _, _, _| {}, cx);
-    let danger = crate::confirm::Confirm::ask("Discard the sample change?", "Discard", ()).danger();
-    let danger_band = danger.render_band(hits, "kit-band-danger", |_: &mut Gallery, _, _, _| {}, cx);
+    let asked = g.prompts[0].ask(hits, "kit-ask", &question, |_: &mut Gallery, _, _, _| {}, cx);
+    let danger = crate::confirm::Confirm::ask("Discard the sample change? It cannot be brought back.", "Discard", ()).danger();
+    let danger = g.prompts[1].ask(hits, "kit-ask-danger", &danger, |_: &mut Gallery, _, _, _| {}, cx);
     let form = crate::form::Form {
         key: "kit-form".into(),
-        icon: Icon::FolderAdd,
-        title: "A side form".into(),
+        title: "Add Sample".into(),
         ok: "Add".into(),
         why: None,
         running: false,
         answers: crate::form::Answers { ok: |_: &mut Gallery, _| {}, close: |_: &mut Gallery, _| {} },
     };
     let fields = vec![(SharedString::from("Name"), crate::form::input(hits, "kit-form-name", &g.inputs.form_name)), (SharedString::from("Address"), crate::form::input(hits, "kit-form-url", &g.inputs.form_url))];
-    let order = crate::focus_order::FocusOrder::new([g.inputs.form_name.focus_handle(cx), g.inputs.form_url.focus_handle(cx)]);
-    let form = div().w(width(20.)).h(width(16.)).relative().child(form.render(hits, fields, order, None, cx));
+    let members = vec![g.inputs.form_name.focus_handle(cx), g.inputs.form_url.focus_handle(cx)];
+    let form = form.render(&g.prompts[2], hits, fields, members, None, cx);
+    let upstream = upstream(g, cx);
+    let frame = |caption: &str, prompt: AnyElement, cx: &App| {
+        let behind = div().size_full().p(tokens::space::XXL).child(crate::placeholder::placeholder("The tab behind", ["Its keys wait."], cx));
+        group(caption, cx).child(div().w(width(36.)).h(width(20.)).border(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border).child(crate::dialog::over(behind, Some(prompt))))
+    };
     let dismiss = |key: String, cx: &App| Button::new(hits, key).icon(Icon::Close.svg(tokens::icon::S, cx.theme().colors().text_muted)).icon_only(gpui::px(18.));
     let notices = crate::notices::render(vec![(Kind, "A plain notice with its ×".to_string()), (Kind, "Another notice".to_string())], status.warning, dismiss, |_: &mut Gallery, _, _, _| {}, cx);
     let banners = div()
@@ -295,8 +323,9 @@ pub fn prompts(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
         .flex()
         .flex_col()
         .gap(tokens::space::XL)
-        .child(group("confirm band: a question, then one with a danger answer", cx).child(band).child(danger_band))
-        .child(row().items_start().child(group("form", cx).child(form)).child(group("banner kinds, notices", cx).child(banners)).child(group("toast", cx).child(toast)))
+        .child(row().items_start().child(frame("a question", asked, cx)).child(frame("a danger question: Enter cancels", danger, cx)))
+        .child(row().items_start().child(frame("a small form", form, cx)).child(frame("the upstream prompt", upstream, cx)))
+        .child(row().items_start().child(group("banner kinds, notices", cx).child(banners)).child(group("toast", cx).child(toast)))
         .into_any_element()
 }
 

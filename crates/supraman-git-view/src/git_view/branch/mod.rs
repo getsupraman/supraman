@@ -159,8 +159,10 @@ fn with_stash(done: String, autostash: &Autostash) -> String {
 }
 
 impl BranchActions {
-    pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
-        self.writes.band_answer(&self.hits, "git-ref-ask", Self::answer, cx)
+    /// The question, else the name asked, else Create Worktree, in the tab's prompt.
+    pub(crate) fn prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        self.ensure_dialog(window, cx);
+        self.writes.prompt_answer(&self.hits, "git-ref-ask", Self::answer, cx).or_else(|| self.render_naming(cx)).or_else(|| self.render_add_worktree(cx))
     }
 
     pub(crate) fn new(gate: Entity<WriteGate>, hits: HitTargets, cx: &mut Context<Self>) -> BranchActions {
@@ -540,6 +542,6 @@ impl Render for BranchActions {
                 cx.notify();
             }, cx)
         });
-        div().children(self.render_dialog(cx)).children(menu)
+        div().children(menu)
     }
 }

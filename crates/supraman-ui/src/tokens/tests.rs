@@ -47,7 +47,7 @@ fn the_roles_follow_the_theme_applied(cx: &mut TestAppContext) {
 
 #[test]
 fn the_layers_stack_in_their_order() {
-    let order = [Layer::Float, Layer::Form, Layer::Card, Layer::OverForm, Layer::Menu, Layer::Dialog];
+    let order = [Layer::Float, Layer::Card, Layer::Prompt, Layer::OverPrompt, Layer::Menu, Layer::Dialog];
     assert!(order.windows(2).all(|w| w[0].priority() < w[1].priority()));
     assert_eq!(Layer::Float.priority(), 1);
 }
@@ -66,3 +66,12 @@ fn the_open_fill_reads_in_every_theme_apart_from_the_hover_and_both_selections()
     }
 }
 
+
+#[test]
+fn the_focus_ring_reads_on_a_prompts_raised_surface_in_every_theme() {
+    for theme in bundled() {
+        let (r, raised) = (Roles::of(&theme), theme.colors().elevated_surface_background);
+        let ring = contrast(r.ring, raised);
+        assert!(ring >= 3., "{}: the default answer's ring {ring:.2}:1 on the prompt's surface", theme.name);
+    }
+}

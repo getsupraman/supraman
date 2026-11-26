@@ -2,6 +2,7 @@ mod file_view;
 mod focus;
 mod forms;
 mod paint;
+mod prompt;
 mod stream;
 mod write_cancel;
 

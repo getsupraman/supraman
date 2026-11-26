@@ -125,8 +125,8 @@ fn index_write() -> LockSet {
 }
 
 impl CommitActions {
-    pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
-        self.writes.band_answer(&self.hits, "git-commit-ask", Self::answer, cx)
+    pub(crate) fn prompt(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        self.writes.prompt_answer(&self.hits, "git-commit-ask", Self::answer, cx)
     }
 
     pub(crate) fn new(gate: Entity<WriteGate>, hits: HitTargets, cx: &mut Context<Self>) -> CommitActions {

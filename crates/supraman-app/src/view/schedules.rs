@@ -609,6 +609,8 @@ impl FleetView {
                 DialogButton::new("sched-edit-cancel", "Cancel", button::Tone::Neutral, |this: &mut Self, _, cx| close_schedule_edit(this, cx)),
             ],
             first: None,
+            default: None,
+            close: None,
             cancel: std::rc::Rc::new(|this: &mut Self, _, cx| close_schedule_edit(this, cx)),
         };
         Some(edit.dialog.render(&self.hits, panel, cx))

@@ -147,6 +147,7 @@ impl CommitPanel {
     pub(crate) fn new(hits: HitTargets, gate: Entity<WriteGate>, message_height: Option<Pixels>, cx: &mut Context<Self>) -> Self {
         let written = cx.subscribe(&gate, |this: &mut CommitPanel, _, w: &Written, cx| this.written(w, cx));
         cx.observe(&gate, |_, _, cx| cx.notify()).detach();
+        let dialog = gate.read(cx).dialog();
         CommitPanel {
             hits,
             repo: None,
@@ -168,7 +169,7 @@ impl CommitPanel {
             message_height: message_height.unwrap_or(MESSAGE_HEIGHT),
             message_scroll: ScrollHandle::new(),
             gate,
-            reword: reword::Reword::default(),
+            reword: reword::Reword::new(dialog),
             _written: written,
         }
     }

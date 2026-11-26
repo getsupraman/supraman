@@ -42,7 +42,7 @@ type, feature words or a feature's state file.
 
 ## 3. Tokens
 
-Colour comes from the theme (`ThemeColors` plus `themes::{selection, secondary, attention}`). Every other decision is
+Colour comes from the theme (`ThemeColors` plus `themes::{selection, secondary}`). Every other decision is
 `supraman_ui::tokens`, by role, at the values the kit already drew with (ui-kit/2 measured them; the gallery did not move):
 
 | Token | Values | Replaces |
@@ -54,7 +54,7 @@ Colour comes from the theme (`ThemeColors` plus `themes::{selection, secondary, 
 | `icon` | `XS 10, S 12, M 14, L 16` | literal icon sizes |
 | `stroke` | `HAIRLINE 1, FOCUS 2` | `border_1`, `border_2` |
 | `motion` | `FAST 80 ms, NORMAL 160 ms, TURN 1 s, SCROLLBAR_IDLE 1500 ms, CARET_BLINK 530 ms` | scattered constants |
-| `Layer` | `Float < Form < Card < OverForm < Menu < Dialog` | `menu::{FLOAT, FORM, CARD, OVER_FORM, PRIORITY}`, `dialog::PRIORITY` |
+| `Layer` | `Float < Card < Prompt < OverPrompt < Menu < Dialog` | `menu::{FLOAT, FORM, CARD, OVER_FORM, PRIORITY}`, `dialog::PRIORITY` |
 
 Colour roles the kit adds over the theme, derived once per theme load (`tokens::roles(cx)`): `surface`, `surface_raised`,
 `surface_sunken`, `border_subtle`, `border_strong`, `ring`, `accent`, `on_accent`, `danger`, `warning`, `success`, `info`,
@@ -189,8 +189,7 @@ hit target, toggles on click, Space and Enter, and carries the focus ring. Same 
 
 ## 5. Surfaces: where a question or a small form appears
 
-Today a Git tab question can appear as a band, a form slot, a name card, a stash strip, an inline row
-field or the in-place editor. There are only two meanings:
+A Git tab question or small form has two meanings:
 
 - **A question or a small form about an action** (rename a branch, set an upstream, a force push,
   delete, add a remote, create a worktree, a stash message): **one `Prompt`**. It is modal to its tab,
@@ -200,9 +199,11 @@ field or the in-place editor. There are only two meanings:
 - **Editing a value where it is shown** (a group's name in the sidebar, a new branch's name on the
   graph row, the commit message): **in place**, through `TextBox` (§4.5). Nothing else moves.
 
-The band (`git_view/band.rs`, the attention fill), the name card (`branch/dialog.rs`), the stash strip
-and the per-tab form slot are retired. `themes::attention` goes with the band (placement confirmed by
-René 2026-11-26).
+The `Prompt` is `dialog::Dialog::in_tab` (ui-kit/6): the main window's dialog over one tab's region, at
+`Layer::Prompt`, F6's pane while it shows (`focus::Pane::covering`), its keys never reaching the tab behind
+while the rest of the window keeps its own. A form keeps its title × (outside the Tab order) rather than a
+Cancel answer. The band, the name card, the stash strip and the per-tab form slot are gone, and
+`themes::attention` with the band (placement confirmed by René 2026-11-26).
 
 ## 6. Visual direction
 

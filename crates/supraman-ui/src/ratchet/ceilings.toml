@@ -53,8 +53,7 @@
 "supraman-app/src/view/startup.rs" = 1
 "supraman-app/src/view/term.rs" = 1
 "supraman-app/src/view/term_look.rs" = 1
-"supraman-git-view/src/git_view.rs" = 33
-"supraman-git-view/src/git_view/branch/dialog.rs" = 1
+"supraman-git-view/src/git_view.rs" = 32
 "supraman-git-view/src/git_view/cap.rs" = 1
 "supraman-git-view/src/git_view/cells.rs" = 33
 "supraman-git-view/src/git_view/details/files.rs" = 10
@@ -72,7 +71,6 @@
 "supraman-git-view/src/git_view/ref_panel/render.rs" = 11
 "supraman-git-view/src/git_view/ref_panel/worktrees.rs" = 3
 "supraman-git-view/src/git_view/refresh.rs" = 3
-"supraman-git-view/src/git_view/remote/dialogs.rs" = 1
 "supraman-git-view/src/git_view/wip/compose.rs" = 2
 "supraman-git-view/src/git_view/wip/conflicts.rs" = 1
 "supraman-git-view/src/git_view/wip/render.rs" = 8
@@ -95,10 +93,8 @@
 "supraman-ui/src/button.rs" = 2
 "supraman-ui/src/button/build.rs" = 3
 "supraman-ui/src/clipped.rs" = 2
-"supraman-ui/src/confirm.rs" = 2
 "supraman-ui/src/details.rs" = 1
 "supraman-ui/src/dialog.rs" = 2
-"supraman-ui/src/form.rs" = 1
 "supraman-ui/src/gallery.rs" = 4
 "supraman-ui/src/gallery/sections.rs" = 16
 "supraman-ui/src/hit.rs" = 1

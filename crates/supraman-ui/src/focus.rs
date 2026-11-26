@@ -17,7 +17,7 @@ mod popup;
 mod visible;
 
 pub use popup::{popup, request};
-pub use visible::{keyed, ring, visible};
+pub use visible::{keyed, ring, ring_while, visible};
 
 gpui::actions!(focus, [NextPane, PreviousPane]);
 
@@ -37,11 +37,12 @@ pub struct Pane {
     region: FocusHandle,
     entry: FocusHandle,
     later: bool,
+    covers: Option<FocusHandle>,
 }
 
 impl Pane {
     pub fn new(key: impl Into<SharedString>, region: &FocusHandle) -> Self {
-        Self { key: key.into(), region: region.clone(), entry: region.clone(), later: false }
+        Self { key: key.into(), region: region.clone(), entry: region.clone(), later: false, covers: None }
     }
 
     /// What F6 focuses in it before anything in it has held the focus.
@@ -52,6 +53,11 @@ impl Pane {
     /// Ordered after the window's other panes though painted before some (the diff viewer in the graph's place).
     pub fn later(self) -> Self {
         Self { later: true, ..self }
+    }
+
+    /// A modal pane over the element tracking `region` (a tab's Prompt): the panes inside it leave F6's order while it shows.
+    pub fn covering(self, region: &FocusHandle) -> Self {
+        Self { covers: Some(region.clone()), ..self }
     }
 
     /// The last child of the pane's `relative` element: registers the pane as it prepaints and paints its mark.
@@ -216,12 +222,12 @@ pub fn to_pane(key: &str, window: &mut Window, cx: &mut App) -> bool {
 
 /// The shown panes' keys in F6's order.
 pub fn order(window: &mut Window, cx: &mut App) -> Vec<SharedString> {
-    state(window, cx).borrow().ordered().into_iter().map(|p| p.key).collect()
+    state(window, cx).borrow().ordered(window).into_iter().map(|p| p.key).collect()
 }
 
 /// The pane holding the focus.
 pub fn focused(window: &mut Window, cx: &mut App) -> Option<SharedString> {
-    let panes = state(window, cx).borrow().ordered();
+    let panes = state(window, cx).borrow().ordered(window);
     holding(&panes, window, cx).map(|at| panes[at].key.clone())
 }
 
@@ -233,7 +239,7 @@ fn step(back: bool, window: &mut Window, cx: &mut App) {
     let target = {
         let state = state(window, cx);
         let state = state.borrow();
-        let panes = state.ordered();
+        let panes = state.ordered(window);
         focus_order::stepped(holding(&panes, window, cx), panes.len(), back).map(|to| state.target(&panes[to], window))
     };
     if let Some(target) = target {
@@ -286,8 +292,11 @@ impl State {
         };
     }
 
-    fn ordered(&self) -> Vec<Pane> {
-        ordered(&self.shown, |p| p.later)
+    /// The shown panes in F6's order, those a modal pane covers left out.
+    fn ordered(&self, window: &Window) -> Vec<Pane> {
+        let covers: Vec<&FocusHandle> = self.shown.iter().filter_map(|p| p.covers.as_ref()).collect();
+        let open: Vec<Pane> = self.shown.iter().filter(|p| !covers.iter().any(|c| c.contains(&p.region, window))).cloned().collect();
+        ordered(&open, |p| p.later)
     }
 
     fn target(&self, pane: &Pane, window: &Window) -> FocusHandle {

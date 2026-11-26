@@ -16,7 +16,6 @@ use serde::Deserialize;
 use serde_json::Value;
 use theme::{AccentColors, Appearance, StatusColors, Theme, ThemeColors};
 
-pub mod attention;
 pub mod lanes;
 pub mod selftest_light;
 pub mod syntax;
@@ -248,11 +247,10 @@ fn fresh_id(name: &str) -> String {
     format!("{name}#{}", GENERATION.fetch_add(1, Ordering::Relaxed))
 }
 
-/// A fresh id for a changed theme, its lanes and attention kept.
+/// A fresh id for a changed theme, its lanes kept.
 fn reid(theme: &mut Theme) {
     let id = fresh_id(&theme.name);
     lanes::carry(&theme.id, &id);
-    attention::carry(&theme.id, &id);
     theme.id = id;
 }
 
@@ -296,7 +294,6 @@ pub fn supraman_dark() -> Loaded {
     let mut adjusted = fit_backgrounds(&mut theme);
     adjusted.extend(fit_placeholder(&mut theme));
     adjusted.extend(lanes::fit(&theme, &[None; lanes::LANES]));
-    adjusted.extend(attention::fit(&theme, None));
     adjusted.extend(syntax::fit(&mut theme));
     Loaded { theme, applied: 0, ignored: Vec::new(), adjusted }
 }
@@ -321,18 +318,14 @@ pub fn from_zed(base: &Theme, zed: &ZedTheme) -> Loaded {
     };
     let (mut applied, mut ignored, mut set) = (0, Vec::new(), HashSet::new());
     let mut lane_set = [None; lanes::LANES];
-    let mut attention_set = None;
     let styles = &mut theme.styles;
     styles.syntax = syntax::defaults(theme.appearance);
     for (key, value) in &zed.style {
         let lane = lanes::key_lane(key);
-        if lane.is_some() || key == attention::KEY {
+        if let Some(lane) = lane {
             match value.as_str().and_then(parse_color) {
                 Some(colour) => {
-                    match lane {
-                        Some(lane) => lane_set[lane] = Some(colour),
-                        None => attention_set = Some(colour),
-                    }
+                    lane_set[lane] = Some(colour);
                     applied += 1;
                 }
                 None if value.is_null() => {}
@@ -385,7 +378,6 @@ pub fn from_zed(base: &Theme, zed: &ZedTheme) -> Loaded {
     fill_unset(styles, &set);
     let mut adjusted = fit_floors(&mut theme);
     adjusted.extend(lanes::fit(&theme, &lane_set));
-    adjusted.extend(attention::fit(&theme, attention_set));
     adjusted.extend(syntax::fit(&mut theme));
     Loaded { theme, applied, ignored, adjusted }
 }

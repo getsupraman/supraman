@@ -1,4 +1,4 @@
-//! The open form laid over the graph at the ref panel's right edge: Add Remote, Edit Remote and Create Worktree, on a fixture copy and its bare temp remote.
+//! The open form, the tab's prompt over it: Add Remote, Edit Remote and Create Worktree, on a fixture copy and its bare temp remote.
 
 use gpui::{Bounds, Entity, Pixels, TestAppContext, VisualTestContext, px};
 use supraman_gitman::fixture::Fixture;
@@ -10,26 +10,17 @@ use crate::git_view::test_support::{self, Opts, click, keys, redraw, right_click
 
 const WORKTREE: &str = "git-add-worktree";
 
-/// The ref panel's, the open form's (when `form`), the graph's and the commit panel's bounds in a frame drawn now.
-fn places(view: &Entity<GitView>, form: Option<&str>, cx: &mut VisualTestContext) -> (Option<Bounds<Pixels>>, Option<Bounds<Pixels>>, Bounds<Pixels>, Bounds<Pixels>) {
+/// The form's scrim and panel in a frame drawn now: the scrim over the whole tab, the panel centred on it within its margin.
+fn prompt(view: &Entity<GitView>, form: &str, cx: &mut VisualTestContext) -> (Bounds<Pixels>, Bounds<Pixels>) {
     let hits = test_support::repaint(view, cx);
     let at = |k: &str| hits.borrow().get(k).map(|h| h.bounds).unwrap_or_else(|| panic!("{k} is painted"));
-    (hits.borrow().get(REFS_PANE).map(|h| h.bounds), form.map(at), at(GRAPH_PANE), at(PANEL_PANE))
-}
-
-/// The form lies over the graph from its left edge, `FORM_WIDTH` wide (or the graph's width when narrower) and the column's height; nothing else moves.
-fn over(view: &Entity<GitView>, form: &str, closed: (Option<Bounds<Pixels>>, Bounds<Pixels>, Bounds<Pixels>), cx: &mut VisualTestContext) -> Bounds<Pixels> {
-    let (refs, at, graph, panel) = places(view, Some(form), cx);
-    let at = at.unwrap();
-    assert_eq!((refs, graph, panel), closed, "{form}: the ref panel, the graph and the commit panel stay where they were");
-    if let Some(refs) = refs {
-        assert!(refs.right() <= at.left() && at.left() - refs.right() < px(8.), "{form} at the ref panel's right edge: {refs:?} {at:?}");
-        assert_eq!((at.top(), at.bottom()), (refs.top(), refs.bottom()), "{form} spans the ref panel's column");
-    }
-    assert_eq!(at.left(), graph.left(), "{form} starts at the graph's left edge: {at:?} {graph:?}");
-    assert_eq!((at.top(), at.bottom()), (graph.top(), graph.bottom()), "{form} is the graph's height");
-    assert!((at.size.width - px(FORM_WIDTH).min(graph.size.width)).abs() < px(2.), "{form} is {FORM_WIDTH} wide, within the graph: {at:?} {graph:?}");
-    at
+    let (toolbar, graph, scrim, panel) = (at("git-toolbar"), at(GRAPH_PANE), at(&format!("{form}-scrim")), at(&format!("{form}-dialog")));
+    assert_eq!((scrim.origin, scrim.size.width), (toolbar.origin, toolbar.size.width), "{form}: the scrim from the tab's top across it");
+    assert!(scrim.bottom() >= graph.bottom(), "{form}: down to the tab's bottom: {scrim:?} {graph:?}");
+    assert!((panel.center() - scrim.center()).x.abs() < px(1.) && (panel.center() - scrim.center()).y.abs() < px(1.), "{form}: centred: {panel:?} {scrim:?}");
+    let margin = supraman_ui::dialog::MARGIN - px(1.);
+    assert!(panel.left() >= scrim.left() + margin && panel.right() <= scrim.right() - margin && panel.size.width <= supraman_ui::dialog::WIDTH, "{form}: within the tab: {panel:?} {scrim:?}");
+    (scrim, panel)
 }
 
 fn open_form(view: &Entity<GitView>, plus: &str, cx: &mut VisualTestContext) {
@@ -44,65 +35,50 @@ fn open_form(view: &Entity<GitView>, plus: &str, cx: &mut VisualTestContext) {
 }
 
 #[gpui::test]
-fn a_form_covers_the_graph_at_the_ref_panels_edge_and_nothing_moves(cx: &mut TestAppContext) {
+fn a_form_is_a_prompt_centred_over_the_tab_and_closing_it_leaves_the_tab_as_it_was(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let home = tempfile::tempdir().unwrap();
     let (view, cx) = test_support::open(&f.dir, Opts::default().home(home.path()).size(1400., 900.), cx);
-    let (refs, _, graph, panel) = places(&view, None, cx);
-
+    let before = test_support::repaint(&view, cx).borrow().get(GRAPH_PANE).map(|h| h.bounds);
     open_form(&view, "refpanel-remote-add", cx);
-    over(&view, add::KEY, (refs, graph, panel), cx);
+    prompt(&view, add::KEY, cx);
+    keys(&view, "escape", cx);
     open_form(&view, "refpanel-worktrees-add", cx);
-    over(&view, WORKTREE, (refs, graph, panel), cx);
+    prompt(&view, WORKTREE, cx);
     keys(&view, "escape", cx);
     keys(&view, "escape", cx);
-    assert_eq!(places(&view, None, cx), (refs, None, graph, panel), "closed, the tab is as it was");
+    let hits = test_support::repaint(&view, cx);
+    assert!(!hits.borrow().contains_key(&format!("{WORKTREE}-dialog")), "closed");
+    assert_eq!(hits.borrow().get(GRAPH_PANE).map(|h| h.bounds), before, "the graph where it was");
 }
 
 #[gpui::test]
-fn a_click_on_a_pill_under_the_form_lands_on_the_form(cx: &mut TestAppContext) {
+fn in_a_narrow_tab_the_form_stays_within_it(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let home = tempfile::tempdir().unwrap();
+    for width in [1300., 950., 500.] {
+        let (view, cx) = test_support::open(&f.dir, Opts::default().home(home.path()).size(width, 700.), cx);
+        view.update(cx, |v, cx| v.remote.update(cx, |r, cx| r.open_add(cx)));
+        settle(&view, cx);
+        prompt(&view, add::KEY, cx);
+    }
+}
+
+#[gpui::test]
+fn a_click_on_a_pill_under_the_scrim_does_nothing_and_the_form_stays(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let home = tempfile::tempdir().unwrap();
     let (view, cx) = test_support::open(&f.dir, Opts::default().home(home.path()).size(1400., 900.), cx);
     open_form(&view, "refpanel-remote-add", cx);
+    let (scrim, _) = prompt(&view, add::KEY, cx);
     let hits = test_support::repaint(&view, cx);
-    let form = hits.borrow().get(add::KEY).unwrap().bounds;
     let selected = view.read_with(cx, |v, cx| v.selected(cx));
-    let under = hits.borrow().iter().filter(|(k, h)| k.starts_with("git-pill-") && form.contains(&h.bounds.center())).map(|(k, _)| k.clone()).collect::<Vec<_>>();
-    assert!(under.len() > 1, "pills lie under the form: {under:?}");
-    for pill in under {
-        click(&view, &pill, cx);
-        assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), selected, "{pill}: the click stays on the form");
-        assert!(test_support::painted(&view, add::KEY, cx), "{pill}: the form stays open");
-    }
-    let outside = hits.borrow().get(PANEL_PANE).unwrap().bounds;
-    assert!(!form.intersects(&outside), "the commit panel lies outside the form");
-}
-
-#[gpui::test]
-fn with_the_ref_panel_shut_the_form_starts_at_the_strip(cx: &mut TestAppContext) {
-    let f = Fixture::copy();
-    let home = tempfile::tempdir().unwrap();
-    let (view, cx) = test_support::open(&f.dir, Opts::default().home(home.path()).size(1400., 900.), cx);
-    view.update(cx, |v, cx| v.ref_panel.update(cx, |p, cx| p.toggle_shut(cx)));
-    let (refs, _, graph, panel) = places(&view, None, cx);
-    assert_eq!(refs, None, "shut, the ref panel is its strip");
-    view.update(cx, |v, cx| v.remote.update(cx, |r, cx| r.open_add(cx)));
-    settle(&view, cx);
-    let at = over(&view, add::KEY, (refs, graph, panel), cx);
-    assert!(at.left() > px(0.) && at.left() < px(60.), "the form starts at the strip's right edge: {at:?}");
-}
-
-#[gpui::test]
-fn in_a_narrow_tab_the_form_stays_within_the_graph_and_nothing_moves(cx: &mut TestAppContext) {
-    let f = Fixture::copy();
-    let home = tempfile::tempdir().unwrap();
-    for width in [1300., 1100., 950., 700.] {
-        let (view, cx) = test_support::open(&f.dir, Opts::default().home(home.path()).size(width, 700.), cx);
-        let (refs, _, graph, panel) = places(&view, None, cx);
-        open_form(&view, "refpanel-remote-add", cx);
-        let at = over(&view, add::KEY, (refs, graph, panel), cx);
-        assert!(at.right() <= graph.right(), "{width}: the form ends within the graph: {at:?} {graph:?}");
+    let under = hits.borrow().iter().filter(|(k, h)| (k.starts_with("git-pill-") || k.starts_with("refpanel-row-")) && scrim.contains(&h.bounds.center())).map(|(k, _)| k.clone()).collect::<Vec<_>>();
+    assert!(under.len() > 1, "pills and ref rows lie under the scrim: {under:?}");
+    for key in under {
+        click(&view, &key, cx);
+        assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), selected, "{key}: the click stays on the scrim");
+        assert!(test_support::painted(&view, add::KEY, cx), "{key}: the form stays open");
     }
 }
 
@@ -116,14 +92,24 @@ fn one_form_at_a_time(cx: &mut TestAppContext) {
         [add::KEY, add::EDIT_KEY, WORKTREE].into_iter().filter(|k| hits.borrow().contains_key(*k)).collect::<Vec<_>>()
     };
 
+    let event = |view: &Entity<GitView>, e: ref_panel::RefEvent, cx: &mut VisualTestContext| {
+        view.update(cx, |v, cx| {
+            let panel = v.ref_panel.clone();
+            v.ref_event(panel, &e, cx);
+        });
+        settle(view, cx);
+    };
+
     open_form(&view, "refpanel-worktrees-add", cx);
     assert_eq!(open(&view, cx), [WORKTREE]);
-    open_form(&view, "refpanel-remote-add", cx);
+    click(&view, "refpanel-remote-add", cx);
+    settle(&view, cx);
+    assert_eq!(open(&view, cx), [WORKTREE], "the ref panel's + under the prompt's scrim opens nothing");
+    event(&view, ref_panel::RefEvent::AddRemote, cx);
     assert_eq!(open(&view, cx), [add::KEY], "Add Remote closes Create Worktree");
-    open_form(&view, "refpanel-worktrees-add", cx);
+    event(&view, ref_panel::RefEvent::AddWorktree, cx);
     assert_eq!(open(&view, cx), [WORKTREE], "Create Worktree closes Add Remote");
-    right_click(&view, "refpanel-row-remote/origin", cx);
-    click(&view, "menu-remote-edit-origin", cx);
+    view.update(cx, |v, cx| v.remote.update(cx, |r, cx| r.act(remote::RemoteAct::EditRemote("origin".into()), cx)));
     settle(&view, cx);
     assert_eq!(open(&view, cx), [add::EDIT_KEY], "Edit Remote closes Create Worktree");
 }
@@ -189,24 +175,4 @@ fn edit_remote_opens_filled_and_saves_its_url_push_url_and_name(cx: &mut TestApp
     assert_eq!(view.read_with(cx, |v, cx| v.remote.read(cx).adding().unwrap().why_not(cx)), Some(add::NEEDS_URL), "an empty URL dims Save");
     keys(&view, "escape", cx);
     assert!(!test_support::painted(&view, add::EDIT_KEY, cx), "Esc closes");
-}
-
-#[gpui::test]
-fn the_ref_panels_overlay_card_lies_over_an_open_form_and_takes_its_clicks(cx: &mut TestAppContext) {
-    let f = Fixture::copy();
-    let home = tempfile::tempdir().unwrap();
-    let (view, cx) = test_support::open(&f.dir, Opts::default().home(home.path()).size(1400., 900.), cx);
-    let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
-    panel.update(cx, |p, cx| p.toggle_shut(cx));
-    view.update(cx, |v, cx| v.remote.update(cx, |r, cx| r.open_add(cx)));
-    settle(&view, cx);
-    click(&view, "refpanel-strip-local", cx);
-    assert_eq!(panel.read_with(cx, |p, _| p.overlay()), Some(ref_panel::Section::Local));
-    let hits = test_support::repaint(&view, cx);
-    let (form, row) = (hits.borrow().get(add::KEY).unwrap().bounds, hits.borrow().get("refpanel-overlay-row-feature").unwrap().bounds);
-    assert!(form.contains(&row.center()), "the card's row lies over the form: {form:?} {row:?}");
-    click(&view, "refpanel-overlay-row-feature", cx);
-    assert_eq!(view.read_with(cx, |v, cx| v.selected(cx)), Some(Selected::Commit(f.sha("rename").into())), "the click lands on the card's row");
-    assert_eq!(panel.read_with(cx, |p, _| p.overlay()), None, "the pick closes the card");
-    assert!(test_support::painted(&view, add::KEY, cx), "the form stays open under it");
 }
