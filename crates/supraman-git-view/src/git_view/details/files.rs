@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use gpui::{AnyElement, App, ClickEvent, Context, Div, Hsla, MouseButton, MouseDownEvent, Pixels, Point, SharedString, Stateful, Window, div, prelude::*, px};
 use supraman_gitman::ChangeKind;
+use supraman_ui::tokens;
 use supraman_ui::controls::button;
 use supraman_ui::clipped::{clipped, path_label};
 use supraman_ui::hit::{HitTargets, hit_target};
@@ -204,7 +205,7 @@ pub(crate) fn sort_button<V: 'static>(hits: &HitTargets, list: &str, order: Orde
         Order::Ascending => (Icon::SortDown, "Names A–Z; click for Z–A"),
         Order::Descending => (Icon::SortUp, "Names Z–A; click for A–Z"),
     };
-    button::Button::new(hits, format!("{list}-sort")).icon(icon.svg(14., muted)).icon_only(px(24.))
+    button::Button::new(hits, format!("{list}-sort")).icon(icon.svg(14., muted)).icon_only(tokens::bar::ICON_BUTTON)
         .tooltip(Tooltip::text(words))
         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| set(this, order.reversed(), cx)))
 }

@@ -1,5 +1,6 @@
 //! The commit area under the WIP panel's lists; a cherry-pick, revert or am shows only its steps, an external rebase only its Abort.
 
+use supraman_ui::tokens;
 use gpui::{ClickEvent, Context, Div, SharedString, div, prelude::*};
 use supraman_gitman::OperationState;
 use supraman_gitman::write::conflicts::Sequence;
@@ -57,7 +58,7 @@ impl WipPanel {
             .items_center()
             .gap_1()
             .px_1()
-            .rounded_sm()
+            .rounded(tokens::radius::S)
             .text_color(muted)
             .child(chevron.svg(12., muted))
             .child("Commit options")
@@ -103,7 +104,7 @@ impl WipPanel {
     pub(super) fn commit_area(&self, shown: &Shown, cx: &mut Context<Self>) -> Option<Div> {
         let c = self.composer.as_ref()?;
         let border = cx.theme().colors().border_variant;
-        let area = div().relative().flex().flex_col().flex_none().gap_2().p_2().border_t_1().border_color(border).child(hit_target(&self.hits, AREA.into()));
+        let area = div().relative().flex().flex_col().flex_none().gap_2().p_2().border_t(tokens::stroke::HAIRLINE).border_color(border).child(hit_target(&self.hits, AREA.into()));
         let area = match self.message_order(false, cx) {
             Some(order) => order.on(area),
             None => area,

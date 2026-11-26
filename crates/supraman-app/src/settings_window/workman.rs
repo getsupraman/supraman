@@ -10,6 +10,9 @@ use theme::ActiveTheme as _;
 use super::SettingsView;
 use crate::workman_setup::ServerCheck;
 
+/// The server URL field.
+const URL_WIDTH: gpui::Pixels = px(280.);
+
 impl SettingsView {
     /// server.json and claude's own `workman` entry, read off the UI thread.
     pub fn check_server(&mut self, cx: &mut Context<Self>) {
@@ -66,7 +69,7 @@ impl SettingsView {
         let status_row = self.render_workman_status(cx);
         self.members.add(self.url_input.focus_handle(cx));
         let field = button::Button::line()
-            .child(div().id("ws-url").w(px(280.)).child(self.url_input.clone()))
+            .child(div().id("ws-url").w(URL_WIDTH).child(self.url_input.clone()))
             .child(self.control("settings-ws-url-apply", "Apply", |this, _, cx| this.apply_url(cx), cx));
         let below = div()
             .flex()

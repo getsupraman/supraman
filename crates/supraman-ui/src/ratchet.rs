@@ -18,7 +18,8 @@ pub enum Kind {
     RenderFocus,
     /// `.hover(`: a feature's own hover fill.
     Hover,
-    /// `px(` in a feature crate (not the `.px(` padding method).
+    /// `px(` in a feature crate (not the `.px(` padding method). At its floor: geometry or measurement and named decision
+    /// constants only; a styling value (padding, gap, radius, text, size, border) is a `tokens` one, and a new styling `px(` fails review.
     Px,
     /// `px(` in the kit's own sources.
     KitPx,

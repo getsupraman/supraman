@@ -20,6 +20,11 @@ use supraman_ui::label::Label;
 use supraman_ui::surfaces::{banner, card};
 use supraman_ui::tokens;
 
+/// The least width of Working now and the tiles beside Needs you.
+const SIDE_MIN: gpui::Pixels = gpui::px(260.);
+/// The least width of Needs you.
+const NEEDS_MIN: gpui::Pixels = gpui::px(320.);
+
 pub(crate) const NEEDS_SHOWN: usize = 5;
 /// Wide enough for the longest word of a tile's label, so a label wraps between words only.
 const TILE_MIN: f32 = 120.;
@@ -112,7 +117,7 @@ impl WorkView {
                     .child(div().relative().text_sm().text_color(colors.text_muted).child(SharedString::from(said.clone())).child(hit_target(&self.hits, format!("work-overview-sentence={said}")))),
             )
             .children(self.overview.as_ref().map(|o| div().flex_none().text_xs().text_color(colors.text_muted).child(SharedString::from(as_of(&o.as_of, now)))));
-        let side = div().flex().flex_col().gap_3().flex_1().min_w(px(260.)).child(self.render_working(now, cx)).children(self.render_tiles(cx));
+        let side = div().flex().flex_col().gap_3().flex_1().min_w(SIDE_MIN).child(self.render_working(now, cx)).children(self.render_tiles(cx));
         let mut root = supraman_ui::scroll::area("work-overview")
             .track(&self.list_scroll)
             .size_full()
@@ -136,7 +141,7 @@ impl WorkView {
 
     fn render_needs(&self, needs: &[Card], now: i64, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
-        let mut card = self.card("Needs you", Some(needs.len()), cx).flex_1().min_w(px(320.));
+        let mut card = self.card("Needs you", Some(needs.len()), cx).flex_1().min_w(NEEDS_MIN);
         if needs.is_empty() {
             card = card.child(placeholder("Nothing needs you.", Vec::<SharedString>::new(), cx).px_3().pb_3());
         }
@@ -250,7 +255,7 @@ impl WorkView {
                     .px_3()
                     .py_2()
                     .child(fonts::figures(div().text_xl().font_weight(FontWeight::SEMIBOLD).text_color(fg)).child(SharedString::from(n.to_string())))
-                    .child(div().flex().flex_wrap().gap_x(px(3.)).text_xs().text_color(colors.text_muted).children(words))
+                    .child(div().flex().flex_wrap().gap_x(tokens::space::S).text_xs().text_color(colors.text_muted).children(words))
                     .child(hit_target(&self.hits, format!("work-tile-{label}={n}"))),
             );
         }

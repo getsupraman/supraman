@@ -1,5 +1,6 @@
 //! The prompt chips of a run or a blocked item: Workman's `/api/v1/prompts`, labels, counts and text as served.
 
+use supraman_ui::tokens;
 use gpui::{FontWeight};
 use supraman_ui::controls::button;
 use supraman_ui::fonts;
@@ -107,8 +108,8 @@ impl WorkView {
                     .flex_col()
                     .gap_2()
                     .p_2()
-                    .rounded_md()
-                    .border_1()
+                    .rounded(tokens::radius::M)
+                    .border(tokens::stroke::HAIRLINE)
                     .border_color(colors.border)
                     .bg(colors.element_background)
                     .child(div().font_family(fonts::MONO).text_xs().whitespace_normal().child(SharedString::from(p.text.clone())))

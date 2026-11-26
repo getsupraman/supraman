@@ -72,7 +72,7 @@ impl WorkView {
         let chosen = FILTERS.iter().position(|(f, _, _)| *f == self.filter).unwrap_or(0);
         let filter = segmented(&self.hits, "work-filter", &segments, chosen, |this: &mut WorkView, i, _, cx| this.set_filter(FILTERS[i].0, cx), cx);
         let rows = state::listed(board, self.filter);
-        let mut list = div().flex().flex_col().rounded_md().border_1().border_color(colors.border_variant).py_1();
+        let mut list = div().flex().flex_col().rounded(tokens::radius::M).border(tokens::stroke::HAIRLINE).border_color(colors.border_variant).py_1();
         if rows.is_empty() {
             list = list.child(div().relative().px_3().py_2().text_sm().text_color(colors.text_muted).child(NOTHING_MATCHES).child(hit_target(&self.hits, "work-list-empty".into())));
         }
@@ -113,7 +113,7 @@ impl WorkView {
             .gap_2()
             .pl(indent)
             .pr_3()
-            .py(px(4.))
+            .py(tokens::space::S)
             .text_sm()
             .child(div().flex_none().h(px(COPY_SIDE)).flex().items_center().font_family(fonts::MONO).child(ref_))
             .child(copy)

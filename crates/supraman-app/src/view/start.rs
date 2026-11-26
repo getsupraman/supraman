@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, FontWeight, ScrollHandle, SharedString, Subscription, Window, div, prelude::*, px};
+use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, FontWeight, ScrollHandle, SharedString, Subscription, Window, div, prelude::*};
 use supraman_core::paths::path_key;
 use supraman_ui::surfaces::banner;
 use supraman_ui::controls::button;
@@ -274,7 +274,7 @@ impl FleetView {
         let ws = tree.entry(&page.entry)?;
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
-        let label = |text: &'static str| div().flex_none().w(px(88.)).text_xs().text_color(colors.text_muted).child(text);
+        let label = |text: &'static str| div().flex_none().w(supraman_ui::surfaces::form::LABEL_WIDTH).text_xs().text_color(colors.text_muted).child(text);
         let line = |name: &'static str| div().flex().flex_wrap().items_center().gap_2().min_w_0().child(label(name));
         let mut folder_line = line("Folder");
         for (i, (name, path)) in folders(ws, Some(&page.folder)).into_iter().enumerate() {

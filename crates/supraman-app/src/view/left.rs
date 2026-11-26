@@ -6,6 +6,7 @@ use std::{
 
 use supraman_claude::{Health, now_ms};
 use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, SharedString, Stateful, div, prelude::*, px, relative, rems};
+use supraman_ui::tokens;
 use supraman_ui::surfaces::banner;
 use supraman_ui::controls::button;
 use supraman_ui::hit::{HitTargets, hit_target};
@@ -170,7 +171,7 @@ pub(super) fn tree_label<E: Styled + ParentElement>(hits: &HitTargets, key: &str
 }
 
 fn glyph_button(hits: &HitTargets, key: String, icon: Icon, tip: impl Into<SharedString>, cx: &gpui::App) -> button::Button {
-    button::Button::new(hits, key).icon(icon.svg(14., cx.theme().colors().text_muted)).icon_only(px(20.)).tooltip(Tooltip::text(tip))
+    button::Button::new(hits, key).icon(icon.svg(14., cx.theme().colors().text_muted)).icon_only(tokens::control::SMALL.height).tooltip(Tooltip::text(tip))
 }
 
 impl FleetView {
@@ -267,7 +268,7 @@ impl FleetView {
                         .flex_shrink(NOTICES_SHRINK)
                         .min_h_0()
                         .mb(px(SEAM_GAP))
-                        .border_b_1()
+                        .border_b(tokens::stroke::HAIRLINE)
                         .border_color(seam_color(cx))
                         .children(notices),
                 )
@@ -508,8 +509,8 @@ impl FleetView {
                 .relative()
                 .flex_none()
                 .px_3()
-                .py(px(2.))
-                .border_b_1()
+                .py(tokens::space::XS)
+                .border_b(tokens::stroke::HAIRLINE)
                 .border_color(cx.theme().colors().border)
                 .text_xs()
                 .text_color(secondary(cx))
@@ -544,7 +545,7 @@ impl FleetView {
             .px_3()
             .py_2()
             .mb(px(SEAM_GAP))
-            .border_b_1()
+            .border_b(tokens::stroke::HAIRLINE)
             .border_color(seam_color(cx))
             .child(
                 div()
@@ -703,7 +704,7 @@ impl FleetView {
                 },
             ))
         };
-        let buttons = div().flex().flex_none().items_center().gap(px(2.)).child(add).children(self.work_button(entry, &group, shown, cx)).child(self.task_button(entry, &group, shown, cx));
+        let buttons = div().flex().flex_none().items_center().gap(tokens::space::XS).child(add).children(self.work_button(entry, &group, shown, cx)).child(self.task_button(entry, &group, shown, cx));
         let editing_now = editing.is_some();
         let label = editing.unwrap_or_else(|| {
             tree_label(&self.hits, &format!("group-{name}"), div().flex_none().font_weight(FontWeight::BOLD).whitespace_nowrap().child(SharedString::from(name.clone()))).into_any_element()
@@ -828,7 +829,7 @@ impl FleetView {
             .child(tree_label(&self.hits, &tree_key, div().flex_none().whitespace_nowrap().when(top, |d| d.font_weight(FontWeight::BOLD)).child(SharedString::from(repo.name.clone()))))
             .child(clipped(format!("branch-{key}"), branch, false).text_xs().text_color(secondary(cx)).child(hit_target(&self.hits, format!("branch-{key}"))))
             .child(div().relative().flex_1().child(hit_target(&self.hits, format!("repo-room-{key}"))))
-            .child(div().flex().flex_none().items_center().gap(px(2.)).children(history).child(new_claude).child(terminal).children(work))
+            .child(div().flex().flex_none().items_center().gap(tokens::space::XS).children(history).child(new_claude).child(terminal).children(work))
             .on_mouse_down(MouseButton::Right, {
                 let key = key.clone();
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
@@ -886,9 +887,9 @@ impl FleetView {
             .flex_col()
             .pl(indent)
             .pr_2()
-            .py(px(1.))
+            .py(tokens::space::XS)
             .text_sm()
-            .when(shown, |d| d.border_l_2().border_color(colors.border_focused).pl(indent - px(2.)))
+            .when(shown, |d| d.border_l(tokens::stroke::FOCUS).border_color(colors.border_focused).pl(indent - tokens::stroke::FOCUS))
             .when(dimmed, |d| d.opacity(DIMMED))
             .child(line)
             .when_some(waiting_for, |d, w| {
@@ -975,7 +976,7 @@ impl FleetView {
                     .flex()
                     .flex_none()
                     .items_center()
-                    .gap(px(2.))
+                    .gap(tokens::space::XS)
                     .child(star)
                     .child(action.map_or_else(slot, IntoElement::into_any_element)),
             )

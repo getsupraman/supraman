@@ -8,7 +8,8 @@ mod tests;
 
 use std::rc::Rc;
 
-use gpui::{AnyElement, App, AppContext as _, Context, Entity, SharedString, Subscription, Window, div, prelude::*, px};
+use gpui::{AnyElement, App, AppContext as _, Context, Entity, SharedString, Subscription, Window, div, prelude::*};
+use supraman_ui::tokens;
 use supraman_ui::list::palette::{Entry as _, Mode, Palette, PaletteEvent, Rank};
 use supraman_runtime::save_off_thread;
 
@@ -221,6 +222,6 @@ impl GitView {
 
     pub(super) fn render_find(&self) -> Option<AnyElement> {
         let find = self.find.as_ref()?;
-        Some(div().absolute().top_0().left_0().right_0().flex().justify_center().pt(px(48.)).px_4().child(find.palette.clone()).into_any_element())
+        Some(div().absolute().top_0().left_0().right_0().flex().justify_center().pt(tokens::space::PAGE * 2.).px_4().child(find.palette.clone()).into_any_element())
     }
 }

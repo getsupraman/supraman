@@ -8,6 +8,7 @@ use std::time::Duration;
 use supraman_core::schedule::{self, Clock, Day, ForeignTask, Overlap, Profile, Registrar, Schedule, Span, Status, SyncTarget, Trigger};
 use supraman_core::secret::default_store;
 use supraman_core::process;
+use supraman_ui::tokens;
 use supraman_ui::controls::button;
 use supraman_ui::surfaces::dialog::{Button as DialogButton, Panel};
 use supraman_ui::patterns::details::{self, Section};
@@ -620,7 +621,7 @@ impl FleetView {
     fn schedule_edit_body(&self, edit: &ScheduleEdit, place: &str, cx: &mut Context<Self>) -> gpui::Div {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
-        let label = |text: &'static str| div().flex_none().w(px(88.)).text_xs().text_color(colors.text_muted).child(text);
+        let label = |text: &'static str| div().flex_none().w(supraman_ui::surfaces::form::LABEL_WIDTH).text_xs().text_color(colors.text_muted).child(text);
         let field = |key: &'static str, input: &Entity<TextInput>| {
             div().id(key).relative().flex_1().min_w_0().child(input.clone()).child(hit_target(&self.hits, key.into()))
         };
@@ -646,7 +647,7 @@ impl FleetView {
                 div()
                     .relative()
                     .px_1()
-                    .rounded_sm()
+                    .rounded(tokens::radius::S)
                     .bg(status.error.opacity(0.14))
                     .text_xs()
                     .text_color(status.error)
@@ -977,7 +978,7 @@ impl FleetView {
             .flex_col()
             .pl(grid::indent(level))
             .pr_2()
-            .py(px(1.))
+            .py(tokens::space::XS)
             .text_sm()
             .when(row.status == Status::Paused, |d| d.opacity(super::left::DIMMED))
             .child(line)

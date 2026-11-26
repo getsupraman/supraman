@@ -4,6 +4,7 @@ use supraman_core::text::count;
 use gpui::{AppContext as _, Context, Div, Entity, FocusHandle, Focusable, SharedString, Subscription, Window, div, prelude::*, px};
 use supraman_gitman::OperationState;
 use supraman_gitman::write::conflicts::Sequence;
+use supraman_ui::tokens;
 use supraman_ui::focus_order::FocusOrder;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
@@ -13,6 +14,9 @@ use supraman_ui::{surfaces::banner, controls::button};
 use theme::ActiveTheme as _;
 
 use super::WipPanel;
+
+/// The summary's counter: up to three digits.
+const COUNT_WIDTH: gpui::Pixels = px(32.);
 
 /// The summary's length past which most tools cut it.
 pub(crate) const SUMMARY_FITS: i64 = 72;
@@ -86,13 +90,13 @@ pub(crate) fn summary_count(hits: &HitTargets, summary: &Entity<TextInput>, coun
 
 /// The summary field and its [`summary_count`] beside it.
 pub(crate) fn summary_row(hits: &HitTargets, summary: &Entity<TextInput>, counter: &'static str, cx: &gpui::App) -> Div {
-    let count = summary_count(hits, summary, counter, cx).w(px(32.)).text_right();
+    let count = summary_count(hits, summary, counter, cx).w(COUNT_WIDTH).text_right();
     div().flex().items_center().gap_1().child(div().flex_1().min_w_0().child(summary.clone())).child(count)
 }
 
 /// A failed commit's words (git's or a hook's) in the error colour with its ×, under `key` and `<key>-dismiss`.
 pub(crate) fn failure_banner<V: 'static>(hits: &HitTargets, key: &str, why: String, dismiss: impl Fn(&mut V, &mut Context<V>) + 'static, cx: &mut Context<V>) -> Div {
-    let close = button::Button::new(hits, format!("{key}-dismiss")).icon(Icon::Close.svg(12., cx.theme().colors().text_muted)).icon_only(px(20.))
+    let close = button::Button::new(hits, format!("{key}-dismiss")).icon(Icon::Close.svg(12., cx.theme().colors().text_muted)).icon_only(tokens::control::SMALL.height)
         .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| dismiss(this, cx)));
     let words = div().relative().child(SharedString::from(why)).child(hit_target(hits, key.into()));
     banner::tinted(cx.theme().status().error).child(banner::dismissable(words, close))

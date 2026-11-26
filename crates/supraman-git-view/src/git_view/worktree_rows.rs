@@ -17,6 +17,9 @@ use super::ref_panel::{RefWips, worktrees};
 use super::wip_row::conflict_node;
 use super::{GitView, Load, Selected, background, cells, graph};
 
+/// Open Worktree's button, inside a graph row's band.
+const ROW_BUTTON: gpui::Pixels = px(18.);
+
 /// What a worktree's WIP row says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WorktreeView {
@@ -195,7 +198,7 @@ impl GitView {
             Some(group) => cells::acting(label, key, ix, group, 0, self.pill_sha(&row, cx), cx).into_any_element(),
             None => label.into_any_element(),
         };
-        let open = button::Button::new(&self.hits, format!("git-worktree-open-{ix}")).icon(Icon::GitGraph.svg(12., palette.muted)).icon_only(px(18.))
+        let open = button::Button::new(&self.hits, format!("git-worktree-open-{ix}")).icon(Icon::GitGraph.svg(12., palette.muted)).icon_only(ROW_BUTTON)
             .tooltip(Tooltip::text("Open Worktree"))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();

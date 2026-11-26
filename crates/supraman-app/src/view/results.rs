@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use supraman_claude::now_ms;
+use supraman_ui::tokens;
 use supraman_ui::controls::badge::count;
 use supraman_ui::matcher::highlighted;
 use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, SharedString, Stateful, div, prelude::*, px};
@@ -37,7 +38,7 @@ impl FleetView {
             .relative()
             .flex_none()
             .px_2()
-            .py(px(4.))
+            .py(tokens::space::S)
             .child(self.search.clone())
             .child(hit_target(&self.hits, "search-box".into()))
             .into_any_element()

@@ -5,8 +5,9 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui::{AppContext as _, ClickEvent, Context, Div, EventEmitter, Render, SharedString, Window, div, prelude::*, px};
+use gpui::{AppContext as _, ClickEvent, Context, Div, EventEmitter, Render, SharedString, Window, div, prelude::*};
 use supraman_gitman::{FileChange, WorktreeWip};
+use supraman_ui::tokens;
 use supraman_ui::controls::button;
 use supraman_ui::clipped::path_label;
 use supraman_ui::hit::{HitTargets, hit_target};
@@ -302,7 +303,7 @@ impl WorktreePanel {
     fn toolbar(&self, cx: &mut Context<Self>) -> Div {
         let sort = files::sort_button(&self.hits, "worktree", self.order, |this: &mut WorktreePanel, order, cx| this.set_order(order, cx), cx);
         let toggle = files::view_toggle(&self.hits, "worktree", self.view, |_: &mut WorktreePanel, view, cx| cx.emit(WorktreeEvent::View(view)), cx);
-        div().flex().flex_none().items_center().h(px(28.)).px_2().child(sort).child(div().flex_1().flex().justify_center().child(toggle)).child(div().w(px(24.)))
+        div().flex().flex_none().items_center().h(tokens::bar::HEADER).px_2().child(sort).child(div().flex_1().flex().justify_center().child(toggle)).child(div().w(tokens::bar::ICON_BUTTON))
     }
 
     /// A section's list: no row buttons, no menu.
@@ -329,14 +330,14 @@ impl WorktreePanel {
             .flex_none()
             .items_center()
             .gap_1()
-            .h(px(26.))
+            .h(tokens::control::MEDIUM.height)
             .px_1()
-            .rounded_sm()
+            .rounded(tokens::radius::S)
             .text_color(colors.text)
             .child(chevron.svg(12., colors.text_muted))
             .child(SharedString::from(title))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(section, cx)));
-        let rule = div().flex_none().h(px(1.)).bg(colors.border_variant);
+        let rule = div().flex_none().h(tokens::stroke::HAIRLINE).bg(colors.border_variant);
         let column = div().flex().flex_col().min_h_0().px_1().child(header).child(rule);
         if open { column.flex_1().child(self.file_list(section, shown, cx).flex_1().min_h_0()) } else { column.flex_none() }
     }
@@ -344,7 +345,7 @@ impl WorktreePanel {
     fn render_shown(&self, shown: Rc<Shown>, cx: &mut Context<Self>) -> Div {
         let border = cx.theme().colors().border_variant;
         let sections: Vec<Div> = shown.sections().iter().map(|s| self.section(*s, &shown, cx)).collect();
-        div().flex().flex_col().size_full().gap_1().child(self.header(&shown, cx)).child(self.toolbar(cx).border_b_1().border_color(border)).children(sections)
+        div().flex().flex_col().size_full().gap_1().child(self.header(&shown, cx)).child(self.toolbar(cx).border_b(tokens::stroke::HAIRLINE).border_color(border)).children(sections)
     }
 }
 

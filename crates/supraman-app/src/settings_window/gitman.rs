@@ -13,6 +13,9 @@ use theme::ActiveTheme as _;
 use crate::view::writes::Serial;
 use supraman_ui::controls::checkbox::Checkbox;
 
+/// The fetch interval field: a few digits.
+const MINUTES_WIDTH: gpui::Pixels = px(72.);
+
 pub const MAINTENANCE_KEY: &str = "gitman-maintenance";
 pub const WORKTREE_WIP_KEY: &str = "gitman-worktree-wip";
 
@@ -141,7 +144,7 @@ impl GitmanPage {
     }
 
     fn rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let field = div().w(px(72.)).child(self.every.clone()).into_any_element();
+        let field = div().w(MINUTES_WIDTH).child(self.every.clone()).into_any_element();
         let [maintenance, worktree_wip] = &self.ticks;
         let tick = Checkbox::new(&self.hits, MAINTENANCE_KEY, self.settings.maintains()).focus(maintenance).on_toggle(cx.listener(|this, _: &bool, _, cx| this.toggle_maintenance(cx)));
         let worktrees = Checkbox::new(&self.hits, WORKTREE_WIP_KEY, self.settings.worktree_wips()).focus(worktree_wip).on_toggle(cx.listener(|this, _: &bool, _, cx| this.toggle_worktree_wip(cx)));

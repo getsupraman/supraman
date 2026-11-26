@@ -46,6 +46,7 @@ use std::sync::Arc;
 use gpui::{AnyElement, App, AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle, Pixels, Render, SharedString, Subscription, Task, Window, deferred, div, prelude::*, px};
 use supraman_gitman::write::Occupancy;
 use supraman_gitman::{Repo, WipCounts, WorktreeRow};
+use supraman_ui::tokens;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::{surfaces::banner, controls::button, focus};
 use supraman_ui::controls::tooltip::Tooltip;
@@ -895,7 +896,7 @@ impl GitView {
         let panel = self.ref_panel.clone();
         if shut {
             let border = cx.theme().colors().border;
-            let strip = div().flex_none().h_full().border_r_1().border_color(border).child(panel);
+            let strip = div().flex_none().h_full().border_r(tokens::stroke::HAIRLINE).border_color(border).child(panel);
             return div().flex().size_full().child(strip).child(div().flex_1().min_w_0().h_full().child(rest)).into_any_element();
         }
         let rest_min = px(GRAPH_MIN + PANEL_MIN + 1.);
@@ -929,7 +930,7 @@ impl GitView {
     /// A warning over the tab whose × under `key` runs `dismiss`.
     fn notice_banner(&self, key: &'static str, text: String, dismiss: impl Fn(&mut GitView, &mut Context<GitView>) + 'static, cx: &mut Context<Self>) -> AnyElement {
         let color = cx.theme().status().warning;
-        let close = button::Button::new(&self.hits, key).icon(Icon::Close.svg(14., cx.theme().colors().text_muted)).icon_only(px(20.))
+        let close = button::Button::new(&self.hits, key).icon(Icon::Close.svg(14., cx.theme().colors().text_muted)).icon_only(tokens::control::SMALL.height)
             .tooltip(Tooltip::text("Dismiss"))
             .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
                 dismiss(this, cx);
@@ -941,7 +942,7 @@ impl GitView {
 
 impl GitView {
     fn toolbar(&self, cx: &mut Context<Self>) -> Div {
-        let bar = div().h(TOOLBAR).flex().items_start().border_b_1().border_color(cx.theme().colors().border);
+        let bar = div().h(TOOLBAR).flex().items_start().border_b(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border);
         let bar = bar.child(self.undo.clone()).child(self.stash_buttons(cx)).child(self.remote_buttons(cx));
         div().relative().flex_none().child(bar).child(hit_target(&self.hits, "git-toolbar".into()))
     }

@@ -5,6 +5,7 @@ use std::rc::Rc;
 use gpui::{AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla, Render, SharedString, Window, div, prelude::*, px};
 use supraman_core::time;
 use supraman_gitman::short_sha;
+use supraman_ui::tokens;
 use supraman_ui::controls::button;
 use supraman_ui::fonts;
 use supraman_ui::icon::Icon;
@@ -58,7 +59,7 @@ impl CommitPanel {
         div().flex().flex_none().justify_center().items_baseline().gap_1().py_1p5().child(div().text_color(muted).child(what)).child(
             fonts::figures(button::ghost(&self.hits, "commit-sha", cx))
                 .px_1()
-                .rounded_sm()
+                .rounded(tokens::radius::S)
                 .child(short_sha(&shown.sha).to_string())
                 .tooltip(Tooltip::text("Copy the full sha"))
                 .on_click(move |_: &ClickEvent, _, cx| supraman_ui::clipboard::write_text(cx, sha.to_string())),
@@ -82,7 +83,7 @@ impl CommitPanel {
     fn message_box(&self, shown: &Shown, editable: bool, box_bg: Hsla, cx: &mut Context<Self>) -> Div {
         let colors = cx.theme().colors().clone();
         let text = format!("{}\n\n{}", shown.summary, shown.body).trim_end().to_string();
-        let copy = button::Button::new(&self.hits, "commit-message-copy").icon(Icon::Copy.svg(13., colors.text_muted)).icon_only(px(22.))
+        let copy = button::Button::new(&self.hits, "commit-message-copy").icon(Icon::Copy.svg(13., colors.text_muted)).icon_only(tokens::bar::ICON_BUTTON)
             .tooltip(Tooltip::text("Copy the message"))
             .on_click(move |_: &ClickEvent, _, cx| {
                 cx.stop_propagation();
@@ -99,7 +100,7 @@ impl CommitPanel {
             let line = div().absolute().bottom_1().left_2().text_xs().text_color(colors.text_muted).child(words);
             if editable { line.invisible().group_hover(reword::EDIT_KEY, |s| s.visible()) } else { line }
         });
-        let boxed = div().id("commit-message-box").group(reword::EDIT_KEY).relative().size_full().rounded_md().border_1().border_color(colors.border).bg(box_bg).child(content).children(hint);
+        let boxed = div().id("commit-message-box").group(reword::EDIT_KEY).relative().size_full().rounded(tokens::radius::M).border(tokens::stroke::HAIRLINE).border_color(colors.border).bg(box_bg).child(content).children(hint);
         let boxed = if editable && !editing { boxed.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_field(window, cx))) } else { boxed };
         div().size_full().child(boxed.child(div().absolute().top_1().right_1().child(copy)))
     }
@@ -120,7 +121,7 @@ impl CommitPanel {
             let full = sha.clone();
             fonts::figures(button::ghost(&self.hits, format!("commit-parent-{i}"), cx))
                 .px_0p5()
-                .rounded_sm()
+                .rounded(tokens::radius::S)
                 .text_color(colors.text)
                 .child(short_sha(sha).to_string())
                 .tooltip(Tooltip::text("Select this parent in the graph"))
@@ -186,7 +187,7 @@ impl CommitPanel {
             .flex_none()
             .items_center()
             .justify_between()
-            .h(px(28.))
+            .h(tokens::bar::HEADER)
             .px_2()
             .child(sort)
             .child(div().flex().children(toggle))
@@ -214,7 +215,7 @@ impl CommitPanel {
         let expand = button::ghost(&self.hits, "commit-expand", cx)
             .flex_none()
             .px_1()
-            .rounded_sm()
+            .rounded(tokens::radius::S)
             .text_xs()
             .text_color(colors.text)
             .child(label)
@@ -276,7 +277,7 @@ impl CommitPanel {
             .child(self.author(&shown, &palette, cx))
             .children(self.co_authors(&shown, &palette, cx))
             .child(self.counts(&shown, cx).pt_2().when(self.stale, |d| d.invisible()))
-            .child(self.toolbar(cx).border_b_1().border_color(border))
+            .child(self.toolbar(cx).border_b(tokens::stroke::HAIRLINE).border_color(border))
             .child(self.files(&shown, window, cx))
     }
 }

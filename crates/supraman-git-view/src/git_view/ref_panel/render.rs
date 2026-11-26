@@ -20,6 +20,11 @@ use super::marks::MARK;
 use super::{Count, Entry, Keys, LIST, RefEvent, RefPanel, STRIP, Section, Walk};
 use supraman_ui::themes::secondary;
 
+/// A collapsed panel's section icon column.
+const STRIP_ICON_WIDTH: gpui::Pixels = px(30.);
+/// A header's hover button, inside its row.
+const ROW_BUTTON: gpui::Pixels = px(18.);
+
 pub(super) const ROW: f32 = 24.;
 const ICON: f32 = 12.;
 /// The row of a ref the graph does not walk.
@@ -147,14 +152,14 @@ impl RefPanel {
             button::ghost(&self.hits, format!("{LIST}-show-all"), cx)
                 .flex_none()
                 .px_1()
-                .rounded_sm()
+                .rounded(tokens::radius::S)
                 .text_xs()
                 .text_color(cx.theme().colors().text_accent)
                 .child("Show all")
                 .tooltip(Tooltip::text("Show every ref in the graph: none hidden, none soloed"))
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.show_all(cx)))
         });
-        let collapse = button::Button::new(&self.hits, format!("{LIST}-collapse")).icon(Icon::ChevronLeft.svg(14., secondary(cx.theme().colors()))).icon_only(px(22.))
+        let collapse = button::Button::new(&self.hits, format!("{LIST}-collapse")).icon(Icon::ChevronLeft.svg(14., secondary(cx.theme().colors()))).icon_only(tokens::bar::ICON_BUTTON)
             .tooltip(Tooltip::text("Collapse the ref panel (Ctrl+J)"))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_shut(cx)));
         div()
@@ -173,8 +178,8 @@ impl RefPanel {
         let open = self.overlay();
         let selected = cx.theme().colors().element_selected;
         let (accent, muted) = (cx.theme().colors().text_accent, secondary(cx.theme().colors()));
-        let expand = button::Button::new(&self.hits, format!("{LIST}-expand")).icon(Icon::ChevronRight.svg(14., muted)).icon_only(px(24.)).tone(button::Tone::Neutral)
-            .rounded_full()
+        let expand = button::Button::new(&self.hits, format!("{LIST}-expand")).icon(Icon::ChevronRight.svg(14., muted)).icon_only(tokens::bar::ICON_BUTTON).tone(button::Tone::Neutral)
+            .rounded(tokens::radius::FULL)
             .tooltip(Tooltip::text("Expand the ref panel (Ctrl+J)"))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_shut(cx)));
         let counts = self.counts();
@@ -184,9 +189,9 @@ impl RefPanel {
                 .flex_col()
                 .items_center()
                 .gap_0p5()
-                .w(px(30.))
+                .w(STRIP_ICON_WIDTH)
                 .py_1()
-                .rounded_sm()
+                .rounded(tokens::radius::S)
                 .when(open == Some(section), |b| b.bg(selected))
                 .child(section.icon().svg(14., muted))
                 .child(div().text_xs().text_color(accent).child(count.total.to_string()))
@@ -206,7 +211,7 @@ impl RefPanel {
             .items_center()
             .h(px(ROW))
             .px_2()
-            .border_t_1()
+            .border_t(tokens::stroke::HAIRLINE)
             .border_color(cx.theme().colors().border_variant)
             .child(Label::element(self.header(section, open, self.add_button(section, cx), cx)).mark(LabelMark::Svg(chevron.svg(ICON, secondary(cx.theme().colors())))).slot(px(LEAD)).gap(gpui::Pixels::ZERO).size(tokens::text::SMALL).flex_1())
             .children((section == Section::Worktrees).then(|| self.refresh_wips(cx)).flatten())
@@ -230,7 +235,7 @@ impl RefPanel {
             _ => return None,
         };
         let group = format!("{LIST}-row-{}", section.key());
-        let plus = button::Button::new(&self.hits, format!("{LIST}-{}-add", section.key())).icon(Icon::Plus.svg(ICON, cx.theme().status().success)).icon_only(px(18.)).reveal(group.clone(), false)
+        let plus = button::Button::new(&self.hits, format!("{LIST}-{}-add", section.key())).icon(Icon::Plus.svg(ICON, cx.theme().status().success)).icon_only(ROW_BUTTON).reveal(group.clone(), false)
             .tooltip(Tooltip::text(tip))
             .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();

@@ -1,5 +1,6 @@
 //! The sidebar's action bar: add, expand and collapse, stopped sessions, refresh, the CLI warning, the busy limit, Settings.
 
+use supraman_ui::tokens;
 use super::*;
 use supraman_ui::controls::stepper::stepper;
 
@@ -8,7 +9,7 @@ impl FleetView {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let hits = &self.hits;
-        let separator = || div().w(px(1.)).h(px(16.)).mx_1().bg(colors.border_variant);
+        let separator = || div().w(tokens::stroke::HAIRLINE).h(tokens::space::XXL).mx_1().bg(colors.border_variant);
         let warning = match &self.cli {
             Cli::Supported(version) => version.untested(),
             _ => None,
@@ -18,10 +19,10 @@ impl FleetView {
             .flex()
             .flex_none()
             .items_center()
-            .gap(px(2.))
+            .gap(tokens::space::XS)
             .px_2()
-            .py(px(3.))
-            .border_b_1()
+            .py(tokens::space::S)
+            .border_b(tokens::stroke::HAIRLINE)
             .border_color(colors.border)
             .child(
                 icon_button(hits, "add-folder", Icon::FolderAdd, "Add Folder or Group…", false, cx)

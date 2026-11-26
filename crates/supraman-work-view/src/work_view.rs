@@ -20,6 +20,7 @@ mod target;
 #[cfg(test)]
 mod tests;
 
+use supraman_ui::tokens;
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
@@ -800,7 +801,7 @@ impl WorkView {
         };
         let list = div().relative().flex_grow(1.).flex_basis(px(layout::LIST_MIN)).min_w_0().h_full().track_focus(&self.panes.main).child(self.render_run_page(&run, self.keys_in.1, cx));
         let list = list.child(focus::Pane::new(FOCUS_MAIN, &self.panes.main).paint(&self.hits));
-        let detail = div().flex_shrink(1.).min_w_0().w(self.layout.detail()).h_full().relative().border_l_1().border_color(cx.theme().colors().border).track_focus(&self.panes.detail).child(self.render_detail(cx));
+        let detail = div().flex_shrink(1.).min_w_0().w(self.layout.detail()).h_full().relative().border_l(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border).track_focus(&self.panes.detail).child(self.render_detail(cx));
         let detail = detail.child(hit_target(&self.hits, "work-detail-column".into())).child(focus::Pane::new(FOCUS_DETAIL, &self.panes.detail).paint(&self.hits));
         layout::detail_split()
             .render_second(list, detail, |this: &mut WorkView, width, cx| {
@@ -814,7 +815,7 @@ impl WorkView {
     fn render_columns(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let main = self.render_main(cx);
         if self.layout.nav_shut() {
-            let strip = div().flex_none().h_full().border_r_1().border_color(cx.theme().colors().border).child(self.render_nav_strip(cx));
+            let strip = div().flex_none().h_full().border_r(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border).child(self.render_nav_strip(cx));
             return div().flex().size_full().child(strip).child(div().flex_1().min_w_0().h_full().child(main)).into_any_element();
         }
         let nav = div().relative().flex_shrink(0.5).min_w_0().overflow_hidden().w(self.layout.nav()).h_full().track_focus(&self.panes.nav).child(self.render_navigator(cx));

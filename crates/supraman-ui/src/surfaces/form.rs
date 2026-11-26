@@ -4,7 +4,7 @@
 
 use std::rc::Rc;
 
-use gpui::{AnyElement, AppContext as _, Context, Entity, FocusHandle, SharedString, Subscription, Window, div, prelude::*};
+use gpui::{AnyElement, AppContext as _, Context, Entity, FocusHandle, Pixels, SharedString, Subscription, Window, div, prelude::*, px};
 
 use crate::controls::button;
 use crate::surfaces::dialog::{Button, Dialog, Panel};
@@ -13,6 +13,9 @@ use crate::text::input::{InputEvent, TextInput};
 use crate::themes::secondary;
 use crate::tokens;
 use theme::ActiveTheme as _;
+
+/// A form's label column beside its fields (a schedule's Edit, the Start page).
+pub const LABEL_WIDTH: Pixels = px(88.);
 
 /// The owner's OK and close, what the form's buttons, Enter and Esc run.
 pub struct Answers<V> {

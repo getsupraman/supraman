@@ -19,6 +19,9 @@ use crate::view::FleetView;
 use crate::workman_setup::ServerCheck;
 use supraman_workman::status::WorkmanStatus;
 
+/// The page list's column.
+const PAGE_LIST_WIDTH: gpui::Pixels = gpui::px(180.);
+
 mod about;
 mod appearance;
 pub mod gitman;
@@ -422,12 +425,12 @@ impl Render for SettingsView {
             .track_focus(&self.nav)
             .flex()
             .flex_col()
-            .w(px(180.))
+            .w(PAGE_LIST_WIDTH)
             .flex_none()
             .h_full()
             .py_2()
             .bg(colors.panel_background)
-            .border_r_1()
+            .border_r(tokens::stroke::HAIRLINE)
             .border_color(colors.border);
         nav = nav.children(self.pages.nav(&self.hits, self.page, |this, page, cx| this.show(page, cx), cx));
         nav = nav.child(div().flex_1()).child(

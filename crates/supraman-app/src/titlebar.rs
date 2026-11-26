@@ -1,8 +1,12 @@
 use gpui::{AnyElement, App, Div, FontWeight, Pixels, Stateful, Window, WindowControlArea, div, prelude::*, px};
+use supraman_ui::tokens;
 use supraman_ui::controls::button;
 use supraman_ui::fonts;
 use supraman_ui::hit::HitTargets;
 use theme::ActiveTheme as _;
+
+/// A caption button's width, Windows' own.
+const CAPTION_WIDTH: gpui::Pixels = px(46.);
 
 pub const HEIGHT: Pixels = px(34.);
 
@@ -18,7 +22,7 @@ pub fn render(title: &'static str, actions: Option<AnyElement>, minimizable: boo
         .w_full()
         .h(HEIGHT)
         .bg(colors.title_bar_background)
-        .border_b_1()
+        .border_b(tokens::stroke::HAIRLINE)
         .border_color(colors.border)
         .window_control_area(WindowControlArea::Drag)
         .child(
@@ -49,10 +53,10 @@ pub fn icon_button(hits: &HitTargets, key: &'static str, glyph: &'static str, cx
         .items_center()
         .justify_center()
         .occlude()
-        .w(px(46.))
+        .w(CAPTION_WIDTH)
         .h_full()
         .font_family(fonts::icons())
-        .text_size(px(12.))
+        .text_size(tokens::text::SMALL)
         .child(glyph)
 }
 
@@ -90,9 +94,9 @@ impl Caption {
             .items_center()
             .justify_center()
             .occlude()
-            .w(px(46.))
+            .w(CAPTION_WIDTH)
             .h_full()
-            .text_size(px(10.))
+            .text_size(tokens::text::CAPTION)
             .window_control_area(area)
             .child(glyph)
             .into_any_element()

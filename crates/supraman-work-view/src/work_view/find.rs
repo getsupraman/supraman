@@ -1,5 +1,6 @@
 //! Ctrl+P: the shared palette over the items this tab has loaded, then Workman's `/api/v1/search` hits in the bound projects.
 
+use supraman_ui::tokens;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -84,7 +85,7 @@ fn paint(found: &Found, marks: &[Range<usize>], on: bool, cx: &mut App) -> AnyEl
     div()
         .flex()
         .flex_col()
-        .gap(px(1.))
+        .gap(tokens::space::XS)
         .child(highlighted(SharedString::from(format!("work-find-ref-{qref}")), qref.clone(), &ref_marks, cx).font_family(fonts::MONO).text_xs().text_color(if on { colors.text_accent } else { colors.text_muted }))
         .child(highlighted(SharedString::from(format!("work-find-title-{qref}")), found.item.title.clone(), &title_marks, cx).text_sm().font_weight(FontWeight::MEDIUM))
         .children(found.snippet.clone().map(|s| div().text_xs().text_color(colors.text_muted).overflow_hidden().whitespace_nowrap().text_ellipsis().child(SharedString::from(s))))
@@ -96,7 +97,7 @@ fn paint(found: &Found, marks: &[Range<usize>], on: bool, cx: &mut App) -> AnyEl
                 .text_xs()
                 .text_color(colors.text_muted)
                 .child(SharedString::from(found.item.kind.clone()))
-                .child(div().px_1().rounded_sm().bg(pill.opacity(0.15)).text_color(pill).child(SharedString::from(status.as_str().replace('_', " "))))
+                .child(div().px_1().rounded(tokens::radius::S).bg(pill.opacity(0.15)).text_color(pill).child(SharedString::from(status.as_str().replace('_', " "))))
                 .child(SharedString::from(found.project.clone())),
         )
         .into_any_element()
@@ -163,7 +164,7 @@ impl WorkView {
 
     pub(super) fn render_palette(&self) -> Option<AnyElement> {
         let palette = self.palette.clone()?;
-        Some(div().absolute().top_0().left_0().right_0().flex().justify_center().pt(px(48.)).px_4().child(palette).into_any_element())
+        Some(div().absolute().top_0().left_0().right_0().flex().justify_center().pt(tokens::space::PAGE * 2.).px_4().child(palette).into_any_element())
     }
 }
 
