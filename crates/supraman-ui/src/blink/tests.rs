@@ -99,3 +99,17 @@ fn a_pause_does_not_start_a_stopped_blink(cx: &mut TestAppContext) {
     assert_eq!(blink(&view, cx), (false, false));
     assert_eq!(notices(&view, CARET_BLINK * 6, cx), 0);
 }
+
+#[gpui::test]
+fn a_blink_made_for_a_focused_field_in_an_inactive_window_does_not_run(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    focus(&view, cx);
+    cx.deactivate_window();
+    view.update_in(cx, |v, window, cx| {
+        let (blink, follow) = Blink::follow(&v.focus, window, cx);
+        v.blink = blink;
+        v._follow = follow;
+    });
+    assert_eq!(blink(&view, cx), (false, false), "the field holds the keys, but its window is inactive");
+    assert_eq!(notices(&view, CARET_BLINK * 6, cx), 0, "and no timer runs");
+}

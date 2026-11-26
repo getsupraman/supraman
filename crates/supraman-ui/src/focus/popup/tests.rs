@@ -34,6 +34,8 @@ enum Kind {
 
 struct Host {
     hits: HitTargets,
+    /// The field's pane, so the window's net would hand the field back had nothing else said otherwise.
+    pane: gpui::FocusHandle,
     field: Entity<TextInput>,
     menu: Option<ContextMenu<u8>>,
     dialog: Option<Dialog>,
@@ -103,7 +105,8 @@ impl Host {
 impl Render for Host {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let popup = self.popup(cx);
-        root(div().size_full()).child(div().w(px(200.)).child(self.field.clone())).children(popup)
+        let pane = div().relative().w(px(200.)).track_focus(&self.pane).child(self.field.clone()).child(crate::focus::Pane::new("left", &self.pane).paint(&self.hits));
+        root(div().size_full()).child(pane).children(popup)
     }
 }
 
@@ -115,7 +118,7 @@ fn host(cx: &mut TestAppContext) -> (Entity<Host>, &mut VisualTestContext) {
     });
     let (view, cx) = cx.add_window_view(|window, cx| {
         let field = cx.new(|cx| TextInput::new("Field", None, window, cx));
-        Host { hits: HitTargets::default(), field, menu: None, dialog: None, palette: None, form: None, _restore: restore_on_loss(window, cx) }
+        Host { hits: HitTargets::default(), pane: cx.focus_handle(), field, menu: None, dialog: None, palette: None, form: None, _restore: restore_on_loss(window, cx) }
     });
     cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
@@ -236,4 +239,20 @@ fn a_request_for_a_handle_no_frame_paints_does_nothing(cx: &mut TestAppContext) 
     settle(&view, cx);
     assert!(field_focused(&view, cx), "the field keeps the keys");
     assert!(!cx.update(|window, _| stray.is_focused(window)));
+}
+
+#[gpui::test]
+fn a_menu_opened_as_the_keys_were_dropped_gives_them_to_nothing_though_its_pane_held_a_field(cx: &mut TestAppContext) {
+    let (view, cx) = host(cx);
+    focus_field(&view, cx);
+    view.update_in(cx, |v, window, cx| {
+        window.blur(cx);
+        v.open(Kind::Menu, window, cx);
+    });
+    settle(&view, cx);
+    assert!(shown(&view, cx) && !field_focused(&view, cx), "the menu holds the keys");
+    cx.simulate_keystrokes("escape");
+    settle(&view, cx);
+    assert!(!shown(&view, cx));
+    assert!(nothing_focused(cx), "nothing held the keys as it opened, so the field's pane does not get them back");
 }
