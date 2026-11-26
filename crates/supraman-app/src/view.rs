@@ -1258,6 +1258,7 @@ impl FleetView {
                 terminal.input(text.clone().into_bytes());
             }
         });
+        self.term_look.blink.update(cx, |b, cx| b.pause(cx));
         // the cursor is lit at once after a key, also when the program echoes nothing
         cx.notify();
         cx.stop_propagation();
@@ -1313,7 +1314,7 @@ impl Render for FleetView {
         }
         crate::selftest_seams::injected_frame_sleep();
         self.persist_tabs(cx);
-        self.wake_blink();
+        self.run_blink(window, cx);
         self.hits.borrow_mut().clear();
         let colors = cx.theme().colors().clone();
         let root = supraman_ui::focus::root(div())

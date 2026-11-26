@@ -4,18 +4,17 @@ use std::{
     cell::Cell,
     ops::Range,
     sync::Arc,
-    time::{Duration, Instant},
 };
 
 use gpui::{
     App, AvailableSpace, Bounds, Context, CursorStyle, ElementId, ElementInputHandler, Entity, EntityInputHandler, EventEmitter,
     FocusHandle, Focusable, GlobalElementId, KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    LineLayout, PaintQuad, Pixels, Point, ScrollEvent, SharedString, Style, Subscription, Task, TextRun, UTF16Selection, UnderlineStyle,
+    LineLayout, PaintQuad, Pixels, Point, ScrollEvent, SharedString, Style, Subscription, TextRun, UTF16Selection, UnderlineStyle,
     Window, WrappedLine, actions, div, fill, point, prelude::*, px, relative, size,
 };
-use supraman_term::{blink_phase, terminal_settings::CURSOR_BLINK_INTERVAL};
 use theme::ActiveTheme as _;
 use unicode_segmentation::UnicodeSegmentation as _;
+use crate::blink::Blink;
 use crate::tokens;
 
 const CONTEXT: &str = "TextInput";
@@ -618,11 +617,10 @@ pub struct TextInput {
     /// The caret moved since the last paint: scroll it into view.
     autoscroll: bool,
     is_selecting: bool,
-    /// The last edit, move or focus: the caret is lit for one [`CURSOR_BLINK_INTERVAL`] after it.
-    moved_at: Instant,
+    blink: Entity<Blink>,
     /// Whether the last frame painted the caret lit; the selftest reads it.
     pub caret_painted: Cell<bool>,
-    _blink: Task<()>,
+    _blink: [Subscription; 4],
 }
 
 impl EventEmitter<InputEvent> for TextInput {}
@@ -653,23 +651,8 @@ impl Focusable for TextInput {
 impl TextInput {
     pub fn new(placeholder: impl Into<SharedString>, filter: Option<fn(char) -> Option<char>>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
+        let (blink, following) = Blink::follow(&focus_handle, window, cx);
         cx.on_focus(&focus_handle, window, |this: &mut Self, _, cx| this.lit(cx)).detach();
-        cx.on_blur(&focus_handle, window, |_: &mut Self, _, cx| cx.notify()).detach();
-        let blink = cx.spawn_in(window, async move |this, cx| {
-            loop {
-                let wait = this.update_in(cx, |this, window, cx| {
-                    if !this.focus_handle.is_focused(window) {
-                        return CURSOR_BLINK_INTERVAL;
-                    }
-                    cx.notify();
-                    this.next_blink(Instant::now())
-                });
-                let Ok(wait) = wait else {
-                    return;
-                };
-                cx.background_executor().timer(wait + Duration::from_millis(5)).await;
-            }
-        });
         Self {
             focus_handle,
             line: LineText::default(),
@@ -688,9 +671,9 @@ impl TextInput {
             scroll: Point::default(),
             autoscroll: true,
             is_selecting: false,
-            moved_at: Instant::now(),
+            blink,
             caret_painted: Cell::new(false),
-            _blink: blink,
+            _blink: following,
         }
     }
 
@@ -785,17 +768,13 @@ impl TextInput {
         self.lit(cx);
     }
 
-    /// Whether the caret is painted at `now`: lit for one interval after an edit or move, then blinking.
-    pub fn caret_lit(&self, now: Instant) -> bool {
-        blink_phase(now.saturating_duration_since(self.moved_at)).0
-    }
-
-    fn next_blink(&self, now: Instant) -> Duration {
-        blink_phase(now.saturating_duration_since(self.moved_at)).1
+    /// Whether the caret shows: it holds the keys in an active window and its [`Blink`] is on.
+    pub fn caret_shown(&self, window: &Window, cx: &App) -> bool {
+        self.focus_handle.is_focused(window) && window.is_window_active() && self.blink.read(cx).visible()
     }
 
     fn lit(&mut self, cx: &mut Context<Self>) {
-        self.moved_at = Instant::now();
+        self.blink.update(cx, |b, cx| b.pause(cx));
         self.autoscroll = true;
         cx.notify();
     }
@@ -1331,8 +1310,7 @@ impl Element for TextElement {
                 scroll.x = caret.x;
             }
         }
-        let focused = input.focus_handle.is_focused(window);
-        let lit = focused && input.caret_lit(Instant::now());
+        let lit = input.caret_shown(window, cx);
         input.caret_painted.set(lit);
         let origin = bounds.origin - scroll;
         let newline = px(5.);

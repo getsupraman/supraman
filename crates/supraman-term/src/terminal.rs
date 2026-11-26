@@ -24,7 +24,7 @@ pub use bounds::TerminalBounds;
 pub use builder::{TerminalBuilder, TerminalMode};
 pub use content::{
     Cell, Content, Cursor, CursorShape, GridLinesChange, HoveredWord, Hyperlink, IndexedCell,
-    Modes, Point, Range, SelectionRange, blink_phase, is_default_background_color,
+    Modes, Point, Range, SelectionRange, is_default_background_color,
 };
 pub use events::Event;
 pub use links::{MaybeNavigationTarget, PathLikeTarget};
@@ -78,8 +78,6 @@ pub struct Terminal {
     shell_program: Option<String>,
     child_exited: Option<ExitStatus>,
     keyboard_input_sent: bool,
-    /// Input or a cursor move restarts the blink with the cursor lit (Windows Terminal).
-    cursor_moved_at: Instant,
     /// Whether the painter last drew the cursor lit; the selftest reads it.
     pub cursor_painted_lit: bool,
     /// The selection's background and its text's colour as last painted, while a selection with text

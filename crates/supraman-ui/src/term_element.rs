@@ -3,7 +3,7 @@
 // (GPL-3.0-or-later).
 
 use gpui::{
-    App, Bounds, ContentMask, CursorStyle, DispatchPhase, ElementId, Entity, ParentElement as _, RenderOnce, div, Font, FontFeatures, FontId, FontStyle,
+    App, Bounds, ContentMask, CursorStyle, DispatchPhase, ElementId, Entity, FocusHandle, ParentElement as _, RenderOnce, div, Font, FontFeatures, FontId, FontStyle,
     FontWeight, Hitbox, HitboxBehavior, Hsla, IntoElement, Keystroke, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, Pixels, Point as GpuiPoint, SharedString, ShapedLine,
     StrikethroughStyle, Styled, TextRun, UnderlineStyle, Window, WindowTextSystem, canvas, fill,
@@ -17,6 +17,7 @@ use supraman_term::{
 };
 use theme::{ActiveTheme, Theme};
 
+use crate::blink::Blink;
 use crate::builtin_glyphs::{self, Mark};
 
 pub const FONT_SIZE: Pixels = px(14.);
@@ -405,14 +406,22 @@ mod scrollback;
 pub use scrollback::Scrollback;
 
 /// A terminal's grid with its scrollback's bar over the right edge.
-pub fn terminal_grid(terminal: Entity<Terminal>, font: TermFont) -> TerminalGrid {
-    TerminalGrid { terminal, font }
+pub fn terminal_grid(terminal: Entity<Terminal>, font: TermFont, cursor: Cursor) -> TerminalGrid {
+    TerminalGrid { terminal, font, cursor }
+}
+
+/// The line cursor's owner: shown and blinking only while `focus` holds the keys in an active window (UI-KIT §4.3).
+#[derive(Clone)]
+pub struct Cursor {
+    pub focus: FocusHandle,
+    pub blink: Entity<Blink>,
 }
 
 #[derive(IntoElement)]
 pub struct TerminalGrid {
     terminal: Entity<Terminal>,
     font: TermFont,
+    cursor: Cursor,
 }
 
 impl RenderOnce for TerminalGrid {
@@ -420,9 +429,9 @@ impl RenderOnce for TerminalGrid {
         let id = self.terminal.entity_id().as_u64();
         let scrollback = window.use_keyed_state(ElementId::NamedInteger("term-scrollback".into(), id), cx, |_, _| Scrollback::default()).read(cx).clone();
         let bar = crate::scroll::Scrollbar::new(ElementId::NamedInteger("term-bar".into(), id), &scrollback);
-        let (terminal, font, terminal_for_paint) = (self.terminal.clone(), self.font, self.terminal);
+        let (terminal, font, terminal_for_paint, cursor) = (self.terminal.clone(), self.font, self.terminal, self.cursor);
         let grid = canvas(
-            move |bounds, window, cx| prepaint(&terminal, &font, &scrollback, bounds, window, cx),
+            move |bounds, window, cx| prepaint(&terminal, &font, &cursor, &scrollback, bounds, window, cx),
             move |_bounds, state, window, cx| {
                 register_mouse_listeners(&terminal_for_paint, &state.hitbox, window);
                 paint(state, window, cx)
@@ -436,6 +445,7 @@ impl RenderOnce for TerminalGrid {
 fn prepaint(
     terminal: &Entity<Terminal>,
     font: &TermFont,
+    cursor: &Cursor,
     scrollback: &Scrollback,
     bounds: Bounds<Pixels>,
     window: &mut Window,
@@ -451,15 +461,21 @@ fn prepaint(
     grid_bounds.origin = point(snap(grid_bounds.origin.x), snap(grid_bounds.origin.y));
     let dims = TerminalBounds::new(line_height, cell_width, grid_bounds);
 
-    terminal.update(cx, |terminal, cx| {
+    let moved = terminal.update(cx, |terminal, cx| {
         scrollback.apply(terminal);
         terminal.set_size(dims);
+        let before = terminal.last_content().cursor.point;
         terminal.sync(window, cx);
         scrollback.read(terminal, bounds, line_height);
+        terminal.last_content().cursor.point != before
     });
+    if moved {
+        cursor.blink.update(cx, |b, cx| b.pause(cx));
+    }
 
     let theme = cx.theme().clone();
-    let (lit, _) = terminal.read(cx).cursor_blink(std::time::Instant::now());
+    let holds = cursor.focus.is_focused(window) && window.is_window_active();
+    let lit = holds && (cursor.blink.read(cx).visible() || !terminal.read(cx).last_content().cursor_blinking);
     terminal.update(cx, |terminal, _| terminal.cursor_painted_lit = lit);
     let terminal_ref = terminal.read(cx);
     let content = terminal_ref.last_content();

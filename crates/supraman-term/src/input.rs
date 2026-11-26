@@ -14,7 +14,6 @@ use gpui::Context;
 use gpui::{App, Keystroke};
 use itertools::Itertools as _;
 use std::borrow::Cow;
-use std::time::Instant;
 #[cfg(test)]
 use vte::ansi::{Processor, StdSyncHandler};
 
@@ -82,7 +81,6 @@ impl Terminal {
 
     pub fn input(&mut self, input: impl Into<Cow<'static, [u8]>>) {
         self.keyboard_input_sent = true;
-        self.cursor_moved_at = Instant::now();
         self.write_input(input);
     }
 

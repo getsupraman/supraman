@@ -1,6 +1,7 @@
 //! What every Supraman gpui binary shares: the widgets, themes, terminal painter, init and the selftests' probes.
 
 pub mod banner;
+pub mod blink;
 mod builtin_glyphs;
 pub mod button;
 pub mod clipboard;

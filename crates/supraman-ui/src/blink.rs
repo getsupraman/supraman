@@ -35,7 +35,7 @@ impl Blink {
         let blink = cx.new(Blink::new);
         let run = |blink: &Entity<Blink>, focus: &FocusHandle, window: &Window, cx: &mut App| {
             let on = focus.is_focused(window) && window.is_window_active();
-            blink.update(cx, |b, cx| if on { b.start(cx) } else { b.stop(cx) });
+            blink.update(cx, |b, cx| b.set_running(on, cx));
         };
         let (b, f) = (blink.clone(), focus.clone());
         let focused = cx.on_focus(focus, window, move |_, window, cx| run(&b, &f, window, cx));
@@ -46,6 +46,15 @@ impl Blink {
         let repaint = cx.observe(&blink, |_, _, cx| cx.notify());
         run(&blink, focus, window, cx);
         (blink, [focused, blurred, activation, repaint])
+    }
+
+    /// Started or stopped; nothing while it already is.
+    pub fn set_running(&mut self, on: bool, cx: &mut Context<Self>) {
+        match (on, self.running) {
+            (true, false) => self.start(cx),
+            (false, true) => self.stop(cx),
+            _ => {}
+        }
     }
 
     /// Shown, then off and on every interval.

@@ -29,7 +29,8 @@ fn open(cx: &mut TestAppContext) -> (Entity<Owner>, &mut VisualTestContext) {
 }
 
 fn focus(view: &Entity<Owner>, cx: &mut VisualTestContext) {
-    cx.update(|window, cx| view.read(cx).focus.focus(window, cx));
+    let focus = view.read_with(cx, |v, _| v.focus.clone());
+    cx.update(|window, cx| focus.focus(window, cx));
     cx.run_until_parked();
 }
 
