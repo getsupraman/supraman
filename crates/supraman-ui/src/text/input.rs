@@ -170,6 +170,23 @@ pub fn quiet_frame(focused: bool, cx: &App) -> gpui::Div {
     div().flex().items_center().min_w_0().h(QUIET_HEIGHT).px(PAD_X).rounded(tokens::radius::M).border(tokens::stroke::HAIRLINE).border_color(border).bg(colors.element_background).text_size(tokens::text::BODY).line_height(LINE_HEIGHT).overflow_hidden()
 }
 
+/// A bordered one-line field's box on `el`: the field's own, or a trigger that opens a picker in a form (`focus_order::pressable`).
+pub fn framed<E: Styled>(el: E, focused: bool, cx: &App) -> E {
+    let colors = cx.theme().colors();
+    el.flex()
+        .items_center()
+        .min_w_0()
+        .h(SINGLE_HEIGHT)
+        .px(PAD_X)
+        .rounded(tokens::radius::S)
+        .border(tokens::stroke::HAIRLINE)
+        .border_color(if focused { colors.border_focused } else { colors.border })
+        .bg(colors.editor_background)
+        .text_size(tokens::text::BODY)
+        .line_height(LINE_HEIGHT)
+        .overflow_hidden()
+}
+
 /// An [`inline_frame`]'s padding beside the text, inside its 1 px border.
 const INLINE_PAD_X: Pixels = tokens::space::S;
 /// Where an [`inline_frame`]'s text starts, from its outer left edge: the border and [`INLINE_PAD_X`].
@@ -464,12 +481,15 @@ impl TextInput {
         if self.quiet && !multi_line {
             return quiet_frame(focused, cx);
         }
+        if !multi_line {
+            return framed(div().relative(), focused, cx);
+        }
         div()
             .relative()
             .flex()
             .min_w_0()
-            .when(!multi_line, |d| d.items_center().h(SINGLE_HEIGHT))
-            .when(multi_line, |d| d.py(PAD_Y).on_scroll(cx.listener(Self::scroll_wheel)))
+            .py(PAD_Y)
+            .on_scroll(cx.listener(Self::scroll_wheel))
             .px(PAD_X)
             .rounded(tokens::radius::S)
             .border(tokens::stroke::HAIRLINE)

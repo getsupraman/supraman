@@ -47,6 +47,8 @@ enum Kind {
     Square(Pixels),
     /// An action bar's: its icon, then any children, the ghost's fills.
     Toolbar,
+    /// A quiet link: its words in the muted text at the small size, the text colour and the ghost's fill hovered.
+    Link,
 }
 
 /// Every clickable button. `key` is its element id, its hover group and its [`hit_target`] key; a label's letters paint under
@@ -108,6 +110,11 @@ impl Button {
     /// An action bar's button: its icon, then any children, in the ghost's fills; the selected fill while [`Button::on`].
     pub fn toolbar(hits: &HitTargets, key: impl Into<SharedString>) -> Self {
         Self { kind: Kind::Toolbar, ..Self::new(hits, key) }
+    }
+
+    /// A quiet link to a file or page beside a list (Settings' Open settings.toml): its label, no frame until hovered.
+    pub fn link(hits: &HitTargets, key: impl Into<SharedString>) -> Self {
+        Self { kind: Kind::Link, ..Self::new(hits, key) }
     }
 
     /// A row of buttons [`super::GAP`] apart, centred on one line.
@@ -224,6 +231,7 @@ impl Button {
             Kind::Action => self.action(glyph, cx),
             Kind::Square(side) => self.square(side, glyph, cx),
             Kind::Toolbar => self.toolbar_frame(glyph, cx),
+            Kind::Link => self.link_frame(cx),
         };
         if self.dimmed {
             el = el.opacity(tokens::DIMMED).cursor_default();
@@ -301,6 +309,19 @@ impl Button {
                 frame(base(&self.hits, key.clone(), move |s| s.bg(look.hover), look.active)).border(stroke::HAIRLINE).border_color(look.border).bg(look.fill).children(glyph)
             }
         }
+    }
+
+    fn link_frame(&mut self, cx: &App) -> Stateful<Div> {
+        let letters = div().relative().child(self.label.take().unwrap_or_default()).child(hit_target(&self.hits, format!("{}-label", self.key)));
+        super::ghost_muted(&self.hits, self.key.clone(), cx)
+            .flex()
+            .flex_none()
+            .items_center()
+            .px(space::L)
+            .py(space::S)
+            .rounded(radius::S)
+            .text_size(tokens::text::SMALL)
+            .child(Label::element(letters))
     }
 
     fn toolbar_frame(&self, glyph: Option<Glyph>, cx: &App) -> Stateful<Div> {

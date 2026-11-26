@@ -9,7 +9,9 @@ use theme::ActiveTheme as _;
 
 use super::{FleetView, hit_target};
 use supraman_ui::text::input::{InputEvent, TextInput};
+use supraman_ui::controls::pill;
 use supraman_ui::term_element::{self, FONT_SIZE, TermFont, step_font_size};
+use supraman_ui::tokens;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Chord {
@@ -280,20 +282,14 @@ impl FleetView {
         let colors = cx.theme().colors();
         let key = format!("terminal-link-{tab_id}");
         Some(
-            div()
+            pill::tag(cx)
                 .id(SharedString::from(key.clone()))
                 .absolute()
-                .bottom_1()
-                .left_1()
+                .bottom(tokens::space::S)
+                .left(tokens::space::S)
                 .max_w(gpui::relative(0.66))
-                .px_2()
-                .py_0p5()
-                .rounded_sm()
-                .border_1()
-                .border_color(colors.border)
+                .py(tokens::space::XS)
                 .bg(colors.elevated_surface_background)
-                .text_xs()
-                .text_color(colors.text_muted)
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()
@@ -317,11 +313,11 @@ impl FleetView {
             .flex()
             .flex_none()
             .items_center()
-            .gap_2()
-            .h(px(28.))
-            .px_2()
+            .gap(tokens::space::L)
+            .h(tokens::bar::HEADER)
+            .px(tokens::space::L)
             .bg(colors.toolbar_background)
-            .border_b_1()
+            .border_b(tokens::stroke::HAIRLINE)
             .border_color(colors.border)
             .text_sm()
             .child(div().text_color(colors.text_muted).child("Find"))

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use supraman_core::Settings;
 use supraman_ui::patterns::settings_page::{SettingsPage, SettingsPages};
-use supraman_ui::{surfaces::banner, controls::button, focus_order};
+use supraman_ui::{surfaces::banner, controls::button, focus_order, tokens};
 use supraman_workman::AuthStatus;
 use supraman_ui::themes::{self, Catalog, TerminalColors};
 use gpui::{
@@ -431,13 +431,9 @@ impl Render for SettingsView {
             .border_color(colors.border);
         nav = nav.children(self.pages.nav(&self.hits, self.page, |this, page, cx| this.show(page, cx), cx));
         nav = nav.child(div().flex_1()).child(
-            button::ghost_muted(&self.hits, "open-file", cx)
-                .mx_2()
-                .px_2()
-                .py_1()
-                .rounded_sm()
-                .text_xs()
-                .child("Open settings.toml")
+            button::Button::link(&self.hits, "open-file")
+                .label("Open settings.toml")
+                .mx(tokens::space::L)
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_file(cx))),
         );
 

@@ -4,6 +4,7 @@ pub mod dialog;
 pub mod confirm;
 pub mod toast;
 pub mod banner;
+pub mod card;
 pub mod hover_card;
 pub mod form;
 pub mod notices;

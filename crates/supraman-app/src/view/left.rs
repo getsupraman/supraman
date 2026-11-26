@@ -16,7 +16,7 @@ use theme::ActiveTheme as _;
 use supraman_ui::icon::Icon;
 use supraman_ui::marks;
 use supraman_ui::controls::tooltip::Tooltip;
-use super::{Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE, MAX_WORKING_LIMIT};
+use super::{Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE};
 use supraman_ui::clipped::clipped;
 use crate::settings_window::page;
 use crate::updates::Stage;

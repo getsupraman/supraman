@@ -24,3 +24,16 @@ pub fn pill(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<Sh
         .text_color(fg)
         .child(label)
 }
+
+/// A still tag: a word in a hairline box at the small text's size, muted, with no hover or click (the diff's side, a terminal's link).
+pub fn tag(cx: &App) -> Div {
+    let colors = cx.theme().colors();
+    div()
+        .flex_none()
+        .px(space::M)
+        .rounded(radius::S)
+        .border(stroke::HAIRLINE)
+        .border_color(colors.border)
+        .text_size(tokens::text::SMALL)
+        .text_color(colors.text_muted)
+}
