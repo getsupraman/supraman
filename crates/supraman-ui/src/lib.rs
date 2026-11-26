@@ -11,6 +11,8 @@ pub mod dialog;
 pub mod focus;
 pub mod focus_order;
 pub mod form;
+#[cfg(any(test, feature = "gallery"))]
+pub mod gallery;
 pub mod folder_picker;
 pub mod fonts;
 pub mod hit;
@@ -27,6 +29,8 @@ pub mod nudge;
 pub mod open;
 pub mod palette;
 pub mod placeholder;
+#[cfg(test)]
+mod ratchet;
 pub mod segmented;
 pub mod session;
 pub mod settings_page;

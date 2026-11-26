@@ -12,7 +12,7 @@ path = "src/main.rs"
 [features]
 default = ["selftest"]
 # `selftest`: the --selftest* modes with their Win32 harness, GitMan's test repos (7g's `Fixture::new_in`) and FakeWorkman.
-selftest = ["dep:windows", "supraman-gitman/test-support", "supraman-workman/fake"]
+selftest = ["dep:windows", "supraman-gitman/test-support", "supraman-workman/fake", "supraman-ui/gallery"]
 
 [dependencies]
 anyhow = "1.0.86"

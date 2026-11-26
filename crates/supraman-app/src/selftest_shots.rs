@@ -18,6 +18,7 @@ use crate::{
     view::{FleetView, MenuTarget, TabKind},
 };
 
+mod gallery;
 mod git;
 
 pub const GROUP: &str = "demo";
@@ -46,6 +47,31 @@ static OAUTH: OnceLock<std::sync::Arc<supraman_workman::fake::FakeAuth>> = OnceL
 /// `SUPRAMAN_SHOTS`: where a run that takes screenshots writes them.
 pub(crate) fn dir() -> Option<PathBuf> {
     std::env::var_os("SUPRAMAN_SHOTS").map(PathBuf::from)
+}
+
+const LIGHT_FILE: &str = "selftest-light.json";
+
+/// `supraman_ui::themes::selftest_light::LIGHT` planted in `home`'s themes and painting every window; false when it cannot be planted.
+pub(crate) fn light_theme(home: &Path, cx: &mut AsyncWindowContext) -> bool {
+    let dir = supraman_ui::themes::themes_dir(home);
+    if std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join(LIGHT_FILE), supraman_ui::themes::selftest_light::LIGHT)).is_err() {
+        return false;
+    }
+    apply_theme(Some("Selftest Light"), home, cx);
+    true
+}
+
+/// The default theme painting every window again, the planted light one gone.
+pub(crate) fn default_theme(home: &Path, cx: &mut AsyncWindowContext) {
+    apply_theme(None, home, cx);
+    std::fs::remove_file(supraman_ui::themes::themes_dir(home).join(LIGHT_FILE)).ok();
+}
+
+fn apply_theme(name: Option<&str>, home: &Path, cx: &mut AsyncWindowContext) {
+    cx.update(|_, cx| {
+        supraman_ui::themes::apply(cx, name, supraman_ui::themes::TerminalColors::Theme, Some(home));
+    })
+    .ok();
 }
 
 fn out_dir() -> anyhow::Result<PathBuf> {
@@ -270,7 +296,8 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     git::shot(view, &out, cx).await?;
     git_palette(view, &out, cx).await?;
     tab_overflow(view, &out, cx).await?;
-    settings_pages(view, &out, cx).await
+    settings_pages(view, &out, cx).await?;
+    gallery::shots(&out, cx).await
 }
 
 /// demo-api attached in its tab: its sidebar row in the selected fill with the focus colour's left edge.
