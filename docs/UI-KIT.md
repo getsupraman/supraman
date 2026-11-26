@@ -109,13 +109,15 @@ Rules:
   frame paints (gpui-kit's popover defers the same way). No `window.focus` inside `render`; a ratchet
   test counts them down to zero (§11).
 - **A popup remembers what held the focus when it opened** and gives it back on close, only if the focus
-  is still inside the popup; if nothing held it, nothing gets it.
+  is still inside the popup; if nothing held it, only what encloses the popup may take it, else nothing
+  does (`focus::popup`; `restore_on_loss` asks it first).
 - **Only the element holding the keys shows a caret or cursor, and only while its window is active.**
   A text field's caret and a terminal's line cursor (`|`) behave alike: shown and blinking while they
   hold the keys, hidden otherwise. One
   `Blink` entity (epoch-cancelled timer, paused by each keystroke, gpui-kit `blink_cursor.rs`) drives
   every caret and cursor.
-- `focus_visible` (keyboard-reached) shows the ring; a mouse click on a button does not.
+- `focus_visible` (keyboard-reached: a key since the window's last mouse press) shows the ring, `focus::ring`,
+  a painted outline, never a shadow; a mouse click on a button does not.
 
 ### 4.4 Scroll
 

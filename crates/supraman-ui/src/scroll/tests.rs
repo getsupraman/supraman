@@ -174,3 +174,26 @@ fn page_keys_scroll_the_area_holding_the_focus(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("pageup home");
     assert_eq!(offset(&view, false, cx), px(0.));
 }
+
+struct Plain {
+    handle: ScrollHandle,
+}
+
+impl Render for Plain {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(area("plain").track(&self.handle).w(px(300.)).h(px(200.)).flex().flex_col().children(rows(50)))
+    }
+}
+
+#[gpui::test]
+fn a_click_gives_an_area_with_nothing_focusable_in_it_the_keys_and_its_page_keys_work(cx: &mut TestAppContext) {
+    cx.update(|cx| crate::init_globals(cx, "test"));
+    let (view, cx) = cx.add_window_view(|_, _| Plain { handle: ScrollHandle::new() });
+    cx.run_until_parked();
+    assert!(cx.update(|window, cx| window.focused(cx).is_none()));
+    cx.simulate_click(point(px(100.), px(50.)), Modifiers::none());
+    assert!(cx.update(|window, cx| window.focused(cx).is_some()), "the click gives the area the keys");
+    cx.simulate_keystrokes("pagedown");
+    cx.run_until_parked();
+    assert_eq!(view.read_with(cx, |v, _| v.handle.offset().y), px(-200.), "Page Down scrolls it a viewport");
+}

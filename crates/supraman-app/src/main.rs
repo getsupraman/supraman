@@ -15,6 +15,8 @@ mod selftest;
 #[cfg(feature = "selftest")]
 mod selftest_machine;
 #[cfg(feature = "selftest")]
+mod selftest_caret;
+#[cfg(feature = "selftest")]
 mod selftest_closed;
 #[cfg(feature = "selftest")]
 mod selftest_delete;

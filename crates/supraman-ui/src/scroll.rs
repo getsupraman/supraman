@@ -122,7 +122,8 @@ pub fn mode(cx: &App) -> Scrollbars {
 pub(crate) const IDLE: Duration = crate::tokens::motion::SCROLLBAR_IDLE;
 pub(crate) const FADE: Duration = crate::tokens::motion::NORMAL;
 
-/// A vertical scroll box: style and children are the scrolled element's, its bar is laid over its right edge.
+/// A vertical scroll box: style and children are the scrolled element's, its bar is laid over its right edge; a click
+/// that nothing focusable in it takes gives it the keys, so its Page keys work with nothing focusable in it.
 pub fn area(id: impl Into<ElementId>) -> ScrollArea {
     ScrollArea { id: id.into(), handle: None, content: div(), hit: None, mode: None }
 }
@@ -190,8 +191,10 @@ impl RenderOnce for ScrollArea {
             bar = bar.mode(mode);
         }
         let keys = handle.clone();
+        let focus = window.use_keyed_state(ElementId::from((self.id.clone(), "focus")), cx, |_, cx| cx.focus_handle()).read(cx).clone();
         self.content
             .id(self.id)
+            .track_focus(&focus)
             .overflow_y_scroll()
             .track_scroll(&handle)
             .on_key_down(move |e: &KeyDownEvent, window, cx| {
