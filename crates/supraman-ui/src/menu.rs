@@ -4,7 +4,6 @@
 use std::{
     cell::{Cell, OnceCell, RefCell},
     rc::Rc,
-    time::Instant,
 };
 
 use gpui::{
@@ -20,14 +19,12 @@ use crate::popup::Popup;
 use crate::state::{self, Fills, State};
 use crate::tokens::{self, Layer};
 
-mod nav;
+use crate::list::{self, nav};
 
 /// A menu's least width.
 const MIN_WIDTH: Pixels = px(180.);
 /// How long the pointer rests on an item before its submenu opens, or another's closes.
 const SUBMENU_DELAY: std::time::Duration = tokens::motion::NORMAL;
-/// How long typed letters add up to one type-ahead.
-const TYPED_FOR: std::time::Duration = std::time::Duration::from_millis(800);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MenuItem<A> {
@@ -98,8 +95,7 @@ impl<A> MenuItem<A> {
 struct Nav {
     highlighted: Option<usize>,
     sub: Option<Sub>,
-    typed: String,
-    typed_at: Option<Instant>,
+    typing: list::Selection,
     scroll: ScrollHandle,
     viewport: Option<Pixels>,
     /// Bumped by each pointer move onto an item, so only the last one's delay acts.
@@ -466,11 +462,7 @@ fn key<V: 'static, A: Clone + 'static>(nav: &Rc<RefCell<Nav>>, items: &[MenuItem
         (shown, at)
     };
     let acting: Vec<bool> = shown.iter().map(MenuItem::acts).collect();
-    let to = match k.key.as_str() {
-        "up" => nav::step(&acting, at, true),
-        "down" => nav::step(&acting, at, false),
-        "home" => nav::end(&acting, false),
-        "end" => nav::end(&acting, true),
+    match k.key.as_str() {
         "enter" | "space" => {
             if let Some(ix) = at {
                 activate(nav, items, acts, level, ix, true, this, window, cx);
@@ -492,21 +484,15 @@ fn key<V: 'static, A: Clone + 'static>(nav: &Rc<RefCell<Nav>>, items: &[MenuItem
             }
             return true;
         }
-        typed if typed.chars().count() == 1 && typed.chars().all(|c| c.is_alphanumeric()) => {
-            let mut n = nav.borrow_mut();
-            let now = Instant::now();
-            if n.typed_at.is_none_or(|t| now.duration_since(t) > TYPED_FOR) {
-                n.typed.clear();
-            }
-            n.typed.push_str(typed);
-            n.typed_at = Some(now);
-            let labels: Vec<(&str, bool)> = shown.iter().map(|it| (it.label.as_str(), it.acts())).collect();
-            nav::typed(&labels, at, &n.typed).or_else(|| {
-                n.typed = typed.to_string();
-                nav::typed(&labels, at, typed)
-            })
-        }
-        _ => return false,
+        _ => {}
+    }
+    let Some(listed) = list::key_of(k) else { return false };
+    let page = nav.borrow().viewport.map_or(1, |h| list::page_of(h, tokens::control::MEDIUM.height));
+    let to = {
+        let mut n = nav.borrow_mut();
+        n.typing.select(at);
+        let rows = list::Rows::new(shown.len()).page(page).wrapping().acting(&acting);
+        n.typing.key(&listed, &rows, || Some(shown.iter().map(|it| (it.label.clone(), it.acts())).collect()))
     };
     let Some(to) = to else { return true };
     let mut n = nav.borrow_mut();

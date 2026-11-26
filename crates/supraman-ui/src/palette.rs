@@ -5,7 +5,7 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ClickEvent, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla, MouseButton, Render,
+    AnyElement, App, ClickEvent, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla, MouseButton, Pixels, Render,
     SharedString, Subscription, Window, div, prelude::*, px,
 };
 use theme::ActiveTheme as _;
@@ -301,10 +301,19 @@ impl<T: Entry> Palette<T> {
     }
 
     pub fn step(&mut self, by: isize, cx: &mut Context<Self>) {
+        self.go(crate::list::Step::By(by), cx);
+    }
+
+    /// Moves the selection as `step` says over the rows shown, a page being the rows in view.
+    pub fn go(&mut self, step: crate::list::Step, cx: &mut Context<Self>) {
         if self.shown.is_empty() {
             return;
         }
-        self.selected = (self.selected as isize + by).clamp(0, self.shown.len() as isize - 1) as usize;
+        let page = crate::list::page_of(Pixels::from(LIST_HEIGHT), tokens::control::LARGE.height);
+        let mut selection = crate::list::Selection::default();
+        selection.select(Some(self.selected));
+        selection.go(step, &crate::list::Rows::new(self.shown.len()).page(page));
+        self.selected = selection.selected().unwrap_or(0);
         let key = self.shown[self.selected].0.key();
         self.list.reveal_where(|k| k == key.as_ref());
         cx.notify();
@@ -324,12 +333,12 @@ impl<T: Entry> Palette<T> {
     fn render_row(&mut self, ix: usize, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let Some((entry, marks)) = self.shown.get(ix).cloned() else { return div().into_any_element() };
         let on = ix == self.selected;
-        let selection = crate::themes::selection(cx.theme().colors(), self.input.focus_handle(cx).is_focused(window));
-        if on {
+        let chrome = crate::list::Chrome::new().selected(on).focused(self.input.focus_handle(cx).is_focused(window));
+        if let Some(selection) = chrome.selection(cx) {
             self.selection_shown = Some(selection);
         }
         let body = (self.paint)(&entry, &marks, on, cx);
-        let row = button::row(&self.hits, self.row_key(&entry.key()), on.then_some(selection), cx)
+        let row = crate::list::row(&self.hits, button::RowKeys::one(self.row_key(&entry.key()).into()), chrome, cx)
             .w_full()
             .px(tokens::space::XL)
             .py(px(5.))
@@ -410,6 +419,14 @@ impl<T: Entry> Render for Palette<T> {
             .child(crate::focus::popup([self.input.focus_handle(cx)]))
             .on_action(cx.listener(|this, _: &text_input::Up, _, cx| this.step(-1, cx)))
             .on_action(cx.listener(|this, _: &text_input::Down, _, cx| this.step(1, cx)))
+            .on_key_down(cx.listener(|this, e: &gpui::KeyDownEvent, _, cx| {
+                let Some(crate::list::Key::Step(step @ (crate::list::Step::Pages(_) | crate::list::Step::First | crate::list::Step::Last))) = crate::list::key_of(&e.keystroke) else { return };
+                if matches!(step, crate::list::Step::First | crate::list::Step::Last) && !e.keystroke.modifiers.control {
+                    return;
+                }
+                cx.stop_propagation();
+                this.go(step, cx);
+            }))
             .capture_action(cx.listener(|this, _: &text_input::Backspace, _, cx| {
                 if this.mode.is_some() && this.query(cx).is_empty() {
                     this.leave_mode(cx);

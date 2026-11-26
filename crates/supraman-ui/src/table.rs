@@ -22,6 +22,8 @@ pub use widths::{clamp, drag, fit};
 gpui::actions!(table, [SelectPrevious, SelectNext, SelectPageUp, SelectPageDown, SelectFirst, SelectLast]);
 
 pub const KEY_CONTEXT: &str = "Table";
+/// A table whose letters step it, not one with type-ahead ([`Table::type_ahead`]).
+const STEPPING: &str = "Table && !TypeAhead";
 
 /// A cell's padding left and right, in rems.
 pub const CELL_PAD: f32 = 0.5;
@@ -30,11 +32,13 @@ pub fn bind_keys(cx: &mut App) {
     let c = Some(KEY_CONTEXT);
     cx.bind_keys([
         KeyBinding::new("up", SelectPrevious, c),
-        KeyBinding::new("k", SelectPrevious, c),
+        KeyBinding::new("k", SelectPrevious, Some(STEPPING)),
         KeyBinding::new("down", SelectNext, c),
-        KeyBinding::new("j", SelectNext, c),
+        KeyBinding::new("j", SelectNext, Some(STEPPING)),
         KeyBinding::new("pageup", SelectPageUp, c),
         KeyBinding::new("pagedown", SelectPageDown, c),
+        KeyBinding::new("home", SelectFirst, c),
+        KeyBinding::new("end", SelectLast, c),
         KeyBinding::new("ctrl-up", SelectFirst, c),
         KeyBinding::new("ctrl-home", SelectFirst, c),
         KeyBinding::new("ctrl-down", SelectLast, c),
@@ -42,15 +46,7 @@ pub fn bind_keys(cx: &mut App) {
     ]);
 }
 
-/// Where a key moves the selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Step {
-    By(isize),
-    /// A page of the rows in view, down when positive.
-    Pages(isize),
-    First,
-    Last,
-}
+pub use crate::list::Step;
 
 #[derive(Clone, Debug)]
 pub struct Column {
@@ -121,7 +117,7 @@ impl NearEnd {
 
 #[derive(Default)]
 struct Inner {
-    selected: Option<usize>,
+    selection: crate::list::Selection,
     /// The rows a key can select: the last frame's, without its footer.
     rows: usize,
     row_height: Pixels,
@@ -150,7 +146,7 @@ impl TableState {
     }
 
     pub fn selected(&self) -> Option<usize> {
-        self.inner.borrow().selected
+        self.inner.borrow().selection.selected()
     }
 
     /// The fill the last frame painted the selected row with; `None` while it was not in view.
@@ -160,7 +156,7 @@ impl TableState {
 
     /// Selects `row` (none with `None`) without scrolling to it.
     pub fn select(&self, row: Option<usize>) {
-        self.inner.borrow_mut().selected = row;
+        self.inner.borrow_mut().selection.select(row);
     }
 
     /// Scrolls `row` into view, the least distance.
@@ -198,23 +194,24 @@ impl TableState {
     /// Moves the selection to where `step` says within the last frame's rows, reveals it, and returns it
     /// when it moved; a relative step selects the first row when none was selected.
     pub fn go(&self, step: Step) -> Option<usize> {
-        let page = self.page() as isize;
-        let (row, moved) = {
-            let mut inner = self.inner.borrow_mut();
-            let last = inner.rows.checked_sub(1)?;
-            let row = match (step, inner.selected) {
-                (Step::First, _) => 0,
-                (Step::Last, _) => last,
-                (_, None) => 0,
-                (Step::By(by), Some(row)) => row.saturating_add_signed(by).min(last),
-                (Step::Pages(n), Some(row)) => row.saturating_add_signed(n * page).min(last),
-            };
-            let moved = inner.selected != Some(row);
-            inner.selected = Some(row);
-            (row, moved)
-        };
-        self.reveal(row);
-        moved.then_some(row)
+        let rows = crate::list::Rows::new(self.inner.borrow().rows).page(self.page());
+        let moved = self.inner.borrow_mut().selection.go(step, &rows);
+        if let Some(row) = moved.or(self.selected()) {
+            self.reveal(row);
+        }
+        moved
+    }
+
+    /// Type-ahead: `typed` on the rows' text (`text`, a row's), the row it moved to, revealed.
+    pub fn type_ahead(&self, typed: &str, text: &dyn Fn(usize) -> String) -> Option<usize> {
+        let n = self.inner.borrow().rows;
+        let labels: Vec<String> = (0..n).map(text).collect();
+        let labels: Vec<(&str, bool)> = labels.iter().map(|t| (t.as_str(), true)).collect();
+        let moved = self.inner.borrow_mut().selection.type_ahead(typed, &labels, std::time::Instant::now());
+        if let Some(row) = moved {
+            self.reveal(row);
+        }
+        moved
     }
 }
 
@@ -225,6 +222,7 @@ type ResizeFn<V> = dyn Fn(&mut V, Vec<Pixels>, &mut Context<V>);
 type NearEndFn<V> = dyn Fn(&mut V, &mut Window, &mut Context<V>);
 type KeyFn<V> = dyn Fn(&mut V, &str, &mut Window, &mut Context<V>) -> bool;
 type RowKeyFn = dyn Fn(usize) -> String;
+type TextFn<V> = dyn Fn(&V, usize) -> String;
 type HeaderMenuFn<V> = dyn Fn(&mut V, gpui::Point<Pixels>, &mut Window, &mut Context<V>);
 
 /// One frame's table, built in the owner's render. Its element ids and hit keys start with `id`:
@@ -247,6 +245,7 @@ pub struct Table<V> {
     on_key: Option<Rc<KeyFn<V>>>,
     row_key: Option<Rc<RowKeyFn>>,
     header_menu: Option<Rc<HeaderMenuFn<V>>>,
+    text: Option<Rc<TextFn<V>>>,
     headless: bool,
     footer: usize,
 }
@@ -280,9 +279,16 @@ impl<V: 'static> Table<V> {
             on_key: None,
             row_key: None,
             header_menu: None,
+            text: None,
             headless: false,
             footer: 0,
         }
+    }
+
+    /// Type-ahead on each row's `text`: a typed letter or digit selects the next row it starts.
+    pub fn type_ahead(mut self, text: impl Fn(&V, usize) -> String + 'static) -> Self {
+        self.text = Some(Rc::new(text));
+        self
     }
 
     /// No header row.
@@ -367,18 +373,25 @@ impl<V: 'static> Table<V> {
         };
         // Columns fitted to a width not yet measured would jump on the next frame; the last column fills the row either way.
         let unfitted = !measured && self.columns.len() > 1;
-        let on_key = self.on_key.clone();
+        let (on_key, text, state, on_select) = (self.on_key.clone(), self.text.clone(), self.state.clone(), self.on_select.clone());
         let keys = cx.listener(move |this: &mut V, e: &KeyDownEvent, window, cx| {
             if on_key.as_ref().is_some_and(|f| f(this, e.keystroke.key.as_str(), window, cx)) {
                 cx.stop_propagation();
                 cx.notify();
+                return;
             }
+            let (Some(text), Some(crate::list::Key::Typed(typed))) = (&text, crate::list::key_of(&e.keystroke)) else { return };
+            cx.stop_propagation();
+            if let (Some(row), Some(f)) = (state.type_ahead(&typed, &|ix| text(this, ix)), &on_select) {
+                f(this, row, window, cx);
+            }
+            cx.notify();
         });
         let header = (!self.headless).then(|| self.header(&widths, cx));
         div()
             .id(self.id.clone())
             .relative()
-            .key_context(KEY_CONTEXT)
+            .key_context(if self.text.is_some() { "Table TypeAhead" } else { KEY_CONTEXT })
             .track_focus(&self.state.focus)
             .on_key_down(keys)
             .on_action(self.stepper(|_: &SelectPrevious| Step::By(-1), cx))
@@ -525,12 +538,12 @@ impl<V: 'static> Table<V> {
                 }
             }
             let selected = state.selected();
-            let colors = cx.theme().colors();
             let focused = state.focus.is_focused(window) || state.focus.contains_focused(window, cx);
-            let (selection, hover, open) = (crate::themes::selection(colors, focused), colors.ghost_element_hover, crate::tokens::roles(cx).open);
+            let chrome = crate::list::Chrome::new().focused(focused).inset(inset);
+            let selection = chrome.selected(true).selection(cx);
             let mut out = Vec::with_capacity(range.len());
             if range.len() > 1 || range.start > 0 {
-                state.inner.borrow_mut().shown_selection = selected.filter(|s| range.contains(s)).map(|_| selection);
+                state.inner.borrow_mut().shown_selection = selected.filter(|s| range.contains(s)).and(selection);
             }
             for ix in range {
                 let part = row_key.as_ref().map_or_else(|| ix.to_string(), |k| k(ix));
@@ -545,12 +558,7 @@ impl<V: 'static> Table<V> {
                     })
                     .collect();
                 let (state, on_select, on_click) = (state.clone(), on_select.clone(), on_click.clone());
-                let row = crate::state::State { selected: selected == Some(ix), open: crate::popup::is_open(&key, window, cx), ..Default::default() };
-                if row.open {
-                    crate::popup::note_painted(&key.clone().into());
-                }
-                let fills = crate::state::Fills { rest: background, hover: Some(hover), selected: Some(selection), open: Some(open), ..Default::default() };
-                let fill = crate::state::resolve(row, fills).paint(div().absolute().left_0().right_0().top(inset).bottom(inset), Some(group.clone())).child(hit_target(&hits, fill_key));
+                let fill = chrome.selected(selected == Some(ix)).band(background).fill(key.clone(), group.clone(), cx).child(hit_target(&hits, fill_key));
                 out.push(
                     div()
                         .id(SharedString::from(key.clone()))
