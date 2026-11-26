@@ -270,7 +270,6 @@ impl Scrollbar {
         let view = window.current_view();
         let line_height = window.line_height();
         let (thumb, area, track) = (shown.thumb, shown.area.clone(), shown.track.clone());
-        let visible = state.get().opacity > 0.;
         let edit = |state: &State, f: &dyn Fn(&mut Bar)| {
             let mut s = state.get();
             f(&mut s);
@@ -305,7 +304,8 @@ impl Scrollbar {
         window.on_mouse_event({
             let (handle, state, track) = (self.handle.clone(), state.clone(), track.clone());
             move |e: &MouseDownEvent, phase, window, cx| {
-                if !phase.bubble() || e.button != MouseButton::Left || !visible || !track.is_hovered(window) {
+                let shown = state.get().opacity > 0. || state.get().hovered;
+                if !phase.bubble() || e.button != MouseButton::Left || !shown || !track.is_hovered(window) {
                     return;
                 }
                 cx.stop_propagation();
