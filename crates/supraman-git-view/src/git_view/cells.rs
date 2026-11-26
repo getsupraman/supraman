@@ -195,7 +195,7 @@ pub(crate) fn refs(ix: usize, row: &GraphRow, view: RefCellView, selected: bool,
         return cell.child(shown.relative().child(hit_target(hits, format!("git-ghost-{ix}")))).into_any_element();
     }
     let shown = acting(shown.relative().child(hit_target(hits, format!("git-pill-{ix}"))), format!("git-pill-{ix}"), ix, first, 0, row.sha.clone(), palette, cx);
-    let shown = if view.list.is_empty() { shown } else { shown.child(deferred(list(ix, row, &view.list, colour, palette, hits, cx)).with_priority(supraman_ui::menu::FLOAT)) };
+    let shown = if view.list.is_empty() { shown } else { shown.child(deferred(list(ix, row, &view.list, colour, palette, hits, cx)).with_priority(supraman_ui::tokens::Layer::Float.priority())) };
     cell = cell.child(shown).when(view.more > 0, |d| {
         let more = SharedString::from(format!("+{}", view.more));
         d.child(more_chip(more, colour, palette).child(hit_target(hits, format!("git-more-{ix}"))))

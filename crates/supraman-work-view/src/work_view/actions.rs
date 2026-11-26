@@ -79,12 +79,12 @@ impl WorkView {
             .flex_none()
             .items_center()
             .child(
-                button::icon(&self.hits, format!("{prefix}-copy"), Icon::Copy.svg(12., muted), px(COPY_SIDE), cx)
+                button::Button::new(&self.hits, format!("{prefix}-copy")).icon(Icon::Copy.svg(12., muted)).icon_only(px(COPY_SIDE))
                     .tooltip(supraman_ui::tooltip::Tooltip::text("Copy ref"))
                     .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| this.copy_ref(&copied, cx))),
             )
             .child(
-                button::icon(&self.hits, format!("{prefix}-web"), Icon::ArrowUpRight.svg(12., muted), px(COPY_SIDE), cx)
+                button::Button::new(&self.hits, format!("{prefix}-web")).icon(Icon::ArrowUpRight.svg(12., muted)).icon_only(px(COPY_SIDE))
                     .tooltip(supraman_ui::tooltip::Tooltip::text("Open in Workman web"))
                     .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| this.open_web(&opened, cx))),
             )

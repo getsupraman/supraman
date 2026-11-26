@@ -97,7 +97,7 @@ impl WipPanel {
         Some(div().flex().flex_col().gap_1().child(fold).children(skip))
     }
 
-    fn abort(&self, shown: &Shown, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    fn abort(&self, shown: &Shown, cx: &mut Context<Self>) -> Option<button::Button> {
         let (step, words) = match shown.state {
             OperationState::Merge => (Step::AbortMerge, "Abort merge".to_string()),
             OperationState::Rebase { .. } => (Step::AbortRebase, "Abort rebase".to_string()),
@@ -107,16 +107,15 @@ impl WipPanel {
             }
         };
         let busy = self.busy(cx);
-        Some(live(button::action(&self.hits, "wip-abort", SharedString::from(words), button::Tone::Danger, button::Fill::Outline, cx), busy, cx, move |this, cx| this.ask(Ask::Step(step), cx)))
+        Some(live(button::Button::new(&self.hits, "wip-abort").label(SharedString::from(words)).tone(button::Tone::Danger).fill(button::Fill::Outline), busy, cx, move |this, cx| this.ask(Ask::Step(step), cx)))
     }
 
-    fn commit_bar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    fn commit_bar(&self, cx: &mut Context<Self>) -> Option<button::Button> {
         let (words, act) = self.commit_button(false, cx)?;
         let (tone, fill) = (button::Tone::Success, button::Fill::Solid);
-        let ink = button::look(tone, fill, cx).text;
-        let bar = button::sized(button::action(&self.hits, "wip-commit", SharedString::from(words.clone()), tone, fill, cx), button::Size::Medium).w_full().child(Icon::GitCommit.svg(14., ink));
+        let bar = button::Button::new(&self.hits, "wip-commit").label(SharedString::from(words.clone())).tone(tone).fill(fill).size(button::Size::Medium).w_full().icon_after(Icon::GitCommit);
         let busy = self.busy(cx);
-        Some(if act.is_none() && busy.is_none() { button::dimmed(bar) } else { live(bar, busy, cx, |this, cx| this.commit(false, cx)) })
+        Some(if act.is_none() && busy.is_none() { bar.dimmed_if(true) } else { live(bar, busy, cx, |this, cx| this.commit(false, cx)) })
     }
 
     pub(super) fn commit_area(&self, shown: &Shown, cx: &mut Context<Self>) -> Option<Div> {

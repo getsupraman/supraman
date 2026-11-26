@@ -398,9 +398,9 @@ impl SettingsView {
     }
 
     /// A page's button: [`button::Size::Medium`], the next of the page's Tab order, `act` its click, Space and Enter.
-    fn control(&self, key: &'static str, label: impl Into<SharedString>, act: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
-        let shown = button::sized(button::action(&self.hits, key, label, button::Tone::Neutral, button::Fill::Solid, cx), button::Size::Medium);
-        button::acting(shown, &self.members.handle(key, cx), act, cx)
+    fn control(&self, key: &'static str, label: impl Into<SharedString>, act: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static, cx: &mut Context<Self>) -> button::Button {
+        let shown = button::Button::new(&self.hits, key).label(label).size(button::Size::Medium);
+        shown.acting(&self.members.handle(key, cx), act, cx)
     }
 
     fn render_gitman(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {

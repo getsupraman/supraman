@@ -144,9 +144,9 @@ impl UndoBar {
         };
         let colors = cx.theme().colors();
         let fg = if enabled { colors.text } else { colors.text_muted };
-        let button = button::toolbar(&self.hits, key, icon.svg(14., fg), false, fg, cx).child(SharedString::from(caption)).tooltip(Tooltip::text(tooltip));
+        let button = button::Button::toolbar(&self.hits, key).icon(icon.svg(14., fg)).text_color(fg).child(SharedString::from(caption)).tooltip(Tooltip::text(tooltip));
         if !enabled {
-            return button::dimmed(button);
+            return button.dimmed_if(true);
         }
         button.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| match key {
             UNDO_KEY => this.undo(cx),

@@ -102,13 +102,13 @@ fn seam_color(cx: &gpui::App) -> Hsla {
     cx.theme().colors().text_muted.opacity(0.35)
 }
 
-fn icon_button(hits: &HitTargets, key: &'static str, icon: Icon, tip: impl Into<SharedString>, on: bool, cx: &gpui::App) -> Stateful<Div> {
+fn icon_button(hits: &HitTargets, key: &'static str, icon: Icon, tip: impl Into<SharedString>, on: bool, cx: &gpui::App) -> button::Button {
     let colors = cx.theme().colors();
-    tinted_button(hits, key, icon, tip, on, if on { colors.text } else { colors.text_muted }, cx)
+    tinted_button(hits, key, icon, tip, on, if on { colors.text } else { colors.text_muted })
 }
 
-fn tinted_button(hits: &HitTargets, key: &'static str, icon: Icon, tip: impl Into<SharedString>, on: bool, fg: Hsla, cx: &gpui::App) -> Stateful<Div> {
-    button::toolbar(hits, key, icon.svg(16., fg), on, fg, cx).tooltip(Tooltip::text(tip))
+fn tinted_button(hits: &HitTargets, key: &'static str, icon: Icon, tip: impl Into<SharedString>, on: bool, fg: Hsla) -> button::Button {
+    button::Button::toolbar(hits, key).icon(icon.svg(16., fg)).on(on).text_color(fg).tooltip(Tooltip::text(tip))
 }
 
 /// Every top-level row's height: a group's, a top-level folder's, Other sessions'; no margin between them.
@@ -175,8 +175,8 @@ pub(super) fn tree_label<E: Styled + ParentElement>(hits: &HitTargets, key: &str
     label.relative().child(hit_target(hits, format!("tree-label-{key}")))
 }
 
-fn glyph_button(hits: &HitTargets, key: String, icon: Icon, tip: impl Into<SharedString>, cx: &gpui::App) -> Stateful<Div> {
-    button::icon(hits, key, icon.svg(14., cx.theme().colors().text_muted), px(20.), cx).tooltip(Tooltip::text(tip))
+fn glyph_button(hits: &HitTargets, key: String, icon: Icon, tip: impl Into<SharedString>, cx: &gpui::App) -> button::Button {
+    button::Button::new(hits, key).icon(icon.svg(14., cx.theme().colors().text_muted)).icon_only(px(20.)).tooltip(Tooltip::text(tip))
 }
 
 impl FleetView {
@@ -584,13 +584,13 @@ impl FleetView {
         let mut actions = div().flex().flex_wrap().gap_2().pt_1();
         if self.workman.signed_out() {
             actions = match self.workman_state.signing_in {
-                Some(_) => actions.child(button::action(&self.hits, "ws-setup-cancel", "Cancel sign-in", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(
+                Some(_) => actions.child(button::Button::new(&self.hits, "ws-setup-cancel").label("Cancel sign-in").on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
                         cx.stop_propagation();
                         this.cancel_sign_in();
                     },
                 ))),
-                None => actions.child(button::action(&self.hits, "ws-setup-signin", "Sign in", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(
+                None => actions.child(button::Button::new(&self.hits, "ws-setup-signin").label("Sign in").on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
                         cx.stop_propagation();
                         this.sign_in(cx);
@@ -599,14 +599,14 @@ impl FleetView {
             };
         }
         if self.workman.unreachable() {
-            actions = actions.child(button::action(&self.hits, "ws-setup-retry", "Retry", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(
+            actions = actions.child(button::Button::new(&self.hits, "ws-setup-retry").label("Retry").on_click(cx.listener(
                 |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     this.recheck_workman();
                 },
             )));
         }
-        actions = actions.child(button::action(&self.hits, "ws-setup-settings", "Settings…", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(
+        actions = actions.child(button::Button::new(&self.hits, "ws-setup-settings").label("Settings…").on_click(cx.listener(
             |this, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();
                 this.open_settings_at(Some(page::WORKMAN), cx);
@@ -649,7 +649,7 @@ impl FleetView {
         let mut actions = div().flex().flex_wrap().gap_2().pt_2();
         match stage {
             Stage::Downloading { .. } => {
-                actions = actions.child(button::action(&self.hits, "update-cancel", "Cancel", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                actions = actions.child(button::Button::new(&self.hits, "update-cancel").label("Cancel").on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     this.cancel_update(cx);
                 })));
@@ -657,11 +657,11 @@ impl FleetView {
             Stage::Applying => {}
             Stage::Idle | Stage::Failed(_) => {
                 actions = actions
-                    .child(button::action(&self.hits, "update-notes", "What's new", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    .child(button::Button::new(&self.hits, "update-notes").label("What's new").on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         cx.stop_propagation();
                         this.update_notes(cx);
                     })))
-                    .child(button::action(&self.hits, "update-install", "Update", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    .child(button::Button::new(&self.hits, "update-install").label("Update").on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         cx.stop_propagation();
                         this.run_update(cx);
                     })));
@@ -691,8 +691,8 @@ impl FleetView {
         )
     }
 
-    pub(super) fn hover_icon(&self, key: String, icon: Icon, tip: &'static str, group: &SharedString, shown: bool, cx: &gpui::App) -> Stateful<Div> {
-        button::revealed(&self.hits, key, icon.svg(14., cx.theme().colors().text_muted), px(SLOT), group.clone(), shown, cx).tooltip(Tooltip::text(tip))
+    pub(super) fn hover_icon(&self, key: String, icon: Icon, tip: &'static str, group: &SharedString, shown: bool, cx: &gpui::App) -> button::Button {
+        button::Button::new(&self.hits, key).icon(icon.svg(14., cx.theme().colors().text_muted)).icon_only(px(SLOT)).reveal(group.clone(), shown).tooltip(Tooltip::text(tip))
     }
 
     fn entry_selected(&self, entry: &EntryNode, cx: &gpui::App) -> bool {
@@ -767,7 +767,7 @@ impl FleetView {
     }
 
     /// An entry's Work, on its group's row or its top-level folder's; a folder's dimmed with why while it binds no project.
-    fn work_button(&self, entry: &EntryNode, group: &SharedString, shown: bool, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    fn work_button(&self, entry: &EntryNode, group: &SharedString, shown: bool, cx: &mut Context<Self>) -> Option<button::Button> {
         let target = super::work_tab::entry_target(entry)?;
         let why = target.folder().and_then(|f| self.work_why_not(f, cx));
         let key = format!("work-{}", entry.name);
@@ -779,11 +779,11 @@ impl FleetView {
             })));
         };
         let icon = Icon::Work.svg(14., cx.theme().colors().text_disabled);
-        Some(button::revealed(&self.hits, key, icon, px(SLOT), group.clone(), shown, cx).cursor_default().tooltip(Tooltip::text(why)).on_click(|_: &ClickEvent, _, cx| cx.stop_propagation()))
+        Some(button::Button::new(&self.hits, key).icon(icon).icon_only(px(SLOT)).reveal(group.clone(), shown).cursor_default().tooltip(Tooltip::text(why)).on_click(|_: &ClickEvent, _, cx| cx.stop_propagation()))
     }
 
     /// A group's New task…, its folder picked on the Start page.
-    fn task_button(&self, entry: &EntryNode, group: &SharedString, shown: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn task_button(&self, entry: &EntryNode, group: &SharedString, shown: bool, cx: &mut Context<Self>) -> button::Button {
         let name = entry.name.clone();
         self.hover_icon(format!("task-{name}"), Icon::Task, "New task…: start a session with a first prompt", group, shown, cx).on_click(cx.listener(
             move |this, _: &ClickEvent, window, cx| {
@@ -1031,7 +1031,7 @@ impl FleetView {
         }
     }
 
-    fn session_star(&self, row: &SessionRow, at: &str, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn session_star(&self, row: &SessionRow, at: &str, cx: &mut Context<Self>) -> button::Button {
         let (colors, status) = (cx.theme().colors().clone(), cx.theme().status().clone());
         let s = &row.session;
         let group = SharedString::from(format!("session-group-{}{at}", s.session_id));
@@ -1041,7 +1041,7 @@ impl FleetView {
         } else {
             (Icon::Star, colors.text_muted, "Star: always shown, stopped or closed, however old")
         };
-        button::revealed(&self.hits, format!("star-{}{at}", s.session_id), icon.svg(13., fg), px(SLOT), group, self.is_marked(s) || row.starred, cx)
+        button::Button::new(&self.hits, format!("star-{}{at}", s.session_id)).icon(icon.svg(13., fg)).icon_only(px(SLOT)).reveal(group, self.is_marked(s) || row.starred)
             .tooltip(Tooltip::text(tip))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();
@@ -1049,7 +1049,7 @@ impl FleetView {
             }))
     }
 
-    fn session_open(&self, place: &str, row: &SessionRow, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    fn session_open(&self, place: &str, row: &SessionRow, cx: &mut Context<Self>) -> Option<button::Button> {
         let s = &row.session;
         let at = row.scope.clone();
         let group = SharedString::from(format!("session-group-{}{at}", s.session_id));

@@ -6,10 +6,11 @@ use gpui::{AnyElement, App, ClickEvent, Div, FontWeight, Hsla, SharedString, Sta
 use supraman_core::time;
 use theme::ActiveTheme as _;
 
-use crate::button;
+use crate::button::{self, Button};
 use crate::clipped::{clamped, clipped, clipped_with};
 use crate::hit::{HitTargets, hit_target};
 use crate::tooltip::Tooltip;
+use crate::tokens;
 
 pub const TINT: f32 = 0.06;
 pub const TINT_HOVER: f32 = 0.14;
@@ -45,12 +46,12 @@ pub fn when(key: impl Into<SharedString>, at: i64, now: i64, cx: &App) -> Option
 
 /// A card's hover icon under `key`, shown while the card `card_key` is hovered; the owner adds its click.
 pub fn action(hits: &HitTargets, key: impl Into<SharedString>, card_key: impl Into<SharedString>, icon: Svg, tip: impl Into<SharedString>, cx: &App) -> Stateful<Div> {
-    button::revealed(hits, key, icon, px(BUTTON), card_key, false, cx).tooltip(Tooltip::text(tip))
+    Button::new(hits, key).icon(icon).icon_only(px(BUTTON)).reveal(card_key, false).tooltip(Tooltip::text(tip)).build(cx)
 }
 
 /// A card's main remedy under `key`: its word, shown without hover; the owner adds its click.
 pub fn primary(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<SharedString>, cx: &App) -> Stateful<Div> {
-    button::action(hits, key, label, button::Tone::Neutral, button::Fill::Outline, cx)
+    Button::new(hits, key).label(label).fill(button::Fill::Outline).build(cx)
 }
 
 pub fn icon_color(cx: &App) -> Hsla {
@@ -159,8 +160,8 @@ impl InboxCard {
         let head = div()
             .flex()
             .items_center()
-            .gap_2()
-            .text_xs()
+            .gap(tokens::space::L)
+            .text_size(tokens::text::SMALL)
             .children(self.mark)
             .children(self.context.map(|text| {
                 let context = match self.context_tip {
@@ -170,13 +171,13 @@ impl InboxCard {
                 context.flex_shrink(1.).text_color(muted)
             }))
             .children(self.when.and_then(|(at, now)| when(part("when"), at, now, cx)))
-            .child(div().flex_none().px_1().rounded_sm().bg(color.opacity(BADGE_TINT)).text_color(color).font_weight(FontWeight::BOLD).child(self.badge))
+            .child(div().flex_none().px(tokens::space::S).rounded(tokens::radius::S).bg(color.opacity(BADGE_TINT)).text_color(color).font_weight(FontWeight::BOLD).child(self.badge))
             .child(div().flex_1())
-            .child(div().flex().flex_none().items_center().gap_1().children(self.actions).children(self.primary))
+            .child(div().flex().flex_none().items_center().gap(tokens::space::S).children(self.actions).children(self.primary))
             .child(hit_target(hits, part("head")));
-        let title = clamped(part("title"), self.title, 2).text_sm().text_color(colors.text).child(hit_target(hits, part("title")));
+        let title = clamped(part("title"), self.title, 2).text_size(tokens::text::BODY).text_color(colors.text).child(hit_target(hits, part("title")));
         let lines = self.lines.into_iter().map(|(name, text, quiet)| {
-            clipped(part(&name), text, false).text_xs().text_color(if quiet { muted } else { colors.text }).child(hit_target(hits, part(&name)))
+            clipped(part(&name), text, false).text_size(tokens::text::SMALL).text_color(if quiet { muted } else { colors.text }).child(hit_target(hits, part(&name)))
         });
         let key = SharedString::from(self.key);
         let on_click = self.on_click;
@@ -186,10 +187,10 @@ impl InboxCard {
             .relative()
             .flex()
             .flex_col()
-            .gap(px(2.))
-            .p_2()
-            .rounded_md()
-            .border_l_2()
+            .gap(tokens::space::XS)
+            .p(tokens::space::L)
+            .rounded(tokens::radius::M)
+            .border_l(tokens::stroke::FOCUS)
             .border_color(color)
             .bg(color.opacity(TINT))
             .hover(|s| s.bg(color.opacity(TINT_HOVER)))

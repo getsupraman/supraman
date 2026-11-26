@@ -11,7 +11,6 @@ use supraman_ui::confirm::Confirm;
 use supraman_ui::focus_order::FocusOrder;
 use supraman_ui::hit::hit_target;
 use supraman_ui::text_input::{InputEvent, TextInput};
-use supraman_ui::tooltip::Tooltip;
 use supraman_ui::button;
 use theme::ActiveTheme as _;
 
@@ -381,12 +380,12 @@ impl CommitPanel {
             Target::Older { above, .. } => Some(rebases_words(above)),
             _ => None,
         };
-        let update = button::action(&self.hits, UPDATE_KEY, update_words, button::Tone::Success, button::Fill::Solid, cx);
+        let update = button::Button::new(&self.hits, UPDATE_KEY).label(update_words).tone(button::Tone::Success);
         let update = match self.update_why_not(cx) {
-            Some(why) => button::dimmed(update).tooltip(Tooltip::text(why)),
+            Some(why) => update.dimmed(Some(why)),
             None => update.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.update_message(cx))),
         };
-        let cancel = button::action(&self.hits, CANCEL_KEY, cancel_words, button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_amend(cx)));
+        let cancel = button::Button::new(&self.hits, CANCEL_KEY).label(cancel_words).fill(button::Fill::Outline).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_amend(cx)));
         let muted = cx.theme().colors().text_muted;
         let rebases = rebases.map(|words| div().relative().text_xs().text_color(muted).child(words).child(hit_target(&self.hits, REBASES_KEY.into())));
         div()

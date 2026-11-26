@@ -3,6 +3,7 @@ use std::{cell::RefCell, collections::HashMap};
 use gpui::{Bounds, Div, ElementId, Hsla, Pixels, SharedString, Stateful, canvas, div, prelude::*};
 
 use crate::tooltip::Tooltip;
+use crate::tokens;
 
 const KEPT: usize = 512;
 
@@ -88,7 +89,7 @@ pub fn pair(key: impl Into<SharedString>, bright_text: impl Into<SharedString>, 
     let tooltip = bright_cut || cut_at(&muted_key).is_some();
     let whole = SharedString::from(format!("{bright_text} {muted}"));
     let bright = div().relative().flex().flex_none().max_w_full().min_w_0().overflow_hidden().child(bright).child(measure(bright_key, bright_text, bright_cut));
-    let muted = div().flex().flex_1().min_w_0().pl_1().text_color(muted_color).child(clipped_with(muted_key, muted, false, false));
+    let muted = div().flex().flex_1().min_w_0().pl(tokens::space::S).text_color(muted_color).child(clipped_with(muted_key, muted, false, false));
     let line = div().id(ElementId::Name(key)).flex().items_center().min_w_0().overflow_hidden().whitespace_nowrap().child(bright).child(muted);
     if tooltip { line.tooltip(Tooltip::text(whole)) } else { line }
 }

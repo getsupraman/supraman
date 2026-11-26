@@ -15,7 +15,7 @@ pub const EDGE_STEP: Pixels = px(24.);
 
 /// Each tab's width: the room shared evenly, between [`TAB_MIN`] and [`TAB_MAX`]; [`TAB_MAX`] while the room is unknown.
 pub fn tab_width(room: Pixels, tabs: usize) -> Pixels {
-    if tabs == 0 || room <= px(0.) {
+    if tabs == 0 || room <= Pixels::ZERO {
         return TAB_MAX;
     }
     (room / tabs as f32).clamp(TAB_MIN, TAB_MAX)
@@ -23,10 +23,10 @@ pub fn tab_width(room: Pixels, tabs: usize) -> Pixels {
 
 /// The room the tabs get: the strip's `area` less the owner's `trailing` element; zero while the area is unmeasured.
 pub fn room(area: Pixels, trailing: Pixels) -> Pixels {
-    if area <= px(0.) {
-        return px(0.);
+    if area <= Pixels::ZERO {
+        return Pixels::ZERO;
     }
-    (area - trailing).max(px(0.))
+    (area - trailing).max(Pixels::ZERO)
 }
 
 /// Where the trailing element starts: right after the last tab, and at the room's right edge once the tabs overflow.
@@ -35,7 +35,7 @@ pub fn trailing_at(content: Pixels, room: Pixels) -> Pixels {
 }
 
 pub fn max_scroll(content: Pixels, viewport: Pixels) -> Pixels {
-    (content - viewport).max(px(0.))
+    (content - viewport).max(Pixels::ZERO)
 }
 
 /// The scroll that shows `start..end` whole, moving as little as it can from `scroll`.
@@ -47,7 +47,7 @@ pub fn revealed(scroll: Pixels, viewport: Pixels, content: Pixels, start: Pixels
     } else {
         scroll
     };
-    to.clamp(px(0.), max_scroll(content, viewport))
+    to.clamp(Pixels::ZERO, max_scroll(content, viewport))
 }
 
 /// The tab at `ix`'s span along the strip.
@@ -63,13 +63,13 @@ pub fn cut(scroll: Pixels, viewport: Pixels, content: Pixels) -> (bool, bool) {
 
 /// How far a drag at `x` (from the viewport's left) scrolls: towards the edge it is within [`EDGE`] of, more the nearer it is.
 pub fn edge_scroll(x: Pixels, viewport: Pixels) -> Pixels {
-    let depth = |into: Pixels| EDGE_STEP * ((EDGE - into.max(px(0.))) / EDGE).clamp(0., 1.);
+    let depth = |into: Pixels| EDGE_STEP * ((EDGE - into.max(Pixels::ZERO)) / EDGE).clamp(0., 1.);
     if x < EDGE {
         -depth(x)
     } else if x > viewport - EDGE {
         depth(viewport - x)
     } else {
-        px(0.)
+        Pixels::ZERO
     }
 }
 

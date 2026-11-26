@@ -6,6 +6,7 @@ use gpui::{Context, Div, SharedString, Stateful, div, prelude::*};
 use theme::ActiveTheme as _;
 
 use crate::hit::{HitTargets, hit_target};
+use crate::tokens;
 
 pub const TOAST_FOR: Duration = Duration::from_millis(2500);
 
@@ -60,23 +61,23 @@ impl ToastSlot {
             div()
                 .id(SharedString::from(key.to_string()))
                 .absolute()
-                .bottom_3()
-                .left_3()
-                .right_3()
+                .bottom(tokens::space::XL)
+                .left(tokens::space::XL)
+                .right(tokens::space::XL)
                 .flex()
                 .justify_center()
                 .child(
                     div()
                         .relative()
                         .max_w_full()
-                        .px_3()
-                        .py_1()
-                        .rounded_md()
-                        .border_1()
+                        .px(tokens::space::XL)
+                        .py(tokens::space::S)
+                        .rounded(tokens::radius::M)
+                        .border(tokens::stroke::HAIRLINE)
                         .border_color(if toast.done { success.opacity(0.5) } else { colors.border })
                         .bg(colors.elevated_surface_background)
                         .shadow_md()
-                        .text_sm()
+                        .text_size(tokens::text::BODY)
                         .text_color(colors.text)
                         .overflow_hidden()
                         .whitespace_nowrap()

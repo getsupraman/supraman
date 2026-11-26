@@ -6,6 +6,7 @@ use gpui::{AnyElement, Bounds, ClickEvent, Context, CursorStyle, Div, DragMoveEv
 use theme::ActiveTheme as _;
 
 use crate::hit::{HitTargets, hit_target};
+use crate::tokens;
 
 pub struct SplitPane {
     /// The divider's element id; it also tells two splits' drags apart.
@@ -71,11 +72,11 @@ impl SplitPane {
                 }
                 let max = (e.bounds.size.width - min_second).max(min_first);
                 let x = (e.event.position.x - e.bounds.left()).clamp(min_first, max);
-                drag(this, if keeps_second { e.bounds.size.width - x - px(1.) } else { x }, cx);
+                drag(this, if keeps_second { e.bounds.size.width - x - tokens::stroke::HAIRLINE } else { x }, cx);
             }))
             .child(first)
             .child(
-                div().relative().w(px(1.)).h_full().flex_none().bg(border).child(
+                div().relative().w(tokens::stroke::HAIRLINE).h_full().flex_none().bg(border).child(
                     handle(id, 0, move |this, cx| end(this, cx), move |this, cx| {
                         reset(this, default, cx);
                         reset_end(this, cx);
@@ -134,7 +135,7 @@ impl HeightBar {
         .justify_center()
         .w_full()
         .h(px(8.))
-        .child(div().w(px(48.)).h(px(4.)).rounded_full().bg(line).hover(|s| s.bg(lit)))
+        .child(div().w(px(48.)).h(px(4.)).rounded(tokens::radius::FULL).bg(line).hover(|s| s.bg(lit)))
         .child(hit_target(hits, id.to_string()));
         div()
             .flex()
@@ -202,7 +203,7 @@ impl Stack {
                 let (reset, end, reset_end) = (on_resize.clone(), on_resize_end.clone(), on_resize_end.clone());
                 let key = format!("{id}-divider-{i}");
                 grip(key.clone().into(), i, CursorStyle::ResizeUpDown, move |this, cx| end(this, cx), move |this, cx| {
-                    reset(this, vec![px(0.); count], cx);
+                    reset(this, vec![Pixels::ZERO; count], cx);
                     reset_end(this, cx);
                 }, cx)
                 .absolute()
@@ -217,7 +218,7 @@ impl Stack {
             let mut pane_div = div().relative().flex().flex_col().min_h_0().child(record).child(div().relative().flex_none().child(pane.header).children(border));
             if open {
                 pane_div.style().flex_grow = Some(weights[i]);
-                pane_div = pane_div.flex_shrink(1.).flex_basis(px(0.)).min_h(min).children(pane.body.map(|b| div().flex().flex_col().flex_1().min_h_0().child(b)));
+                pane_div = pane_div.flex_shrink(1.).flex_basis(Pixels::ZERO).min_h(min).children(pane.body.map(|b| div().flex().flex_col().flex_1().min_h_0().child(b)));
             } else {
                 pane_div = pane_div.flex_none();
             }
@@ -229,9 +230,9 @@ impl Stack {
 
 /// Each open pane's flex weight: its height, or the mean of the set ones (one apiece when none is set).
 fn weights(given: &[(bool, Pixels)]) -> Vec<f32> {
-    let set: Vec<f32> = given.iter().filter(|(open, h)| *open && *h > px(0.)).map(|(_, h)| f32::from(*h)).collect();
+    let set: Vec<f32> = given.iter().filter(|(open, h)| *open && *h > Pixels::ZERO).map(|(_, h)| f32::from(*h)).collect();
     let fill = if set.is_empty() { 1. } else { set.iter().sum::<f32>() / set.len() as f32 };
-    given.iter().map(|(_, h)| if *h > px(0.) { f32::from(*h) } else { fill }).collect()
+    given.iter().map(|(_, h)| if *h > Pixels::ZERO { f32::from(*h) } else { fill }).collect()
 }
 
 /// Every pane's height with the border above pane `border` at `y`: the nearest open pane above it and the nearest
@@ -241,7 +242,7 @@ fn dragged_heights(bounds: &[Option<Bounds<Pixels>>], given: &[(bool, Pixels)], 
     let below = (border..given.len()).find(|i| given[*i].0)?;
     let at = |i: usize| bounds.get(i).copied().flatten();
     let (top, bottom) = (at(above)?.top(), at(below)?.bottom());
-    let fixed = |range: std::ops::Range<usize>| range.map(|i| at(i).map_or(px(0.), |b| b.size.height)).fold(px(0.), |s, h| s + h);
+    let fixed = |range: std::ops::Range<usize>| range.map(|i| at(i).map_or(Pixels::ZERO, |b| b.size.height)).fold(Pixels::ZERO, |s, h| s + h);
     let (over, under) = (fixed(above + 1..border), fixed(border..below));
     let shared = bottom - top - over - under;
     if shared < min * 2. {

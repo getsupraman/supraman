@@ -14,6 +14,7 @@ use crate::table::TableState;
 use crate::text_input::TextInput;
 use crate::toast::ToastSlot;
 use crate::tree::TreeState;
+use crate::tokens;
 
 mod sections;
 
@@ -381,7 +382,7 @@ impl Render for Gallery {
             Section::Marks => sections::marks(cx),
             Section::Text => sections::text(self, cx),
         };
-        let title = div().flex_none().px_4().py_2().border_b_1().border_color(colors.border).text_sm().text_color(crate::themes::secondary(&colors)).child(self.section.title());
+        let title = div().flex_none().px(tokens::space::XXL).py(tokens::space::L).border_b(tokens::stroke::HAIRLINE).border_color(colors.border).text_size(tokens::text::BODY).text_color(crate::themes::secondary(&colors)).child(self.section.title());
         div()
             .id("kit-gallery")
             .track_focus(&self.root)
@@ -393,7 +394,7 @@ impl Render for Gallery {
             .bg(colors.editor_background)
             .text_color(colors.text)
             .child(title)
-            .child(div().relative().flex_1().min_h_0().p_4().child(body))
+            .child(div().relative().flex_1().min_h_0().p(tokens::space::XXL).child(body))
     }
 }
 

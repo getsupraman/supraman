@@ -1,17 +1,21 @@
-//! Every side form: a title with its icon and ×, labelled fields, and its OK (`button::action` Success Solid, `button::Size::Medium`) dimmed with why,
+//! Every side form: a title with its icon and ×, labelled fields, and its OK (a Success Solid `button::Button` at `button::Size::Medium`) dimmed with why,
 //! turning while the owner's write runs;
 //! Tab and Shift+Tab through its `FocusOrder`, Enter in a field its OK, Esc its close; hit keys `<key>`, `<key>-close`, `<key>-ok`.
 
 use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, FocusHandle, FontWeight, SharedString, Subscription, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
-use crate::button;
+use crate::button::{self, Button};
 use crate::focus_order::{Dismiss, FocusOrder, Press};
 use crate::hit::{HitTargets, hit_target};
 use crate::icon::Icon;
 use crate::text_input::{InputEvent, TextInput};
 use crate::themes::secondary;
+use crate::tokens;
 use crate::tooltip::Tooltip;
+
+/// The title's ×.
+const CLOSE: gpui::Pixels = px(22.);
 
 /// The owner's OK and close, what the form's button, ×, Enter and Esc run.
 pub struct Answers<V> {
@@ -79,36 +83,34 @@ impl<V: 'static> Form<V> {
         let colors = cx.theme().colors();
         let (muted, border, background) = (secondary(colors), colors.border, colors.panel_background);
         let Answers { ok: on_ok, close: on_close } = self.answers;
-        let close = button::icon(hits, format!("{}-close", self.key), Icon::Close.svg(14., muted), px(22.), cx)
+        let close = Button::new(hits, format!("{}-close", self.key))
+            .icon(Icon::Close.svg(tokens::icon::M, muted))
+            .icon_only(CLOSE)
             .tooltip(Tooltip::text("Close (Esc)"))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| on_close(this, cx)));
         let title = div()
             .flex()
             .items_center()
-            .gap_2()
-            .px_3()
-            .py_2()
-            .border_b_1()
+            .gap(tokens::space::L)
+            .px(tokens::space::XL)
+            .py(tokens::space::L)
+            .border_b(tokens::stroke::HAIRLINE)
             .border_color(border)
-            .child(self.icon.svg(16., muted))
+            .child(self.icon.svg(tokens::icon::L, muted))
             .child(div().flex_1().min_w_0().font_weight(FontWeight::SEMIBOLD).child(self.title))
             .child(close);
-        let fields = fields.into_iter().map(|(label, field)| div().flex().flex_col().gap_1().child(div().text_xs().text_color(muted).child(label)).child(field));
+        let fields = fields.into_iter().map(|(label, field)| div().flex().flex_col().gap(tokens::space::S).child(div().text_size(tokens::text::SMALL).text_color(muted).child(label)).child(field));
         let ok_key = format!("{}-ok", self.key);
-        let ok = if self.running {
-            button::action_turning(hits, ok_key, Icon::Refresh, self.ok, button::Tone::Success, button::Fill::Solid, cx)
-        } else {
-            button::action(hits, ok_key, self.ok, button::Tone::Success, button::Fill::Solid, cx)
-        };
-        let ok = match self.why {
-            Some(why) => button::dimmed(ok).tooltip(Tooltip::text(why)),
-            None => ok.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| on_ok(this, cx))),
-        };
-        let ok = match ok_focus {
-            Some(focus) => button::focusable(ok, focus, cx.listener(move |this, _: &Press, _, cx| on_ok(this, cx)), cx),
-            None => ok,
-        };
-        let body = div().flex().flex_col().gap_3().p_3().children(fields).child(div().flex().child(button::sized(ok, button::Size::Medium)));
+        let pressed = on_ok.clone();
+        let ok = Button::new(hits, ok_key)
+            .label(self.ok)
+            .tone(button::Tone::Success)
+            .size(button::Size::Medium)
+            .when(self.running, |b| b.icon(Icon::Refresh).turning(true))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| on_ok(this, cx)))
+            .dimmed(self.why)
+            .when_some(ok_focus, |b, focus| b.focus(focus, cx.listener(move |this, _: &Press, _, cx| pressed(this, cx))));
+        let body = div().flex().flex_col().gap(tokens::space::XL).p(tokens::space::XL).children(fields).child(div().flex().child(ok));
         order
             .on(div())
             .on_action(cx.listener(move |this, _: &Dismiss, _, cx| on_close(this, cx)))

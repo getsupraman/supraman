@@ -145,7 +145,7 @@ impl BatchedTextRun {
         let base_style = TextRun { len: 1, ..self.style.clone() };
         let base = text_system.shape_line("m".into(), font_size, &[base_style], None);
         let ink_at = |shaped: &ShapedLine| {
-            ink(&self.text, shaped, &text_system).unwrap_or_else(|| Bounds::new(point(px(0.), -shaped.ascent), size(shaped.width, shaped.ascent)))
+            ink(&self.text, shaped, &text_system).unwrap_or_else(|| Bounds::new(point(Pixels::ZERO, -shaped.ascent), size(shaped.width, shaped.ascent)))
         };
         let full = ink_at(&natural);
         let scale = ((before + cells + after) / full.size.width.max(px(0.01))).min(1.);
@@ -309,7 +309,7 @@ impl BuiltinCell {
                 Mark::RoundRect([l, t, r, b], radius, width) => {
                     let mut path = PathBuilder::stroke(px(width / scale));
                     let radii = point(px(radius / scale), px(radius / scale));
-                    let arc = |path: &mut PathBuilder, to| path.arc_to(radii, px(0.), false, true, at(to));
+                    let arc = |path: &mut PathBuilder, to| path.arc_to(radii, Pixels::ZERO, false, true, at(to));
                     path.move_to(at([l + radius, t]));
                     path.line_to(at([r - radius, t]));
                     arc(&mut path, [r, t + radius]);
@@ -475,7 +475,7 @@ fn prepaint(
             let y_off = if content.cursor.shape == CursorShape::Underline {
                 line_height - px(2.)
             } else {
-                px(0.)
+                Pixels::ZERO
             };
             let mut color = theme.players().local().cursor;
             if matches!(content.cursor.shape, CursorShape::Block | CursorShape::HollowBlock) {

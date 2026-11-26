@@ -68,7 +68,7 @@ impl Element for Ink {
     }
 
     fn prepaint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, _: Bounds<Pixels>, shift: &mut Pixels, window: &mut Window, cx: &mut App) {
-        window.with_element_offset(point(px(0.), *shift), |window| self.child.prepaint(window, cx));
+        window.with_element_offset(point(Pixels::ZERO, *shift), |window| self.child.prepaint(window, cx));
     }
 
     fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, _: Bounds<Pixels>, _: &mut Pixels, _: &mut (), window: &mut Window, cx: &mut App) {

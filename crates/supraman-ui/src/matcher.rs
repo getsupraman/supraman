@@ -5,6 +5,7 @@ use std::ops::Range;
 
 use gpui::{App, Div, FontWeight, HighlightStyle, SharedString, Stateful, StyledText, div, prelude::*, px};
 use theme::ActiveTheme as _;
+use crate::tokens;
 
 fn same(a: char, b: char) -> bool {
     a == b || a.to_lowercase().eq(b.to_lowercase())
@@ -78,10 +79,10 @@ pub fn count(n: usize, cx: &App) -> Div {
     div()
         .flex_none()
         .min_w(px(18.))
-        .px_1()
-        .rounded_full()
+        .px(tokens::space::S)
+        .rounded(tokens::radius::FULL)
         .bg(colors.element_background)
-        .text_xs()
+        .text_size(tokens::text::SMALL)
         .text_center()
         .text_color(colors.text)
         .child(SharedString::from(n.to_string()))

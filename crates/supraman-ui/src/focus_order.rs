@@ -12,6 +12,15 @@ pub const CONTEXT: &str = "FocusOrder";
 /// A focused button's element: Space and Enter press it, Esc says `Dismiss` to the form around it.
 pub const BUTTON_CONTEXT: &str = "FocusedButton";
 
+/// `el` taking the keyboard under `focus` (a [`FocusOrder`] member): [`crate::button::ring`]ed in the focus colour while
+/// focused, over any other ring; Space or Enter `press`. A [`crate::button::Button`]'s focus, and a field that opens a picker.
+pub fn pressable(el: gpui::Stateful<gpui::Div>, focus: &FocusHandle, press: impl Fn(&Press, &mut Window, &mut App) + 'static, cx: &App) -> gpui::Stateful<gpui::Div> {
+    use gpui::Styled as _;
+    use theme::ActiveTheme as _;
+    let focused = crate::button::ring(cx.theme().colors().border_focused);
+    el.track_focus(focus).key_context(BUTTON_CONTEXT).on_action(press).focus(move |s| s.shadow(vec![focused]))
+}
+
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("tab", NextField, Some(CONTEXT)),

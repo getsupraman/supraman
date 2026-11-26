@@ -10,17 +10,8 @@ use gpui::{AnyElement, App, ClickEvent, Context, Div, FocusHandle, KeyDownEvent,
 use theme::{ActiveTheme as _, ThemeColors};
 
 use crate::hit::{HitTargets, hit_target};
+use crate::tokens;
 
-/// The deferred priority of every layer that floats over its view and is not a menu (a pill group's list).
-pub const FLOAT: usize = 1;
-/// A side form laid over its view's content, above [`FLOAT`], and what floats inside it (its picker).
-pub const FORM: usize = FLOAT + 1;
-/// A card opened beside its view's edge over a [`FORM`] there (the ref panel's overlay card).
-pub const CARD: usize = FORM + 1;
-/// A toast, a palette or a prompt band over a view that may hold a [`FORM`].
-pub const OVER_FORM: usize = CARD + 1;
-/// Every menu's deferred priority: above every other deferred layer.
-pub const PRIORITY: usize = OVER_FORM + 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MenuItem<A> {
@@ -83,7 +74,7 @@ impl<A> ContextMenu<A> {
 }
 
 impl<A: Clone + 'static> ContextMenu<A> {
-    /// Over everything ([`PRIORITY`]), kept in the window, under `menu`; `on_pick` and `on_dismiss` (a click outside, Esc) must close it.
+    /// Over every layer but the dialog ([`tokens::Layer::Menu`]), kept in the window, under `menu`; `on_pick` and `on_dismiss` (a click outside, Esc) must close it.
     pub fn render<V: 'static>(
         &self,
         hits: &HitTargets,
@@ -109,13 +100,13 @@ impl<A: Clone + 'static> ContextMenu<A> {
             .flex()
             .flex_col()
             .min_w(px(180.))
-            .py_1()
-            .rounded_md()
-            .border_1()
+            .py(tokens::space::S)
+            .rounded(tokens::radius::M)
+            .border(tokens::stroke::HAIRLINE)
             .border_color(colors.border)
             .bg(colors.elevated_surface_background)
             .shadow_md()
-            .text_sm()
+            .text_size(tokens::text::BODY)
             .occlude()
             .on_mouse_down_out(cx.listener(move |this, _: &MouseDownEvent, _, cx| on_dismiss(this, cx)))
             .child(hit_target(hits, "menu".into()))
@@ -124,10 +115,10 @@ impl<A: Clone + 'static> ContextMenu<A> {
         for entry in &self.items {
             let key = format!("menu-{}", entry.key);
             if let Some(section) = &entry.section {
-                list = list.child(div().my_1().h(px(1.)).bg(colors.border_variant)).when(!section.is_empty(), |list| list.child(caption(section, &colors)));
+                list = list.child(div().my(tokens::space::S).h(tokens::stroke::HAIRLINE).bg(colors.border_variant)).when(!section.is_empty(), |list| list.child(caption(section, &colors)));
             }
             let tick = entry.ticked.map(|on| crate::button::tick(on, colors.text_accent, cx));
-            let row = div().id(SharedString::from(key.clone())).relative().flex().items_center().gap_2().px_3().py(px(3.)).children(tick);
+            let row = div().id(SharedString::from(key.clone())).relative().flex().items_center().gap(tokens::space::L).px(tokens::space::XL).py(px(3.)).children(tick);
             let row = row.child(SharedString::from(entry.label.clone())).child(hit_target(hits, key));
             list = list.child(match &entry.dimmed {
                 Some(why) => row.text_color(colors.text_disabled).tooltip(crate::tooltip::Tooltip::text(why.clone())).on_click(|_, _, cx| cx.stop_propagation()),
@@ -140,10 +131,10 @@ impl<A: Clone + 'static> ContextMenu<A> {
                 }
             });
         }
-        deferred(anchored().position(self.position).snap_to_window_with_margin(px(8.)).child(list)).with_priority(PRIORITY).into_any_element()
+        deferred(anchored().position(self.position).snap_to_window_with_margin(tokens::space::L).child(list)).with_priority(tokens::Layer::Menu.priority()).into_any_element()
     }
 }
 
 fn caption(text: &str, colors: &ThemeColors) -> Div {
-    div().px_3().pb_1().text_size(px(10.)).text_color(colors.text_placeholder).overflow_hidden().whitespace_nowrap().child(SharedString::from(text.to_string()))
+    div().px(tokens::space::XL).pb(tokens::space::S).text_size(tokens::text::CAPTION).text_color(colors.text_placeholder).overflow_hidden().whitespace_nowrap().child(SharedString::from(text.to_string()))
 }

@@ -44,20 +44,32 @@ pub fn secondary(colors: &ThemeColors) -> Hsla {
 
 /// The theme's text over the panel at this alpha is a list's selected row while another element has the keys.
 pub const INACTIVE_SELECTION: f32 = 0.16;
-/// The least contrast of the inactive selection against the panel, so the row still shows; less only where the active one shows less.
+/// The least contrast of the inactive selection against the panel, so the row still shows.
 pub const INACTIVE_SELECTION_SHOWS: f32 = 1.25;
+/// The least contrast of the active selection against the panel.
+pub const ACTIVE_SELECTION_SHOWS: f32 = 1.4;
 
-/// Every list's selected-row fill: `element.selected` while the list has the keys, else a neutral fill
-/// ([`INACTIVE_SELECTION`]) moved to the nearest lightness where the text on it holds [`NAME_FLOOR`] and it still shows on the panel.
+/// Every list's selected-row fill: `element.selected` while the list has the keys, moved to the nearest lightness where it
+/// holds [`ACTIVE_SELECTION_SHOWS`] on the panel; else a neutral fill ([`INACTIVE_SELECTION`]) moved to the nearest one
+/// where it still shows ([`INACTIVE_SELECTION_SHOWS`]) and reads weaker than the active one.
+/// The text on either holds [`NAME_FLOOR`].
 pub fn selection(colors: &ThemeColors, focused: bool) -> Hsla {
-    if focused {
-        return colors.element_selected;
-    }
     let panel = colors.panel_background;
+    let names = |fill: Hsla| contrast(colors.text, fill) >= NAME_FLOOR;
+    let selected = colors.element_selected;
+    let active = if contrast(selected, panel) >= ACTIVE_SELECTION_SHOWS {
+        selected
+    } else {
+        let opaque: Hsla = over(selected, panel).into();
+        nearest_holding(opaque, |fill| names(fill) && contrast(fill, panel) >= ACTIVE_SELECTION_SHOWS).unwrap_or(selected)
+    };
+    if focused {
+        return active;
+    }
     let blend: Hsla = over(colors.text.opacity(INACTIVE_SELECTION), panel).into();
-    let shows = INACTIVE_SELECTION_SHOWS.min(contrast(colors.element_selected, panel));
-    let holds = |fill: Hsla| contrast(colors.text, fill) >= NAME_FLOOR && contrast(fill, panel) >= shows;
-    nearest_holding(blend, holds).unwrap_or(blend)
+    let ceiling = contrast(active, panel);
+    let shows = INACTIVE_SELECTION_SHOWS.min(ceiling);
+    nearest_holding(blend, |fill| names(fill) && (shows..ceiling).contains(&contrast(fill, panel))).unwrap_or(blend)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -434,6 +446,12 @@ pub fn contrast(fg: Hsla, bg: Hsla) -> f32 {
 }
 
 /// `colour` at the lightness nearest its own, either way in 0.005 steps, where it `holds`; `None` where none does.
+/// White or black, whichever reads better on `fill`.
+pub fn on(fill: Hsla) -> Hsla {
+    let (white, black) = (gpui::white(), gpui::black());
+    if contrast(white, fill) >= contrast(black, fill) { white } else { black }
+}
+
 fn nearest_holding(colour: Hsla, holds: impl Fn(Hsla) -> bool) -> Option<Hsla> {
     std::iter::once(0.)
         .chain((1..=200).flat_map(|k| [k as f32 * 0.005, k as f32 * -0.005]))
@@ -522,9 +540,32 @@ pub fn fit_floors(theme: &mut Theme) -> Vec<Adjustment> {
         *floor_color(theme, key) = color;
         adjusted.push(Adjustment { key: key.into(), old: hex(old), new: hex(color), was, now: worst_contrast(theme, color, alpha, on) });
     }
+    adjusted.extend(fit_info(theme));
     adjusted.extend(fit_backgrounds(theme));
     adjusted.extend(fit_placeholder(theme));
     adjusted
+}
+
+/// The least saturation of `status.info`, so info (a banner, a dot, an idle session) reads as a colour beside muted text.
+pub const INFO_SATURATION: f32 = 0.4;
+/// The hue and saturation info takes when neither it nor the accent has [`INFO_SATURATION`]: a blue.
+const INFO_BLUE: (f32, f32) = (0.58, 0.6);
+
+/// `status.info` below [`INFO_SATURATION`] takes the accent's hue and saturation (else [`INFO_BLUE`]) at its lightness over the
+/// panel, moved to the nearest lightness that holds its [`FLOORS`] floor.
+fn fit_info(theme: &mut Theme) -> Option<Adjustment> {
+    let old = theme.status().info;
+    if old.s >= INFO_SATURATION {
+        return None;
+    }
+    let accent = theme.colors().text_accent;
+    let (h, s) = if accent.s >= INFO_SATURATION { (accent.h, accent.s) } else { INFO_BLUE };
+    let opaque: Hsla = over(old, theme.colors().panel_background).into();
+    let hued = Hsla { h, s, ..opaque };
+    let was = worst_contrast(theme, old, 1., On::Surfaces);
+    let new = nearest_holding(hued, |c| worst_contrast(theme, c, 1., On::Surfaces) >= SECONDARY_FLOOR).unwrap_or(hued);
+    theme.styles.status.info = new;
+    Some(Adjustment { key: "info (hue)".into(), old: hex(old), new: hex(new), was, now: worst_contrast(theme, new, 1., On::Surfaces) })
 }
 
 /// `text.placeholder` keeps [`PLACEHOLDER_FLOOR`] <= ratio < [`PLACEHOLDER_CEILING`] on the panel and the editor background: a hint.
@@ -737,6 +778,7 @@ pub fn apply_resolved(cx: &mut App, resolved: Resolved) -> Resolved {
     }
     let palette = palette(&resolved.theme);
     theme::GlobalTheme::update_theme(cx, Arc::new(resolved.theme.clone()));
+    crate::tokens::roles::derive(cx);
     if cx.has_global::<TerminalConfig>() {
         cx.update_global(|config: &mut TerminalConfig, _| config.palette = palette);
     }
@@ -908,10 +950,11 @@ mod tests {
             assert!(loaded.adjusted.iter().any(|a| a.key == "text.placeholder"), "{why}: reported");
         }
     }
-
+    /// Dark Modern's `info` is a grey 2.58:1 on #1F1F1F, its marked row leaves ids at 3.82:1, its placeholder is translucent.
     /// Dark Modern's `info` is 2.58:1 on #1F1F1F, its marked row leaves ids at 3.82:1, its placeholder is translucent.
-    const EXPECTED_ADJUSTMENTS: [(&str, &str, &str); 4] = [
+    const EXPECTED_ADJUSTMENTS: [(&str, &str, &str); 5] = [
         ("info", "#BFBFBF66", "#868686"),
+        ("info (hue)", "#868686", "#5882EA"),
         ("ghost_element.selected", "#04395E", "#04395E80"),
         ("search.match_background", "#C6510666", "#C6510661"),
         ("text.placeholder", "#FFFFFF56", "#6B6B6B"),
@@ -989,7 +1032,11 @@ mod tests {
         for theme in [dark_modern().theme, supraman_dark().theme, one_dark(), light] {
             let c = theme.colors();
             let (active, inactive) = (selection(c, true), selection(c, false));
-            assert_eq!(active, c.element_selected, "{}", theme.name);
+            if contrast(c.element_selected, c.panel_background) >= ACTIVE_SELECTION_SHOWS {
+                assert_eq!(active, c.element_selected, "{}", theme.name);
+            }
+            assert!(contrast(active, c.panel_background) >= ACTIVE_SELECTION_SHOWS, "{}: the active selection on the panel", theme.name);
+            assert!(contrast(active, c.panel_background) > contrast(inactive, c.panel_background), "{}: active reads stronger than inactive", theme.name);
             assert_ne!(hex(active), hex(inactive), "{}", theme.name);
             assert!(contrast(c.text, inactive) >= NAME_FLOOR, "{}: text on {}", theme.name, hex(inactive));
             let shows = INACTIVE_SELECTION_SHOWS.min(contrast(active, c.panel_background));

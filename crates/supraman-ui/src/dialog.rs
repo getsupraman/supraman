@@ -10,14 +10,12 @@ use crate::button;
 use crate::confirm::{self, Answer, Confirm};
 use crate::focus_order::{Dismiss, Members};
 use crate::hit::{HitTargets, hit_target};
-use crate::menu;
+use crate::tokens;
 
-/// Above every other deferred layer, a menu's too.
-pub const PRIORITY: usize = menu::PRIORITY + 1;
 /// The panel's width, or the window's less [`MARGIN`] each side when narrower.
 pub const WIDTH: Pixels = px(520.);
 /// The least room between the panel and the window's edges.
-pub const MARGIN: Pixels = px(24.);
+pub const MARGIN: Pixels = tokens::space::PAGE;
 /// The scrim's black on a dark theme: enough to set the panel apart on a near-black ground.
 pub const SCRIM_DARK: f32 = 0.6;
 /// The scrim's black on a light theme: [`SCRIM_DARK`] there turns the window a muddy grey.
@@ -104,7 +102,7 @@ impl Dialog {
         self.render(hits, panel, cx)
     }
 
-    /// `panel` centred on a scrim over the whole window ([`over`]'s), at [`PRIORITY`]; Tab and Shift+Tab walk its
+    /// `panel` centred on a scrim over the whole window ([`over`]'s), at [`tokens::Layer::Dialog`]; Tab and Shift+Tab walk its
     /// fields and buttons, Enter or Space press the focused button; paints `<key>-scrim`, `<key>-dialog`, `<key>-title`.
     pub fn render<V: 'static>(&self, hits: &HitTargets, panel: Panel<V>, cx: &mut Context<V>) -> AnyElement {
         let colors = cx.theme().colors().clone();
@@ -118,8 +116,7 @@ impl Dialog {
             .map(|b| {
                 let focus = self.members.handle(b.key.clone(), cx);
                 let act = b.act.clone();
-                let look = confirm::answer(hits, b.key.clone(), b.words, b.tone, false, cx);
-                button::acting(look, &focus, move |this: &mut V, window, cx| act(this, window, cx), cx)
+                confirm::answer_button(hits, b.key.clone(), b.words, b.tone, false, cx).acting(&focus, move |this: &mut V, window, cx| act(this, window, cx), cx)
             })
             .collect();
         let first = panel.first.as_ref().and_then(|k| self.members.get(k)).or_else(|| panel.fields.first().cloned()).or_else(|| self.members.order().first());
@@ -139,24 +136,24 @@ impl Dialog {
             .size_0()
         };
         let (key, cancel, escape) = (panel.key, panel.cancel.clone(), panel.cancel);
-        let title = panel.title.map(|t| div().relative().text_base().font_weight(gpui::FontWeight::SEMIBOLD).child(t).child(hit_target(hits, format!("{key}-title"))));
+        let title = panel.title.map(|t| div().relative().text_size(tokens::text::TITLE).font_weight(gpui::FontWeight::SEMIBOLD).child(t).child(hit_target(hits, format!("{key}-title"))));
         let body = div().id(SharedString::from(format!("{key}-body"))).flex_1().min_h_0().overflow_y_scroll().child(panel.body);
         let card = order
             .on(div().id(SharedString::from(format!("{key}-dialog"))))
             .relative()
             .flex()
             .flex_col()
-            .gap_3()
+            .gap(tokens::space::XL)
             .w(WIDTH)
             .max_w_full()
             .max_h_full()
-            .p_5()
-            .rounded_lg()
-            .border_1()
+            .p(tokens::space::XXXL)
+            .rounded(tokens::radius::L)
+            .border(tokens::stroke::HAIRLINE)
             .border_color(colors.border)
             .bg(colors.elevated_surface_background)
-            .shadow(vec![shade(px(4.), px(12.)), shade(px(16.), px(40.))])
-            .text_sm()
+            .shadow(vec![shade(tokens::space::S, tokens::space::XL), shade(tokens::space::XXL, px(40.))])
+            .text_size(tokens::text::BODY)
             .text_color(colors.text)
             .child(take_focus)
             .on_action(cx.listener(move |this, _: &Dismiss, window, cx| cancel(this, window, cx)))
@@ -168,10 +165,10 @@ impl Dialog {
             }))
             .children(title)
             .child(body)
-            .child(button::line().justify_end().flex_wrap().pt_2().children(buttons))
+            .child(button::Button::line().justify_end().flex_wrap().pt(tokens::space::L).children(buttons))
             .child(hit_target(hits, format!("{key}-dialog")));
         let shade = if cx.theme().appearance.is_light() { SCRIM_LIGHT } else { SCRIM_DARK };
-        deferred(scrim(hits, &key, shade).child(card)).with_priority(PRIORITY).into_any_element()
+        deferred(scrim(hits, &key, shade).child(card)).with_priority(tokens::Layer::Dialog.priority()).into_any_element()
     }
 }
 
@@ -198,7 +195,7 @@ fn scrim(hits: &HitTargets, key: &str, shade: f32) -> gpui::Stateful<Div> {
 }
 
 fn shade(offset: Pixels, blur: Pixels) -> BoxShadow {
-    BoxShadow { color: gpui::black().opacity(0.28), offset: point(px(0.), offset), blur_radius: blur, spread_radius: px(0.), inset: false }
+    BoxShadow { color: gpui::black().opacity(0.28), offset: point(Pixels::ZERO, offset), blur_radius: blur, spread_radius: Pixels::ZERO, inset: false }
 }
 
 #[cfg(test)]

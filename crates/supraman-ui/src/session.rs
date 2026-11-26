@@ -4,13 +4,13 @@ use std::path::PathBuf;
 
 use gpui::{AnyElement, App, ClickEvent, Div, SharedString, Stateful, Window, div, prelude::*, px};
 
-use crate::button::{self, Fill, Tone};
+use crate::button::{Button, Fill, Tone};
 use crate::clipped::clipped;
 use crate::hit::HitTargets;
 use crate::icon::Icon;
-use crate::tooltip::Tooltip;
 use crate::ink;
 use crate::marks::{self, Activity, Mark};
+use crate::tokens;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveSession {
@@ -29,7 +29,7 @@ pub fn lead(key: &str, mark: Mark, name: &str, slot: Option<AnyElement>) -> Div 
     div()
         .flex()
         .items_center()
-        .gap_1p5()
+        .gap(tokens::space::M)
         .min_w(px(marks::DOT))
         .flex_shrink(1.)
         .overflow_hidden()
@@ -49,14 +49,16 @@ pub struct Opening {
 
 /// Every session's Open: `opening`'s icon and the word Open, its hint as tooltip; dimmed with the hint as why, its click a no-op, while it cannot run.
 pub fn open(hits: &HitTargets, key: impl Into<SharedString>, opening: &Opening, fill: Fill, on_open: impl Fn(&mut Window, &mut App) + 'static, cx: &App) -> Stateful<Div> {
-    let button = button::action_with(hits, key, opening.icon, "Open", Tone::Neutral, fill, cx).tooltip(Tooltip::text(opening.hint.clone()));
+    let button = Button::new(hits, key).icon(opening.icon).label("Open").tone(Tone::Neutral).fill(fill).tooltip(crate::tooltip::Tooltip::text(opening.hint.clone()));
     if !opening.runs {
-        return button::dimmed(button);
+        return button.dimmed_if(true).build(cx);
     }
-    button.on_click(move |_: &ClickEvent, window, cx| {
-        cx.stop_propagation();
-        on_open(window, cx);
-    })
+    button
+        .on_click(move |_: &ClickEvent, window, cx| {
+            cx.stop_propagation();
+            on_open(window, cx);
+        })
+        .build(cx)
 }
 
 #[cfg(test)]

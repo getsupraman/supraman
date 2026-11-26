@@ -98,7 +98,7 @@ impl WorkView {
         let (id, copied) = (item.id.clone(), item.clone());
         let mut texts = row_texts(row).into_iter();
         let (ref_, title, criteria) = (texts.next().unwrap_or_default(), texts.next().unwrap_or_default(), texts.next());
-        let copy = button::revealed(&self.hits, format!("work-row-copy-{}", item.qualified_ref), Icon::Copy.svg(11., colors.text_muted), px(COPY_SIDE), key.clone(), selected, cx)
+        let copy = button::Button::new(&self.hits, format!("work-row-copy-{}", item.qualified_ref)).icon(Icon::Copy.svg(11., colors.text_muted)).icon_only(px(COPY_SIDE)).reveal(key.clone(), selected)
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();
                 this.copy_ref(&copied, cx);

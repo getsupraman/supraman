@@ -22,6 +22,7 @@ use crate::hit::{HitTargets, hit_target};
 use crate::icon::Icon;
 use crate::palette::{Palette, PaletteEvent};
 use crate::tooltip::Tooltip;
+use crate::tokens;
 
 /// Longer program titles are cut to this many characters, with an ellipsis.
 pub const MAX_TITLE: usize = 200;
@@ -72,14 +73,14 @@ pub fn chip<V>(title: SharedString, cx: &Context<V>) -> Div {
     let colors = cx.theme().colors();
     div()
         .font_family(fonts::UI)
-        .text_sm()
-        .px_3()
-        .py_1()
+        .text_size(tokens::text::BODY)
+        .px(tokens::space::XL)
+        .py(tokens::space::S)
         .max_w(px(280.))
         .overflow_hidden()
         .whitespace_nowrap()
-        .rounded_sm()
-        .border_1()
+        .rounded(tokens::radius::S)
+        .border(tokens::stroke::HAIRLINE)
         .border_color(colors.border_focused)
         .bg(colors.tab_active_background)
         .text_color(colors.text)
@@ -127,14 +128,14 @@ impl Strip {
                 self.reveal = active;
             }
         }
-        if fit.room <= px(0.) {
+        if fit.room <= Pixels::ZERO {
             return;
         }
         let Some(id) = self.reveal.take() else { return };
         let Some(ix) = ids.iter().position(|&t| t == id) else { return };
         let (start, end) = span(ix, fit.width);
         let to = revealed(-self.scroll.offset().x, fit.room, fit.content, start, end);
-        self.scroll.set_offset(point(-to, px(0.)));
+        self.scroll.set_offset(point(-to, Pixels::ZERO));
     }
 
     fn close_list(&mut self, window: &mut Window, cx: &mut App) {
@@ -187,7 +188,7 @@ pub fn tab_strip<V: 'static>(
         .h(px(32.))
         .items_end()
         .bg(bar)
-        .border_b_1()
+        .border_b(tokens::stroke::HAIRLINE)
         .border_color(border)
         .child(area(viewport(hits, &strip, row, fit, bar, cx), trailing, &strip, fit, cx))
         .child(list_button(hits, entries, &strip, on_activate, cx))
@@ -199,14 +200,14 @@ fn area<V>(viewport: Stateful<Div>, trailing: Option<AnyElement>, strip: &Entity
         let s = strip.read(cx);
         (s.area.clone(), s.trailing.clone())
     };
-    let measured = fit.room > px(0.);
+    let measured = fit.room > Pixels::ZERO;
     let trailing = trailing.map(|el| {
         div()
             .flex()
             .flex_none()
             .items_center()
             .h_full()
-            .pr_1()
+            .pr(tokens::space::S)
             .when(measured, |d| d.absolute().top_0().left(trailing_at(fit.content, fit.room)))
             .child(el)
             .child(width_of(trail))
@@ -269,10 +270,10 @@ fn viewport<V>(hits: &HitTargets, strip: &Entity<Strip>, row: Stateful<Div>, fit
                 return;
             }
             let by = edge_scroll(at.x - b.left(), b.size.width);
-            if by != px(0.) {
+            if by != Pixels::ZERO {
                 dragged.update(cx, |s, cx| {
-                    let to = (-s.scroll.offset().x + by).clamp(px(0.), max_scroll(fit.content, b.size.width));
-                    s.scroll.set_offset(point(-to, px(0.)));
+                    let to = (-s.scroll.offset().x + by).clamp(Pixels::ZERO, max_scroll(fit.content, b.size.width));
+                    s.scroll.set_offset(point(-to, Pixels::ZERO));
                     cx.notify();
                 });
             }
@@ -310,11 +311,14 @@ impl Header<'_> {
         let (moved, over_ids, drop_ids) = (on.moved.clone(), self.ids.clone(), self.ids.clone());
         let drop_border = colors.drop_target_border;
         let clicked = self.strip.clone();
-        let close_button = button::icon(hits, format!("close-tab-{id}"), close_icon(), px(18.), cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-            cx.stop_propagation();
-            close(this, id, cx);
-        }));
-        let close_button = button::reveal(close_button, group.clone(), is_active || self.width >= CLOSE_ON_HOVER_BELOW);
+        let close_button = button::Button::new(hits, format!("close-tab-{id}"))
+            .icon(close_icon())
+            .icon_only(px(18.))
+            .reveal(group.clone(), is_active || self.width >= CLOSE_ON_HOVER_BELOW)
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                close(this, id, cx);
+            }));
         div()
             .id(group.clone())
             .group(group)
@@ -323,16 +327,16 @@ impl Header<'_> {
             .flex_none()
             .w(self.width)
             .items_center()
-            .gap_2()
+            .gap(tokens::space::L)
             .h_full()
-            .px_3()
-            .text_sm()
-            .border_r_1()
+            .px(tokens::space::XL)
+            .text_size(tokens::text::BODY)
+            .border_r(tokens::stroke::HAIRLINE)
             .border_color(colors.border)
             .cursor_pointer()
             .bg(if is_active { colors.tab_active_background } else { colors.tab_inactive_background })
             .when(!is_active, |d| d.text_color(colors.text_muted).hover(|s| s.bg(colors.ghost_element_hover).text_color(colors.text)))
-            .when(is_active, |d| d.child(div().absolute().top_0().left_0().right_0().h(px(2.)).bg(colors.border_focused)))
+            .when(is_active, |d| d.child(div().absolute().top_0().left_0().right_0().h(tokens::stroke::FOCUS).bg(colors.border_focused)))
             .child(div().flex().flex_1().min_w_0().overflow_hidden().child(tab.label))
             .when_some(tab.tooltip, |d, tooltip| d.tooltip(move |window, cx| tooltip(window, cx)))
             .child(close_button)
@@ -359,8 +363,8 @@ impl Header<'_> {
             .on_drag(DraggedTab { id, title: tab.title }, |tab, _, _, cx| cx.new(|_| tab.clone()))
             .drag_over::<DraggedTab>(move |style, dragged: &DraggedTab, _, _| {
                 match over_ids.iter().position(|&d| d == dragged.id).and_then(|from| landing(from, ix)) {
-                    Some(Side::Before) => style.border_0().border_l_2().border_color(drop_border),
-                    Some(Side::After) => style.border_0().border_r_2().border_color(drop_border),
+                    Some(Side::Before) => style.border_0().border_l(tokens::stroke::FOCUS).border_color(drop_border),
+                    Some(Side::After) => style.border_0().border_r(tokens::stroke::FOCUS).border_color(drop_border),
                     None => style,
                 }
             })
@@ -404,11 +408,11 @@ fn list_button<V: 'static>(
         .justify_center()
         .h_full()
         .w(px(28.))
-        .border_l_1()
+        .border_l(tokens::stroke::HAIRLINE)
         .border_color(colors.border)
         .bg(list_fill(&colors))
         .when(open.is_some(), |d| d.bg(colors.ghost_element_selected))
-        .child(LIST_ICON.svg(14., colors.text_muted).group_hover(LIST_BUTTON, |s| s.text_color(colors.text)))
+        .child(LIST_ICON.svg(tokens::icon::M, colors.text_muted).group_hover(LIST_BUTTON, |s| s.text_color(colors.text)))
         .tooltip(Tooltip::text("All tabs"))
         .capture_any_mouse_down(move |e: &MouseDownEvent, _, cx| {
             if e.button == MouseButton::Left {
@@ -424,7 +428,7 @@ fn list_button<V: 'static>(
                     .absolute()
                     .top_full()
                     .right_0()
-                    .child(deferred(anchored().anchor(Anchor::TopRight).snap_to_window_with_margin(px(8.)).child(palette)).with_priority(crate::menu::FLOAT)),
+                    .child(deferred(anchored().anchor(Anchor::TopRight).snap_to_window_with_margin(tokens::space::L).child(palette)).with_priority(crate::tokens::Layer::Float.priority())),
             )
         })
         .into_any_element()

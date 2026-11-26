@@ -80,7 +80,7 @@ pub(crate) fn summary_row(hits: &HitTargets, summary: &Entity<TextInput>, counte
 
 /// A failed commit's words (git's or a hook's) in the error colour with its ×, under `key` and `<key>-dismiss`.
 pub(crate) fn failure_banner<V: 'static>(hits: &HitTargets, key: &str, why: String, dismiss: impl Fn(&mut V, &mut Context<V>) + 'static, cx: &mut Context<V>) -> Div {
-    let close = button::icon(hits, format!("{key}-dismiss"), Icon::Close.svg(12., cx.theme().colors().text_muted), px(20.), cx)
+    let close = button::Button::new(hits, format!("{key}-dismiss")).icon(Icon::Close.svg(12., cx.theme().colors().text_muted)).icon_only(px(20.))
         .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| dismiss(this, cx)));
     let words = div().relative().child(SharedString::from(why)).child(hit_target(hits, key.into()));
     banner::tinted(cx.theme().status().error).child(banner::dismissable(words, close))

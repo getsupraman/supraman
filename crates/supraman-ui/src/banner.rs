@@ -3,6 +3,7 @@
 
 use gpui::{App, Div, Hsla, IntoElement, div, prelude::*};
 use theme::ActiveTheme as _;
+use crate::tokens;
 
 pub const TINT: f32 = 0.12;
 
@@ -22,17 +23,17 @@ pub fn plain(cx: &App) -> Div {
 }
 
 fn filled(fg: Hsla, bg: Hsla) -> Div {
-    div().p_2().rounded_md().bg(bg).text_sm().text_color(fg)
+    div().p(tokens::space::L).rounded(tokens::radius::M).bg(bg).text_size(tokens::text::BODY).text_color(fg)
 }
 
 /// `body` beside a dismiss button at the top right.
 pub fn dismissable(body: impl IntoElement, dismiss: impl IntoElement) -> Div {
-    div().flex().items_start().gap_2().child(div().flex_1().min_w_0().child(body)).child(dismiss)
+    div().flex().items_start().gap(tokens::space::L).child(div().flex_1().min_w_0().child(body)).child(dismiss)
 }
 
 /// `mark` (an icon, a logo) beside `text` that wraps in the room the mark leaves.
 pub fn marked(mark: impl IntoElement, text: impl IntoElement) -> Div {
-    div().flex().items_start().gap_2().child(mark).child(div().flex_1().min_w_0().child(text))
+    div().flex().items_start().gap(tokens::space::L).child(mark).child(div().flex_1().min_w_0().child(text))
 }
 
 #[cfg(test)]

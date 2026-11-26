@@ -263,7 +263,7 @@ impl FleetView {
             }
             let action = item.action.clone();
             out.push(
-                button::action(&self.hits, format!("details-{page_key}-{}", item.key), item.label.clone(), button::Tone::Neutral, button::Fill::Solid, cx)
+                button::Button::new(&self.hits, format!("details-{page_key}-{}", item.key)).label(item.label.clone())
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         cx.stop_propagation();
                         this.run_action(action.clone(), window, cx);

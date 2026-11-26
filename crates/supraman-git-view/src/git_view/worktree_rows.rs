@@ -195,7 +195,7 @@ impl GitView {
             Some(group) => cells::acting(label, key, ix, group, 0, self.pill_sha(&row, cx), palette, cx).into_any_element(),
             None => label.into_any_element(),
         };
-        let open = button::icon(&self.hits, format!("git-worktree-open-{ix}"), Icon::GitGraph.svg(12., palette.muted), px(18.), cx)
+        let open = button::Button::new(&self.hits, format!("git-worktree-open-{ix}")).icon(Icon::GitGraph.svg(12., palette.muted)).icon_only(px(18.))
             .tooltip(Tooltip::text("Open Worktree"))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();

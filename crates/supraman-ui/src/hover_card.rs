@@ -4,6 +4,7 @@ use std::cell::RefCell;
 
 use gpui::{AnyView, App, SharedString, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
+use crate::tokens;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct HoverCard {
@@ -45,27 +46,27 @@ impl Render for CardView {
         let rows = self.0.rows.iter().map(|(label, value)| {
             div()
                 .flex()
-                .gap_2()
+                .gap(tokens::space::L)
                 .child(div().flex_none().w(px(64.)).text_color(quiet).child(*label))
                 .child(div().min_w_0().child(SharedString::from(value.clone())))
         });
-        div().pl_2().pt_2().child(
+        div().pl(tokens::space::L).pt(tokens::space::L).child(
             div()
                 .w(px(360.))
-                .px_3()
-                .py_2()
-                .rounded_md()
-                .border_1()
+                .px(tokens::space::XL)
+                .py(tokens::space::L)
+                .rounded(tokens::radius::M)
+                .border(tokens::stroke::HAIRLINE)
                 .border_color(colors.border)
                 .bg(colors.elevated_surface_background)
-                .text_xs()
+                .text_size(tokens::text::SMALL)
                 .font_family(crate::fonts::UI)
                 .text_color(colors.text)
                 .shadow_md()
                 .flex()
                 .flex_col()
-                .gap_1()
-                .child(div().text_sm().pb_1().child(SharedString::from(self.0.title.clone())))
+                .gap(tokens::space::S)
+                .child(div().text_size(tokens::text::BODY).pb(tokens::space::S).child(SharedString::from(self.0.title.clone())))
                 .children(rows),
         )
     }

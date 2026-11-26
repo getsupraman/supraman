@@ -561,14 +561,14 @@ impl FleetView {
         let mut actions = Vec::new();
         if matches!(row.approvable, Some(Ok(_))) {
             actions.push(
-                button::action(&self.hits, format!("sched-page-approve-{k}"), "Approve", button::Tone::Neutral, button::Fill::Solid, cx)
+                button::Button::new(&self.hits, format!("sched-page-approve-{k}")).label("Approve")
                     .on_click(act(|this, w, id, _, cx| this.approve_shown(w, id, cx)))
                     .into_any_element(),
             );
         }
         let paused = row.schedule.status == Status::Paused;
         actions.push(
-            button::action(&self.hits, format!("sched-page-pause-{k}"), if paused { "Resume" } else { "Pause" }, button::Tone::Neutral, button::Fill::Solid, cx)
+            button::Button::new(&self.hits, format!("sched-page-pause-{k}")).label(if paused { "Resume" } else { "Pause" })
                 .on_click(if paused {
                     act(|this, w, id, _, cx| this.set_schedule_paused(w.to_string(), id.to_string(), false, cx))
                 } else {
@@ -576,14 +576,14 @@ impl FleetView {
                 })
                 .into_any_element(),
         );
-        actions.push(button::action(&self.hits, format!("sched-page-run-{k}"), "Run now", button::Tone::Neutral, button::Fill::Solid, cx).on_click(act(|this, w, id, _, cx| this.run_schedule_now(w, id, cx))).into_any_element());
+        actions.push(button::Button::new(&self.hits, format!("sched-page-run-{k}")).label("Run now").on_click(act(|this, w, id, _, cx| this.run_schedule_now(w, id, cx))).into_any_element());
         actions.push(
-            button::action(&self.hits, format!("sched-page-dry-run-{k}"), if page.dry_running { "Dry run…" } else { "Dry run" }, button::Tone::Neutral, button::Fill::Solid, cx)
+            button::Button::new(&self.hits, format!("sched-page-dry-run-{k}")).label(if page.dry_running { "Dry run…" } else { "Dry run" })
                 .on_click(act(|this, w, id, _, cx| this.dry_run_schedule(w, id, cx)))
                 .into_any_element(),
         );
-        actions.push(button::action(&self.hits, format!("sched-page-edit-{k}"), "Edit…", button::Tone::Neutral, button::Fill::Solid, cx).on_click(act(|this, w, id, window, cx| this.open_schedule_edit(w, id, window, cx))).into_any_element());
-        actions.push(button::action(&self.hits, format!("sched-page-remove-{k}"), "Remove…", button::Tone::Neutral, button::Fill::Solid, cx).on_click(act(|this, w, id, _, cx| this.ask_remove_schedule(w, id, cx))).into_any_element());
+        actions.push(button::Button::new(&self.hits, format!("sched-page-edit-{k}")).label("Edit…").on_click(act(|this, w, id, window, cx| this.open_schedule_edit(w, id, window, cx))).into_any_element());
+        actions.push(button::Button::new(&self.hits, format!("sched-page-remove-{k}")).label("Remove…").on_click(act(|this, w, id, _, cx| this.ask_remove_schedule(w, id, cx))).into_any_element());
         let page_key = format!("sched-page-{k}");
         let page = details::Page { key: &page_key, title: row.title().to_string(), pill: Some((pill.to_string(), pill_color)), sections: &sections, actions, scroll: &page.scroll, on_link: None, top: None, over: None, bar: None };
         Some(details::render(page, &self.hits, cx))

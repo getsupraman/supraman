@@ -65,7 +65,7 @@ impl SettingsView {
         let colors = cx.theme().colors().clone();
         let status_row = self.render_workman_status(cx);
         self.members.add(self.url_input.focus_handle(cx));
-        let field = button::line()
+        let field = button::Button::line()
             .child(div().id("ws-url").w(px(280.)).child(self.url_input.clone()))
             .child(self.control("settings-ws-url-apply", "Apply", |this, _, cx| this.apply_url(cx), cx));
         let below = div()
