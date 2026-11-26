@@ -35,6 +35,10 @@ what each costs. The release itself is docs/RELEASE.md.
   (by default the working tree against its merge base with master, untracked files included) and every member that
   depends on one of them; a change to `Cargo.toml`, `Cargo.lock`, `.cargo\` or `rust-toolchain*` means all. It prints
   nothing (and says so on stderr) when no crate changed: a bare `cargo test` would then test the whole workspace.
+- **Ratchets** (`supraman_ui` `ratchet`, `cargo test -p supraman-ui ratchet`): a failure names a file whose count of raw
+  `overflow_*scroll`, render-time focus, `.hover(` or `px(` passed its ceiling in `crates/supraman-ui/src/ratchet/ceilings.toml`
+  (use the kit's component instead), or fell below it: then set that file's ceiling to the count the message gives (`lower the
+  ceiling to N`), in the same unit, so the gain holds; `print_ceilings -- --ignored --nocapture` prints today's whole table.
 - Where a test lives and the shared test helpers: docs/ARCHITECTURE.md "Testing". GitMan's integration tests are one
   binary: `cargo test --profile unit -p supraman-gitman --test it <filter>` runs them without its lib's tests.
 - The `unit` profile (`Cargo.toml`) is `release` with the workspace members incremental in 256 codegen units; the

@@ -15,6 +15,8 @@ Which command when, why, and what each costs: `docs/DEVELOPING.md`. Every cargo 
 
 **This binds every agent and subagent working in this repo — brief subagents on it when you delegate.**
 
+The kit's model (what a control is made of, its mechanisms, the run that refactors onto them) is `docs/UI-KIT.md`; `supraman_ui::gallery` shows every control (`kit-*.png` from `--selftest-shots`) and `supraman_ui` `ratchet` holds the feature crates' raw `overflow_*scroll`, render-time focus, `.hover(` and `px(` to counts that only go down.
+
 Before you build something generic yourself (a text input, a list, a dialog, an HTTP or OAuth client, a file watcher, a process helper, a parser, …), search for a shared one and use it. If none fits, extract a shared one into the crate it belongs to and list it below. Do not grow a private copy inside a feature. A unit that keeps a local implementation says why in its report.
 
 Reusable components (crates, boundaries, flows and when to use each: `docs/ARCHITECTURE.md`):
