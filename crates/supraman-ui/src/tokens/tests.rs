@@ -51,3 +51,18 @@ fn the_layers_stack_in_their_order() {
     assert!(order.windows(2).all(|w| w[0].priority() < w[1].priority()));
     assert_eq!(Layer::Float.priority(), 1);
 }
+
+#[test]
+fn the_open_fill_reads_in_every_theme_apart_from_the_hover_and_both_selections() {
+    for theme in bundled() {
+        let (r, c) = (Roles::of(&theme), theme.colors());
+        let panel = c.panel_background;
+        assert!(contrast(r.open, panel) >= INACTIVE_SELECTION_SHOWS, "{}: open {:?} shows on the panel", theme.name, r.open);
+        assert!(contrast(c.text, r.open) >= themes::NAME_FLOOR, "{}: its text holds the name floor", theme.name);
+        for (name, other) in [("hover", c.ghost_element_hover), ("hover", c.element_hover), ("selection", r.selection), ("inactive selection", r.selection_inactive)] {
+            let d = themes::apart(r.open, other, panel);
+            assert!(d >= themes::OPEN_APART, "{}: open {:?} and {name} {other:?} only {d:.3} apart", theme.name, r.open);
+        }
+    }
+}
+

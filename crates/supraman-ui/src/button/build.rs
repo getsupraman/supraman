@@ -66,6 +66,8 @@ pub struct Button {
     why: Option<SharedString>,
     turning: bool,
     on: bool,
+    /// A popup anchored to its key is open ([`crate::popup::is_open`]).
+    open: bool,
     focus: Option<(FocusHandle, OnPress)>,
     reveal: Option<(SharedString, bool)>,
     tooltip: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView>>,
@@ -92,6 +94,7 @@ impl Button {
             why: None,
             turning: false,
             on: false,
+            open: false,
             focus: None,
             reveal: None,
             tooltip: None,
@@ -271,7 +274,7 @@ impl Button {
             .rounded(radius::S)
             .border(stroke::HAIRLINE)
             .border_color(look.border)
-            .bg(look.fill)
+            .bg(if self.open { look.hover } else { look.fill })
             .text_color(look.text)
             .whitespace_nowrap()
             .children(glyph)
@@ -286,7 +289,8 @@ impl Button {
     fn square(&self, side: Pixels, glyph: Option<Glyph>, cx: &App) -> Stateful<Div> {
         let key = self.key.clone();
         let colors = cx.theme().colors();
-        let frame = |el: Stateful<Div>| el.flex().flex_none().items_center().justify_center().size(side).rounded(radius::S);
+        let open = self.open.then(|| tokens::roles(cx).open);
+        let frame = |el: Stateful<Div>| el.flex().flex_none().items_center().justify_center().size(side).rounded(radius::S).when_some(open, |d, bg| d.bg(bg));
         match self.tone {
             None => {
                 let text = colors.text;
@@ -317,7 +321,14 @@ impl Button {
             .rounded(radius::M)
             .text_size(tokens::text::SMALL)
             .text_color(colors.text_muted)
-            .when(self.on, |d| d.bg(colors.ghost_element_selected));
+            .map(|d| {
+                let state = crate::state::State { selected: self.on, open: self.open, ..Default::default() };
+                let fills = crate::state::Fills { selected: Some(colors.ghost_element_selected), open: Some(tokens::roles(cx).open), ..Default::default() };
+                match crate::state::resolve(state, fills).fill {
+                    Some(bg) => d.bg(bg),
+                    None => d,
+                }
+            });
         let Some(glyph) = glyph else {
             return frame;
         };
@@ -345,7 +356,8 @@ fn turning(svg: Svg, key: &str) -> AnyElement {
 }
 
 impl RenderOnce for Button {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        self.open = crate::popup::is_open(&self.key, window, cx);
         self.build(cx)
     }
 }

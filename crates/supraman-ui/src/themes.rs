@@ -72,6 +72,31 @@ pub fn selection(colors: &ThemeColors, focused: bool) -> Hsla {
     nearest_holding(blend, |fill| names(fill) && (shows..ceiling).contains(&contrast(fill, panel))).unwrap_or(blend)
 }
 
+/// The accent's alpha over the panel that is an anchor's fill while its popup is open.
+pub const OPEN_TINT: f32 = 0.3;
+
+/// The least distance of the open fill's colour from the hover's and the selections' on the panel.
+pub const OPEN_APART: f32 = 0.06;
+
+/// The fill of an element whose popup is open ([`crate::popup`]): the accent tinted on the panel ([`OPEN_TINT`]), moved
+/// to the nearest lightness where its text holds [`NAME_FLOOR`], it shows on the panel ([`INACTIVE_SELECTION_SHOWS`])
+/// and it stands [`OPEN_APART`] from the hover and both selections.
+pub fn open(colors: &ThemeColors) -> Hsla {
+    let panel = colors.panel_background;
+    let tint: Hsla = over(colors.text_accent.opacity(OPEN_TINT), panel).into();
+    let others = [colors.ghost_element_hover, colors.element_hover, selection(colors, true), selection(colors, false)];
+    nearest_holding(tint, |fill| {
+        contrast(colors.text, fill) >= NAME_FLOOR && contrast(fill, panel) >= INACTIVE_SELECTION_SHOWS && others.iter().all(|o| apart(fill, *o, panel) >= OPEN_APART)
+    })
+    .unwrap_or(tint)
+}
+
+/// The distance of two fills' colours over `bg`.
+pub fn apart(a: Hsla, b: Hsla, bg: Hsla) -> f32 {
+    let (a, b) = (over(a, bg), over(b, bg));
+    ((a.r - b.r).powi(2) + (a.g - b.g).powi(2) + (a.b - b.b).powi(2)).sqrt()
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TerminalColors {
     /// ANSI 0-15 from the theme.

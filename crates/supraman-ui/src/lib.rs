@@ -30,6 +30,7 @@ pub mod nudge;
 pub mod open;
 pub mod palette;
 pub mod placeholder;
+pub mod popup;
 #[cfg(test)]
 mod ratchet;
 pub mod scroll;
@@ -37,6 +38,7 @@ pub mod segmented;
 pub mod session;
 pub mod settings_page;
 pub mod split;
+pub mod state;
 pub mod stall;
 pub mod store;
 pub mod table;

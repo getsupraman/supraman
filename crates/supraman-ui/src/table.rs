@@ -86,6 +86,11 @@ impl Column {
     }
 }
 
+/// Row `part`'s hit key in table `id`, the anchor of its menu: the row paints open while that menu is ([`crate::popup`]).
+pub fn row_hit(id: &str, part: &str) -> String {
+    format!("{id}-row-{part}")
+}
+
 /// The hover group of every row of table `id`, for a cell's `group_hover`.
 pub fn row_group(id: &str) -> SharedString {
     SharedString::from(format!("{id}-row"))
@@ -522,14 +527,14 @@ impl<V: 'static> Table<V> {
             let selected = state.selected();
             let colors = cx.theme().colors();
             let focused = state.focus.is_focused(window) || state.focus.contains_focused(window, cx);
-            let (selection, hover) = (crate::themes::selection(colors, focused), colors.ghost_element_hover);
+            let (selection, hover, open) = (crate::themes::selection(colors, focused), colors.ghost_element_hover, crate::tokens::roles(cx).open);
             let mut out = Vec::with_capacity(range.len());
             if range.len() > 1 || range.start > 0 {
                 state.inner.borrow_mut().shown_selection = selected.filter(|s| range.contains(s)).map(|_| selection);
             }
             for ix in range {
                 let part = row_key.as_ref().map_or_else(|| ix.to_string(), |k| k(ix));
-                let (key, fill_key) = (format!("{id}-row-{part}"), format!("{id}-fill-{part}"));
+                let (key, fill_key) = (row_hit(&id, &part), format!("{id}-fill-{part}"));
                 let background = band.as_ref().and_then(|b| b(this, ix, cx));
                 let cells: Vec<AnyElement> = widths
                     .iter()
@@ -540,15 +545,9 @@ impl<V: 'static> Table<V> {
                     })
                     .collect();
                 let (state, on_select, on_click) = (state.clone(), on_select.clone(), on_click.clone());
-                let fill = div()
-                    .absolute()
-                    .left_0()
-                    .right_0()
-                    .top(inset)
-                    .bottom(inset)
-                    .when_some(background, |d, bg| d.bg(bg))
-                    .map(|d| if selected == Some(ix) { d.bg(selection) } else { d.group_hover(group.clone(), |s| s.bg(hover)) })
-                    .child(hit_target(&hits, fill_key));
+                let row = crate::state::State { selected: selected == Some(ix), open: crate::popup::is_open(&key, window, cx), ..Default::default() };
+                let fills = crate::state::Fills { rest: background, hover: Some(hover), selected: Some(selection), open: Some(open), ..Default::default() };
+                let fill = crate::state::resolve(row, fills).paint(div().absolute().left_0().right_0().top(inset).bottom(inset), Some(group.clone())).child(hit_target(&hits, fill_key));
                 out.push(
                     div()
                         .id(SharedString::from(key.clone()))
