@@ -978,7 +978,7 @@ impl FleetView {
             .flex_col()
             .pl(grid::indent(level))
             .pr_2()
-            .py(tokens::space::XS)
+            .py(gpui::px(super::left::LINE_PAD))
             .text_sm()
             .when(row.status == Status::Paused, |d| d.opacity(super::left::DIMMED))
             .child(line)
