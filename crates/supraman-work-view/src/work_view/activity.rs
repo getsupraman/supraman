@@ -179,7 +179,7 @@ impl WorkView {
             .items_center()
             .gap_2()
             .px_3()
-            .py(tokens::space::S)
+            .py(tokens::space::XS)
             .border_t(tokens::stroke::HAIRLINE)
             .border_color(colors.border_variant)
             .text_sm()

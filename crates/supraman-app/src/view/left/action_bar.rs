@@ -21,7 +21,7 @@ impl FleetView {
             .items_center()
             .gap(tokens::space::XS)
             .px_2()
-            .py(tokens::space::S)
+            .py(tokens::space::XS)
             .border_b(tokens::stroke::HAIRLINE)
             .border_color(colors.border)
             .child(

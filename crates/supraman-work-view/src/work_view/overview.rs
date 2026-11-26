@@ -255,7 +255,7 @@ impl WorkView {
                     .px_3()
                     .py_2()
                     .child(fonts::figures(div().text_xl().font_weight(FontWeight::SEMIBOLD).text_color(fg)).child(SharedString::from(n.to_string())))
-                    .child(div().flex().flex_wrap().gap_x(tokens::space::S).text_xs().text_color(colors.text_muted).children(words))
+                    .child(div().flex().flex_wrap().gap_x(tokens::space::XS).text_xs().text_color(colors.text_muted).children(words))
                     .child(hit_target(&self.hits, format!("work-tile-{label}={n}"))),
             );
         }
