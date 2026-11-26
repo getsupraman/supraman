@@ -23,9 +23,9 @@ pub(crate) struct DraggedPill {
     pub(crate) sha: SharedString,
 }
 
-impl gpui::Render for DraggedPill {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
-        supraman_ui::tabs::chip(SharedString::from(self.group.name.clone()), cx)
+impl supraman_ui::dnd::Payload for DraggedPill {
+    fn title(&self) -> SharedString {
+        SharedString::from(self.group.name.clone())
     }
 }
 

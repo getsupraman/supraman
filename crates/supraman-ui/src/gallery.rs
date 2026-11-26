@@ -17,6 +17,7 @@ use crate::toast::ToastSlot;
 use crate::tree::TreeState;
 use crate::tokens;
 
+mod dnd;
 mod sections;
 
 /// The window title the shots step captures by.
@@ -38,10 +39,11 @@ pub enum Section {
     Marks,
     Text,
     Scroll,
+    Dnd,
 }
 
 impl Section {
-    pub const ALL: [Section; 14] = [
+    pub const ALL: [Section; 15] = [
         Section::Buttons,
         Section::Toggles,
         Section::Inputs,
@@ -56,6 +58,7 @@ impl Section {
         Section::Marks,
         Section::Text,
         Section::Scroll,
+        Section::Dnd,
     ];
 
     /// Its part of the shot's name, `kit-<key>-dark.png`.
@@ -75,6 +78,7 @@ impl Section {
             Section::Marks => "marks",
             Section::Text => "text",
             Section::Scroll => "scroll",
+            Section::Dnd => "dnd",
         }
     }
 
@@ -94,6 +98,7 @@ impl Section {
             Section::Marks => "Marks: dots, rings, activity, squares, progress line",
             Section::Text => "Text: a read-only text's selection, the read-only and editable box; clipped labels, path labels, pairs, clamped",
             Section::Scroll => "Scroll areas: a list, a box, a nested pair, a grid, and a box set to always",
+            Section::Dnd => "Drag and drop: a reorder's insertion line, a drop zone under a payload it takes, the dimmed source, the chip",
         }
     }
 }
@@ -109,6 +114,8 @@ pub enum Act {
     Tooltip(String, String),
     /// The keys given to the gallery's focus sample of that name ([`Gallery::focus_sample`]).
     Focus(&'static str),
+    /// The first hit key pressed and dragged over the second, held there; Esc ends it after the frame.
+    Drag(String, String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -127,6 +134,10 @@ fn press(name: &'static str, key: &str) -> Probe {
 
 fn focus(name: &'static str) -> Probe {
     Probe { name, act: Act::Focus(name) }
+}
+
+fn drag(name: &'static str, from: &str, to: &str) -> Probe {
+    Probe { name, act: Act::Drag(from.into(), to.into()) }
 }
 
 fn tip(name: &'static str, key: &str, text: &str) -> Probe {
@@ -168,6 +179,7 @@ impl Section {
             Section::Cards => vec![hover("hover-card", "kit-inbox-a")],
             Section::Marks => Vec::new(),
             Section::Scroll => vec![hover("hover-area", "kit-scroll-div"), hover("hover-thumb", "kit-scroll-div-bar-thumb"), press("scrolling", "kit-scroll-div-bar-track")],
+            Section::Dnd => vec![drag("drag-reorder", "kit-dnd-0", "kit-dnd-2"), drag("drag-over", "kit-dnd-0", "kit-dnd-zone")],
             Section::Text => vec![focus("focus-text-view"), focus("focus-text-edit"), tip("tooltip-clipped", "kit-clip-end", sections::LONG), tip("tooltip-path", "kit-path-long", sections::PATH_FOLDER)],
         }
     }
@@ -234,6 +246,8 @@ pub struct Gallery {
     pub(crate) scrolls: sections::Scrolls,
     pub(crate) split: gpui::Pixels,
     pub(crate) bar: gpui::Pixels,
+    /// The drag and drop section's cards in their order.
+    pub(crate) cards: Vec<usize>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -308,6 +322,7 @@ impl Gallery {
             scrolls: sections::Scrolls::default(),
             split: gpui::px(256.),
             bar: gpui::px(80.),
+            cards: (0..dnd::CARDS).collect(),
             _subscriptions: Vec::new(),
         }
     }
@@ -442,6 +457,7 @@ impl Render for Gallery {
             Section::Marks => sections::marks(cx),
             Section::Text => sections::text(self, cx),
             Section::Scroll => sections::scroll(self, cx),
+            Section::Dnd => dnd::section(self, cx),
         };
         let title = div().flex_none().px(tokens::space::XXL).py(tokens::space::L).border_b(tokens::stroke::HAIRLINE).border_color(colors.border).text_size(tokens::text::BODY).text_color(crate::themes::secondary(&colors)).child(self.section.title());
         div()

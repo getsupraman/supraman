@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use gpui::{Context, SharedString, Window, prelude::*};
+use gpui::SharedString;
 use supraman_core::folders::{Entries, Entry, Place, Pos};
 
 /// A listed folder's row being dragged: its place in folders.toml while it is still `path` there.
@@ -11,9 +11,9 @@ pub struct DraggedFolder {
     pub title: SharedString,
 }
 
-impl Render for DraggedFolder {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        supraman_ui::tabs::chip(self.title.clone(), cx)
+impl supraman_ui::dnd::Payload for DraggedFolder {
+    fn title(&self) -> SharedString {
+        self.title.clone()
     }
 }
 
@@ -24,9 +24,9 @@ pub struct DraggedGroup {
     pub title: SharedString,
 }
 
-impl Render for DraggedGroup {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        supraman_ui::tabs::chip(self.title.clone(), cx)
+impl supraman_ui::dnd::Payload for DraggedGroup {
+    fn title(&self) -> SharedString {
+        self.title.clone()
     }
 }
 

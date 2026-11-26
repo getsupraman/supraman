@@ -7,17 +7,19 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, AnyView, App, ClickEvent, Context, Anchor, Div, DragMoveEvent, Entity, FocusHandle, Hsla, MouseButton, MouseDownEvent, Pixels,
+    AnyElement, AnyView, App, ClickEvent, Context, Anchor, Axis, Div, Entity, FocusHandle, Hsla, MouseButton, MouseDownEvent, Pixels,
     Point, ScrollHandle, SharedString, Stateful, Subscription, Svg, Window, anchored, canvas, deferred, div, linear_color_stop, linear_gradient, point,
     prelude::*, px,
 };
 use theme::ActiveTheme as _;
 
-pub use fit::{CLOSE_ON_HOVER_BELOW, EDGE, TAB_MAX, TAB_MIN, cut, edge_scroll, max_scroll, revealed, room, span, tab_width, trailing_at};
+pub use fit::{CLOSE_ON_HOVER_BELOW, TAB_MAX, TAB_MIN, cut, max_scroll, revealed, room, span, tab_width, trailing_at};
 pub use list::{LIST, TabEntry};
 
 use crate::button;
-use crate::fonts;
+use crate::dnd::{self, Sortable, lands};
+#[cfg(test)]
+use crate::dnd::{Edge as Side, lands as landing};
 use crate::hit::{HitTargets, hit_target};
 use crate::icon::Icon;
 use crate::palette::{Palette, PaletteEvent};
@@ -56,36 +58,16 @@ pub struct DraggedSession {
     pub title: SharedString,
 }
 
-impl Render for DraggedTab {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        chip(self.title.clone(), cx)
+impl crate::dnd::Payload for DraggedTab {
+    fn title(&self) -> SharedString {
+        self.title.clone()
     }
 }
 
-impl Render for DraggedSession {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        chip(self.title.clone(), cx)
+impl crate::dnd::Payload for DraggedSession {
+    fn title(&self) -> SharedString {
+        self.title.clone()
     }
-}
-
-/// A dragged thing's chip under the pointer: a tab, a session row, a graph pill.
-pub fn chip<V>(title: SharedString, cx: &Context<V>) -> Div {
-    let colors = cx.theme().colors();
-    div()
-        .font_family(fonts::UI)
-        .text_size(tokens::text::BODY)
-        .px(tokens::space::XL)
-        .py(tokens::space::S)
-        .max_w(px(280.))
-        .overflow_hidden()
-        .whitespace_nowrap()
-        .rounded(tokens::radius::S)
-        .border(tokens::stroke::HAIRLINE)
-        .border_color(colors.border_focused)
-        .bg(colors.tab_active_background)
-        .text_color(colors.text)
-        .opacity(0.9)
-        .child(title)
 }
 
 /// What the strip keeps across frames, under [`STRIP`] in its owner's element state.
@@ -254,8 +236,7 @@ fn viewport<V>(hits: &HitTargets, strip: &Entity<Strip>, row: Stateful<Div>, fit
             .bg(linear_gradient(if left { 90. } else { 270. }, linear_color_stop(bg, 0.), linear_color_stop(bg.opacity(0.), 1.)))
             .child(hit_target(hits, format!("{STRIP}-fade-{side}")))
     };
-    let dragged = strip.clone();
-    div()
+    let el = div()
         .id(STRIP)
         .relative()
         .min_w_0()
@@ -263,21 +244,12 @@ fn viewport<V>(hits: &HitTargets, strip: &Entity<Strip>, row: Stateful<Div>, fit
         .child(row)
         .child(hit_target(hits, STRIP.into()))
         .when(cut_left, |d| d.child(fade(true)))
-        .when(cut_right, |d| d.child(fade(false)))
-        .on_drag_move(move |e: &DragMoveEvent<DraggedTab>, _, cx| {
-            let (b, at) = (e.bounds, e.event.position);
-            if at.y < b.top() || at.y > b.bottom() {
-                return;
-            }
-            let by = edge_scroll(at.x - b.left(), b.size.width);
-            if by != Pixels::ZERO {
-                dragged.update(cx, |s, cx| {
-                    let to = (-s.scroll.offset().x + by).clamp(Pixels::ZERO, max_scroll(fit.content, b.size.width));
-                    s.scroll.set_offset(point(-to, Pixels::ZERO));
-                    cx.notify();
-                });
-            }
-        })
+        .when(cut_right, |d| d.child(fade(false)));
+    sortable().scrolls(el, scroll)
+}
+
+fn sortable() -> Sortable<DraggedTab> {
+    Sortable::new(STRIP, Axis::Horizontal)
 }
 
 struct Handlers<'a, A, C, M, U> {
@@ -309,7 +281,6 @@ impl Header<'_> {
         let group = SharedString::from(format!("tab-{id}"));
         let (close, middle, activate, menu) = (on.close.clone(), on.close.clone(), on.activate.clone(), on.menu.clone());
         let (moved, over_ids, drop_ids) = (on.moved.clone(), self.ids.clone(), self.ids.clone());
-        let drop_border = colors.drop_target_border;
         let clicked = self.strip.clone();
         let close_button = button::Button::new(hits, format!("close-tab-{id}"))
             .icon(close_icon())
@@ -319,7 +290,7 @@ impl Header<'_> {
                 cx.stop_propagation();
                 close(this, id, cx);
             }));
-        div()
+        let header = div()
             .id(group.clone())
             .group(group)
             .relative()
@@ -360,23 +331,16 @@ impl Header<'_> {
                 clicked.update(cx, |s, _| s.reveal = Some(id));
                 activate(this, id, cx);
                 cx.notify();
-            }))
-            .on_drag(DraggedTab { id, title: tab.title }, |tab, _, _, cx| cx.new(|_| tab.clone()))
-            .drag_over::<DraggedTab>(move |style, dragged: &DraggedTab, _, _| {
-                match over_ids.iter().position(|&d| d == dragged.id).and_then(|from| landing(from, ix)) {
-                    Some(Side::Before) => style.border_0().border_l(tokens::stroke::FOCUS).border_color(drop_border),
-                    Some(Side::After) => style.border_0().border_r(tokens::stroke::FOCUS).border_color(drop_border),
-                    None => style,
-                }
-            })
-            .on_drop(cx.listener(move |this, dragged: &DraggedTab, _, cx| {
-                if let Some(from) = drop_ids.iter().position(|&d| d == dragged.id)
-                    && from != ix
-                {
-                    moved(this, from, ix, cx);
-                }
-            }))
-            .into_any_element()
+            }));
+        let key = format!("tab-{id}");
+        let lands = move |d: &DraggedTab, _: &App| over_ids.iter().position(|&t| t == d.id).and_then(|from| lands(from, ix));
+        let dropped = cx.listener(move |this, d: &DraggedTab, _, cx| {
+            if let Some(from) = drop_ids.iter().position(|&t| t == d.id) {
+                moved(this, from, ix, cx);
+            }
+        });
+        let header = sortable().item(header, key.clone(), lands, dropped, cx);
+        dnd::source(header, key, DraggedTab { id, title: tab.title }, cx).into_any_element()
     }
 }
 
@@ -493,21 +457,6 @@ fn toggle_list<V: 'static>(
         s.list = Some(Listed { palette, entries, restore, _events: events });
         cx.notify();
     });
-}
-
-#[derive(Debug, PartialEq)]
-enum Side {
-    Before,
-    After,
-}
-
-/// Where the tab at `from`, dropped on the one at `to`, lands: before it when it comes from its right.
-fn landing(from: usize, to: usize) -> Option<Side> {
-    match from.cmp(&to) {
-        std::cmp::Ordering::Greater => Some(Side::Before),
-        std::cmp::Ordering::Less => Some(Side::After),
-        std::cmp::Ordering::Equal => None,
-    }
 }
 
 /// `items` with the one at `from` taken out and put back at `to`; out of range changes nothing.

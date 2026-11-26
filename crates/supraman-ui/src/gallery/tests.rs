@@ -17,6 +17,9 @@ fn every_section_paints_what_its_probes_point_at(cx: &mut TestAppContext) {
                 Act::Hover(key) | Act::Press(key) | Act::Tooltip(key, _) => {
                     assert!(hits.borrow().contains_key(key), "{section:?}'s {} points at {key}, which did not paint", probe.name);
                 }
+                Act::Drag(from, to) => {
+                    assert!(hits.borrow().contains_key(from) && hits.borrow().contains_key(to), "{section:?}'s {} drags {from} over {to}, which did not both paint", probe.name);
+                }
                 Act::Focus(name) => {
                     let focused = cx.update(|window, cx| gallery.update(cx, |g, cx| g.focus_sample(name, window, cx)));
                     assert!(focused, "{section:?} has no focus sample {name}");
