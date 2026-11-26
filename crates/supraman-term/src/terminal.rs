@@ -16,6 +16,7 @@ mod process;
 mod pty_info;
 mod scroll;
 mod search;
+mod typed;
 pub mod terminal_settings;
 #[cfg(test)]
 mod test_support;
@@ -78,6 +79,8 @@ pub struct Terminal {
     shell_program: Option<String>,
     child_exited: Option<ExitStatus>,
     keyboard_input_sent: bool,
+    /// An IME's composition, shown at the cursor and not yet sent.
+    marked: Option<String>,
     /// Whether the painter last drew the cursor lit; the selftest reads it.
     pub cursor_painted_lit: bool,
     /// The selection's background and its text's colour as last painted, while a selection with text
@@ -94,7 +97,7 @@ pub struct Terminal {
     input_log: Vec<Vec<u8>>,
     #[cfg(test)]
     suppress_hyperlink_throttle_once: bool,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pty_write_log: std::cell::RefCell<Vec<Vec<u8>>>,
 }
 

@@ -78,6 +78,8 @@ mod selftest_tabs;
 #[cfg(feature = "selftest")]
 mod selftest_title;
 #[cfg(feature = "selftest")]
+mod selftest_typed;
+#[cfg(feature = "selftest")]
 mod selftest_updates;
 #[cfg(feature = "selftest")]
 mod selftest_term;

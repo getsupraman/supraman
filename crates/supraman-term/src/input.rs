@@ -61,7 +61,7 @@ impl Terminal {
 
     pub(crate) fn write_to_pty(&self, input: impl Into<Cow<'static, [u8]>>) {
         let input = input.into();
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         self.pty_write_log.borrow_mut().push(input.to_vec());
         if let TerminalType::Pty {
             resources: PtyResources::Active(pty_tx),
@@ -112,8 +112,8 @@ impl Terminal {
         std::mem::take(&mut self.input_log)
     }
 
-    #[cfg(test)]
-    pub(crate) fn take_pty_write_log(&mut self) -> Vec<Vec<u8>> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn take_pty_write_log(&mut self) -> Vec<Vec<u8>> {
         std::mem::take(self.pty_write_log.get_mut())
     }
 

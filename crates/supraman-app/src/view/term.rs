@@ -346,8 +346,13 @@ impl FleetView {
 impl FleetView {
     /// The line cursor blinks while a shown terminal holds the keys in an active window, and is stopped otherwise.
     pub(super) fn run_blink(&self, window: &Window, cx: &mut Context<Self>) {
-        let on = self.active_terminal().is_some() && self.focus.is_focused(window) && window.is_window_active();
+        let on = self.terminal_holds_keys(window);
         self.term_look.blink.update(cx, |b, cx| b.set_running(on, cx));
+    }
+
+    /// A shown terminal holds the keys in an active window: its grid's input handler takes typed text.
+    pub fn terminal_holds_keys(&self, window: &Window) -> bool {
+        self.active_terminal().is_some() && self.focus.is_focused(window) && window.is_window_active()
     }
 
     pub(super) fn term_cursor(&self) -> term_element::Cursor {

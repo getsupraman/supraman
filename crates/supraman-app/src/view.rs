@@ -1251,17 +1251,15 @@ impl FleetView {
             cx.stop_propagation();
             return;
         }
-        terminal.update(cx, |terminal, _| {
-            if !terminal.try_keystroke(&event.keystroke, false)
-                && let Some(text) = &event.keystroke.key_char
-            {
-                terminal.input(text.clone().into_bytes());
-            }
-        });
+        // the grid registers its input handler on this focus (term_element); a typed character comes through it
+        let shown = self.focus.is_focused(window);
+        let taken = terminal.update(cx, |terminal, _| terminal.key_down(event, shown));
         self.term_look.blink.update(cx, |b, cx| b.pause(cx));
         // the cursor is lit at once after a key, also when the program echoes nothing
         cx.notify();
-        cx.stop_propagation();
+        if taken {
+            cx.stop_propagation();
+        }
     }
 }
 

@@ -74,9 +74,14 @@ A click anywhere outside an input gives the keys back to the window (the termina
 | Shift+PgUp / PgDn | scroll one page; the program never gets them |
 | Ctrl+Shift+PgUp / PgDn | scroll one page, unless Tab keys in a terminal is Everywhere (then they move the tab) |
 | Ctrl+Shift+Home / End | scroll to the top / bottom |
-| Shift+Enter | ESC CR (a new line in Claude Code's prompt) |
+| Shift+Enter | LF (a new line in Claude Code's prompt) |
 
-Everything else goes to the program.
+Everything else goes to the program, encoded as Windows Terminal does (`supraman-term` `mappings/keys/table.rs`:
+Shift/Alt/Ctrl on the arrows, Home, End, Insert, Delete, PgUp, PgDn and F1–F12 as `CSI 1;m X` / `CSI n;m ~`,
+Ctrl+letter and Ctrl+Shift+letter its C0 code, Alt+key ESC first). Typed characters, dead keys (`` ` `` then `e`
+is `é`), AltGr characters and IME compositions come from Windows' own text input, through the terminal's input
+handler, and go to the program as UTF-8; a composition shows underlined at the cursor until it is committed.
+Selection stays the mouse's: Shift+arrows go to the program.
 
 ## Mouse in a terminal
 
