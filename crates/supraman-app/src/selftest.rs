@@ -1041,6 +1041,9 @@ async fn window_steps(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> 
     let caret = step("7k+", crate::selftest_caret::run(view, cx)).await?;
     println!("step 7k+: {caret}");
 
+    let typed = step("7k++", crate::selftest_typed::run(view, cx)).await?;
+    println!("step 7k++: {typed}");
+
     let mark = step("7l", crate::selftest_mark::run(view, cx)).await?;
     println!("step 7l: {mark}");
     Ok(())

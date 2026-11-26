@@ -1,7 +1,7 @@
 // Vendored from Zed crates/terminal/src/terminal.rs @ 03efd49220ba06703d04f9c4732fdf814f9c523c
 // (GPL-3.0-or-later).
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use crate::Content;
 #[cfg(not(windows))]
 use crate::alacritty::current_child_signal_mask;
@@ -26,7 +26,7 @@ use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedReceiver, unbounded};
 use futures_lite::future::yield_now;
 use gpui::AppContext as _;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use gpui::BackgroundExecutor;
 use gpui::{App, Context, Task, px};
 use itertools::Itertools as _;
@@ -132,8 +132,8 @@ pub struct TerminalBuilder {
 }
 
 impl TerminalBuilder {
-    #[cfg(test)]
-    pub(crate) fn new_display_only(
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn new_display_only(
         cursor_shape: SettingsCursorShape,
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
@@ -153,6 +153,7 @@ impl TerminalBuilder {
             terminal_type: TerminalType::DisplayOnly,
             term,
             term_config: config,
+            #[cfg(test)]
             output_processor: None,
             events: VecDeque::with_capacity(10),
             last_content: Content {
@@ -177,6 +178,7 @@ impl TerminalBuilder {
             shell_program: None,
             child_exited: None,
             keyboard_input_sent: false,
+            marked: None,
             cursor_painted_lit: true,
             selection_painted: None,
             hand_painted: false,
@@ -185,7 +187,9 @@ impl TerminalBuilder {
             path_style,
             cwd_history: Vec::new(),
             pending_cwd_boundary: None,
+            #[cfg(test)]
             input_log: Vec::new(),
+            #[cfg(test)]
             suppress_hyperlink_throttle_once: false,
             pty_write_log: Default::default(),
         };
@@ -372,6 +376,7 @@ impl TerminalBuilder {
                 shell_program,
                 child_exited: None,
                 keyboard_input_sent: false,
+                marked: None,
                 cursor_painted_lit: true,
                 selection_painted: None,
                 hand_painted: false,
@@ -396,7 +401,7 @@ impl TerminalBuilder {
                 input_log: Vec::new(),
                 #[cfg(test)]
                 suppress_hyperlink_throttle_once: false,
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-support"))]
                 pty_write_log: Default::default(),
             };
 

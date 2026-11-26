@@ -9,6 +9,10 @@ license.workspace = true
 path = "src/terminal.rs"
 doctest = false
 
+[features]
+# A display-only terminal and the log of what it wrote to its PTY, for another crate's tests.
+test-support = []
+
 [dependencies]
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
 anyhow = "1.0.86"

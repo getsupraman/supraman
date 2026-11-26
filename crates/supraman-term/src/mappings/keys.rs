@@ -176,6 +176,13 @@ pub(crate) fn to_esc_str(
         return Some(Cow::Borrowed(esc_str));
     }
 
+    // gpui_windows names Ctrl+Shift+A `a` with Shift held; Windows Terminal sends Ctrl+A's C0 for it.
+    if modifiers == TerminalModifiers::CtrlShift
+        && let [letter @ b'a'..=b'z'] = keystroke.key.as_bytes()
+    {
+        return Some(Cow::Owned(char::from(letter - b'a' + 1).to_string()));
+    }
+
     if modifiers.any() {
         let modifier_code = modifier_code(keystroke);
         let modified_esc_str = match keystroke.key.as_ref() {
@@ -204,6 +211,7 @@ pub(crate) fn to_esc_str(
             "f19" => Some(format!("\x1b[33;{}~", modifier_code)),
             "f20" => Some(format!("\x1b[34;{}~", modifier_code)),
             "insert" => Some(format!("\x1b[2;{}~", modifier_code)),
+            "delete" => Some(format!("\x1b[3;{}~", modifier_code)),
             "pageup" => Some(format!("\x1b[5;{}~", modifier_code)),
             "pagedown" => Some(format!("\x1b[6;{}~", modifier_code)),
             "end" => Some(format!("\x1b[1;{}F", modifier_code)),
@@ -261,6 +269,9 @@ fn modifier_code(keystroke: &Keystroke) -> u32 {
     }
     modifier_code + 1
 }
+
+#[cfg(test)]
+mod table;
 
 #[cfg(test)]
 mod test {

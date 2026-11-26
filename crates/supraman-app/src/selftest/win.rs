@@ -120,6 +120,14 @@ pub(crate) fn key_messages(key: &str) -> [(u32, usize, isize); 2] {
     [(WM_KEYDOWN, vk as usize, 1 | (scan << 16)), (WM_KEYUP, vk as usize, 1 | (scan << 16) | (0b11 << 30))]
 }
 
+/// What `TranslateMessage` queues for a dead key and the letter after it on a layout with dead keys:
+/// WM_DEADCHAR of the accent, then WM_CHAR of the composed character (` then e: é).
+#[cfg(windows)]
+pub(crate) fn dead_key_messages(accent: char, composed: char) -> [(u32, usize, isize); 2] {
+    use windows::Win32::UI::WindowsAndMessaging::{WM_CHAR, WM_DEADCHAR};
+    [(WM_DEADCHAR, accent as usize, 1), (WM_CHAR, composed as usize, 1)]
+}
+
 /// Every message queued for this thread dispatched.
 #[cfg(windows)]
 pub(crate) fn pump_messages() {

@@ -3,7 +3,7 @@
 // (GPL-3.0-or-later).
 
 use gpui::{
-    App, Bounds, ContentMask, CursorStyle, DispatchPhase, ElementId, Entity, FocusHandle, ParentElement as _, RenderOnce, div, Font, FontFeatures, FontId, FontStyle,
+    App, Bounds, ContentMask, CursorStyle, DispatchPhase, ElementId, ElementInputHandler, Entity, FocusHandle, ParentElement as _, RenderOnce, div, Font, FontFeatures, FontId, FontStyle,
     FontWeight, Hitbox, HitboxBehavior, Hsla, IntoElement, Keystroke, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, Pixels, Point as GpuiPoint, SharedString, ShapedLine,
     StrikethroughStyle, Styled, TextRun, UnderlineStyle, Window, WindowTextSystem, canvas, fill,
@@ -343,7 +343,27 @@ pub struct LayoutState {
     matches: Vec<LayoutRect>,
     /// Ctrl is held over a link: the pointer is a hand.
     on_link: bool,
+    marked: Option<Marked>,
     hitbox: Hitbox,
+}
+
+/// An IME's composition, painted underlined over the cells from the cursor on.
+struct Marked {
+    text: SharedString,
+    at: GpuiPoint<Pixels>,
+    font: Font,
+    color: Hsla,
+}
+
+impl Marked {
+    fn paint(&self, origin: GpuiPoint<Pixels>, dims: &TerminalBounds, font_size: Pixels, background: Hsla, window: &mut Window, cx: &mut App) {
+        let underline = Some(UnderlineStyle { color: Some(self.color), thickness: crate::tokens::stroke::HAIRLINE, wavy: false });
+        let run = TextRun { len: self.text.len(), font: self.font.clone(), color: self.color, underline, ..Default::default() };
+        let line = window.text_system().shape_line(self.text.clone(), font_size, &[run], None);
+        let at = origin + self.at;
+        window.paint_quad(fill(Bounds::new(at, size(line.width, dims.line_height)), background));
+        let _ = line.paint(at, dims.line_height, gpui::TextAlign::Left, None, window, cx);
+    }
 }
 
 /// Cell metrics for `font`; used for the grid and for the PTY size.
@@ -402,6 +422,8 @@ pub fn drawn_by_fallback(text_system: &gpui::TextSystem, font_id: FontId, ch: ch
 }
 
 mod scrollback;
+#[cfg(test)]
+mod typed;
 
 pub use scrollback::Scrollback;
 
@@ -430,10 +452,12 @@ impl RenderOnce for TerminalGrid {
         let scrollback = window.use_keyed_state(ElementId::NamedInteger("term-scrollback".into(), id), cx, |_, _| Scrollback::default()).read(cx).clone();
         let bar = crate::scroll::Scrollbar::new(ElementId::NamedInteger("term-bar".into(), id), &scrollback);
         let (terminal, font, terminal_for_paint, cursor) = (self.terminal.clone(), self.font, self.terminal, self.cursor);
+        let focus = cursor.focus.clone();
         let grid = canvas(
             move |bounds, window, cx| prepaint(&terminal, &font, &cursor, &scrollback, bounds, window, cx),
             move |_bounds, state, window, cx| {
                 register_mouse_listeners(&terminal_for_paint, &state.hitbox, window);
+                window.handle_input(&focus, ElementInputHandler::new(state.dims.bounds, terminal_for_paint.clone()), cx);
                 paint(state, window, cx)
             },
         )
@@ -528,6 +552,17 @@ fn prepaint(
         })
     };
 
+    let marked = terminal_ref.marked_text().filter(|_| holds).map(|text| {
+        let line = content.cursor.point.line + content.display_offset as i32;
+        Marked {
+            text: text.to_owned().into(),
+            at: point(cell_width * content.cursor.point.column as f32, line_height * line as f32),
+            font: base.clone(),
+            color: theme.colors().terminal_foreground,
+        }
+    });
+    let cursor = cursor.filter(|_| marked.is_none());
+
     let selection = selected
         .as_ref()
         .map(|sel| selection_rects(sel.start, sel.end, sel.is_block, dims.num_lines(), dims.num_columns(), SELECTION_BACKGROUND))
@@ -563,6 +598,7 @@ fn prepaint(
         selection,
         matches,
         on_link,
+        marked,
         hitbox: window.insert_hitbox(bounds, HitboxBehavior::Normal),
     }
 }
@@ -676,6 +712,9 @@ fn paint(state: LayoutState, window: &mut Window, cx: &mut App) {
     }
     if let Some((bounds, color)) = state.cursor {
         window.paint_quad(fill(bounds + origin, color));
+    }
+    if let Some(marked) = &state.marked {
+        marked.paint(origin, &dims, state.font_size, state.background, window, cx);
     }
     if state.on_link {
         window.set_cursor_style(CursorStyle::PointingHand, &state.hitbox);
