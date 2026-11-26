@@ -166,7 +166,7 @@ impl Section {
             Section::Prompts => vec![hover("hover-band-answer", "kit-band-yes"), hover("hover-form-ok", "kit-form-ok")],
             Section::Cards => vec![hover("hover-card", "kit-inbox-a")],
             Section::Marks => Vec::new(),
-            Section::Scroll => vec![hover("hover-area", "kit-scroll-div"), hover("hover-thumb", "kit-scroll-div-bar-thumb"), press("scrolling", "kit-scroll-list-bar-track")],
+            Section::Scroll => vec![hover("hover-area", "kit-scroll-div"), hover("hover-thumb", "kit-scroll-div-bar-thumb"), press("scrolling", "kit-scroll-div-bar-track")],
             Section::Text => vec![tip("tooltip-clipped", "kit-clip-end", sections::LONG), tip("tooltip-path", "kit-path-long", sections::PATH_FOLDER)],
         }
     }
