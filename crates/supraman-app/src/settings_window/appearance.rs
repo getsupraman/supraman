@@ -214,7 +214,7 @@ impl SettingsView {
         let list = button::choices(list, &focus, VALUES.len(), chosen, move |this: &mut Self, ix, _, cx| this.set_scrollbars(VALUES[ix].1, cx), cx);
         row(
             "Scrollbars",
-            "Auto shows a list's or a page's scrollbar while it scrolls and while the pointer is over it; Always shows it              whenever there is more to scroll to. Kept in settings.toml ([appearance] scrollbars).",
+            "Auto shows a list's or a page's scrollbar while it scrolls and while the pointer is over it; Always shows it whenever there is more to scroll to. Kept in settings.toml ([appearance] scrollbars).",
             list.into_any_element(),
             None,
             cx,
