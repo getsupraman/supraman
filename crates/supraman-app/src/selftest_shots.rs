@@ -755,6 +755,7 @@ async fn git_add_remote(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWind
     let shot = capture(out.join("supraman-git-add-remote.png"), None, cx).await?;
     println!("shot: {}", shot.display());
     crate::selftest::click(view, "git-add-remote-close", cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "Add Remote closed", |v| (!v.hits.borrow().contains_key("git-add-remote-scrim")).then_some(())).await?;
     crate::selftest::press(view, "refpanel-row-remote/origin", MouseButton::Right, cx).await?;
     crate::selftest::until(view, cx, Duration::from_secs(10), "origin's menu", |v| v.hits.borrow().contains_key("menu-remote-edit-origin").then_some(())).await?;
     crate::selftest::click(view, "menu-remote-edit-origin", cx).await?;
@@ -762,7 +763,8 @@ async fn git_add_remote(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWind
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-git-edit-remote.png"), None, cx).await?;
     println!("shot: {}", shot.display());
-    crate::selftest::click(view, "git-edit-remote-close", cx).await
+    crate::selftest::click(view, "git-edit-remote-close", cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the prompt closed", |v| (!v.hits.borrow().contains_key("git-edit-remote-scrim")).then_some(())).await
 }
 
 /// The WORKTREES header hovered, its + in the count's place beside Refresh; then Create Worktree in the tab's prompt, its reference's picker shown, then shut.
@@ -786,7 +788,8 @@ async fn git_add_worktree(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWi
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-git-add-worktree-form.png"), None, cx).await?;
     println!("shot: {}", shot.display());
-    crate::selftest::click(view, "git-add-worktree-close", cx).await
+    crate::selftest::click(view, "git-add-worktree-close", cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the prompt closed", |v| (!v.hits.borrow().contains_key("git-add-worktree-scrim")).then_some(())).await
 }
 
 /// The worktree's removal asked in the tab's prompt; its look (the scrim over the tab, the panel, the answers and the default's ring) is what René judges, which no unit test shows.
