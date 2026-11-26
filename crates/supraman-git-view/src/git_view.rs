@@ -47,7 +47,7 @@ use gpui::{AnyElement, App, AppContext as _, Context, Div, Entity, EventEmitter,
 use supraman_gitman::write::Occupancy;
 use supraman_gitman::{Repo, WipCounts, WorktreeRow};
 use supraman_ui::hit::{HitTargets, hit_target};
-use supraman_ui::{banner, button, focus, menu};
+use supraman_ui::{banner, button, focus};
 use supraman_ui::tooltip::Tooltip;
 use supraman_ui::icon::Icon;
 use supraman_ui::placeholder::placeholder;
@@ -881,9 +881,9 @@ impl GitView {
         };
         let form = self.render_form(cx).map(|form| {
             let border = cx.theme().colors().border;
-            deferred(div().absolute().top_0().bottom_0().left_0().w(px(FORM_WIDTH)).max_w_full().occlude().border_r_1().border_color(border).child(form)).with_priority(menu::FORM)
+            deferred(div().absolute().top_0().bottom_0().left_0().w(px(FORM_WIDTH)).max_w_full().occlude().border_r_1().border_color(border).child(form)).with_priority(supraman_ui::tokens::Layer::Form.priority())
         });
-        let toast = self.toast.render(&self.hits, "git-toast", cx).map(|t| deferred(t).with_priority(menu::OVER_FORM));
+        let toast = self.toast.render(&self.hits, "git-toast", cx).map(|t| deferred(t).with_priority(supraman_ui::tokens::Layer::OverForm.priority()));
         let table = div().relative().flex_1().min_w_0().h_full().child(first).child(hit_target(&self.hits, GRAPH_PANE.into())).child(pane.paint(&self.hits)).children(form).children(toast);
         let panel = div().relative().flex_shrink(1.).min_w_0().flex().flex_col().w(self.panel_width).h_full().track_focus(&self.panel_focus).child(self.render_panel(cx)).child(hit_target(&self.hits, PANEL_PANE.into()));
         let panel = panel.child(focus::Pane::new(FOCUS_PANEL, &self.panel_focus).paint(&self.hits));
@@ -935,14 +935,14 @@ impl GitView {
 
     /// Why the tab shows no graph, with a Retry that loads it again.
     fn problem(&self, problem: &Problem, cx: &mut Context<Self>) -> AnyElement {
-        let retry = button::action(&self.hits, "git-retry", "Retry", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| this.reload(cx)));
+        let retry = button::Button::new(&self.hits, "git-retry").label("Retry").fill(button::Fill::Outline).on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| this.reload(cx)));
         notice(problem.title(), problem.why().to_string(), cx).child(div().pt_2().child(retry)).into_any_element()
     }
 
     /// A warning over the tab whose × under `key` runs `dismiss`.
     fn notice_banner(&self, key: &'static str, text: String, dismiss: impl Fn(&mut GitView, &mut Context<GitView>) + 'static, cx: &mut Context<Self>) -> AnyElement {
         let color = cx.theme().status().warning;
-        let close = button::icon(&self.hits, key, Icon::Close.svg(14., cx.theme().colors().text_muted), px(20.), cx)
+        let close = button::Button::new(&self.hits, key).icon(Icon::Close.svg(14., cx.theme().colors().text_muted)).icon_only(px(20.))
             .tooltip(Tooltip::text("Dismiss"))
             .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
                 dismiss(this, cx);
@@ -1021,8 +1021,8 @@ impl Render for GitView {
                     .children(self.follow_notice(cx))
                     .child(div().flex_1().min_h_0().child(content)),
             )
-            .children(band.map(|b| deferred(b).with_priority(menu::OVER_FORM)))
-            .children(self.render_find().map(|f| deferred(f).with_priority(menu::OVER_FORM)))
+            .children(band.map(|b| deferred(b).with_priority(supraman_ui::tokens::Layer::OverForm.priority())))
+            .children(self.render_find().map(|f| deferred(f).with_priority(supraman_ui::tokens::Layer::OverForm.priority())))
             .children(self.render_column_menu(cx))
     }
 }

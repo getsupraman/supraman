@@ -1,6 +1,6 @@
 //! The toolbar's Pull split button, Push and the progress strip; hit keys `git-pull`, `git-pull-menu`, `git-push`, `git-remote-cancel`.
 
-use gpui::{App, ClickEvent, Context, Div, Entity, SharedString, Stateful, div, prelude::*};
+use gpui::{App, ClickEvent, Context, Div, Entity, SharedString, div, prelude::*};
 use supraman_gitman::write::remote::PullChoice;
 use supraman_ui::button;
 use supraman_ui::icon::Icon;
@@ -72,12 +72,12 @@ impl GitView {
 ")
     }
 
-    fn remote_button(&self, key: &'static str, icon: Icon, caption: SharedString, why_not: Option<String>, tooltip: String, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn remote_button(&self, key: &'static str, icon: Icon, caption: SharedString, why_not: Option<String>, tooltip: String, cx: &mut Context<Self>) -> button::Button {
         let colors = cx.theme().colors();
         let fg = if why_not.is_none() { colors.text } else { colors.text_muted };
-        let button = button::toolbar(&self.hits, key, icon.svg(14., fg), false, fg, cx).child(caption);
+        let button = button::Button::toolbar(&self.hits, key).icon(icon.svg(14., fg)).text_color(fg).child(caption);
         if let Some(why) = why_not {
-            return button::dimmed(button.tooltip(Tooltip::text(why)));
+            return button.dimmed(Some(why));
         }
         button
             .tooltip(Tooltip::text(tooltip))
@@ -99,7 +99,7 @@ impl GitView {
         };
         let strip = self.write_strip(cx);
         let colors = cx.theme().colors();
-        let menu = button::toolbar(&self.hits, PULL_MENU_KEY, Icon::ChevronDown.svg(12., colors.text_muted), false, colors.text_muted, cx)
+        let menu = button::Button::toolbar(&self.hits, PULL_MENU_KEY).icon(Icon::ChevronDown.svg(12., colors.text_muted)).text_color(colors.text_muted)
             .tooltip(Tooltip::text("Choose a pull, or the default the button does"))
             .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, e: &gpui::MouseDownEvent, _, cx| {
                 cx.stop_propagation();
@@ -111,7 +111,7 @@ impl GitView {
             .items_center()
             .gap_1()
             .py_1()
-            .child(button::split(self.remote_button(PULL_KEY, Icon::SortDown, caption.into(), pull_why, self.pull_tooltip(choice, cx), cx), menu, cx))
+            .child(button::ButtonSplit::new(self.remote_button(PULL_KEY, Icon::SortDown, caption.into(), pull_why, self.pull_tooltip(choice, cx), cx), menu))
             .child(self.remote_button(PUSH_KEY, Icon::SortUp, "Push".into(), push_why, push_tip, cx))
             .children(strip)
     }

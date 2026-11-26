@@ -202,13 +202,13 @@ pub(crate) fn path_list<V: 'static>(
 }
 
 /// The sort button (`<list>-sort`), turning `order` over on a click.
-pub(crate) fn sort_button<V: 'static>(hits: &HitTargets, list: &str, order: Order, set: impl Fn(&mut V, Order, &mut Context<V>) + 'static, cx: &mut Context<V>) -> Stateful<Div> {
+pub(crate) fn sort_button<V: 'static>(hits: &HitTargets, list: &str, order: Order, set: impl Fn(&mut V, Order, &mut Context<V>) + 'static, cx: &mut Context<V>) -> button::Button {
     let muted = cx.theme().colors().text_muted;
     let (icon, words) = match order {
         Order::Ascending => (Icon::SortDown, "Names A–Z; click for Z–A"),
         Order::Descending => (Icon::SortUp, "Names Z–A; click for A–Z"),
     };
-    button::icon(hits, format!("{list}-sort"), icon.svg(14., muted), px(24.), cx)
+    button::Button::new(hits, format!("{list}-sort")).icon(icon.svg(14., muted)).icon_only(px(24.))
         .tooltip(Tooltip::text(words))
         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| set(this, order.reversed(), cx)))
 }

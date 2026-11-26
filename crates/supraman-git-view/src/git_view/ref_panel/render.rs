@@ -153,7 +153,7 @@ impl RefPanel {
                 .tooltip(Tooltip::text("Show every ref in the graph: none hidden, none soloed"))
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.show_all(cx)))
         });
-        let collapse = button::icon(&self.hits, format!("{LIST}-collapse"), Icon::ChevronLeft.svg(14., secondary(cx.theme().colors())), px(22.), cx)
+        let collapse = button::Button::new(&self.hits, format!("{LIST}-collapse")).icon(Icon::ChevronLeft.svg(14., secondary(cx.theme().colors()))).icon_only(px(22.))
             .tooltip(Tooltip::text("Collapse the ref panel (Ctrl+J)"))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_shut(cx)));
         div()
@@ -172,7 +172,7 @@ impl RefPanel {
         let open = self.overlay();
         let selected = cx.theme().colors().element_selected;
         let (accent, muted) = (cx.theme().colors().text_accent, secondary(cx.theme().colors()));
-        let expand = button::icon_toned(&self.hits, format!("{LIST}-expand"), Icon::ChevronRight.svg(14., muted), px(24.), button::Tone::Neutral, cx)
+        let expand = button::Button::new(&self.hits, format!("{LIST}-expand")).icon(Icon::ChevronRight.svg(14., muted)).icon_only(px(24.)).tone(button::Tone::Neutral)
             .rounded_full()
             .tooltip(Tooltip::text("Expand the ref panel (Ctrl+J)"))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_shut(cx)));
@@ -229,7 +229,7 @@ impl RefPanel {
             _ => return None,
         };
         let group = format!("{LIST}-row-{}", section.key());
-        let plus = button::revealed(&self.hits, format!("{LIST}-{}-add", section.key()), Icon::Plus.svg(ICON, cx.theme().status().success), px(18.), group.clone(), false, cx)
+        let plus = button::Button::new(&self.hits, format!("{LIST}-{}-add", section.key())).icon(Icon::Plus.svg(ICON, cx.theme().status().success)).icon_only(px(18.)).reveal(group.clone(), false)
             .tooltip(Tooltip::text(tip))
             .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();

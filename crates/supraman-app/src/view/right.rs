@@ -31,15 +31,15 @@ impl FleetView {
             })
             .collect();
         let muted = colors.text_muted;
-        let plus = button::toolbar(&self.hits, "new-shell", Icon::Plus.svg(16., muted), false, muted, cx)
+        let plus = button::Button::toolbar(&self.hits, "new-shell").icon(Icon::Plus.svg(16., muted)).text_color(muted)
             .tooltip(Tooltip::text("New shell"))
             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                 this.new_shell(window, cx);
             }));
-        let shells = button::toolbar(&self.hits, "new-shell-menu", Icon::ChevronDown.svg(12., muted), false, muted, cx)
+        let shells = button::Button::toolbar(&self.hits, "new-shell-menu").icon(Icon::ChevronDown.svg(12., muted)).text_color(muted)
             .tooltip(Tooltip::text("New shell of…"))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_shell_menu(cx)));
-        let new_tab = button::split(plus, shells, cx).into_any_element();
+        let new_tab = button::ButtonSplit::new(plus, shells).into_any_element();
         let bar = tab_strip(
             &self.hits,
             headers,

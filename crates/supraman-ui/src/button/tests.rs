@@ -54,7 +54,7 @@ impl Render for Actions {
         let mut row = div().flex().gap_2().p_2();
         for tone in TONES {
             for fill in FILLS {
-                let mut button = action(&self.hits, format!("{tone:?}-{fill:?}"), "Label", tone, fill, cx);
+                let mut button = Button::new(&self.hits, format!("{tone:?}-{fill:?}")).label("Label").tone(tone).fill(fill).build(cx);
                 let style = button.style();
                 let painted = Painted { fill: style.background.as_ref().and_then(|f| f.color()).and_then(|b| b.as_solid()), border: style.border_color, text: style.text.color };
                 self.painted.push((tone, fill, painted));
@@ -107,7 +107,7 @@ struct Toned {
 impl Render for Toned {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let error = cx.theme().status().error;
-        let mut button = icon_toned(&self.hits, "trash", crate::icon::Icon::Trash.svg(14., error), px(24.), Tone::Danger, cx);
+        let mut button = Button::new(&self.hits, "trash").icon(crate::icon::Icon::Trash.svg(14., error)).icon_only(px(24.)).tone(Tone::Danger).build(cx);
         let style = button.style();
         self.painted = Some(Painted { fill: style.background.as_ref().and_then(|f| f.color()).and_then(|b| b.as_solid()), border: style.border_color, text: style.text.color });
         div().flex().p_2().child(button)
@@ -178,12 +178,12 @@ struct Sizes {
 }
 
 impl Render for Sizes {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let mut column = div().flex().flex_col().gap_2().p_2();
         for size in Size::ALL {
-            let plain = sized(action(&self.hits, format!("{size:?}"), "Agj", Tone::Neutral, Fill::Solid, cx), size);
-            let with = sized(action_with(&self.hits, format!("{size:?}-icon"), crate::icon::Icon::Check, "Open", Tone::Success, Fill::Solid, cx), size);
-            column = column.child(line().child(plain).child(with));
+            let plain = Button::new(&self.hits, format!("{size:?}")).label("Agj").size(size);
+            let with = Button::new(&self.hits, format!("{size:?}-icon")).icon(crate::icon::Icon::Check).label("Open").tone(Tone::Success).size(size);
+            column = column.child(Button::line().child(plain).child(with));
         }
         column
     }
@@ -228,15 +228,15 @@ struct Three {
 impl Render for Three {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.members.begin();
-        let mut row = line();
+        let mut row = Button::line();
         for n in 0..3 {
             let key = format!("answer-{n}");
-            let button = sized(action(&self.hits, key.clone(), format!("Answer {n}"), Tone::Neutral, Fill::Solid, cx), Size::Medium);
+            let button = Button::new(&self.hits, key.clone()).label(format!("Answer {n}")).size(Size::Medium);
             row = row.child(if self.skip == Some(n) {
                 button
             } else {
                 let focus = self.members.handle(key, cx);
-                acting(button, &focus, move |this: &mut Three, _, _| this.pressed.push(n), cx)
+                button.acting(&focus, move |this: &mut Three, _, _| this.pressed.push(n), cx)
             });
         }
         self.members.order().on(row.id("three"))
@@ -324,8 +324,8 @@ struct Listed {
 impl Render for Listed {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.members.begin();
-        let before = sized(action(&self.hits, "before", "Before", Tone::Neutral, Fill::Solid, cx), Size::Medium);
-        let before = acting(before, &self.members.handle("before", cx), |_: &mut Listed, _, _| {}, cx);
+        let before = Button::new(&self.hits, "before").label("Before").size(Size::Medium);
+        let before = before.acting(&self.members.handle("before", cx), |_: &mut Listed, _, _| {}, cx);
         let mut list = div().flex().gap_1();
         for n in 0..3 {
             list = list.child(choice(("pick", n), format!("Pick {n}"), n == self.chosen, cx));

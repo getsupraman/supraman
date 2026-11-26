@@ -149,12 +149,12 @@ impl BranchActions {
         let fields = dialog.fields.as_ref()?;
         let colors = cx.theme().colors();
         let problem = dialog.problem(cx);
-        let create = button::action(&self.hits, "git-name-create", if matches!(dialog.ask, NameAsk::Rename { .. }) { "Rename" } else { "Create" }, button::Tone::Success, button::Fill::Solid, cx);
+        let create = button::Button::new(&self.hits, "git-name-create").label(if matches!(dialog.ask, NameAsk::Rename { .. }) { "Rename" } else { "Create" }).tone(button::Tone::Success);
         let create = match problem {
-            Some(_) => button::dimmed(create),
+            Some(_) => create.dimmed_if(true),
             None => create.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.submit_name(cx))),
         };
-        let cancel = button::action(&self.hits, "git-name-cancel", "Cancel", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_name(cx)));
+        let cancel = button::Button::new(&self.hits, "git-name-cancel").label("Cancel").fill(button::Fill::Outline).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_name(cx)));
         let checkout = matches!(dialog.ask, NameAsk::Branch { .. }).then(|| {
             let tick = button::checkbox(&self.hits, "git-name-checkout", dialog.checkout, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 if let Some(d) = &mut this.naming {

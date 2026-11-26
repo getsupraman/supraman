@@ -42,25 +42,26 @@ type, feature words or a feature's state file.
 
 ## 3. Tokens
 
-Colour already comes from the theme (`ThemeColors` plus `themes::{selection, secondary, attention}`).
-Everything else is a raw `px(…)` today (~1,000 of them). One module, `supraman_ui::tokens`, holds every
-other decision, by role:
+Colour comes from the theme (`ThemeColors` plus `themes::{selection, secondary, attention}`). Every other decision is
+`supraman_ui::tokens`, by role, at the values the kit already drew with (ui-kit/2 measured them; the gallery did not move):
 
 | Token | Values | Replaces |
 |---|---|---|
-| `space` | `XS 2, S 4, M 6, L 8, XL 12, XXL 16, XXXL 24` | `gap_1`, `px(6.)`, … |
-| `radius` | `S 3` (pills, fields), `M 5` (buttons, menus), `L 8` (cards, dialogs) | `rounded_md`, `rounded_lg` by guess |
-| `text` | `Caption 11, Small 12, Body 13, Title 15, Heading 18` and their line heights | `text_xs`, `text_sm`, `px(10.)` |
-| `control` | `Small 20, Medium 26, Large 32` heights, each with its padding and text | `button::Size::table` |
-| `icon` | `S 12, M 14, L 16` | literal icon sizes |
-| `stroke` | `hairline 1, focus 2` | `border_1`, `border_2` |
-| `motion` | `fast 80 ms, normal 160 ms`, `scrollbar_idle 1500 ms`, `caret_blink 530 ms` | scattered constants |
-| `layer` | `float < form < card < menu < over_form < dialog < tooltip` | `menu::{FLOAT, FORM, CARD, …}` |
+| `space` | `XS 2, S 4, M 6, L 8, XL 12, XXL 16, XXXL 20, PAGE 24` | `gap_1`, `p_2`, `px(6.)`, … |
+| `radius` | `S 4` (buttons, fields, pills, tick boxes), `M 6` (toolbar buttons, menus, cards), `L 8` (dialogs), `FULL` | `rounded_sm`, `rounded_md`, `rounded_lg` |
+| `text` | `CAPTION 10, SMALL 12, BODY 14, TITLE 16, HEADING 18` (rems of 16 px), each at gpui's φ line height | `text_xs`, `text_sm`, `px(10.)` |
+| `control` | `SMALL 20` (8 px padding, SMALL text), `MEDIUM 26` (12, BODY), `LARGE 32` (16, BODY) | `button::Size::table` |
+| `icon` | `XS 10, S 12, M 14, L 16` | literal icon sizes |
+| `stroke` | `HAIRLINE 1, FOCUS 2` | `border_1`, `border_2` |
+| `motion` | `FAST 80 ms, NORMAL 160 ms, TURN 1 s, SCROLLBAR_IDLE 1500 ms, CARET_BLINK 530 ms` | scattered constants |
+| `Layer` | `Float < Form < Card < OverForm < Menu < Dialog` | `menu::{FLOAT, FORM, CARD, OVER_FORM, PRIORITY}`, `dialog::PRIORITY` |
 
-Colour roles the kit adds over the theme (derived, never per component): `surface`, `surface_raised`,
-`surface_sunken`, `border_subtle`, `border_strong`, `ring`, `accent`, `on_accent`, `danger`, `warning`,
-`success`, `selection`, `selection_inactive`. A component asks for a role; a theme change moves every
-control at once (the "physics" test).
+Colour roles the kit adds over the theme, derived once per theme load (`tokens::roles(cx)`): `surface`, `surface_raised`,
+`surface_sunken`, `border_subtle`, `border_strong`, `ring`, `accent`, `on_accent`, `danger`, `warning`, `success`, `info`,
+`selection`, `selection_inactive`. A component asks for a role; a theme change moves every control at once (the "physics"
+test). The theme is fitted where the roles come from: `selection` holds `ACTIVE_SELECTION_SHOWS` on the panel and always
+reads stronger than `selection_inactive`, which still shows; `info` holds `INFO_SATURATION`, so it never reads as muted
+text (`themes.rs`).
 
 A size or emphasis is a **dimension** of a control (`size: Size`, `tone: Tone`, `fill: Fill`), never a
 second control.
@@ -261,9 +262,10 @@ Not UI, moved out to `supraman-core` (or their own small crate): `open`, `stall`
 the logger in `lib.rs`. Feature content leaves the kit: `inbox_card`'s and `session`'s words and
 mapping go to their features, built on kit cards and labels.
 
-Controls become builder structs (`Button::new(key).label(…).size(…).tone(…)`) implementing
-`IntoElement`, in place of 30 free functions with positional arguments. The hit key stays the
-element's id, so the selftests keep working.
+Controls become builder structs (`Button::new(hits, key).label(…).size(…).tone(…)`) implementing
+`IntoElement` (`RenderOnce`, and `Styled` so a caller's layout follows the kit's own), in place of 30 free functions with
+positional arguments. The hit key stays the element's id, so the selftests keep working. ui-kit/2 did buttons
+(`Button`, `ButtonSplit`, `Button::line`).
 
 ## 10. The gallery
 

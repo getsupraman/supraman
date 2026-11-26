@@ -84,7 +84,7 @@ impl CommitPanel {
     fn read_only(&self, shown: &Shown, box_bg: Hsla, cx: &mut Context<Self>) -> Div {
         let colors = cx.theme().colors().clone();
         let text = format!("{}\n\n{}", shown.summary, shown.body).trim_end().to_string();
-        let copy = button::icon(&self.hits, "commit-message-copy", Icon::Copy.svg(13., colors.text_muted), px(22.), cx)
+        let copy = button::Button::new(&self.hits, "commit-message-copy").icon(Icon::Copy.svg(13., colors.text_muted)).icon_only(px(22.))
             .tooltip(Tooltip::text("Copy the message"))
             .on_click(move |_: &ClickEvent, _, cx| {
                 cx.stop_propagation();
@@ -237,10 +237,10 @@ impl CommitPanel {
         let changes = shown.clone();
         Some(Rc::new(move |this: &mut CommitPanel, path: &str, _, group: SharedString, cx: &mut Context<CommitPanel>| {
             let file = changes.changes.iter().find(|c| c.path == path).cloned();
-            let applied = button::action(&this.hits, format!("commit-apply-{path}"), "Apply File", button::Tone::Success, button::Fill::Outline, cx);
-            let Some(file) = file else { return button::dimmed(applied).into_any_element() };
+            let applied = button::Button::new(&this.hits, format!("commit-apply-{path}")).label("Apply File").tone(button::Tone::Success).fill(button::Fill::Outline);
+            let Some(file) = file else { return applied.dimmed_if(true).into_any_element() };
             let applied = match this.gate.read(cx).busy() {
-                Some(why) => button::dimmed(applied).tooltip(Tooltip::text(why)).on_click(|_, _, cx| cx.stop_propagation()),
+                Some(why) => applied.dimmed(Some(why)).on_click(|_, _, cx| cx.stop_propagation()),
                 None => {
                     let stash = stash.clone();
                     applied.tooltip(Tooltip::text("Put this file in the work tree as the stash has it")).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
@@ -249,7 +249,7 @@ impl CommitPanel {
                     }))
                 }
             };
-            button::reveal(applied, group, false).into_any_element()
+            applied.reveal(group, false).into_any_element()
         }))
     }
 

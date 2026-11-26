@@ -108,7 +108,7 @@ impl RefPanel {
             return None;
         }
         let muted = secondary(cx.theme().colors());
-        let button = button::toolbar_turning(&self.hits, format!("{LIST}-worktrees-refresh"), Icon::Refresh.svg(ICON, muted), false, self.wips.reading, muted, cx)
+        let button = button::Button::toolbar(&self.hits, format!("{LIST}-worktrees-refresh")).icon(Icon::Refresh.svg(ICON, muted)).turning(self.wips.reading).text_color(muted)
             .h(px(20.))
             .min_w(px(20.))
             .px_0()

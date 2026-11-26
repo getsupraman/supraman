@@ -51,7 +51,7 @@ impl DiffView {
         });
         let renamed = matches!(self.target.kind(), Some(ChangeKind::Renamed | ChangeKind::Copied));
         let encoding = self.encoding_word();
-        let close = button::icon(&self.hits, "diff-close", Icon::Close.svg(14., colors.text_muted), px(22.), cx)
+        let close = button::Button::new(&self.hits, "diff-close").icon(Icon::Close.svg(14., colors.text_muted)).icon_only(px(22.))
             .tooltip(Tooltip::text("Close (Esc): back to the graph"))
             .on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(super::Close)));
         div()
@@ -93,13 +93,13 @@ impl DiffView {
             (None, 1) => "1 change".to_string(),
             (None, n) => format!("{n} changes"),
         };
-        let previous = button::icon(&self.hits, "diff-previous", Icon::ChevronUp.svg(14., colors.text_muted), px(24.), cx)
+        let previous = button::Button::new(&self.hits, "diff-previous").icon(Icon::ChevronUp.svg(14., colors.text_muted)).icon_only(px(24.))
             .tooltip(Tooltip::text("Previous change (Shift+F7)"))
             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.previous_change(window, cx)));
-        let next = button::icon(&self.hits, "diff-next", Icon::ChevronDown.svg(14., colors.text_muted), px(24.), cx)
+        let next = button::Button::new(&self.hits, "diff-next").icon(Icon::ChevronDown.svg(14., colors.text_muted)).icon_only(px(24.))
             .tooltip(Tooltip::text("Next change (F7)"))
             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.next_change(window, cx)));
-        let (previous, next) = if count == 0 { (button::dimmed(previous), button::dimmed(next)) } else { (previous, next) };
+        let (previous, next) = if count == 0 { (previous.dimmed_if(true), next.dimmed_if(true)) } else { (previous, next) };
         bar.child(layout).child(div().flex_1()).child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(place))).child(previous).child(next)
     }
 

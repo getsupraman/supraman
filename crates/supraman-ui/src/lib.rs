@@ -42,6 +42,7 @@ pub mod tabs;
 pub mod term_element;
 pub mod text_input;
 pub mod themes;
+pub mod tokens;
 pub mod toast;
 pub mod tooltip;
 pub mod tree;

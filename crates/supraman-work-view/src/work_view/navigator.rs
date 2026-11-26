@@ -46,7 +46,7 @@ impl WorkView {
             .pb_1()
             .child(clipped("work-nav-name", self.name(), false).flex_1().text_sm().font_weight(FontWeight::SEMIBOLD))
             .child(
-                button::icon(&self.hits, "work-nav-shut", Icon::ChevronLeft.svg(14., colors.icon_muted), px(20.), cx)
+                button::Button::new(&self.hits, "work-nav-shut").icon(Icon::ChevronLeft.svg(14., colors.icon_muted)).icon_only(px(20.))
                     .tooltip(supraman_ui::tooltip::Tooltip::text("Hide the navigator"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_nav(cx))),
             );
@@ -163,7 +163,7 @@ impl WorkView {
             .pt_2()
             .bg(colors.panel_background)
             .child(
-                button::icon(&self.hits, "work-nav-open", Icon::ChevronRight.svg(14., colors.icon_muted), px(20.), cx)
+                button::Button::new(&self.hits, "work-nav-open").icon(Icon::ChevronRight.svg(14., colors.icon_muted)).icon_only(px(20.))
                     .tooltip(supraman_ui::tooltip::Tooltip::text("Show the navigator"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_nav(cx))),
             )

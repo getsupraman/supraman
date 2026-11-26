@@ -9,6 +9,7 @@ use theme::ActiveTheme as _;
 use crate::hit::{HitTargets, hit_target};
 use crate::matcher::highlighted;
 use crate::palette::{Entry, Paint};
+use crate::tokens;
 
 /// The palette's id: its rows paint under `tab-list-row-<tab id>`.
 pub const LIST: &str = "tab-list";
@@ -38,13 +39,13 @@ pub fn paint(hits: HitTargets) -> Paint<TabEntry> {
             .relative()
             .flex_none()
             .size(px(6.))
-            .rounded_full()
+            .rounded(tokens::radius::FULL)
             .when(entry.active, |d| d.bg(colors.text_accent).child(hit_target(&hits, format!("{LIST}-active-{}", entry.id))));
         div()
             .flex()
             .items_center()
-            .gap_2()
-            .text_sm()
+            .gap(tokens::space::L)
+            .text_size(tokens::text::BODY)
             .child(mark)
             .child(
                 highlighted(SharedString::from(format!("{LIST}-title-{}", entry.id)), entry.title.clone(), marks, cx)

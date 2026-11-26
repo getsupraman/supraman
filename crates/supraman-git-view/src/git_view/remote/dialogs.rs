@@ -202,8 +202,8 @@ impl RemoteActions {
             Then::Pull(_) => ("Pull", "Pull {} with no upstream from"),
             Then::Set => ("Set upstream", "Track {} at"),
         };
-        let ok = answer(&self.hits, "git-upstream-ok", ok_words, button::Tone::Success, true, cx);
-        let ok = if d.chosen(&self.remotes, cx).is_some() { ok.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.submit_upstream(cx))) } else { button::dimmed(ok) };
+        let ok = supraman_ui::confirm::answer_button(&self.hits, "git-upstream-ok", ok_words, button::Tone::Success, true, cx);
+        let ok = if d.chosen(&self.remotes, cx).is_some() { ok.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.submit_upstream(cx))) } else { ok.dimmed_if(true) };
         let items = vec![
             remotes.into_any_element(),
             div().text_color(cx.theme().colors().text_muted).child("/").into_any_element(),

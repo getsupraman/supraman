@@ -1,5 +1,6 @@
 use gpui::{AnyView, App, Context, IntoElement, ParentElement as _, Render, SharedString, Styled as _, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
+use crate::tokens;
 
 /// A plain text tooltip: `.tooltip(Tooltip::text(..))`; [`LAST_SHOWN`] is the text it last showed.
 pub struct Tooltip(SharedString);
@@ -21,16 +22,16 @@ impl Tooltip {
 impl Render for Tooltip {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
-        div().pl_2().pt_2().child(
+        div().pl(tokens::space::L).pt(tokens::space::L).child(
             div()
                 .max_w(px(320.))
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .border_1()
+                .px(tokens::space::L)
+                .py(tokens::space::S)
+                .rounded(tokens::radius::M)
+                .border(tokens::stroke::HAIRLINE)
                 .border_color(colors.border)
                 .bg(colors.elevated_surface_background)
-                .text_xs()
+                .text_size(tokens::text::SMALL)
                 .font_family(crate::fonts::UI)
                 .text_color(colors.text)
                 .shadow_md()

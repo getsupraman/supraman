@@ -76,7 +76,7 @@ impl RefPanel {
             Mark::Hidden(keys) => (Icon::EyeOff, muted, true, "Show in the graph", keys, false),
             Mark::Eye(keys) => (Icon::Eye, muted, false, "Hide from the graph", keys, false),
         };
-        let mark = button::revealed(&self.hits, key, icon.svg(ICON, colour), px(MARK), row_group(list), shown, cx)
+        let mark = button::Button::new(&self.hits, key).icon(icon.svg(ICON, colour)).icon_only(px(MARK)).reveal(row_group(list), shown)
             .tooltip(Tooltip::text(tip))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();

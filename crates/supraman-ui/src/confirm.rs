@@ -6,6 +6,7 @@ use theme::ActiveTheme as _;
 use crate::button;
 use crate::hit::{HitTargets, hit_target};
 use crate::themes;
+use crate::tokens;
 
 /// The height of a band's row of answers: the toolbar's.
 pub const ROW: Pixels = px(34.);
@@ -138,17 +139,22 @@ impl<A> Confirm<A> {
     }
 }
 
-/// Every answer of a question (a band's, a dialog's): `button::action` Solid at `button::Size::Medium`, the message's
+/// Every answer of a question (a band's, a dialog's): a Solid `button::Button` at `button::Size::Medium`, the message's
 /// text size; the `default` one, Enter's, `button::ring`ed in the theme's text colour, which reads on the band.
 pub fn answer(hits: &HitTargets, key: impl Into<SharedString>, words: impl Into<SharedString>, tone: button::Tone, default: bool, cx: &App) -> Stateful<Div> {
+    answer_button(hits, key, words, tone, default, cx).build(cx)
+}
+
+/// [`answer`] as its [`button::Button`], for an owner that adds its focus.
+pub fn answer_button(hits: &HitTargets, key: impl Into<SharedString>, words: impl Into<SharedString>, tone: button::Tone, default: bool, cx: &App) -> button::Button {
     let ring = button::ring(cx.theme().colors().text);
-    button::sized(button::action(hits, key, words, tone, button::Fill::Solid, cx), button::Size::Medium).when(default, |b| b.shadow(vec![ring]))
+    button::Button::new(hits, key).label(words).tone(tone).size(button::Size::Medium).when(default, |b| b.shadow(vec![ring]))
 }
 
 /// A prompt band on the [`themes::attention`] fill: `message`, then `items` (fields, then answers) centred in a [`ROW`]; paints `<key>-band` and `<key>-text`.
 pub fn band(hits: &HitTargets, key: &str, message: impl IntoElement, items: impl IntoIterator<Item = AnyElement>, cx: &App) -> Div {
-    let text = div().relative().min_w_0().mr_4().py_1().text_sm().text_color(cx.theme().colors().text).child(message).child(hit_target(hits, format!("{key}-text")));
-    let row = div().flex().flex_none().items_center().gap(button::GAP).h(ROW).pr_2().children(items);
+    let text = div().relative().min_w_0().mr(tokens::space::XXL).py(tokens::space::S).text_size(tokens::text::BODY).text_color(cx.theme().colors().text).child(message).child(hit_target(hits, format!("{key}-text")));
+    let row = div().flex().flex_none().items_center().gap(button::GAP).h(ROW).pr(tokens::space::L).children(items);
     div()
         .relative()
         .w_full()

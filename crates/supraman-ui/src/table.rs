@@ -13,6 +13,7 @@ use crate::hit::{HitTargets, hit_target};
 use crate::icon::Icon;
 use crate::split::{DraggedDivider, handle};
 use crate::tooltip::Tooltip;
+use crate::tokens;
 
 mod widths;
 
@@ -172,7 +173,7 @@ impl TableState {
         let mut state = self.scroll.0.borrow_mut();
         state.deferred_scroll_to_item = None;
         let x = state.base_handle.offset().x;
-        state.base_handle.set_offset(gpui::point(x, -top.max(px(0.))));
+        state.base_handle.set_offset(gpui::point(x, -top.max(Pixels::ZERO)));
     }
 
     /// The height the rows are shown in, as the last frame laid them out.
@@ -184,7 +185,7 @@ impl TableState {
     pub fn page(&self) -> usize {
         let height = self.inner.borrow().row_height;
         match self.viewport() {
-            Some(viewport) if height > px(0.) => ((viewport / height).floor() as usize).max(1),
+            Some(viewport) if height > Pixels::ZERO => ((viewport / height).floor() as usize).max(1),
             _ => 1,
         }
     }
@@ -264,7 +265,7 @@ impl<V: 'static> Table<V> {
             widths: widths.to_vec(),
             rows,
             row_height: px(28.),
-            inset: px(0.),
+            inset: Pixels::ZERO,
             cell: Rc::new(cell),
             band: None,
             on_select: None,
@@ -355,9 +356,9 @@ impl<V: 'static> Table<V> {
             let mut inner = self.state.inner.borrow_mut();
             inner.rows = self.rows.saturating_sub(self.footer);
             inner.row_height = self.row_height;
-            let total = if inner.width > px(0.) { inner.width } else { clamp(&self.columns, &self.widths).iter().fold(px(0.), |s, w| s + *w) };
+            let total = if inner.width > Pixels::ZERO { inner.width } else { clamp(&self.columns, &self.widths).iter().fold(Pixels::ZERO, |s, w| s + *w) };
             inner.current = fit(&self.columns, &inner.current, &self.widths, total);
-            (inner.current.as_slice().into(), inner.width > px(0.))
+            (inner.current.as_slice().into(), inner.width > Pixels::ZERO)
         };
         // Columns fitted to a width not yet measured would jump on the next frame; the last column fills the row either way.
         let unfitted = !measured && self.columns.len() > 1;
@@ -415,7 +416,7 @@ impl<V: 'static> Table<V> {
                     .id(SharedString::from(format!("{key}-icon")))
                     .flex_none()
                     .child(hit_target(&self.hits, format!("{key}-icon")))
-                    .child(icon.slotted(14., text))
+                    .child(icon.slotted(tokens::icon::M, text))
                     .tooltip(Tooltip::text(column.caption.clone()))
                     .into_any_element(),
                 None => clipped(format!("{key}-caption"), column.caption.to_uppercase(), false).into_any_element(),
@@ -424,8 +425,8 @@ impl<V: 'static> Table<V> {
             cells.push(
                 fill(div().relative().flex().items_center(), i == last, *width)
                     .h_full()
-                    .px_2()
-                    .when(i < last, |d| d.border_r_1().border_color(border))
+                    .px(tokens::space::L)
+                    .when(i < last, |d| d.border_r(tokens::stroke::HAIRLINE).border_color(border))
                     .child(hit_target(&self.hits, key))
                     .child(caption)
                     .children(divider),
@@ -439,7 +440,7 @@ impl<V: 'static> Table<V> {
             .w_full()
             .h(px(24.))
             .bg(background)
-            .border_b_1()
+            .border_b(tokens::stroke::HAIRLINE)
             .border_color(border)
             .text_size(size)
             .text_color(text)

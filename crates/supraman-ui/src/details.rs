@@ -10,6 +10,7 @@ use crate::banner;
 use crate::button;
 use crate::clipped::path_label;
 use crate::hit::{HitTargets, hit_target};
+use crate::tokens;
 
 const LABEL: f32 = 128.;
 
@@ -119,20 +120,20 @@ pub struct Page<'a, V> {
 pub fn render<V: 'static>(page: Page<V>, hits: &HitTargets, cx: &mut Context<V>) -> AnyElement {
     let colors = cx.theme().colors().clone();
     let pill = page.pill.map(|(label, color)| {
-        div().flex_none().px_2().rounded_full().bg(banner::tint(color)).text_xs().text_color(color).whitespace_nowrap().child(SharedString::from(label))
+        div().flex_none().px(tokens::space::L).rounded(tokens::radius::FULL).bg(banner::tint(color)).text_size(tokens::text::SMALL).text_color(color).whitespace_nowrap().child(SharedString::from(label))
     });
-    let over = page.over.map(|o| div().px_6().pt_4().child(o));
+    let over = page.over.map(|o| div().px(tokens::space::PAGE).pt(tokens::space::XXL).child(o));
     let title = div()
         .flex()
         .items_center()
-        .gap_3()
-        .px_6()
-        .when(over.is_none(), |d| d.pt_5())
-        .when(over.is_some(), |d| d.pt_1())
-        .pb_3()
-        .child(div().min_w_0().text_lg().font_weight(FontWeight::SEMIBOLD).text_color(colors.text).child(SharedString::from(page.title)))
+        .gap(tokens::space::XL)
+        .px(tokens::space::PAGE)
+        .when(over.is_none(), |d| d.pt(tokens::space::XXXL))
+        .when(over.is_some(), |d| d.pt(tokens::space::S))
+        .pb(tokens::space::XL)
+        .child(div().min_w_0().text_size(tokens::text::HEADING).font_weight(FontWeight::SEMIBOLD).text_color(colors.text).child(SharedString::from(page.title)))
         .children(pill);
-    let mut body = div().id(SharedString::from(format!("{}-body", page.key))).flex().flex_col().flex_1().min_h_0().overflow_y_scroll().track_scroll(page.scroll).px_6().pb_4();
+    let mut body = div().id(SharedString::from(format!("{}-body", page.key))).flex().flex_col().flex_1().min_h_0().overflow_y_scroll().track_scroll(page.scroll).px(tokens::space::PAGE).pb(tokens::space::XXL);
     if let Some(top) = page.top {
         body = body.child(top);
     }
@@ -140,7 +141,7 @@ pub fn render<V: 'static>(page: Page<V>, hits: &HitTargets, cx: &mut Context<V>)
         body = body.child(render_section(page.key, section, page.on_link.clone(), hits, cx));
     }
     let actions = (!page.actions.is_empty())
-        .then(|| div().flex().flex_none().flex_wrap().items_center().gap_2().px_6().py_3().border_t_1().border_color(colors.border_variant).children(page.actions));
+        .then(|| div().flex().flex_none().flex_wrap().items_center().gap(tokens::space::L).px(tokens::space::PAGE).py(tokens::space::XL).border_t(tokens::stroke::HAIRLINE).border_color(colors.border_variant).children(page.actions));
     div()
         .size_full()
         .flex()
@@ -149,7 +150,7 @@ pub fn render<V: 'static>(page: Page<V>, hits: &HitTargets, cx: &mut Context<V>)
         .text_color(colors.text)
         .children(over)
         .child(title)
-        .children(page.bar.map(|b| div().flex_none().px_6().pb_2().child(b)))
+        .children(page.bar.map(|b| div().flex_none().px(tokens::space::PAGE).pb(tokens::space::L).child(b)))
         .child(body)
         .children(actions)
         .into_any_element()
@@ -163,12 +164,12 @@ fn render_section<V: 'static>(page: &str, section: &Section, on_link: Option<OnL
         .flex()
         .flex_col()
         .flex_none()
-        .gap_1()
-        .py_3()
-        .border_b_1()
+        .gap(tokens::space::S)
+        .py(tokens::space::XL)
+        .border_b(tokens::stroke::HAIRLINE)
         .border_color(colors.border_variant)
         .child(hit_target(hits, key.clone()))
-        .child(div().text_xs().font_weight(FontWeight::BOLD).text_color(colors.text_muted).child(SharedString::from(section.caption.to_uppercase())));
+        .child(div().text_size(tokens::text::SMALL).font_weight(FontWeight::BOLD).text_color(colors.text_muted).child(SharedString::from(section.caption.to_uppercase())));
     for (i, line) in section.lines.iter().enumerate() {
         out = out.child(match line {
             Line::Row(label, value) => labelled(label, &colors).child(div().flex_1().min_w_0().child(SharedString::from(value.clone()))).into_any_element(),
@@ -176,7 +177,7 @@ fn render_section<V: 'static>(page: &str, section: &Section, on_link: Option<OnL
                 .child(path_label(format!("{key}-path-{i}"), path, crate::themes::secondary(&colors), colors.text).flex_1())
                 .into_any_element(),
             Line::Link { label, value, target } => link_line(label, value, target, format!("{key}-link-{i}"), on_link.clone(), hits, cx),
-            Line::Text(t) => div().text_sm().whitespace_normal().child(SharedString::from(t.clone())).into_any_element(),
+            Line::Text(t) => div().text_size(tokens::text::BODY).whitespace_normal().child(SharedString::from(t.clone())).into_any_element(),
             Line::Check { done, text, note } => check_line(*done, text, note.as_deref(), format!("{key}-check-{i}"), hits, cx),
             Line::Long(t) => long_line(t, format!("{key}-copy-{i}"), hits, cx),
         });
@@ -188,8 +189,8 @@ fn labelled(label: &str, colors: &ThemeColors) -> Div {
     div()
         .flex()
         .items_start()
-        .gap_3()
-        .text_sm()
+        .gap(tokens::space::XL)
+        .text_size(tokens::text::BODY)
         .child(div().flex_none().w(px(LABEL)).text_color(colors.text_muted).child(SharedString::from(label.to_string())))
 }
 
@@ -222,9 +223,9 @@ fn check_line<V: 'static>(done: bool, text: &str, note: Option<&str>, key: Strin
         .relative()
         .flex()
         .items_start()
-        .gap_2()
-        .text_sm()
-        .child(div().flex_none().h(px(20.)).flex().items_center().child(button::tick(done, cx.theme().status().success, cx)))
+        .gap(tokens::space::L)
+        .text_size(tokens::text::BODY)
+        .child(div().flex_none().h(tokens::control::SMALL.height).flex().items_center().child(button::tick(done, cx.theme().status().success, cx)))
         .child(
             div()
                 .flex_1()
@@ -232,7 +233,7 @@ fn check_line<V: 'static>(done: bool, text: &str, note: Option<&str>, key: Strin
                 .flex()
                 .flex_col()
                 .child(SharedString::from(text.to_string()))
-                .children(note.map(|n| div().text_xs().text_color(colors.text_muted).child(SharedString::from(n.to_string())))),
+                .children(note.map(|n| div().text_size(tokens::text::SMALL).text_color(colors.text_muted).child(SharedString::from(n.to_string())))),
         )
         .child(hit_target(hits, format!("{key}={}", if done { "done" } else { "open" })))
         .into_any_element()
@@ -243,12 +244,12 @@ fn long_line<V: 'static>(text: &str, copy_key: String, hits: &HitTargets, cx: &m
     div()
         .flex()
         .items_start()
-        .gap_2()
-        .p_2()
-        .rounded_md()
+        .gap(tokens::space::L)
+        .p(tokens::space::L)
+        .rounded(tokens::radius::M)
         .bg(cx.theme().colors().element_background)
-        .child(div().flex_1().min_w_0().font_family(crate::fonts::MONO).text_sm().child(SharedString::from(text.to_string())))
-        .child(button::action(hits, copy_key, "Copy", button::Tone::Neutral, button::Fill::Solid, cx).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+        .child(div().flex_1().min_w_0().font_family(crate::fonts::MONO).text_size(tokens::text::BODY).child(SharedString::from(text.to_string())))
+        .child(button::Button::new(hits, copy_key).label("Copy").on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
             crate::clipboard::write_text(cx, copied.clone());
         })))
         .into_any_element()

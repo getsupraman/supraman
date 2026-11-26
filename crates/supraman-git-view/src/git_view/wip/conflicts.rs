@@ -1,7 +1,7 @@
 //! The conflict panel: the WIP panel's header while an operation is under way, the conflicted files' buttons and their writes.
 
 use supraman_core::text::count;
-use gpui::{Context, Div, SharedString, Stateful, div, prelude::*, px};
+use gpui::{Context, Div, SharedString, div, prelude::*, px};
 use supraman_gitman::write::conflicts::{self, Marked, Sequence, Side};
 use supraman_gitman::{OperationState, UnderWay};
 use supraman_ui::button;
@@ -122,43 +122,43 @@ impl WipPanel {
         let muted = cx.theme().colors().text_muted;
         let words = shown.as_ref().and_then(|s| s.conflicts.get(path)).map_or("conflicted", |c| c.words());
         let (current, incoming) = shown.as_ref().and_then(|s| s.under_way.clone()).map_or_else(Default::default, |u| (u.current, u.incoming));
-        let icon = |key: String, icon: Icon, tip: String, cx: &mut Context<WipPanel>| {
-            let button = button::icon(&hits, key, icon.svg(12., muted), px(20.), cx);
+        let icon = |key: String, icon: Icon, tip: String| {
+            let button = button::Button::new(&hits, key).icon(icon.svg(12., muted)).icon_only(px(20.));
             if busy.is_none() { button.tooltip(Tooltip::text(tip)) } else { button }
         };
         let named = |what: &str, name: &str| if name.is_empty() { format!("Take {what} whole") } else { format!("Take {what} ({name}) whole") };
         let mut buttons = Vec::new();
         for (side, which, glyph, name) in [(Side::Current, "current", Icon::Home, current), (Side::Incoming, "incoming", Icon::ArrowUpRight, incoming)] {
             let paths = vec![path.to_string()];
-            let button = icon(format!("wip-take-{which}-{path}"), glyph, named(which, &name), cx);
+            let button = icon(format!("wip-take-{which}-{path}"), glyph, named(which, &name));
             buttons.push(live(button, busy, cx, move |this, cx| this.take(paths.clone(), side, cx)));
         }
         let paths = vec![path.to_string()];
-        let resolve = icon(format!("wip-resolve-{path}"), Icon::Check, "Mark resolved".into(), cx);
+        let resolve = icon(format!("wip-resolve-{path}"), Icon::Check, "Mark resolved".into());
         buttons.push(live(resolve, busy, cx, move |this, cx| this.resolve(Some(paths.clone()), false, cx)));
         div()
             .flex()
             .items_center()
             .gap_1()
             .child(div().text_xs().text_color(muted).child(words))
-            .children(buttons.into_iter().map(|b| button::reveal(b, group.clone(), false)))
+            .children(buttons.into_iter().map(|b| b.reveal(group.clone(), false)))
     }
 
     /// A resolved file's Mark Conflicted on hover, only on one this operation left conflicted (`Status::resolved`).
-    pub(super) fn resolved_tail(&mut self, path: &str, group: SharedString, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    pub(super) fn resolved_tail(&mut self, path: &str, group: SharedString, cx: &mut Context<Self>) -> Option<button::Button> {
         let shown = self.shown()?;
         if !shown.resolved.contains(path) || !matches!(shown.state, OperationState::Merge | OperationState::Rebase { .. } | OperationState::CherryPick { .. } | OperationState::Revert { .. }) {
             return None;
         }
         let (busy, paths) = (self.busy(cx), vec![path.to_string()]);
-        let button = button::action(&self.hits, format!("wip-unresolve-{path}"), "Mark Conflicted", button::Tone::Neutral, button::Fill::Outline, cx);
-        Some(button::reveal(live(button, busy, cx, move |this, cx| this.unresolve(paths.clone(), cx)), group, false))
+        let button = button::Button::new(&self.hits, format!("wip-unresolve-{path}")).label("Mark Conflicted").fill(button::Fill::Outline);
+        Some(live(button, busy, cx, move |this, cx| this.unresolve(paths.clone(), cx)).reveal(group, false))
     }
 
     /// Mark all resolved over the conflicted files: only those are staged.
-    pub(super) fn resolve_all_button(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+    pub(super) fn resolve_all_button(&self, cx: &mut Context<Self>) -> button::Button {
         let busy = self.busy(cx);
-        live(button::action(&self.hits, "wip-resolve-all", "Mark all resolved", button::Tone::Success, button::Fill::Outline, cx), busy, cx, |this, cx| this.resolve(None, false, cx))
+        live(button::Button::new(&self.hits, "wip-resolve-all").label("Mark all resolved").tone(button::Tone::Success).fill(button::Fill::Outline), busy, cx, |this, cx| this.resolve(None, false, cx))
     }
 }
 

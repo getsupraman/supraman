@@ -10,6 +10,7 @@ use crate::icon::Icon;
 use crate::ink;
 use crate::matcher::find_all;
 use crate::table::{CELL_PAD, Column, Table, TableState};
+use crate::tokens;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Order {
@@ -679,11 +680,11 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
             (inner.rows.len(), inner.selected_row)
         };
         self.state.table.select(selected);
-        let column = [Column::new("name", "", px(0.), px(0.))];
+        let column = [Column::new("name", "", Pixels::ZERO, Pixels::ZERO)];
         let (keys, picked, clicked, arrows) = (self.state.clone(), self.state.clone(), self.state.clone(), self.state.clone());
         let (on_select, on_arrow) = (self.on_select.clone(), self.on_select.clone());
         let (toggled, arrow_toggled) = (self.on_toggle.clone(), self.on_toggle.clone());
-        Table::new(self.id.clone(), &self.state.table, &self.hits, column, &[px(0.)], rows, self.cell())
+        Table::new(self.id.clone(), &self.state.table, &self.hits, column, &[Pixels::ZERO], rows, self.cell())
             .headless()
             .row_height(self.row_height)
             .row_key(move |ix| keys.inner.borrow().node(ix).map_or_else(String::new, |n| n.path.to_string()))
@@ -753,10 +754,10 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
                 .items_center()
                 .w_full()
                 .min_w_0()
-                .pl(indent * depth as f32 + marked.as_ref().map_or(px(0.), |(w, _)| *w))
+                .pl(indent * depth as f32 + marked.as_ref().map_or(Pixels::ZERO, |(w, _)| *w))
                 .children(marked.map(|(_, slot)| slot))
                 .children(chevron.map(|c| {
-                    let slot = div().relative().flex().flex_none().items_center().justify_center().w(px(LEAD)).child(c.svg(12., muted));
+                    let slot = div().relative().flex().flex_none().items_center().justify_center().w(px(LEAD)).child(c.svg(tokens::icon::S, muted));
                     ink::mark(slot.child(hit_target(&hits, format!("{id}-chevron-{}", node.path))))
                 }))
                 .children(lead)

@@ -6,6 +6,7 @@ use theme::ActiveTheme as _;
 
 use crate::button;
 use crate::hit::HitTargets;
+use crate::tokens;
 
 pub struct SettingsPage<V: 'static> {
     pub id: &'static str,
@@ -57,18 +58,18 @@ impl<V: 'static> SettingsPages<V> {
             .map(|page| {
                 let (id, on) = (page.id, page.id == active);
                 button::row(hits, format!("settings-page-{id}"), on.then_some(colors.element_selected), cx)
-                    .mx_2()
-                    .px_2()
-                    .py_1()
+                    .mx(tokens::space::L)
+                    .px(tokens::space::L)
+                    .py(tokens::space::S)
                     .flex()
                     .items_center()
-                    .gap_2()
-                    .rounded_sm()
-                    .text_sm()
+                    .gap(tokens::space::L)
+                    .rounded(tokens::radius::S)
+                    .text_size(tokens::text::BODY)
                     .when(!on, |d| d.text_color(colors.text_muted))
                     .child(match page.mark {
                         Some(mark) => div().w_4().flex().items_center().child(mark(if on { colors.text } else { colors.text_muted })),
-                        None => div().w_4().font_family(crate::fonts::icons()).text_xs().child(page.icon),
+                        None => div().w_4().font_family(crate::fonts::icons()).text_size(tokens::text::SMALL).child(page.icon),
                     })
                     .child(page.title)
                     .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| select(view, id, cx)))
@@ -85,9 +86,9 @@ pub fn row(title: &'static str, description: impl Into<SharedString>, control: A
         .flex()
         .items_start()
         .justify_between()
-        .gap_6()
-        .py_3()
-        .border_b_1()
+        .gap(tokens::space::PAGE)
+        .py(tokens::space::XL)
+        .border_b(tokens::stroke::HAIRLINE)
         .border_color(colors.border_variant)
         .child(
             div()
@@ -95,9 +96,9 @@ pub fn row(title: &'static str, description: impl Into<SharedString>, control: A
                 .flex_col()
                 .flex_1()
                 .min_w_0()
-                .gap_1()
-                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(title))
-                .child(div().text_xs().text_color(colors.text_muted).child(description.into()))
+                .gap(tokens::space::S)
+                .child(div().text_size(tokens::text::BODY).font_weight(FontWeight::SEMIBOLD).child(title))
+                .child(div().text_size(tokens::text::SMALL).text_color(colors.text_muted).child(description.into()))
                 .children(below),
         )
         .child(div().flex_none().child(control))

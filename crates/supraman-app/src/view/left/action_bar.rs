@@ -37,13 +37,13 @@ impl FleetView {
             )
             .child(self.stopped_toggle(hidden_stopped, cx))
             .child(
-                button::toolbar_turning(hits, "refresh", Icon::Refresh.svg(16., colors.text_muted), false, self.refreshing(), colors.text_muted, cx)
+                button::Button::toolbar(hits, "refresh").icon(Icon::Refresh.svg(16., colors.text_muted)).turning(self.refreshing()).text_color(colors.text_muted)
                     .tooltip(Tooltip::text("Refresh: read the running sessions and the closed ones' transcripts now (F5 outside a terminal)"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.refresh_now(cx))),
             )
             .child(div().flex_1())
             .children(warning.map(|w| {
-                tinted_button(hits, "cli-warning", Icon::Warning, w, false, status.warning, cx)
+                tinted_button(hits, "cli-warning", Icon::Warning, w, false, status.warning)
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_settings_at(Some(page::ABOUT), cx)))
             }))
             .child(self.busy_limit(cx))
@@ -65,7 +65,7 @@ impl FleetView {
         cx.notify();
     }
 
-    fn stopped_toggle(&self, hidden_stopped: usize, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn stopped_toggle(&self, hidden_stopped: usize, cx: &mut Context<Self>) -> button::Button {
         let stopped_tip: SharedString = if self.show_stopped {
             "Hide stopped sessions".into()
         } else {

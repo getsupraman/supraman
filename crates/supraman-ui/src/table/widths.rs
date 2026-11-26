@@ -6,12 +6,14 @@
 
 use std::ops::Range;
 
-use gpui::{Pixels, px};
+use gpui::Pixels;
+#[cfg(test)]
+use gpui::px;
 
 use super::Column;
 
 fn sum(widths: &[Pixels]) -> Pixels {
-    widths.iter().fold(px(0.), |s, w| s + *w)
+    widths.iter().fold(Pixels::ZERO, |s, w| s + *w)
 }
 
 /// The last column has no max: it takes what the others leave.
@@ -36,7 +38,7 @@ pub fn fit(columns: &[Column], current: &[Pixels], preferred: &[Pixels], total: 
         clamp(columns, preferred)
     };
     let gap = total - sum(&widths);
-    if gap < px(0.) {
+    if gap < Pixels::ZERO {
         take(columns, &mut widths, 0..columns.len(), -gap);
     } else {
         give(&mut widths, &clamp(columns, preferred), 0, gap);
@@ -55,10 +57,10 @@ pub fn drag(columns: &[Column], current: &[Pixels], preferred: &[Pixels], divide
     }
     let wanted = bounded(columns, divider, x - sum(&widths[..divider]));
     let delta = wanted - widths[divider];
-    if delta > px(0.) {
+    if delta > Pixels::ZERO {
         let got = take(columns, &mut widths, divider + 1..n, delta);
         widths[divider] += got;
-    } else if delta < px(0.) {
+    } else if delta < Pixels::ZERO {
         widths[divider] = wanted;
         give(&mut widths, &clamp(columns, preferred), divider + 1, -delta);
     }
@@ -67,9 +69,9 @@ pub fn drag(columns: &[Column], current: &[Pixels], preferred: &[Pixels], divide
 
 /// Takes up to `want` from the columns in `range`, the rightmost first, each down to its min; what it took.
 fn take(columns: &[Column], widths: &mut [Pixels], range: Range<usize>, want: Pixels) -> Pixels {
-    let mut taken = px(0.);
+    let mut taken = Pixels::ZERO;
     for i in range.rev() {
-        let part = (widths[i] - columns[i].min).max(px(0.)).min(want - taken);
+        let part = (widths[i] - columns[i].min).max(Pixels::ZERO).min(want - taken);
         widths[i] -= part;
         taken += part;
     }
@@ -80,7 +82,7 @@ fn take(columns: &[Column], widths: &mut [Pixels], range: Range<usize>, want: Pi
 /// the rest to the last column.
 fn give(widths: &mut [Pixels], preferred: &[Pixels], from: usize, mut spare: Pixels) {
     for i in from..widths.len() {
-        let part = (preferred[i] - widths[i]).max(px(0.)).min(spare);
+        let part = (preferred[i] - widths[i]).max(Pixels::ZERO).min(spare);
         widths[i] += part;
         spare -= part;
     }

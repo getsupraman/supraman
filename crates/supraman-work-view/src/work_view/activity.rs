@@ -165,7 +165,7 @@ impl WorkView {
                 .items_center()
                 .child(div().font_family(fonts::MONO).text_xs().text_color(colors.text_muted).child(SharedString::from(item.qualified_ref.clone())))
                 .child(
-                    button::revealed(&self.hits, format!("work-activity-copy-{}", e.seq), Icon::Copy.svg(11., colors.text_muted), px(COPY_SIDE), key.clone(), false, cx)
+                    button::Button::new(&self.hits, format!("work-activity-copy-{}", e.seq)).icon(Icon::Copy.svg(11., colors.text_muted)).icon_only(px(COPY_SIDE)).reveal(key.clone(), false)
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.copy_ref(&copied, cx))),
                 )
         });

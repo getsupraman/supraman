@@ -93,9 +93,9 @@ impl GitView {
     fn stash_button(&self, key: &'static str, icon: Icon, caption: &'static str, why_not: Option<String>, tooltip: String, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors();
         let fg = if why_not.is_none() { colors.text } else { colors.text_muted };
-        let button = button::toolbar(&self.hits, key, icon.svg(14., fg), false, fg, cx).child(SharedString::from(caption));
+        let button = button::Button::toolbar(&self.hits, key).icon(icon.svg(14., fg)).text_color(fg).child(SharedString::from(caption));
         if let Some(why) = why_not {
-            return button::dimmed(button.tooltip(Tooltip::text(why))).into_any_element();
+            return button.dimmed(Some(why)).into_any_element();
         }
         button
             .tooltip(Tooltip::text(tooltip))

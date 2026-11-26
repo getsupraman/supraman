@@ -12,7 +12,7 @@ pub(crate) const CANCEL_KEY: &str = "git-write-cancel";
 
 /// `said`, then Cancel under `key`.
 fn strip(view: &GitView, key: &'static str, said: String, on_cancel: fn(&mut GitView, &mut Context<GitView>), cx: &mut Context<GitView>) -> Div {
-    let cancel = button::action(&view.hits, key, "Cancel", button::Tone::Neutral, button::Fill::Outline, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| on_cancel(this, cx)));
+    let cancel = button::Button::new(&view.hits, key).label("Cancel").fill(button::Fill::Outline).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| on_cancel(this, cx)));
     div().flex().items_center().gap_2().px_2().text_xs().text_color(cx.theme().colors().text_muted).child(said).child(cancel)
 }
 

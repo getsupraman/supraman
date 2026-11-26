@@ -17,6 +17,7 @@ use crate::matcher::subsequence;
 use crate::text_input::{self, InputEvent, TextInput};
 use crate::tooltip::Tooltip;
 use crate::button;
+use crate::tokens;
 
 /// The most rows listed at once; a longer query narrows them.
 pub const MAX_SHOWN: usize = 200;
@@ -329,7 +330,7 @@ impl<T: Entry> Palette<T> {
         let body = (self.paint)(&entry, &marks, on, cx);
         let row = button::row(&self.hits, self.row_key(&entry.key()), on.then_some(selection), cx)
             .w_full()
-            .px_3()
+            .px(tokens::space::XL)
             .py(px(5.))
             .when(on, |d| d.child(hit_target(&self.hits, format!("{}-selected", self.id))))
             .child(body)
@@ -338,7 +339,7 @@ impl<T: Entry> Palette<T> {
                 this.open_selected(cx);
             }));
         match entry.dimmed() {
-            Some(why) => button::dimmed(row).tooltip(Tooltip::text(why)).into_any_element(),
+            Some(why) => row.opacity(crate::tokens::DIMMED).cursor_default().tooltip(Tooltip::text(why)).into_any_element(),
             None => row.into_any_element(),
         }
     }
@@ -348,25 +349,25 @@ impl<T: Entry> Palette<T> {
         let chip = self.mode.map(|ix| {
             button::ghost(&self.hits, format!("{}-chip", self.id), cx)
                 .flex_none()
-                .px_2()
+                .px(tokens::space::L)
                 .py(px(1.))
-                .rounded_sm()
+                .rounded(tokens::radius::S)
                 .bg(colors.element_selected)
-                .text_xs()
+                .text_size(tokens::text::SMALL)
                 .font_weight(FontWeight::MEDIUM)
                 .child(self.modes[ix].chip.clone())
                 .tooltip(Tooltip::text("Backspace on an empty query leaves it"))
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.leave_mode(cx)))
         });
-        div().flex().items_center().gap_2().p_2().border_b_1().border_color(colors.border).children(chip).child(div().flex_1().min_w_0().child(self.input.clone()))
+        div().flex().items_center().gap(tokens::space::L).p(tokens::space::L).border_b(tokens::stroke::HAIRLINE).border_color(colors.border).children(chip).child(div().flex_1().min_w_0().child(self.input.clone()))
     }
 
     fn render_results(&self, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
-        let line = || div().flex().items_center().gap_2().px_3().py_2().text_sm().text_color(colors.text_muted);
+        let line = || div().flex().items_center().gap(tokens::space::L).px(tokens::space::XL).py(tokens::space::L).text_size(tokens::text::BODY).text_color(colors.text_muted);
         let mode = self.mode.map(|ix| &self.modes[ix]);
         if mode.is_some_and(|m| m.loading) {
-            let turning = crate::icon::turning(Icon::Refresh.svg(14., colors.text_muted), SharedString::from(format!("{}-loading", self.id)));
+            let turning = crate::icon::turning(Icon::Refresh.svg(tokens::icon::M, colors.text_muted), SharedString::from(format!("{}-loading", self.id)));
             return line().child(hit_target(&self.hits, format!("{}-loading", self.id))).child(turning).child("Reading…").into_any_element();
         }
         if self.shown.is_empty() {
@@ -388,7 +389,7 @@ impl<T: Entry> Render for Palette<T> {
         let colors = cx.theme().colors().clone();
         let caption = self.mode.map_or_else(|| self.caption.clone(), |ix| self.modes[ix].chip.to_uppercase().into());
         let hint = |key: &'static str, what: &'static str| {
-            div().flex().items_center().gap_1().child(div().px_1().rounded_sm().border_1().border_color(colors.border).child(key)).child(what)
+            div().flex().items_center().gap(tokens::space::S).child(div().px(tokens::space::S).rounded(tokens::radius::S).border(tokens::stroke::HAIRLINE).border_color(colors.border).child(key)).child(what)
         };
         div()
             .id(self.id.clone())
@@ -397,8 +398,8 @@ impl<T: Entry> Render for Palette<T> {
             .max_w_full()
             .flex()
             .flex_col()
-            .rounded_md()
-            .border_1()
+            .rounded(tokens::radius::M)
+            .border(tokens::stroke::HAIRLINE)
             .border_color(colors.border)
             .bg(colors.elevated_surface_background)
             .shadow_lg()
@@ -415,17 +416,17 @@ impl<T: Entry> Render for Palette<T> {
             .on_mouse_down_out(cx.listener(|_, _, _, cx| cx.emit(PaletteEvent::Close)))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(self.render_query(cx))
-            .child(div().px_3().pt_2().pb_1().text_xs().font_weight(FontWeight::BOLD).text_color(colors.text_muted).child(caption))
+            .child(div().px(tokens::space::XL).pt(tokens::space::L).pb(tokens::space::S).text_size(tokens::text::SMALL).font_weight(FontWeight::BOLD).text_color(colors.text_muted).child(caption))
             .child(self.render_results(cx))
             .child(
                 div()
                     .flex()
-                    .gap_3()
-                    .px_3()
-                    .py_1()
-                    .border_t_1()
+                    .gap(tokens::space::XL)
+                    .px(tokens::space::XL)
+                    .py(tokens::space::S)
+                    .border_t(tokens::stroke::HAIRLINE)
                     .border_color(colors.border)
-                    .text_xs()
+                    .text_size(tokens::text::SMALL)
                     .text_color(colors.text_muted)
                     .child(hint("↑ ↓", "move"))
                     .child(hint("Enter", "open"))

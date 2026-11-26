@@ -205,7 +205,7 @@ impl SettingsView {
                     this.set_term_font_size(size + px(by as f32), cx);
                 }, cx);
                 let reset = self.control("settings-term-font-reset", "Reset", |this, _, cx| this.set_term_font_size(term_element::FONT_SIZE, cx), cx);
-                button::line().child(stepper).child(reset).into_any_element()
+                button::Button::line().child(stepper).child(reset).into_any_element()
             }
             None => div().text_sm().text_color(colors.text_muted).child("the main window is closed").into_any_element(),
         };

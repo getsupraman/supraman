@@ -13,7 +13,6 @@ use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::marks::Mark;
 use supraman_ui::clipped::clipped;
 use supraman_ui::session::{self, Opening};
-use supraman_ui::tooltip::Tooltip;
 use supraman_ui::{button, placeholder};
 
 use super::colours::Palette;
@@ -344,9 +343,9 @@ impl GitView {
     }
 
     fn page_action(&self, session: &LiveSession, action: PageAction, cx: &mut Context<Self>) -> AnyElement {
-        let button = button::action(&self.hits, format!("git-agent-{}", action.key), action.label, button::Tone::Neutral, button::Fill::Outline, cx);
+        let button = button::Button::new(&self.hits, format!("git-agent-{}", action.key)).label(action.label).fill(button::Fill::Outline);
         if let Some(why) = action.dimmed {
-            return button::dimmed(button).tooltip(Tooltip::text(why)).into_any_element();
+            return button.dimmed(Some(why)).into_any_element();
         }
         let (session, key) = (session.clone(), action.key);
         button

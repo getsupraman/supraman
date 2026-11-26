@@ -16,6 +16,7 @@ use gpui::{
 use supraman_term::{blink_phase, terminal_settings::CURSOR_BLINK_INTERVAL};
 use theme::ActiveTheme as _;
 use unicode_segmentation::UnicodeSegmentation as _;
+use crate::tokens;
 
 const CONTEXT: &str = "TextInput";
 /// A multi-line input shows at least this many rows, and grows with its text up to [`MAX_ROWS`].
@@ -514,7 +515,7 @@ impl Layout {
         }
         if layout.rows.is_empty() {
             layout.rows.push(0..0);
-            layout.row_line.push((0, px(0.)));
+            layout.row_line.push((0, Pixels::ZERO));
         }
         layout
     }
@@ -524,7 +525,7 @@ impl Layout {
         let (line, start_x) = self.row_line[row];
         match self.lines.get(line) {
             Some((start, l)) => l.x_for_index(offset.saturating_sub(*start).min(l.len)) - start_x,
-            None => px(0.),
+            None => Pixels::ZERO,
         }
     }
 
@@ -562,26 +563,26 @@ impl Rows for Layout {
 /// Room kept right of the text for the caret.
 const CARET_ROOM: Pixels = px(2.);
 /// The field's padding beside the text, inside its 1 px border.
-pub const PAD_X: Pixels = px(8.);
+pub const PAD_X: Pixels = tokens::space::L;
 /// The field's padding above and below the text, inside its 1 px border.
 pub const PAD_Y: Pixels = px(3.);
 /// Where the text starts, from the field's outer left edge: the border and [`PAD_X`].
 pub const TEXT_LEFT: Pixels = px(9.);
 const LINE_HEIGHT: Pixels = px(18.);
 /// A single-line field: one line, [`PAD_Y`] above and below, and the border.
-pub const SINGLE_HEIGHT: Pixels = px(26.);
+pub const SINGLE_HEIGHT: Pixels = tokens::control::MEDIUM.height;
 /// A [`TextInput::quiet`] field: one line inside its 1 px border, inside a graph row's band.
-pub const QUIET_HEIGHT: Pixels = px(20.);
+pub const QUIET_HEIGHT: Pixels = tokens::control::SMALL.height;
 
 /// A [`TextInput::quiet`] field's box: a low-contrast fill, no border but the focus colour's while `focused`; a still copy of the field paints it too.
 pub fn quiet_frame(focused: bool, cx: &App) -> gpui::Div {
     let colors = cx.theme().colors();
     let border = if focused { colors.border_focused } else { gpui::transparent_black() };
-    div().flex().items_center().min_w_0().h(QUIET_HEIGHT).px(PAD_X).rounded_md().border_1().border_color(border).bg(colors.element_background).text_sm().line_height(LINE_HEIGHT).overflow_hidden()
+    div().flex().items_center().min_w_0().h(QUIET_HEIGHT).px(PAD_X).rounded(tokens::radius::M).border(tokens::stroke::HAIRLINE).border_color(border).bg(colors.element_background).text_size(tokens::text::BODY).line_height(LINE_HEIGHT).overflow_hidden()
 }
 
 /// An [`inline_frame`]'s padding beside the text, inside its 1 px border.
-const INLINE_PAD_X: Pixels = px(4.);
+const INLINE_PAD_X: Pixels = tokens::space::S;
 /// Where an [`inline_frame`]'s text starts, from its outer left edge: the border and [`INLINE_PAD_X`].
 pub const INLINE_TEXT_LEFT: Pixels = px(5.);
 
@@ -589,7 +590,7 @@ pub const INLINE_TEXT_LEFT: Pixels = px(5.);
 pub fn inline_frame(focused: bool, invalid: bool, cx: &App) -> gpui::Div {
     let colors = cx.theme().colors();
     let border = if invalid { cx.theme().status().error } else if focused { colors.border_focused } else { colors.border };
-    div().flex().items_center().min_w_0().h_full().px(INLINE_PAD_X).rounded_sm().border_1().border_color(border).bg(colors.editor_background).overflow_hidden()
+    div().flex().items_center().min_w_0().h_full().px(INLINE_PAD_X).rounded(tokens::radius::S).border(tokens::stroke::HAIRLINE).border_color(border).bg(colors.editor_background).overflow_hidden()
 }
 
 pub struct TextInput {
@@ -1105,7 +1106,7 @@ impl TextInput {
         let runs = match self.line.marked().filter(|_| !text.is_empty()) {
             Some(m) => vec![
                 TextRun { len: m.start, ..run.clone() },
-                TextRun { len: m.end - m.start, underline: Some(UnderlineStyle { color: Some(color), thickness: px(1.), wavy: false }), ..run.clone() },
+                TextRun { len: m.end - m.start, underline: Some(UnderlineStyle { color: Some(color), thickness: tokens::stroke::HAIRLINE, wavy: false }), ..run.clone() },
                 TextRun { len: shown.len() - m.end, ..run },
             ]
             .into_iter()
@@ -1303,7 +1304,7 @@ impl Element for TextElement {
         let caret = point(layout.x_in_row(caret_row, cursor), line_height * caret_row as f32);
         let mut scroll = input.scroll;
         if input.multi_line {
-            scroll.x = px(0.);
+            scroll.x = Pixels::ZERO;
             let height = bounds.size.height;
             if input.autoscroll {
                 if caret.y < scroll.y {
@@ -1312,12 +1313,12 @@ impl Element for TextElement {
                     scroll.y = caret.y + line_height - height;
                 }
             }
-            scroll.y = scroll.y.clamp(px(0.), (line_height * rows.max(1) as f32 - height).max(px(0.)));
+            scroll.y = scroll.y.clamp(Pixels::ZERO, (line_height * rows.max(1) as f32 - height).max(Pixels::ZERO));
         } else {
-            scroll.y = px(0.);
+            scroll.y = Pixels::ZERO;
             let width = bounds.size.width - CARET_ROOM;
-            let line_width = lines.first().map_or(px(0.), |l| l.unwrapped_layout.width);
-            scroll.x = scroll.x.min((line_width - width).max(px(0.)));
+            let line_width = lines.first().map_or(Pixels::ZERO, |l| l.unwrapped_layout.width);
+            scroll.x = scroll.x.min((line_width - width).max(Pixels::ZERO));
             if caret.x - scroll.x > width {
                 scroll.x = caret.x - width;
             } else if caret.x < scroll.x {
@@ -1342,7 +1343,7 @@ impl Element for TextElement {
                     let past = r.end < text.len() && !wraps(&layout.rows, i) && selected.start <= r.end && selected.end > r.end;
                     (start < end || past).then(|| {
                         let top = origin.y + line_height * i as f32;
-                        let right = layout.x_in_row(i, end) + if past { newline } else { px(0.) };
+                        let right = layout.x_in_row(i, end) + if past { newline } else { Pixels::ZERO };
                         fill(
                             Bounds::from_corners(point(origin.x + layout.x_in_row(i, start), top), point(origin.x + right, top + line_height)),
                             colors.element_selection_background,
@@ -1407,11 +1408,11 @@ impl Render for TextInput {
                 .when(!multi_line, |d| d.items_center().h(SINGLE_HEIGHT))
                 .when(multi_line, |d| d.py(PAD_Y).on_scroll(cx.listener(Self::scroll_wheel)))
                 .px(PAD_X)
-                .rounded_sm()
-                .border_1()
+                .rounded(tokens::radius::S)
+                .border(tokens::stroke::HAIRLINE)
                 .border_color(if focused { colors.border_focused } else { colors.border })
                 .bg(colors.editor_background)
-                .text_sm()
+                .text_size(tokens::text::BODY)
                 .line_height(LINE_HEIGHT)
                 .overflow_hidden()
         };

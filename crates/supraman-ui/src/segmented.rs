@@ -7,6 +7,7 @@ use theme::ActiveTheme as _;
 use crate::button::segment;
 use crate::hit::HitTargets;
 use crate::icon::Icon;
+use crate::tokens;
 
 #[derive(Clone, Debug)]
 pub struct Segment {
@@ -45,7 +46,7 @@ pub fn segmented<V: 'static>(
     let options = segments.iter().enumerate().map(|(i, s)| {
         let on_change = on_change.clone();
         segment(hits, format!("{id}-{}", s.key), s.icon, s.label.clone(), i == chosen, cx)
-            .when(i > 0, |d| d.border_l_1().border_color(border))
+            .when(i > 0, |d| d.border_l(tokens::stroke::HAIRLINE).border_color(border))
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 if i != chosen {
                     on_change(this, i, window, cx);
@@ -53,7 +54,7 @@ pub fn segmented<V: 'static>(
                 }
             }))
     });
-    div().flex().flex_none().h(px(24.)).rounded_sm().border_1().border_color(border).overflow_hidden().children(options.collect::<Vec<_>>())
+    div().flex().flex_none().h(px(24.)).rounded(tokens::radius::S).border(tokens::stroke::HAIRLINE).border_color(border).overflow_hidden().children(options.collect::<Vec<_>>())
 }
 
 #[cfg(test)]
