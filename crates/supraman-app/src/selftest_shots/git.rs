@@ -9,7 +9,7 @@ use serde_json::json;
 use supraman_core::folders::Place;
 use supraman_gitman::{Git, fixture};
 
-use super::{GROUP, capture, home, mv, root, sleep};
+use super::{GROUP, capture, home, mv, mv_away, root, sleep};
 use crate::view::FleetView;
 
 const DANA: (&str, &str) = ("Dana Ortiz", "dana.ortiz@example.com");
@@ -235,16 +235,14 @@ pub(super) async fn message(view: &Entity<FleetView>, git: &Entity<crate::git_vi
         (p.commit.as_ref().is_some_and(|(sha, _)| sha == head) && v.hits.borrow().contains_key("commit-message-edit")).then_some(())
     })
     .await?;
-    let away = cx.update(|window, _| window.viewport_size())?;
-    let rest = gpui::point(away.width - gpui::px(4.), away.height - gpui::px(4.));
-    mv(rest, cx)?;
+    mv_away(cx)?;
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-git-message.png"), None, cx).await?;
     println!("shot: {}", shot.display());
     view.read_with(cx, |v, _| v.hits.borrow_mut().remove("commit-amend-update"));
     crate::selftest::click(view, "commit-message-edit", cx).await?;
     crate::selftest::until(view, cx, Duration::from_secs(10), "the message edited in place", |v| v.hits.borrow().contains_key("commit-amend-update").then_some(())).await?;
-    mv(rest, cx)?;
+    mv_away(cx)?;
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-git-message-editing.png"), None, cx).await?;
     println!("shot: {}", shot.display());

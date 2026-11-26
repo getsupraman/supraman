@@ -26,7 +26,7 @@
 "supraman-app/src/selftest_left.rs" = 4
 "supraman-app/src/selftest_manage.rs" = 8
 "supraman-app/src/selftest_overflow.rs" = 4
-"supraman-app/src/selftest_shots.rs" = 8
+"supraman-app/src/selftest_shots.rs" = 4
 "supraman-app/src/selftest_shots/gallery.rs" = 4
 "supraman-app/src/selftest_shots/git.rs" = 2
 "supraman-app/src/selftest_tabs.rs" = 1

@@ -832,19 +832,24 @@ async fn git_focus(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowCon
     Ok(())
 }
 
+/// The pointer in the window's bottom right corner, over nothing a shot shows hovered.
+fn mv_away(cx: &mut AsyncWindowContext) -> anyhow::Result<gpui::DispatchEventResult> {
+    let away = cx.update(|window, _| window.viewport_size())?;
+    mv(gpui::point(away.width - gpui::px(4.), away.height - gpui::px(4.)), cx)
+}
+
 fn mv(position: gpui::Point<gpui::Pixels>, cx: &mut AsyncWindowContext) -> anyhow::Result<gpui::DispatchEventResult> {
     cx.update(|window, cx| window.dispatch_event(gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent { position, pressed_button: None, modifiers: gpui::Modifiers::default() }), cx))
 }
 
 /// The graph's pills at the normal width, one hovered, and cut in a narrow Branch / Tag column, which the column's double-click then resets; what René compares with GitKraken by eye.
 async fn git_pills(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
-    let away = cx.update(|window, _| window.viewport_size())?;
     crate::selftest::drawn(cx).await?;
     let pill = crate::selftest::until(view, cx, Duration::from_secs(10), "the top pill", |v| {
         v.hits.borrow().iter().filter(|(k, _)| k.starts_with("git-pill-")).map(|(_, h)| h.bounds).min_by(|a, b| a.top().partial_cmp(&b.top()).unwrap_or(std::cmp::Ordering::Equal))
     })
     .await?;
-    mv(gpui::point(away.width - gpui::px(4.), away.height - gpui::px(4.)), cx)?;
+    mv_away(cx)?;
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-git-pills.png"), None, cx).await?;
     println!("shot: {}", shot.display());
@@ -864,7 +869,7 @@ async fn git_pills(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowCon
         (narrow && v.hits.borrow().keys().any(|k| k.starts_with("git-pill-") && supraman_ui::clipped::cut_at(&k.replace("git-pill-", "git-ref-")).is_some())).then_some(())
     })
     .await?;
-    mv(gpui::point(away.width - gpui::px(4.), away.height - gpui::px(4.)), cx)?;
+    mv_away(cx)?;
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-git-pills-narrow.png"), None, cx).await?;
     println!("shot: {}", shot.display());
@@ -883,7 +888,6 @@ async fn git_wip(view: &Entity<FleetView>, git: &Entity<crate::git_view::GitView
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-git-discard-hover.png"), None, cx).await?;
     println!("shot: {}", shot.display());
-    let away = cx.update(|window, _| window.viewport_size())?;
-    mv(gpui::point(away.width - gpui::px(4.), away.height - gpui::px(4.)), cx)?;
+    mv_away(cx)?;
     Ok(())
 }
