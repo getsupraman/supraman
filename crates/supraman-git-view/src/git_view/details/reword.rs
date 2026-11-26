@@ -395,8 +395,7 @@ impl CommitPanel {
         self.reword.asking.as_ref().map(|asked| self.reword.dialog.ask(&self.hits, ASK_KEY, asked, |this: &mut Self, answer, _, cx| this.answer_amend(answer == Answer::Yes, cx), cx))
     }
 
-    /// The row the panel keeps under a message that can be edited: while a field is open, the summary's count, what a
-    /// reword rebases, Cancel and Update Message (Reword); then a failure.
+    /// The row kept under an editable message: while a field is open, the count, what a reword rebases, Cancel and Update; then a failure.
     pub(super) fn actions_row(&self, editable: bool, cx: &mut Context<Self>) -> Option<Div> {
         let row = div().flex().flex_none().items_center().gap_2().h(supraman_ui::tokens::control::SMALL.height).px_2().text_xs();
         let Some(field) = self.reword.field.as_ref() else {
