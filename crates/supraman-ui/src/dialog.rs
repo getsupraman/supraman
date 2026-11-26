@@ -264,13 +264,10 @@ fn title_line<V: 'static>(hits: &HitTargets, panel: &Panel<V>, cx: &mut Context<
     let close = panel.close.clone().map(|close| {
         let cancel = panel.cancel.clone();
         let muted = crate::themes::secondary(cx.theme().colors());
-        button::Button::new(hits, close).icon(Icon::Close.svg(tokens::icon::M, muted)).icon_only(CLOSE).tooltip(crate::tooltip::Tooltip::text("Close (Esc)")).on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| cancel(this, window, cx)))
+        button::Button::new(hits, close).icon(Icon::Close.svg(tokens::icon::M, muted)).icon_only(tokens::control::MEDIUM.height).tooltip(crate::tooltip::Tooltip::text("Close (Esc)")).on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| cancel(this, window, cx)))
     });
     (title.is_some() || close.is_some()).then(|| div().flex().items_center().gap(tokens::space::L).children(title).children(close.map(|c| div().ml_auto().child(c))))
 }
-
-/// The title line's ×.
-const CLOSE: Pixels = px(22.);
 
 /// `content` (the window's root element, or a tab's, holding its key context) with `dialog` beside it: a dialog's
 /// focus lies outside `content`, so none of its keys, actions or chords reach what lies behind.
