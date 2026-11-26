@@ -31,6 +31,7 @@ pub mod palette;
 pub mod placeholder;
 #[cfg(test)]
 mod ratchet;
+pub mod scroll;
 pub mod segmented;
 pub mod session;
 pub mod settings_page;
@@ -70,6 +71,7 @@ pub fn init_globals(cx: &mut App, program_version: &str) {
     });
     themes::apply(cx, None, themes::TerminalColors::Theme, None);
     table::bind_keys(cx);
+    scroll::bind_keys(cx);
     focus_order::bind_keys(cx);
     focus::bind_keys(cx);
 }
