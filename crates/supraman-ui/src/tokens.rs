@@ -91,6 +91,18 @@ pub mod icon {
     pub const L: f32 = 16.;
 }
 
+/// The rows across a pane above its content.
+pub mod bar {
+    use super::*;
+
+    /// A pane's header line: the diff's path, a terminal's find bar, a panel's sort row.
+    pub const HEADER: Pixels = px(28.);
+    /// A pane's toolbar: the diff's header and its modes.
+    pub const TOOLBAR: Pixels = px(32.);
+    /// An icon-only button in a bar.
+    pub const ICON_BUTTON: Pixels = px(24.);
+}
+
 /// Border and ring widths.
 pub mod stroke {
     use super::*;

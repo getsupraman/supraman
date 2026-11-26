@@ -2,7 +2,7 @@
 //! folding the selected row.
 
 use gpui::{Context, Div, KeyDownEvent, MouseButton, MouseDownEvent, SharedString, Stateful, Window, prelude::*};
-use supraman_ui::button::RowKeys;
+use supraman_ui::controls::button::RowKeys;
 use supraman_ui::list::{self, Chrome};
 
 use super::{LeftRow, fold, other_schedules, unlisted};

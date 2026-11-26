@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use supraman_gitman::write::branch::{Relation, Target, current_branch, held_elsewhere, held_in_linked};
 use supraman_gitman::{Head, Refs, short_sha};
-use supraman_ui::menu::{MenuItem, item};
+use supraman_ui::controls::menu::{MenuItem, item};
 
 use crate::git_view::ref_panel::RefAction;
 

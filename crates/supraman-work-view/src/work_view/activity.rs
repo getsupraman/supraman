@@ -1,16 +1,20 @@
 //! The Activity page, the web's: the newest events of the bound projects, grouped by day, newest first.
 
+use supraman_ui::tokens;
 use gpui::{ClickEvent, FontWeight};
 use supraman_core::time::{self, rfc3339_ms};
-use supraman_ui::placeholder::placeholder;
+use supraman_ui::patterns::placeholder::placeholder;
 use supraman_ui::hit::hit_target;
 use supraman_ui::clipped::clipped;
 use supraman_ui::icon::Icon;
-use supraman_ui::{button, fonts};
+use supraman_ui::{controls::button, fonts};
 use supraman_workman::{JournalEvent, JournalQuery};
 
 use super::actions::COPY_SIDE;
 use super::*;
+
+/// An event's clock time.
+const TIME_WIDTH: gpui::Pixels = gpui::px(40.);
 
 pub(crate) const SHOWN: usize = 150;
 
@@ -130,7 +134,7 @@ impl WorkView {
         if a.events.is_empty() {
             return root.child(placeholder("No activity yet.", Vec::<SharedString>::new(), cx).py_6()).into_any_element();
         }
-        let mut list = div().flex().flex_col().rounded_md().border_1().border_color(colors.border_variant).bg(colors.panel_background);
+        let mut list = div().flex().flex_col().rounded(tokens::radius::M).border(tokens::stroke::HAIRLINE).border_color(colors.border_variant).bg(colors.panel_background);
         for (day, events) in by_day(&a.events) {
             list = list.child(
                 div()
@@ -175,11 +179,11 @@ impl WorkView {
             .items_center()
             .gap_2()
             .px_3()
-            .py(px(3.))
-            .border_t_1()
+            .py(tokens::space::XS)
+            .border_t(tokens::stroke::HAIRLINE)
             .border_color(colors.border_variant)
             .text_sm()
-            .child(fonts::figures(div().flex_none().w(px(40.)).text_xs().text_color(colors.text_muted)).child(SharedString::from(at)))
+            .child(fonts::figures(div().flex_none().w(TIME_WIDTH).text_xs().text_color(colors.text_muted)).child(SharedString::from(at)))
             .child(div().flex_none().text_xs().text_color(colors.text_muted).child(SharedString::from(e.kind.clone())))
             .children(reference)
             .child(clipped(format!("work-activity-sentence-{}", e.seq), sentence(e), false).flex_1())

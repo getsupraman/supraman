@@ -8,14 +8,15 @@ use std::rc::Rc;
 use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, FocusHandle, Focusable, SharedString, Subscription, Window, deferred, div, prelude::*};
 use supraman_gitman::write::LockSet;
 use supraman_gitman::write::branch::{self, name_problem};
-use supraman_ui::button;
+use supraman_ui::controls::button;
 use supraman_ui::focus_order::{FocusOrder, NextField, Press, PreviousField};
 use supraman_ui::folder_picker::pick_folder;
-use supraman_ui::form::{self, Answers, Form};
+use supraman_ui::surfaces::form::{self, Answers, Form};
 use supraman_ui::icon::Icon;
-use supraman_ui::palette::{Palette, PaletteEvent};
-use supraman_ui::text_input::TextInput;
+use supraman_ui::list::palette::{Palette, PaletteEvent};
+use supraman_ui::text::input::{self, TextInput};
 use supraman_ui::themes::secondary;
+use supraman_ui::tokens;
 use theme::ActiveTheme as _;
 
 use super::{BranchActions, Doing};
@@ -315,22 +316,14 @@ impl BranchActions {
         let colors = cx.theme().colors();
         let muted = secondary(colors);
         let shown = match &adding.picked {
-            Some(GitEntry::Ref { name, kind, .. }) => div().flex().items_center().gap_2().min_w_0().child(entries::kind_mark(*kind).0.svg(14., muted)).child(SharedString::from(name.clone())),
+            Some(GitEntry::Ref { name, kind, .. }) => div().flex().items_center().gap(tokens::space::L).min_w_0().child(entries::kind_mark(*kind).0.svg(tokens::icon::M, muted)).child(SharedString::from(name.clone())),
             _ => div().text_color(muted).child(NEEDS_REF),
         };
-        let field = button::ghost(&self.hits, format!("{KEY}-ref"), cx)
-            .flex()
-            .items_center()
+        let field = input::framed(button::ghost(&self.hits, format!("{KEY}-ref"), cx), false, cx)
             .justify_between()
-            .gap_2()
-            .px_2()
-            .py_1()
-            .rounded_sm()
-            .border_1()
-            .border_color(colors.border)
-            .bg(colors.editor_background)
+            .gap(tokens::space::L)
             .child(shown)
-            .child(Icon::ChevronDown.svg(12., muted))
+            .child(Icon::ChevronDown.svg(tokens::icon::S, muted))
             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_picker(window, cx)));
         let field = supraman_ui::focus_order::pressable(field, focus, cx.listener(|this, _: &Press, window, cx| this.open_picker(window, cx)));
         let picker = adding.picking.as_ref().map(|(p, _)| deferred(div().absolute().top_full().left_0().right_0().child(p.clone())).with_priority(supraman_ui::tokens::Layer::OverPrompt.priority()));

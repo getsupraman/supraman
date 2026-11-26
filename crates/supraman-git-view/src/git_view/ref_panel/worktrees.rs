@@ -5,11 +5,12 @@ use std::collections::HashMap;
 use gpui::{AnyElement, ClickEvent, Context, Hsla, SharedString, div, prelude::*, px};
 use supraman_core::paths::path_key;
 use supraman_gitman::Worktree;
-use supraman_ui::button;
+use supraman_ui::tokens;
+use supraman_ui::controls::button;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::{self, Icon};
 use supraman_ui::themes::secondary;
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::controls::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
 use super::marks::MARK;
@@ -109,8 +110,8 @@ impl RefPanel {
         }
         let muted = secondary(cx.theme().colors());
         let button = button::Button::toolbar(&self.hits, format!("{LIST}-worktrees-refresh")).icon(Icon::Refresh.svg(ICON, muted)).turning(self.wips.reading).text_color(muted)
-            .h(px(20.))
-            .min_w(px(20.))
+            .h(tokens::control::SMALL.height)
+            .min_w(tokens::control::SMALL.height)
             .px_0()
             .tooltip(Tooltip::text("Refresh WIPs"))
             .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {

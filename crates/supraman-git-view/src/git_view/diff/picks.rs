@@ -6,7 +6,7 @@ use supraman_editor::{ZedEditor, rows};
 use supraman_gitman::write::lines::{self, Change, Pick, Picked};
 use supraman_gitman::write::{LockSet, Resource};
 use supraman_gitman::{ChangeKind, OperationState, Repo};
-use supraman_ui::menu::{ContextMenu, MenuItem, item};
+use supraman_ui::controls::menu::{ContextMenu, MenuItem, item};
 
 use super::{DiffView, Layout, Mode, Of};
 use crate::git_view::write_gate::{WriteGate, Written};

@@ -2,7 +2,7 @@ use std::path::Path;
 
 use supraman_core::folders::{Entries, Entry, Shown};
 use supraman_core::paths::{folder_name, path_key};
-use supraman_ui::hover_card::HoverCard;
+use supraman_ui::surfaces::hover_card::HoverCard;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {

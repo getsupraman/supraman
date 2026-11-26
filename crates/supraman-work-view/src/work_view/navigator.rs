@@ -4,13 +4,16 @@ use gpui::{ClickEvent, FontWeight};
 use supraman_ui::clipped::clipped;
 use supraman_ui::icon::Icon;
 use supraman_ui::marks::progress_line;
-use supraman_ui::{button, hit::hit_target};
+use supraman_ui::{controls::button, hit::hit_target};
 use supraman_workman::{OverviewRun, Rollup};
 
 use super::projects::{active, closed_runs};
 use super::*;
 use supraman_ui::label::{Label, LabelMark};
 use supraman_ui::tokens;
+
+/// The shut navigator's strip.
+const SHUT_WIDTH: gpui::Pixels = gpui::px(28.);
 
 /// A navigator row's chrome: selected while the navigator's selection is on it, active while the navigator holds the keys.
 pub(crate) fn nav_chrome(selected: bool, focused: bool) -> supraman_ui::list::Chrome {
@@ -39,11 +42,11 @@ impl WorkView {
             .gap_2()
             .mx_2()
             .px_2()
-            .py(px(3.))
-            .rounded_sm()
+            .py(tokens::space::XS)
+            .rounded(tokens::radius::S)
             .text_sm()
             .child(Label::new(label.to_string()).mark(LabelMark::Svg(icon.svg(14., colors.icon_muted))).gap(tokens::space::L).flex_1())
-            .children(badge.filter(|n| *n > 0).map(|n| supraman_ui::matcher::alert_count(n, cx)))
+            .children(badge.filter(|n| *n > 0).map(|n| supraman_ui::controls::badge::alert_count(n, cx)))
     }
 
     pub(super) fn render_navigator(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -58,8 +61,8 @@ impl WorkView {
             .pb_1()
             .child(clipped("work-nav-name", self.name(), false).flex_1().text_sm().font_weight(FontWeight::SEMIBOLD))
             .child(
-                button::Button::new(&self.hits, "work-nav-shut").icon(Icon::ChevronLeft.svg(14., colors.icon_muted)).icon_only(px(20.))
-                    .tooltip(supraman_ui::tooltip::Tooltip::text("Hide the navigator"))
+                button::Button::new(&self.hits, "work-nav-shut").icon(Icon::ChevronLeft.svg(14., colors.icon_muted)).icon_only(tokens::control::SMALL.height)
+                    .tooltip(supraman_ui::controls::tooltip::Tooltip::text("Hide the navigator"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_nav(cx))),
             );
         let overview = self.nav_entry("work-nav-overview", Icon::Home, "Overview", None, cx)
@@ -75,7 +78,7 @@ impl WorkView {
             .size_full()
             .flex()
             .flex_col()
-            .gap(px(2.))
+            .gap(tokens::space::XS)
             .bg(colors.panel_background)
             .child(head)
             .child(overview)
@@ -85,13 +88,13 @@ impl WorkView {
         for project in &self.projects {
             list = list.child(self.render_project(project, cx));
         }
-        list.child(div().h(px(16.)).flex_none()).into_any_element()
+        list.child(div().h(tokens::space::XXL).flex_none()).into_any_element()
     }
 
     fn render_project(&self, project: &OverviewProject, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let qref = project.item.qualified_ref.clone();
-        let mut out = div().flex().flex_col().gap(px(1.)).pb_1().child(
+        let mut out = div().flex().flex_col().gap(tokens::space::XS).pb_1().child(
             div()
                 .relative()
                 .flex()
@@ -117,7 +120,7 @@ impl WorkView {
                     .gap_1()
                     .mx_2()
                     .px_2()
-                    .rounded_sm()
+                    .rounded(tokens::radius::S)
                     .text_xs()
                     .text_color(colors.text_muted)
                     .child(Label::new(format!("{} closed", closed.len())).mark(LabelMark::Svg((if open { Icon::ChevronDown } else { Icon::ChevronRight }).svg(12., colors.icon_muted))).gap(tokens::space::S))
@@ -143,11 +146,11 @@ impl WorkView {
         self.nav_row(&format!("work-nav-run-{qref}"), cx)
             .flex()
             .flex_col()
-            .gap(px(3.))
+            .gap(tokens::space::XS)
             .mx_2()
             .px_2()
-            .py(px(3.))
-            .rounded_sm()
+            .py(tokens::space::XS)
+            .rounded(tokens::radius::S)
             .child(
                 div()
                     .flex()
@@ -166,15 +169,15 @@ impl WorkView {
         let colors = cx.theme().colors().clone();
         div()
             .h_full()
-            .w(px(28.))
+            .w(SHUT_WIDTH)
             .flex()
             .flex_col()
             .items_center()
             .pt_2()
             .bg(colors.panel_background)
             .child(
-                button::Button::new(&self.hits, "work-nav-open").icon(Icon::ChevronRight.svg(14., colors.icon_muted)).icon_only(px(20.))
-                    .tooltip(supraman_ui::tooltip::Tooltip::text("Show the navigator"))
+                button::Button::new(&self.hits, "work-nav-open").icon(Icon::ChevronRight.svg(14., colors.icon_muted)).icon_only(tokens::control::SMALL.height)
+                    .tooltip(supraman_ui::controls::tooltip::Tooltip::text("Show the navigator"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_nav(cx))),
             )
             .into_any_element()

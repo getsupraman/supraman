@@ -7,7 +7,7 @@ use supraman_core::folders::{Entries, Shown};
 use supraman_core::schedule::{self, ActionKind, CatchUp, Change, Covered, Day, Fired, Foreign, ForeignTask, Live, Outcome, Overlap, Policy, Profile, Prompt, Run, Schedule, Span, Stage, Status, Trigger};
 use supraman_core::secret::SecretStore;
 use supraman_core::time::{self, date_words};
-use supraman_ui::details::Section;
+use supraman_ui::patterns::details::Section;
 
 /// A row keeps at most this many runs.
 pub const HISTORY: usize = 30;
@@ -706,7 +706,7 @@ mod tests {
     }
 
     fn page(row: &ScheduleRow) -> String {
-        supraman_ui::details::text("t", &sections(row, "zone", None, NOW))
+        supraman_ui::patterns::details::text("t", &sections(row, "zone", None, NOW))
     }
 
     #[test]
@@ -798,7 +798,7 @@ mod tests {
         let runs: Vec<&str> = text.lines().skip_while(|l| *l != "Last runs").skip(1).collect();
         assert!(runs[0].ends_with("  on schedule · done: fixed 2 bugs · 1 min 5 s · 129k tokens · fm-demo-sched-nightly-2"), "{text}");
         assert!(runs[1].ends_with("  Run now · nothing to do · 1 min 5 s"), "{text}");
-        assert!(sections(&r, "z", Some("next fires:\n  x\n"), NOW).last().is_some_and(|s| s.key == "dry-run" && s.lines == [supraman_ui::details::Line::Long("next fires:\n  x".into())]));
+        assert!(sections(&r, "z", Some("next fires:\n  x\n"), NOW).last().is_some_and(|s| s.key == "dry-run" && s.lines == [supraman_ui::patterns::details::Line::Long("next fires:\n  x".into())]));
     }
 
     #[test]

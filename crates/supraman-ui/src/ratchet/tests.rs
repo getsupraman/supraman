@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::{CEILINGS, Found, Kind, ceilings, code_of, problems, scan, table, without_tests};
+use super::{CEILINGS, Found, Kind, ceilings, code_of, crate_files, literals, problems, scan, table, without_tests};
 
 fn crates() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap()
@@ -50,6 +50,50 @@ fn v() { ink::mark(a); Link::Url(u); Blink::new(); supraman_ui::ink::text(b); }
 ";
     let planted = Planted::new(&[("supraman-git-view/src/v.rs", view)]);
     assert_eq!(lines(&scan(&planted.0), Kind::Ink, "supraman-git-view/src/v.rs"), [1, 2, 2]);
+}
+
+/// What only a feature names (UI-KIT §2): its domain's nouns and the products'. `tab`, `folder` and `inbox` are the kit's own controls.
+const FEATURE_WORDS: [&str; 30] = [
+    "ref", "refs", "branch", "branches", "commit", "commits", "stash", "worktree", "worktrees", "remote", "git", "gitman", "repo",
+    "session", "sessions", "claude", "fleet", "agent", "agents", "schedule", "schedules", "scheduled", "approve", "run", "runs",
+    "workman", "project", "projects", "task", "criterion",
+];
+
+/// A file and the text its literals may hold although it names a feature word.
+const SAYS_FEATURE_WORDS: [(&str, &str); 4] = [
+    ("supraman-ui/src/gallery.rs", "\"Branch on the remote\""),
+    ("supraman-ui/src/gallery.rs", "\"Commit summary\""),
+    // A theme file's lane keys: renaming them would drop the lanes a user's theme sets.
+    ("supraman-ui/src/themes/lanes.rs", "\"gitman.lane."),
+    ("supraman-ui/src/icon.rs", ".svg\""),
+];
+
+fn feature_words_in(key: &str, text: &str) -> Vec<String> {
+    literals(text)
+        .into_iter()
+        .filter(|(_, literal)| !SAYS_FEATURE_WORDS.iter().any(|(file, said)| *file == key && literal.contains(said)))
+        .filter_map(|(line, literal)| {
+            let words: Vec<String> = literal.split(|c: char| !c.is_alphanumeric()).map(str::to_lowercase).collect();
+            let named: Vec<&str> = FEATURE_WORDS.iter().copied().filter(|w| words.iter().any(|said| said == w)).collect();
+            (!named.is_empty()).then(|| format!("{key}:{line}: {literal} names {}", named.join(", ")))
+        })
+        .collect()
+}
+
+#[test]
+fn the_kit_names_no_feature_word_and_depends_on_no_feature_crate() {
+    let said: Vec<String> = crate_files(crates(), "supraman-ui").iter().flat_map(|(key, text)| feature_words_in(key, text)).collect();
+    assert!(said.is_empty(), "the owner passes these words in (UI-KIT §2):\n{}", said.join("\n"));
+    let manifest = std::fs::read_to_string(crates().join("supraman-ui/Cargo.toml")).unwrap();
+    for feature in super::FEATURE_CRATES.iter().chain(&["supraman-gitman", "supraman-workman", "supraman-claude", "supraman-supervisor", "supraman-editor"]) {
+        assert!(!manifest.contains(&format!("{feature} =")), "supraman-ui depends on {feature}");
+    }
+}
+
+#[test]
+fn the_word_scan_reads_literals_outside_tests_only() {
+    let text = "fn a() { let x = \"Pick a branch\"; let y = r#\"the refs\"#; } // a commit\n#[cfg(test)]\nmod tests { fn b() { \"a session\"; } }\n";
+    assert_eq!(feature_words_in("supraman-ui/src/x.rs", text), ["supraman-ui/src/x.rs:1: \"Pick a branch\" names branch", "supraman-ui/src/x.rs:1: r#\"the refs\"# names refs"]);
 }
 
 /// `cargo test -p supraman-ui print_ceilings -- --ignored --nocapture`: today's counts as `ceilings.toml`.

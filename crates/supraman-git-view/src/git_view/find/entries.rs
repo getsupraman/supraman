@@ -11,13 +11,16 @@ use supraman_ui::icon::Icon;
 use supraman_ui::label::{Label, LabelMark};
 use supraman_ui::tokens;
 use supraman_ui::matcher::highlighted;
-use supraman_ui::palette::{Entry, Fit, Marks, Rank, fuzzy, marks_in, path_fuzzy, ranked_by};
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::list::palette::{Entry, Fit, Marks, Rank, fuzzy, marks_in, path_fuzzy, ranked_by};
+use supraman_ui::controls::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
 use super::super::load::GraphRow;
 use super::super::ref_panel::{self, Section};
 use super::super::remote;
+
+/// The widest a file row's name grows before its folder.
+const NAME_WIDTH: gpui::Pixels = px(300.);
 
 pub(crate) const REFS: &str = "refs";
 pub(crate) const FILES: &str = "files";
@@ -270,7 +273,7 @@ fn paint_path(key: &str, path: &str, marks: &[Range<usize>], muted: gpui::Hsla, 
         .gap_2()
         .min_w_0()
         .text_sm()
-        .child(Label::element(highlighted(format!("{key}-name"), path[name..].to_string(), &marks_in(marks, name..path.len()), cx).flex_none().max_w(px(300.))).mark(LabelMark::Svg(Icon::File.svg(14., muted))).gap(tokens::space::L).flex_none())
+        .child(Label::element(highlighted(format!("{key}-name"), path[name..].to_string(), &marks_in(marks, name..path.len()), cx).flex_none().max_w(NAME_WIDTH)).mark(LabelMark::Svg(Icon::File.svg(14., muted))).gap(tokens::space::L).flex_none())
         .child(highlighted(format!("{key}-folder"), folder.to_string(), &marks_in(marks, 0..folder.len()), cx).text_xs().text_color(muted))
         .into_any_element()
 }
@@ -286,7 +289,7 @@ fn paint_commit(entry: &GitEntry, marks: &[Range<usize>], muted: gpui::Hsla, cx:
     div()
         .flex()
         .flex_col()
-        .gap(px(1.))
+        .gap(tokens::space::XS)
         .min_w_0()
         .child(highlighted(format!("{key}-summary"), summary.clone(), &marks_in(marks, 0..summary.len()), cx).text_sm().tooltip(Tooltip::text(whole)))
         .child(

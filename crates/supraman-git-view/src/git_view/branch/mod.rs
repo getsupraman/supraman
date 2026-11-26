@@ -16,9 +16,9 @@ use supraman_gitman::write::branch::{self, CheckedOut, Merged, Plan, Target, rel
 use supraman_gitman::write::rebase::{self, Autostash, Rebased};
 use supraman_gitman::write::{LockSet, Session, WriteError};
 use supraman_gitman::{Refs, short_sha};
-use supraman_ui::confirm::{Answer, Confirm};
+use supraman_ui::surfaces::confirm::{Answer, Confirm};
 use supraman_ui::hit::HitTargets;
-use supraman_ui::menu::{ContextMenu, MenuItem};
+use supraman_ui::controls::menu::{ContextMenu, MenuItem};
 
 pub(crate) use dialog::{NameAsk, NameDialog};
 pub(crate) use view::DraggedPill;

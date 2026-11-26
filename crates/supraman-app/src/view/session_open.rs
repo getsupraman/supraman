@@ -3,7 +3,7 @@
 use gpui::Context;
 use supraman_claude::now_ms;
 use supraman_core::paths::folder_name;
-use supraman_ui::session::Opening;
+use supraman_ui::patterns::session::Opening;
 
 use super::FleetView;
 use crate::fleet::{self, Open, SessionRow};

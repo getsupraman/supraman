@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use supraman_gitman::write::branch::{Target, current_branch};
 use supraman_gitman::write::commit::ResetMode;
 use supraman_gitman::{Head, Refs};
-use supraman_ui::menu::{MenuItem, item};
+use supraman_ui::controls::menu::{MenuItem, item};
 
 use super::CommitAct;
 use crate::git_view::branch::menu::{self, Facts, Group, RefAct, RefMenu, Subject};

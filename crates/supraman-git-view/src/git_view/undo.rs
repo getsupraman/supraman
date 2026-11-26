@@ -4,11 +4,11 @@ use gpui::{AppContext as _, ClickEvent, Context, Entity, EventEmitter, Render, S
 use supraman_gitman::Repo;
 use supraman_gitman::write::journal::{self, Done, Preview, Refused};
 use supraman_gitman::write::LockSet;
-use supraman_ui::button;
-use supraman_ui::confirm::Confirm;
+use supraman_ui::controls::button;
+use supraman_ui::surfaces::confirm::Confirm;
 use supraman_ui::hit::HitTargets;
 use supraman_ui::icon::Icon;
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::controls::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
 use super::write_gate::{Verb, WriteGate, Writes, Written};

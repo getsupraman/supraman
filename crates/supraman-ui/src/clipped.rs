@@ -5,7 +5,7 @@ use gpui::{
     prelude::*,
 };
 
-use crate::tooltip::Tooltip;
+use crate::controls::tooltip::Tooltip;
 use crate::tokens;
 
 const KEPT: usize = 512;

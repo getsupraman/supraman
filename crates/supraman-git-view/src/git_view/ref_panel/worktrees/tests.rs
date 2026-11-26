@@ -8,7 +8,7 @@ use gpui::{Entity, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, TestApp
 use supraman_core::paths::path_key;
 use supraman_gitman::fixture::{Fixture, git_in};
 use supraman_gitman::write::LockSet;
-use supraman_ui::confirm::Answer;
+use supraman_ui::surfaces::confirm::Answer;
 use supraman_ui::icon::Icon;
 
 use crate::git_view::background::{self, refresh_wips};

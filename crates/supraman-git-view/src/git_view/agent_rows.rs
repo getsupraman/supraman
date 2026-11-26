@@ -8,12 +8,12 @@ use std::time::Duration;
 
 use gpui::{AnyElement, App, ClickEvent, Context, Entity, EventEmitter, Hsla, MouseButton, MouseDownEvent, Pixels, Point, ScrollHandle, SharedString, Window, div, prelude::*};
 use supraman_gitman::Row;
-use supraman_ui::details::{self, Page, Section};
+use supraman_ui::patterns::details::{self, Page, Section};
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::marks::Mark;
 use supraman_ui::clipped::clipped;
-use supraman_ui::session::{self, Opening};
-use supraman_ui::{button, placeholder};
+use supraman_ui::patterns::session::{self, Opening};
+use supraman_ui::{controls::button, patterns::placeholder};
 
 use super::colours::Palette;
 use super::load::{self, GraphRow};
@@ -305,7 +305,7 @@ impl GitView {
     fn agent_menu(&mut self, id: &str, ix: usize, position: Point<Pixels>, cx: &mut Context<Self>) {
         if let Some(session) = self.shown_agent(id).cloned() {
             cx.stop_propagation();
-            cx.emit(AgentMenu { session, position, anchor: supraman_ui::table::row_hit(super::TABLE, &ix.to_string()).into() });
+            cx.emit(AgentMenu { session, position, anchor: supraman_ui::list::table::row_hit(super::TABLE, &ix.to_string()).into() });
         }
     }
 

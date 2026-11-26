@@ -3,7 +3,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::bail;
-use supraman_ui::FrameStats;
+use supraman_runtime::frames::FrameStats;
 use gpui::{AsyncWindowContext, Entity};
 
 use super::sleep;

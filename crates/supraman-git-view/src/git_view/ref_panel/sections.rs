@@ -1,7 +1,7 @@
 //! The panel's five trees, one per [`Section`], its folder painted as the pane's header; addressed by the whole path.
 
 use gpui::{App, SharedString};
-use supraman_ui::tree::{Tree, TreeState};
+use supraman_ui::list::tree::{Tree, TreeState};
 
 use super::{Entry, Keys, Section};
 

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use supraman_claude::{Kind, Session};
-use supraman_ui::menu::item;
+use supraman_ui::controls::menu::item;
 use gpui::{AnyElement, Context};
 
 use supraman_core::schedule::{ForeignTask, Status};
@@ -72,9 +72,9 @@ pub enum Confirmed {
     Update,
 }
 
-pub type MenuItem = supraman_ui::menu::MenuItem<MenuAction>;
-pub type ContextMenu = supraman_ui::menu::ContextMenu<MenuAction>;
-pub type Confirm = supraman_ui::confirm::Confirm<Confirmed>;
+pub type MenuItem = supraman_ui::controls::menu::MenuItem<MenuAction>;
+pub type ContextMenu = supraman_ui::controls::menu::ContextMenu<MenuAction>;
+pub type Confirm = supraman_ui::surfaces::confirm::Confirm<Confirmed>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuTarget {

@@ -1,12 +1,18 @@
 //! The settings window's About page: this build, the update check, the claude CLI, the poll and the home.
 
+use supraman_ui::tokens;
 use gpui::{AnyElement, App, Context, Hsla, SharedString, div, prelude::*, px};
-use supraman_ui::settings_page::row;
-use supraman_ui::banner;
+use supraman_ui::patterns::settings_page::row;
+use supraman_ui::surfaces::banner;
 use theme::ActiveTheme as _;
 
 use super::SettingsView;
 use crate::view::{Cli, REFRESH_EVERY};
+
+/// The home folder's path beside its row, wrapped past it.
+const HOME_WIDTH: gpui::Pixels = px(300.);
+/// The updates line beside its buttons, wrapped past it.
+const UPDATES_WIDTH: gpui::Pixels = px(260.);
 
 impl SettingsView {
     pub(super) fn render_about(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
@@ -22,7 +28,7 @@ impl SettingsView {
                 .items_center()
                 .gap_3()
                 .py_3()
-                .border_b_1()
+                .border_b(tokens::stroke::HAIRLINE)
                 .border_color(colors.border_variant)
                 .child(crate::brand::supraman(40.))
                 .child(crate::brand::wordmark(22., cx))
@@ -54,7 +60,7 @@ impl SettingsView {
             row(
                 "Supraman home",
                 "SUPRAMAN_HOME, else %APPDATA%\\Supraman: folders.toml, settings.toml, hook events, session token records.",
-                div().max_w(px(300.)).text_xs().text_color(colors.text_muted).child(SharedString::from(home)).into_any_element(),
+                div().max_w(HOME_WIDTH).text_xs().text_color(colors.text_muted).child(SharedString::from(home)).into_any_element(),
                 None,
                 cx,
             ),
@@ -89,7 +95,7 @@ impl SettingsView {
             .flex()
             .items_center()
             .gap_2()
-            .child(div().id("updates-last").max_w(px(260.)).text_sm().child(SharedString::from(self.updates_line(cx))))
+            .child(div().id("updates-last").max_w(UPDATES_WIDTH).text_sm().child(SharedString::from(self.updates_line(cx))))
             .children(on.then(|| {
                 self.control("settings-updates-check-now", "Check now", |this, _, cx| {
                     this.fleet.update(cx, |fleet, _| fleet.check_updates_now()).ok();

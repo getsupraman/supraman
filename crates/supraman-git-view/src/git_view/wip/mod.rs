@@ -17,9 +17,9 @@ use std::sync::Arc;
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, SharedString};
 use supraman_gitman::{ChangeKind, Conflict, FileChange, OperationState, Repo, Status, UnderWay};
 use supraman_ui::hit::HitTargets;
-use supraman_ui::stall;
-use supraman_ui::table::TableState;
-use supraman_ui::tree::{Order, TreeState};
+use supraman_runtime::stall;
+use supraman_ui::list::table::TableState;
+use supraman_ui::list::tree::{Order, TreeState};
 
 use super::details::{FileView, PanelEvent, sort_changes};
 use supraman_gitman::WipCounts;

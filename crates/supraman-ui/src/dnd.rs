@@ -273,8 +273,7 @@ impl<P: Payload> Sortable<P> {
     }
 
     fn line(&self, edge: Edge, cx: &App) -> Div {
-        let colour = tokens::roles(cx).drop_border;
-        let line = div().absolute().bg(colour);
+        let line = div().absolute().bg(tokens::roles(cx).drop_line);
         match (self.axis, edge) {
             (Axis::Horizontal, Edge::Before) => line.top_0().bottom_0().left_0().w(tokens::stroke::FOCUS),
             (Axis::Horizontal, Edge::After) => line.top_0().bottom_0().right_0().w(tokens::stroke::FOCUS),

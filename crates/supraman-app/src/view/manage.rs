@@ -7,7 +7,7 @@ use super::FleetView;
 use super::menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuItem, MenuTarget, folder_items, group_items, is_foremans, other_schedule_items, schedule_items, schedules_items, session_items};
 use crate::fleet::{self, SessionRow};
 use crate::work_view;
-use supraman_ui::confirm::Answer;
+use supraman_ui::surfaces::confirm::Answer;
 
 pub(super) fn send_name_of(session_id: &str) -> Option<String> {
     use supraman_claude::peer;

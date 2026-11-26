@@ -13,7 +13,7 @@ pub const CONTEXT: &str = "FocusOrder";
 pub const BUTTON_CONTEXT: &str = "FocusedButton";
 
 /// `el` taking the keyboard under `focus` (a [`FocusOrder`] member): [`crate::focus::ring`]ed while the focus came by
-/// keyboard, over any other ring; Space or Enter `press`. A [`crate::button::Button`]'s focus, and a field that opens a picker.
+/// keyboard, over any other ring; Space or Enter `press`. A [`crate::controls::button::Button`]'s focus, and a field that opens a picker.
 pub fn pressable(el: gpui::Stateful<gpui::Div>, focus: &FocusHandle, press: impl Fn(&Press, &mut Window, &mut App) + 'static) -> gpui::Stateful<gpui::Div> {
     use gpui::{ParentElement as _, Styled as _};
     el.relative().track_focus(focus).key_context(BUTTON_CONTEXT).on_action(press).child(crate::focus::ring(focus, crate::tokens::radius::S))

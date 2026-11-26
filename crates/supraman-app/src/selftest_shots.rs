@@ -14,12 +14,14 @@ use serde_json::{Value, json};
 
 use crate::{
     selftest::{home, remove_dir_retrying, sleep},
-    selftest_manage::capture,
     view::{FleetView, MenuTarget, TabKind},
 };
 
+mod capture;
 mod gallery;
 mod git;
+
+pub(crate) use capture::capture;
 
 pub const GROUP: &str = "demo";
 /// On the selftest home's drive, so the shots show a short path and none of this machine's folders.
@@ -551,7 +553,7 @@ async fn remove_folder_dialog(view: &Entity<FleetView>, api: &Path, out: &Path, 
     crate::selftest::until(view, cx, Duration::from_secs(10), "the question gone", |v| v.dialogs.remove.is_none().then_some(())).await
 }
 
-/// The Inbox with a schedule's notice beside Workman's cards: the two owners of `supraman_ui::inbox_card`.
+/// The Inbox with a schedule's notice beside Workman's cards: the two owners of `supraman_ui::patterns::inbox_card`.
 async fn inbox(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     view.update(cx, |v, cx| {
         v.scheduling.sync_errors.insert(format!("{GROUP}/nightly"), "Task Scheduler refused the task: access is denied".to_string());

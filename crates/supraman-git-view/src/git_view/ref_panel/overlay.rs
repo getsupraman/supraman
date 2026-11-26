@@ -2,8 +2,9 @@
 
 use gpui::{AnyElement, Context, FocusHandle, KeyDownEvent, MouseDownEvent, Pixels, Point, Window, deferred, div, prelude::*, px};
 use supraman_ui::hit::hit_target;
-use supraman_ui::tree::{Tree, TreeList, TreeState};
-use theme::ActiveTheme as _;
+use supraman_ui::list::tree::{Tree, TreeList, TreeState};
+use supraman_ui::surfaces::card;
+use supraman_ui::tokens;
 
 use super::marks::MARK;
 use super::render::ROW;
@@ -116,9 +117,8 @@ impl RefPanel {
             .flex_shrink(1.)
             .min_h_0()
             .h(px(ROW * rows as f32));
-        let colors = cx.theme().colors();
-        let header = div().flex_none().px_2().py_1().child(self.header(section, true, None, cx));
-        let card = div()
+        let header = div().flex_none().px(tokens::space::L).py(tokens::space::S).child(self.header(section, true, None, cx));
+        let card = card::floating(cx)
             .id(OVERLAY)
             .track_focus(&focus)
             .absolute()
@@ -128,12 +128,7 @@ impl RefPanel {
             .max_h_full()
             .flex()
             .flex_col()
-            .py_1()
-            .bg(colors.elevated_surface_background)
-            .border_1()
-            .border_color(colors.border)
-            .rounded_md()
-            .shadow_lg()
+            .py(tokens::space::S)
             .occlude()
             .child(hit_target(&self.hits, OVERLAY.into()))
             .child(header)

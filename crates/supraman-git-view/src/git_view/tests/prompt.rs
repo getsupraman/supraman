@@ -2,7 +2,7 @@
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use supraman_gitman::fixture::Fixture;
-use supraman_ui::dialog::PANE;
+use supraman_ui::surfaces::dialog::PANE;
 
 use super::*;
 use crate::git_view::branch::menu::RefAct;

@@ -6,6 +6,10 @@ use std::time::{Duration, Instant};
 
 use gpui::Keystroke;
 
+pub mod table;
+pub mod tree;
+pub mod palette;
+pub mod keyed_list;
 mod chrome;
 pub mod nav;
 

@@ -1,14 +1,17 @@
 //! The settings window's Workman page: the sign-in status, the server URL and the MCP server name.
 
 use gpui::{AnyElement, App, Context, Div, Focusable as _, Hsla, SharedString, div, prelude::*, px};
-use supraman_ui::settings_page::row;
-use supraman_ui::{banner, button};
+use supraman_ui::patterns::settings_page::row;
+use supraman_ui::{surfaces::banner, controls::button};
 use supraman_workman::AuthStatus;
 use supraman_workman::status::{RECHECK_EVERY, WorkmanStatus};
 use theme::ActiveTheme as _;
 
 use super::SettingsView;
 use crate::workman_setup::ServerCheck;
+
+/// The server URL field.
+const URL_WIDTH: gpui::Pixels = px(280.);
 
 impl SettingsView {
     /// server.json and claude's own `workman` entry, read off the UI thread.
@@ -66,7 +69,7 @@ impl SettingsView {
         let status_row = self.render_workman_status(cx);
         self.members.add(self.url_input.focus_handle(cx));
         let field = button::Button::line()
-            .child(div().id("ws-url").w(px(280.)).child(self.url_input.clone()))
+            .child(div().id("ws-url").w(URL_WIDTH).child(self.url_input.clone()))
             .child(self.control("settings-ws-url-apply", "Apply", |this, _, cx| this.apply_url(cx), cx));
         let below = div()
             .flex()

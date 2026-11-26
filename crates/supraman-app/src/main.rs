@@ -105,7 +105,7 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicI32, Ordering};
 
-use supraman_ui::text_input;
+use supraman_ui::text::input;
 use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use gpui::{AnyWindowHandle, App, AppContext as _, Bounds, Entity, SharedString, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, px, size};
@@ -241,7 +241,7 @@ const TOOL_SHELL: [&str; 10] = [
 ];
 
 fn main() {
-    supraman_ui::process_start();
+    supraman_core::timeline::process_start();
     for name in env_scrub(|name| std::env::var(name).ok()) {
         // SAFETY: no other thread exists yet.
         unsafe { std::env::remove_var(name) };
@@ -297,8 +297,8 @@ fn prepare_selftest(mode: Mode) {
         std::process::exit(1);
     }
     // After `prepare` cleared the selftest's home.
-    supraman_ui::init_logger(Some(&selftest::log_dir()));
-    supraman_ui::log_panics();
+    supraman_core::logging::init_logger(Some(&selftest::log_dir()));
+    supraman_core::logging::log_panics();
 }
 
 #[cfg(feature = "selftest")]
@@ -319,8 +319,8 @@ fn single_instance(mode: Mode, home: Option<PathBuf>, relaunched: bool) -> Optio
     // Before `prepare`, which clears a home a running selftest may use, and before any UAC prompt.
     let mut acquired = home.as_deref().map(instance::acquire);
     if mode == Mode::App {
-        supraman_ui::init_logger(home.as_deref().map(|h| h.join("logs")).as_deref());
-        supraman_ui::log_panics();
+        supraman_core::logging::init_logger(home.as_deref().map(|h| h.join("logs")).as_deref());
+        supraman_core::logging::log_panics();
     }
     if let Some(home) = home.as_deref()
         && matches!(acquired, Some(Ok(Acquired::First(_))))
@@ -370,7 +370,7 @@ fn run(mode: Mode, commands: UnboundedSender<Command>, mut received: UnboundedRe
     if mode != Mode::App {
         supraman_ui::clipboard::use_memory(cx);
     }
-    supraman_ui::stall::watch(cx);
+    supraman_runtime::stall::watch(cx);
     let home = supraman_core::home_from_env();
     if let Some(home) = home.clone() {
         keeping::start(home, cx);
@@ -379,7 +379,7 @@ fn run(mode: Mode, commands: UnboundedSender<Command>, mut received: UnboundedRe
         log::warn!("{problem}");
     }
     view::bind_keys(cx);
-    text_input::bind_keys(cx);
+    input::bind_keys(cx);
     git_view::bind_keys(cx);
     cx.on_window_closed(|cx, _| {
         if cx.windows().is_empty() {

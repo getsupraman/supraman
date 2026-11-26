@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use supraman_core::Settings;
-use supraman_ui::settings_page::{SettingsPage, SettingsPages};
-use supraman_ui::{banner, button, focus_order};
+use supraman_ui::patterns::settings_page::{SettingsPage, SettingsPages};
+use supraman_ui::{surfaces::banner, controls::button, focus_order, tokens};
 use supraman_workman::AuthStatus;
 use supraman_ui::themes::{self, Catalog, TerminalColors};
 use gpui::{
@@ -14,10 +14,13 @@ use gpui::{
 use theme::ActiveTheme as _;
 
 use supraman_ui::hit::HitTargets;
-use supraman_ui::text_input::{InputEvent, TextInput};
+use supraman_ui::text::input::{InputEvent, TextInput};
 use crate::view::FleetView;
 use crate::workman_setup::ServerCheck;
 use supraman_workman::status::WorkmanStatus;
+
+/// The page list's column.
+const PAGE_LIST_WIDTH: gpui::Pixels = gpui::px(180.);
 
 mod about;
 mod appearance;
@@ -384,9 +387,9 @@ impl SettingsView {
                 async move { path.exists() }
             });
             if exists.await {
-                cx.update(|cx| supraman_ui::open::open_off_thread(path, cx).detach());
+                cx.update(|cx| supraman_runtime::open_off_thread(path, cx).detach());
             } else {
-                this.update(cx, |this, cx| this.change_then(|_| {}, move |_, cx| supraman_ui::open::open_off_thread(path, cx).detach(), cx)).ok();
+                this.update(cx, |this, cx| this.change_then(|_| {}, move |_, cx| supraman_runtime::open_off_thread(path, cx).detach(), cx)).ok();
             }
         })
         .detach();
@@ -422,22 +425,18 @@ impl Render for SettingsView {
             .track_focus(&self.nav)
             .flex()
             .flex_col()
-            .w(px(180.))
+            .w(PAGE_LIST_WIDTH)
             .flex_none()
             .h_full()
             .py_2()
             .bg(colors.panel_background)
-            .border_r_1()
+            .border_r(tokens::stroke::HAIRLINE)
             .border_color(colors.border);
         nav = nav.children(self.pages.nav(&self.hits, self.page, |this, page, cx| this.show(page, cx), cx));
         nav = nav.child(div().flex_1()).child(
-            button::ghost_muted(&self.hits, "open-file", cx)
-                .mx_2()
-                .px_2()
-                .py_1()
-                .rounded_sm()
-                .text_xs()
-                .child("Open settings.toml")
+            button::Button::link(&self.hits, "open-file")
+                .label("Open settings.toml")
+                .mx(tokens::space::L)
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_file(cx))),
         );
 

@@ -22,7 +22,7 @@ impl FleetView {
         keys
     }
 
-    /// The hit keys Other schedules paints, for the sidebar's [`supraman_ui::keyed_list::KeyedList`].
+    /// The hit keys Other schedules paints, for the sidebar's [`supraman_ui::list::keyed_list::KeyedList`].
     pub(super) fn other_schedules_tokens(&self, tree: &Tree) -> Vec<String> {
         let mut tokens = vec![format!("{KEY}-row"), format!("tree-label-{KEY}"), format!("{KEY}-caption"), "other-row-".into(), "other-name-".into(), "other-summary-".into()];
         for key in self.unrowed_keys(tree) {
@@ -61,7 +61,7 @@ impl FleetView {
 
     /// Other sessions' look: muted, no icon, no count; a click folds or opens it.
     fn render_other_schedules_row(&self, open: bool, cx: &mut Context<Self>) -> AnyElement {
-        let keys = supraman_ui::button::RowKeys { id: KEY.into(), group: KEY.into(), hit: format!("{KEY}-row").into() };
+        let keys = supraman_ui::controls::button::RowKeys { id: KEY.into(), group: KEY.into(), hit: format!("{KEY}-row").into() };
         self.sidebar_row(keys, Some(KEY), cx)
             .flex()
             .flex_none()

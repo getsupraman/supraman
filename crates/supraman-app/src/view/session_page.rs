@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use gpui::{App, Hsla};
-use supraman_ui::details::Section;
+use supraman_ui::patterns::details::Section;
 use theme::ActiveTheme as _;
 
 use super::FleetView;

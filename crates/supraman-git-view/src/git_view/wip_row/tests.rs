@@ -3,7 +3,7 @@
 use gpui::{Bounds, Entity, Pixels, TestAppContext, VisualTestContext, px};
 use supraman_gitman::fixture::Fixture;
 use supraman_ui::clipped::cut_at;
-use supraman_ui::text_input::TEXT_LEFT;
+use supraman_ui::text::input::TEXT_LEFT;
 
 use super::{COUNTS_KEY, FIELD, FIELD_KEY, STILL_KEY};
 use crate::git_view::graph::{GAP, ROW};
@@ -41,7 +41,7 @@ fn message_cell(view: &Entity<GitView>, cx: &mut VisualTestContext) -> (Bounds<P
     (hits[FIELD_KEY].bounds, hits[COUNTS_KEY].bounds, hits["git-col-message"].bounds)
 }
 
-fn row_input(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Entity<supraman_ui::text_input::TextInput> {
+fn row_input(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Entity<supraman_ui::text::input::TextInput> {
     view.read_with(cx, |v, cx| v.wip_panel.read(cx).composer().map(|c| c.row.clone())).expect("the WIP row's field is made")
 }
 

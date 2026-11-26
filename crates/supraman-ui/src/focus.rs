@@ -55,7 +55,8 @@ impl Pane {
         Self { later: true, ..self }
     }
 
-    /// A modal pane over the element tracking `region` (a tab's Prompt): the panes inside it leave F6's order while it shows.
+    /// A modal pane over the element tracking `region` (a tab's Prompt): the panes inside it leave F6's order while it shows;
+    /// it wears no mark, its scrim says where the keys are.
     pub fn covering(self, region: &FocusHandle) -> Self {
         Self { covers: Some(region.clone()), ..self }
     }
@@ -83,7 +84,7 @@ fn paint_mark(pane: &Pane, bounds: Bounds<Pixels>, hits: &HitTargets, window: &m
     if let Some(leaf) = window.focused(cx) {
         state(window, cx).borrow_mut().held(&pane.key, leaf);
     }
-    if !window.is_window_active() {
+    if !window.is_window_active() || pane.covers.is_some() {
         hits.borrow_mut().remove(&key);
         return;
     }

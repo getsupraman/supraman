@@ -8,21 +8,22 @@ use std::time::Duration;
 use supraman_core::schedule::{self, Clock, Day, ForeignTask, Overlap, Profile, Registrar, Schedule, Span, Status, SyncTarget, Trigger};
 use supraman_core::secret::default_store;
 use supraman_core::process;
-use supraman_ui::button;
-use supraman_ui::dialog::{Button as DialogButton, Panel};
-use supraman_ui::details::{self, Section};
+use supraman_ui::tokens;
+use supraman_ui::controls::button;
+use supraman_ui::surfaces::dialog::{Button as DialogButton, Panel};
+use supraman_ui::patterns::details::{self, Section};
 use supraman_ui::hit::hit_target;
-use supraman_ui::text_input::{InputEvent, TextInput};
+use supraman_ui::text::input::{InputEvent, TextInput};
 use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, MouseButton, MouseDownEvent, ScrollHandle, SharedString, Subscription, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
 use super::{FleetView, Tab, TabKind};
 use supraman_ui::icon::Icon;
-use supraman_ui::inbox_card::{self, InboxCard};
+use supraman_ui::patterns::inbox_card::{self, InboxCard};
 use super::left::{REPO_ROW, SESSION_LINE, disclosure, grid, icon_slot, secondary, tree_label};
 use super::menu::{Confirm, Confirmed, MenuTarget};
 use supraman_ui::clipped::clipped;
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::controls::tooltip::Tooltip;
 use crate::fleet::{EntryNode, FolderNode, SessionRow};
 use crate::schedules::{self, Primary, ScheduleRow, Waiting};
 
@@ -136,7 +137,7 @@ pub struct ScheduleEdit {
     pub max_tokens: Entity<TextInput>,
     pub error: Option<String>,
     saving: bool,
-    dialog: supraman_ui::dialog::Dialog,
+    dialog: supraman_ui::surfaces::dialog::Dialog,
     _events: Vec<Subscription>,
 }
 
@@ -452,7 +453,7 @@ impl FleetView {
             max_tokens,
             error: None,
             saving: false,
-            dialog: supraman_ui::dialog::Dialog::default(),
+            dialog: supraman_ui::surfaces::dialog::Dialog::default(),
             _events: events,
         });
         cx.notify();
@@ -620,7 +621,7 @@ impl FleetView {
     fn schedule_edit_body(&self, edit: &ScheduleEdit, place: &str, cx: &mut Context<Self>) -> gpui::Div {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
-        let label = |text: &'static str| div().flex_none().w(px(88.)).text_xs().text_color(colors.text_muted).child(text);
+        let label = |text: &'static str| div().flex_none().w(supraman_ui::surfaces::form::LABEL_WIDTH).text_xs().text_color(colors.text_muted).child(text);
         let field = |key: &'static str, input: &Entity<TextInput>| {
             div().id(key).relative().flex_1().min_w_0().child(input.clone()).child(hit_target(&self.hits, key.into()))
         };
@@ -646,7 +647,7 @@ impl FleetView {
                 div()
                     .relative()
                     .px_1()
-                    .rounded_sm()
+                    .rounded(tokens::radius::S)
                     .bg(status.error.opacity(0.14))
                     .text_xs()
                     .text_color(status.error)
@@ -763,7 +764,7 @@ impl FleetView {
         let folder_key = schedule::folder_key(&folder.path);
         let gkey = format!("schedules:{folder_key}");
         let tree_key = format!("schedules-{folder_key}");
-        let keys = supraman_ui::button::RowKeys { id: gkey.clone().into(), group: gkey.clone().into(), hit: format!("schedules-row-{folder_key}").into() };
+        let keys = supraman_ui::controls::button::RowKeys { id: gkey.clone().into(), group: gkey.clone().into(), hit: format!("schedules-row-{folder_key}").into() };
         self.sidebar_row(keys, Some(&format!("sched:{folder_key}")), cx)
             .flex()
             .flex_none()
@@ -826,7 +827,7 @@ impl FleetView {
         let open = !self.sidebar.collapsed.contains(&gkey);
         let (hit, tree_key) = (format!("others-row-{folder_key}"), format!("others-{folder_key}"));
         let group = self
-            .sidebar_row(supraman_ui::button::RowKeys::one(hit.into()), None, cx)
+            .sidebar_row(supraman_ui::controls::button::RowKeys::one(hit.into()), None, cx)
             .flex()
             .flex_none()
             .items_center()
@@ -852,7 +853,7 @@ impl FleetView {
         let path = t.path();
         let tree_key = format!("other-{path}");
         let target = MenuTarget::OtherSchedule(path.clone());
-        self.sidebar_row(supraman_ui::button::RowKeys::one(format!("other-row-{path}").into()), Some(&format!("other-row-{path}")), cx)
+        self.sidebar_row(supraman_ui::controls::button::RowKeys::one(format!("other-row-{path}").into()), Some(&format!("other-row-{path}")), cx)
             .flex()
             .flex_none()
             .items_center()
@@ -970,14 +971,14 @@ impl FleetView {
             .child(div().flex().flex_none().items_center().child(action));
         let error = self.scheduling.sync_errors.get(&k).cloned();
         let target = MenuTarget::Schedule { folder_key: w.clone(), id: id.clone() };
-        let keys = supraman_ui::button::RowKeys { id: format!("sched-row-{k}").into(), group, hit: format!("sched-row-{k}").into() };
+        let keys = supraman_ui::controls::button::RowKeys { id: format!("sched-row-{k}").into(), group, hit: format!("sched-row-{k}").into() };
         self.sidebar_row_with(keys, Some(&format!("sched-row-{k}")), super::left::keys::schedule_chrome(pending, cx), cx)
             .flex()
             .flex_none()
             .flex_col()
             .pl(grid::indent(level))
             .pr_2()
-            .py(px(1.))
+            .py(super::left::LINE_PAD)
             .text_sm()
             .when(row.status == Status::Paused, |d| d.opacity(super::left::DIMMED))
             .child(line)
@@ -1050,11 +1051,11 @@ impl FleetView {
             } else {
                 (format!("{} waits for your approval", w.title), format!("Schedule {} of {}: nothing runs until you approve it.", w.id, w.place))
             };
-            out.push(InboxCard::new(card, "approve", "approve", title).context(w.place.clone()).line("detail", detail, false).action(dismiss).primary(open).render(&self.hits, cx));
+            out.push(InboxCard::new(card, cx.theme().status().warning, "approve", title).context(w.place.clone()).line("detail", detail, false).action(dismiss).primary(open).render(&self.hits, cx));
         }
         for a in runs {
             let needs_you = a.outcome == schedule::Outcome::NeedsYou;
-            let kind = if needs_you { "needs you" } else { "run failed" };
+            let (kind, color) = if needs_you { ("needs you", cx.theme().status().warning) } else { ("run failed", cx.theme().status().error) };
             let detail = if a.why.is_empty() { schedules::outcome_text(a.outcome).to_string() } else { format!("{}: {}", schedules::outcome_text(a.outcome), a.why) };
             let (w, id, run) = (a.folder_key.clone(), a.id.clone(), a.run.clone());
             let card = format!("inbox-sched-run-{}", a.run);
@@ -1069,7 +1070,7 @@ impl FleetView {
                 cx.stop_propagation();
                 this.dismiss_schedule_notice(&w, &run, cx);
             }));
-            out.push(InboxCard::new(card, kind, kind, a.id.clone()).context(a.place.clone()).when(Some(a.at), now).line("detail", detail, false).action(dismiss).primary(history).render(&self.hits, cx));
+            out.push(InboxCard::new(card, color, kind, a.id.clone()).context(a.place.clone()).when(Some(a.at), now).line("detail", detail, false).action(dismiss).primary(history).render(&self.hits, cx));
         }
         for (k, e) in syncs {
             let card = format!("inbox-sync-card-{k}");
@@ -1081,7 +1082,7 @@ impl FleetView {
                     cx.notify();
                 }
             }));
-            out.push(InboxCard::new(card, "task not synced", "task not synced", k).line("detail", e, false).action(dismiss).render(&self.hits, cx));
+            out.push(InboxCard::new(card, cx.theme().status().error, "task not synced", k).line("detail", e, false).action(dismiss).render(&self.hits, cx));
         }
         out
     }

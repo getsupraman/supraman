@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use gpui::TestAppContext;
 use supraman_core::folders::{self, Entry, FolderEntry};
-use supraman_ui::confirm::Answer;
+use supraman_ui::surfaces::confirm::Answer;
 
 use super::*;
 
@@ -111,7 +111,7 @@ type Seen = std::rc::Rc<std::cell::RefCell<Vec<GroupNameEvent>>>;
 fn field<'a>(cx: &'a mut TestAppContext, renaming: Option<&str>) -> (gpui::Entity<GroupName>, &'a mut gpui::VisualTestContext, Seen) {
     cx.update(|cx| {
         supraman_ui::init_globals(cx, "test");
-        supraman_ui::text_input::bind_keys(cx);
+        supraman_ui::text::input::bind_keys(cx);
     });
     let renaming = renaming.map(str::to_string);
     let (name, cx) = cx.add_window_view(|window, cx| GroupName::new(renaming, vec!["demo".into(), "other".into()], window, cx));

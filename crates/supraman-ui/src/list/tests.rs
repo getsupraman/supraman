@@ -1,7 +1,7 @@
 use gpui::{Context, Entity, FocusHandle, Render, TestAppContext, VisualTestContext, Window, div, prelude::*, px};
 
 use super::*;
-use crate::button::RowKeys;
+use crate::controls::button::RowKeys;
 use crate::hit::HitTargets;
 use crate::popup::Popup;
 use crate::tokens::Layer;

@@ -1,7 +1,7 @@
 //! The tab's side of the commit, WIP row and file menus: right-clicks turned into menus, each item sent to its write's owner.
 
 use gpui::{AnyElement, AppContext as _, Context, Entity, MouseButton, MouseDownEvent, Pixels, Point, SharedString, div, prelude::*};
-use supraman_ui::menu::item;
+use supraman_ui::controls::menu::item;
 
 use super::files::{FileAct, FileClick, FileFacts, Listed, covered, items};
 use super::{CommitAct, CommitActions, CommitEvent};
@@ -11,7 +11,7 @@ use crate::git_view::branch::{group_subject, pill_graph_items};
 use crate::git_view::wip::Ask as WipAsk;
 
 /// The WIP row's menu.
-fn wip_items() -> Vec<supraman_ui::menu::MenuItem<RefAct>> {
+fn wip_items() -> Vec<supraman_ui::controls::menu::MenuItem<RefAct>> {
     vec![
         item("wip-menu-stage-all", "Stage all changes", RefAct::Commit(CommitAct::StageAll)),
         item("wip-menu-stash-all", "Stash all changes", RefAct::Commit(CommitAct::StashAll)),
@@ -38,7 +38,7 @@ impl GitView {
     /// Row `ix`'s menu at `position`: the WIP row's, else its commit's with its branch groups.
     pub(crate) fn row_menu(&mut self, ix: usize, position: Point<Pixels>, cx: &mut Context<Self>) {
         let Some(row) = self.pages.read(cx).rows.get(ix).cloned() else { return };
-        let anchor = SharedString::from(supraman_ui::table::row_hit(crate::git_view::TABLE, &ix.to_string()));
+        let anchor = SharedString::from(supraman_ui::list::table::row_hit(crate::git_view::TABLE, &ix.to_string()));
         if row.wip() {
             return self.branch.update(cx, |b, cx| b.show_anchored("Work in progress".into(), wip_items(), anchor, position, cx));
         }

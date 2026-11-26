@@ -80,7 +80,7 @@ async fn page_text(view: &Entity<FleetView>, what: &str, needle: &str, cx: &mut 
     until(view, cx, WITHIN, what, |v| {
         let (tab, page) = v.schedule_page(&ws, ID)?;
         let row = v.schedule_row(&ws, ID)?;
-        let text = supraman_ui::details::text(row.title(), &v.page_sections(row, Some(page)));
+        let text = supraman_ui::patterns::details::text(row.title(), &v.page_sections(row, Some(page)));
         (v.active == Some(tab) && text.contains(needle)).then_some(text)
     })
     .await
@@ -385,7 +385,7 @@ async fn changed_command(view: &Entity<FleetView>, dir: &Path, cx: &mut AsyncWin
     let page = until(view, cx, WITHIN, "the page with the changed file", |v| {
         let (tab, page) = v.schedule_page(&ws, CMD)?;
         let row = v.schedule_row(&ws, CMD)?;
-        let text = supraman_ui::details::text(row.title(), &v.page_sections(row, Some(page)));
+        let text = supraman_ui::patterns::details::text(row.title(), &v.page_sections(row, Some(page)));
         (v.active == Some(tab) && text.contains("File now")).then_some(text)
     })
     .await?;

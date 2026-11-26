@@ -16,14 +16,14 @@ use theme::ActiveTheme as _;
 pub use fit::{CLOSE_ON_HOVER_BELOW, TAB_MAX, TAB_MIN, cut, max_scroll, revealed, room, span, tab_width, trailing_at};
 pub use list::{LIST, TabEntry};
 
-use crate::button;
+use crate::controls::button;
 use crate::dnd::{self, Sortable, lands};
 #[cfg(test)]
 use crate::dnd::{Edge as Side, lands as landing};
 use crate::hit::{HitTargets, hit_target};
 use crate::icon::Icon;
-use crate::palette::{Palette, PaletteEvent};
-use crate::tooltip::Tooltip;
+use crate::list::palette::{Palette, PaletteEvent};
+use crate::controls::tooltip::Tooltip;
 use crate::tokens;
 
 /// Longer program titles are cut to this many characters, with an ellipsis.
@@ -562,7 +562,7 @@ mod tests {
     fn strip_of(count: u64, cx: &mut TestAppContext) -> (Entity<Tabs>, &mut VisualTestContext) {
         cx.update(|cx| {
             crate::init_globals(cx, "test");
-            crate::text_input::bind_keys(cx);
+            crate::text::input::bind_keys(cx);
         });
         let (view, cx) = cx.add_window_view(|_, _| Tabs { hits: HitTargets::default(), count, active: Some(1), menu: None });
         cx.run_until_parked();

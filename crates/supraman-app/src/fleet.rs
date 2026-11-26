@@ -10,7 +10,7 @@ use supraman_git_view::occupancy::LiveSession;
 use gpui::App;
 use supraman_ui::icon::Icon;
 use supraman_ui::marks::{Activity, Mark};
-use supraman_ui::session::Opening;
+use supraman_ui::patterns::session::Opening;
 use theme::ActiveTheme as _;
 
 /// A top-level entry: a group with its folders, or a folder alone.
@@ -666,7 +666,7 @@ impl State {
     }
 }
 
-/// What a session's Open does: the row's action slot, its double-click and every page's Open ([`supraman_ui::session::open`]).
+/// What a session's Open does: the row's action slot, its double-click and every page's Open ([`supraman_ui::patterns::session::open`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Open {
     Tab(u64),

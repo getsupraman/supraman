@@ -6,8 +6,9 @@ use std::{
 
 use supraman_claude::{Health, now_ms};
 use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, SharedString, Stateful, div, prelude::*, px, relative, rems};
-use supraman_ui::banner;
-use supraman_ui::button;
+use supraman_ui::tokens;
+use supraman_ui::surfaces::banner;
+use supraman_ui::controls::button;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::dnd;
 use supraman_ui::tabs::DraggedSession;
@@ -15,8 +16,8 @@ use theme::ActiveTheme as _;
 
 use supraman_ui::icon::Icon;
 use supraman_ui::marks;
-use supraman_ui::tooltip::Tooltip;
-use super::{Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE, MAX_WORKING_LIMIT};
+use supraman_ui::controls::tooltip::Tooltip;
+use super::{Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE};
 use supraman_ui::clipped::clipped;
 use crate::settings_window::page;
 use crate::updates::Stage;
@@ -118,6 +119,8 @@ fn tinted_button(hits: &HitTargets, key: &'static str, icon: Icon, tip: impl Int
 pub(crate) const TOP_ROW: f32 = 30.;
 pub(super) const REPO_ROW: f32 = 26.;
 pub(super) const SESSION_LINE: f32 = 24.;
+/// A session's or a schedule's detail line's padding above and below, so the tree's lines sit close.
+pub(super) const LINE_PAD: Pixels = px(1.);
 /// One hover icon's place: always laid out, so a row's icons never shift.
 const SLOT: f32 = 20.;
 /// The widest an Other sessions row's folder name gets before it is cut.
@@ -170,7 +173,7 @@ pub(super) fn tree_label<E: Styled + ParentElement>(hits: &HitTargets, key: &str
 }
 
 fn glyph_button(hits: &HitTargets, key: String, icon: Icon, tip: impl Into<SharedString>, cx: &gpui::App) -> button::Button {
-    button::Button::new(hits, key).icon(icon.svg(14., cx.theme().colors().text_muted)).icon_only(px(20.)).tooltip(Tooltip::text(tip))
+    button::Button::new(hits, key).icon(icon.svg(14., cx.theme().colors().text_muted)).icon_only(tokens::control::SMALL.height).tooltip(Tooltip::text(tip))
 }
 
 impl FleetView {
@@ -227,7 +230,7 @@ impl FleetView {
     }
 
     pub(super) fn render_left(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let _stall = supraman_ui::stall::section("render: left");
+        let _stall = supraman_runtime::stall::section("render: left");
         let colors = cx.theme().colors().clone();
         let tree = self.tree();
 
@@ -267,7 +270,7 @@ impl FleetView {
                         .flex_shrink(NOTICES_SHRINK)
                         .min_h_0()
                         .mb(px(SEAM_GAP))
-                        .border_b_1()
+                        .border_b(tokens::stroke::HAIRLINE)
                         .border_color(seam_color(cx))
                         .children(notices),
                 )
@@ -303,7 +306,7 @@ impl FleetView {
                 banner::tinted(status.warning),
             ));
         }
-        let plain = supraman_ui::notices::render(
+        let plain = supraman_ui::surfaces::notices::render(
             self.plain_notices(cx),
             status.warning,
             |key, cx| glyph_button(&self.hits, key, Icon::Close, "Dismiss", cx),
@@ -348,7 +351,7 @@ impl FleetView {
         }
     }
 
-    /// The sidebar's rows in order: a key each and the tokens its hit keys contain (supraman_ui::keyed_list).
+    /// The sidebar's rows in order: a key each and the tokens its hit keys contain (supraman_ui::list::keyed_list).
     fn set_left_rows(&mut self, tree: &Rc<fleet::Tree>, cx: &gpui::App) {
         let mut rows = Vec::new();
         for (e, entry) in tree.entries.iter().enumerate() {
@@ -438,7 +441,7 @@ impl FleetView {
     }
 
     #[cfg(feature = "selftest")]
-    pub fn left_list(&self) -> &supraman_ui::keyed_list::KeyedList {
+    pub fn left_list(&self) -> &supraman_ui::list::keyed_list::KeyedList {
         &self.sidebar.left_list
     }
 
@@ -508,8 +511,8 @@ impl FleetView {
                 .relative()
                 .flex_none()
                 .px_3()
-                .py(px(2.))
-                .border_b_1()
+                .py(tokens::space::XS)
+                .border_b(tokens::stroke::HAIRLINE)
                 .border_color(cx.theme().colors().border)
                 .text_xs()
                 .text_color(secondary(cx))
@@ -544,7 +547,7 @@ impl FleetView {
             .px_3()
             .py_2()
             .mb(px(SEAM_GAP))
-            .border_b_1()
+            .border_b(tokens::stroke::HAIRLINE)
             .border_color(seam_color(cx))
             .child(
                 div()
@@ -703,7 +706,7 @@ impl FleetView {
                 },
             ))
         };
-        let buttons = div().flex().flex_none().items_center().gap(px(2.)).child(add).children(self.work_button(entry, &group, shown, cx)).child(self.task_button(entry, &group, shown, cx));
+        let buttons = div().flex().flex_none().items_center().gap(tokens::space::XS).child(add).children(self.work_button(entry, &group, shown, cx)).child(self.task_button(entry, &group, shown, cx));
         let editing_now = editing.is_some();
         let label = editing.unwrap_or_else(|| {
             tree_label(&self.hits, &format!("group-{name}"), div().flex_none().font_weight(FontWeight::BOLD).whitespace_nowrap().child(SharedString::from(name.clone()))).into_any_element()
@@ -828,7 +831,7 @@ impl FleetView {
             .child(tree_label(&self.hits, &tree_key, div().flex_none().whitespace_nowrap().when(top, |d| d.font_weight(FontWeight::BOLD)).child(SharedString::from(repo.name.clone()))))
             .child(clipped(format!("branch-{key}"), branch, false).text_xs().text_color(secondary(cx)).child(hit_target(&self.hits, format!("branch-{key}"))))
             .child(div().relative().flex_1().child(hit_target(&self.hits, format!("repo-room-{key}"))))
-            .child(div().flex().flex_none().items_center().gap(px(2.)).children(history).child(new_claude).child(terminal).children(work))
+            .child(div().flex().flex_none().items_center().gap(tokens::space::XS).children(history).child(new_claude).child(terminal).children(work))
             .on_mouse_down(MouseButton::Right, {
                 let key = key.clone();
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
@@ -886,9 +889,9 @@ impl FleetView {
             .flex_col()
             .pl(indent)
             .pr_2()
-            .py(px(1.))
+            .py(LINE_PAD)
             .text_sm()
-            .when(shown, |d| d.border_l_2().border_color(colors.border_focused).pl(indent - px(2.)))
+            .when(shown, |d| d.border_l(tokens::stroke::FOCUS).border_color(colors.border_focused).pl(indent - tokens::stroke::FOCUS))
             .when(dimmed, |d| d.opacity(DIMMED))
             .child(line)
             .when_some(waiting_for, |d, w| {
@@ -975,7 +978,7 @@ impl FleetView {
                     .flex()
                     .flex_none()
                     .items_center()
-                    .gap(px(2.))
+                    .gap(tokens::space::XS)
                     .child(star)
                     .child(action.map_or_else(slot, IntoElement::into_any_element)),
             )

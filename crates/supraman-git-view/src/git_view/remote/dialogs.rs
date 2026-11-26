@@ -6,16 +6,16 @@ use gpui::{Focusable as _, AnyElement, AppContext as _, Context, Entity, FocusHa
 use supraman_core::askpass::{Asked, Prompt, Reply};
 use supraman_gitman::write::remote::PullMode;
 use supraman_gitman::Remote;
-use supraman_ui::button;
-use supraman_ui::dialog::{Button as DialogButton, Panel};
-use supraman_ui::form;
+use supraman_ui::controls::button;
+use supraman_ui::surfaces::dialog::{Button as DialogButton, Panel};
+use supraman_ui::surfaces::form;
 use supraman_ui::hit::hit_target;
-use supraman_ui::segmented::{Segment, segmented};
-use supraman_ui::text_input::{InputEvent, TextInput};
+use supraman_ui::controls::segmented::{Segment, segmented};
+use supraman_ui::text::input::{InputEvent, TextInput};
 use theme::ActiveTheme as _;
 
 use super::RemoteActions;
-use supraman_ui::checkbox::Checkbox;
+use supraman_ui::controls::checkbox::Checkbox;
 
 /// What follows a chosen upstream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use gpui::{AnyElement, ClickEvent, Context, ScrollHandle, SharedString, div, prelude::*};
-use supraman_ui::{button, session};
-use supraman_ui::details::{self, Section};
+use supraman_ui::{controls::button, patterns::session};
+use supraman_ui::patterns::details::{self, Section};
 use theme::ActiveTheme as _;
 
 use super::menu::{MenuAction, MenuItem, MenuTarget, group_items};
@@ -124,7 +124,7 @@ impl FleetView {
     }
 
     pub(super) fn refresh_details(&mut self, cx: &mut Context<Self>) {
-        let _stall = supraman_ui::stall::section("poll: refresh_details");
+        let _stall = supraman_runtime::stall::section("poll: refresh_details");
         if !self.tabs.iter().any(|t| matches!(&t.kind, TabKind::Details(p) if matches!(p.target, MenuTarget::Session { .. }))) {
             return;
         }

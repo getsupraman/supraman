@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use gpui::{App, AppContext as _, Entity, Pixels};
-use supraman_ui::keyed_list::KeyedList;
+use supraman_ui::list::keyed_list::KeyedList;
 
 use super::left::{self, LeftRow, PendingReveal};
 use super::left_width::LeftWidth;

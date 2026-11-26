@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use gpui::{AppContext as _, Context, Entity, Pixels, SharedString, Subscription, px};
-use supraman_ui::blink::Blink;
+use supraman_ui::text::blink::Blink;
 use supraman_core::TerminalSettings;
 
 use super::{FleetView, shells};

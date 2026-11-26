@@ -7,8 +7,8 @@ use supraman_gitman::write::remote;
 use supraman_gitman::{Remote, mask_userinfo};
 #[cfg(test)]
 use supraman_ui::focus_order::FocusOrder;
-use supraman_ui::form::{self, Answers, Form};
-use supraman_ui::text_input::TextInput;
+use supraman_ui::surfaces::form::{self, Answers, Form};
+use supraman_ui::text::input::TextInput;
 
 use super::{Doing, Done, RemoteActions};
 

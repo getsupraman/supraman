@@ -1,4 +1,4 @@
-use supraman_ui::notices::{NoticeKind, remove_one};
+use supraman_ui::surfaces::notices::{NoticeKind, remove_one};
 use gpui::{App, Context};
 
 use super::FleetView;
@@ -72,7 +72,7 @@ fn undismissed<'a>(errors: &'a [String], dismissed: &'a [String]) -> impl Iterat
 
 #[cfg(test)]
 mod tests {
-    use supraman_ui::notices::dismiss_key;
+    use supraman_ui::surfaces::notices::dismiss_key;
 
     use super::*;
 

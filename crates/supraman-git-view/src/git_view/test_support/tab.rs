@@ -139,7 +139,7 @@ pub(crate) fn open_unchecked<'a>(folder: &Path, opts: Opts, cx: &'a mut TestAppC
     cx.update(|cx| {
         if !cx.has_global::<supraman_term::terminal_settings::TerminalConfig>() {
             supraman_ui::init_globals(cx, "test");
-            supraman_ui::text_input::bind_keys(cx);
+            supraman_ui::text::input::bind_keys(cx);
             bind_keys(cx);
         }
         if opts.editor {
@@ -179,7 +179,7 @@ pub(crate) fn aside(cx: &mut VisualTestContext) -> (FocusHandle, Rc<RefCell<Vec<
     holder.read_with(cx, |h, _| h.aside.as_ref().map(|a| (a.focus.clone(), a.keys.clone()))).expect("opened with Opts::aside")
 }
 
-/// The pane holding the keys, by F6's key: the tab's [`supraman_ui::dialog::PANE`] while its prompt has them.
+/// The pane holding the keys, by F6's key: the tab's [`supraman_ui::surfaces::dialog::PANE`] while its prompt has them.
 pub(crate) fn pane_focused(cx: &mut VisualTestContext) -> Option<String> {
     cx.update(|window, cx| supraman_ui::focus::focused(window, cx).map(|k| k.to_string()))
 }

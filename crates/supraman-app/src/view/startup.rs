@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use gpui::{App, AsyncApp, Context, Entity, SharedString, WeakEntity, Window, px};
-use supraman_ui::open::{self, Link};
+use supraman_core::open::Link;
 use supraman_claude::check_supported;
 use supraman_core::Settings;
 use supraman_core::store::Save;
-use supraman_ui::nudge::Nudged;
-use supraman_ui::timeline;
+use supraman_runtime::nudge::Nudged;
+use supraman_core::timeline;
 
 use super::{Cli, FleetView, Poller, REFRESH_EVERY, Refresh, any_exit};
 use crate::dismissed::Dismissed;
@@ -187,13 +187,13 @@ async fn first_poll(this: &WeakEntity<FleetView>, mut poller: Poller, cx: &mut A
     let checking = Instant::now();
     let checked = executor.spawn(async move {
         let checked = check_supported();
-        timeline("version check done", checking.elapsed());
+        timeline::phase("version check done", checking.elapsed());
         checked
     });
     let first = executor.spawn(async move {
         let setting_up = Instant::now();
         let setup = poller.setup();
-        timeline("setup done", setting_up.elapsed());
+        timeline::phase("setup done", setting_up.elapsed());
         let refresh = poller.read(true);
         (poller, setup, refresh)
     });
@@ -218,7 +218,7 @@ async fn first_poll(this: &WeakEntity<FleetView>, mut poller: Poller, cx: &mut A
 
 pub(super) fn open_link(link: &Link, cx: &mut App) {
     match link {
-        Link::Url(url) => open::open_off_thread(url.clone(), cx).detach(),
-        Link::Path(path) => open::open_off_thread(path.clone(), cx).detach(),
+        Link::Url(url) => supraman_runtime::open_off_thread(url.clone(), cx).detach(),
+        Link::Path(path) => supraman_runtime::open_off_thread(path.clone(), cx).detach(),
     }
 }

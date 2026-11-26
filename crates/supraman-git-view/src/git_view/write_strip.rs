@@ -1,7 +1,7 @@
 //! The toolbar's one strip of the write under way: a remote call's words and progress, else a write's that has run `CANCEL_AFTER`, then Cancel.
 
 use gpui::{ClickEvent, Context, Div, Entity, div, prelude::*};
-use supraman_ui::button;
+use supraman_ui::controls::button;
 use theme::ActiveTheme as _;
 
 use super::GitView;

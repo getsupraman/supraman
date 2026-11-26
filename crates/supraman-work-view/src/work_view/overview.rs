@@ -3,11 +3,11 @@
 use supraman_core::text::count;
 use gpui::{ClickEvent, FontWeight, Hsla};
 use supraman_core::time::{self, rfc3339_ms};
-use supraman_ui::placeholder::placeholder;
+use supraman_ui::patterns::placeholder::placeholder;
 use supraman_ui::hit::hit_target;
 use supraman_ui::marks::{Mark, dot};
 use supraman_ui::clipped::clipped;
-use supraman_ui::{button, fonts};
+use supraman_ui::{controls::button, fonts};
 use supraman_workman::{Claim, Honesty, OverviewRun, Rollup};
 
 use super::cards::{self, Card};
@@ -17,8 +17,13 @@ use super::projects::{active, closed_runs};
 use super::state::StateKey;
 use super::*;
 use supraman_ui::label::Label;
-use supraman_ui::banner;
+use supraman_ui::surfaces::{banner, card};
 use supraman_ui::tokens;
+
+/// The least width of Working now and the tiles beside Needs you.
+const SIDE_MIN: gpui::Pixels = gpui::px(260.);
+/// The least width of Needs you.
+const NEEDS_MIN: gpui::Pixels = gpui::px(320.);
 
 pub(crate) const NEEDS_SHOWN: usize = 5;
 /// Wide enough for the longest word of a tile's label, so a label wraps between words only.
@@ -112,7 +117,7 @@ impl WorkView {
                     .child(div().relative().text_sm().text_color(colors.text_muted).child(SharedString::from(said.clone())).child(hit_target(&self.hits, format!("work-overview-sentence={said}")))),
             )
             .children(self.overview.as_ref().map(|o| div().flex_none().text_xs().text_color(colors.text_muted).child(SharedString::from(as_of(&o.as_of, now)))));
-        let side = div().flex().flex_col().gap_3().flex_1().min_w(px(260.)).child(self.render_working(now, cx)).children(self.render_tiles(cx));
+        let side = div().flex().flex_col().gap_3().flex_1().min_w(SIDE_MIN).child(self.render_working(now, cx)).children(self.render_tiles(cx));
         let mut root = supraman_ui::scroll::area("work-overview")
             .track(&self.list_scroll)
             .size_full()
@@ -131,56 +136,40 @@ impl WorkView {
     }
 
     fn card(&self, title: &str, count: Option<usize>, cx: &App) -> gpui::Div {
-        let colors = cx.theme().colors();
-        div().flex().flex_col().rounded_md().border_1().border_color(colors.border_variant).bg(colors.panel_background).child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .px_3()
-                .py_2()
-                .text_sm()
-                .font_weight(FontWeight::SEMIBOLD)
-                .child(SharedString::from(title.to_string()))
-                .children(count.map(|n| div().text_xs().font_weight(FontWeight::NORMAL).text_color(colors.text_muted).child(SharedString::from(n.to_string())))),
-        )
+        card::card(cx).child(card::header(title.to_string(), count, cx))
     }
 
     fn render_needs(&self, needs: &[Card], now: i64, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
-        let mut card = self.card("Needs you", Some(needs.len()), cx).flex_1().min_w(px(320.));
+        let mut card = self.card("Needs you", Some(needs.len()), cx).flex_1().min_w(NEEDS_MIN);
         if needs.is_empty() {
             card = card.child(placeholder("Nothing needs you.", Vec::<SharedString>::new(), cx).px_3().pb_3());
         }
         for c in needs.iter().take(NEEDS_SHOWN) {
             let id = c.item_id.clone();
             card = card.child(
-                supraman_ui::list::row(&self.hits, button::RowKeys::one(SharedString::from(format!("work-overview-needs-{}", c.ref_))), supraman_ui::list::Chrome::new(), cx)
+                card::ruled(supraman_ui::list::row(&self.hits, button::RowKeys::one(SharedString::from(format!("work-overview-needs-{}", c.ref_))), supraman_ui::list::Chrome::new(), cx), cx)
                     .flex()
                     .items_start()
                     .gap_2()
                     .px_3()
-                    .py(px(5.))
-                    .border_t_1()
-                    .border_color(colors.border_variant)
+                    .py(card::ROW_Y)
                     .child({
                         let text = div()
                             .child(div().whitespace_normal().child(SharedString::from(c.title.clone())))
                             .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(format!("{} · {}", c.badge, c.ref_))));
-                        banner::marked(dot(Mark::Filled(supraman_ui::inbox_card::kind_color(&c.kind, cx))), text).flex_1().min_w_0().text_sm()
+                        banner::marked(dot(Mark::Filled(crate::work_view::inbox_card::kind_color(&c.kind, cx))), text).flex_1().min_w_0().text_sm()
                     })
-                    .children(c.since.and_then(|at| supraman_ui::inbox_card::when(format!("work-overview-needs-when-{}", c.ref_), at, now, cx)).map(|w| w.text_xs()))
+                    .children(c.since.and_then(|at| supraman_ui::patterns::inbox_card::when(format!("work-overview-needs-when-{}", c.ref_), at, now, cx)).map(|w| w.text_xs()))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.open_from_inbox(id.clone(), cx))),
             );
         }
         if needs.len() > NEEDS_SHOWN {
             let more = format!("+{} more in the inbox", needs.len() - NEEDS_SHOWN);
             card = card.child(
-                supraman_ui::list::row(&self.hits, button::RowKeys::one(SharedString::from("work-overview-more")), supraman_ui::list::Chrome::new(), cx)
+                card::ruled(supraman_ui::list::row(&self.hits, button::RowKeys::one(SharedString::from("work-overview-more")), supraman_ui::list::Chrome::new(), cx), cx)
                     .px_3()
                     .py_2()
-                    .border_t_1()
-                    .border_color(colors.border_variant)
                     .text_xs()
                     .text_color(colors.text_accent)
                     .child(SharedString::from(more.clone()))
@@ -208,14 +197,12 @@ impl WorkView {
             let mark = Mark::Filled(found.map_or(cx.theme().status().info, |s| s.activity.color(cx)));
             let open = found.map(|s| self.open_control(format!("work-working-open-{qref}"), &s.claude_session_id, cx));
             card = card.child(
-                div()
+                card::ruled(div(), cx)
                     .flex()
                     .items_start()
                     .gap_2()
                     .px_3()
-                    .py(px(5.))
-                    .border_t_1()
-                    .border_color(colors.border_variant)
+                    .py(card::ROW_Y)
                     .child(banner::marked(
                         dot(mark),
                         div()
@@ -253,7 +240,7 @@ impl WorkView {
         let colors = cx.theme().colors();
         let error = cx.theme().status().error;
         let tasks: u32 = self.projects.iter().map(|p| open_of(&p.rollup)).sum();
-        let mut row = div().flex().flex_wrap().rounded_md().border_1().border_color(colors.border_variant).bg(colors.panel_background);
+        let mut row = card::card(cx).flex_row().flex_wrap();
         for (n, label, alarm) in tiles(&honesty, tasks) {
             let fg: Hsla = if alarm { error } else { colors.text };
             let words = label.split(' ').enumerate().map(|(i, word)| {
@@ -268,7 +255,7 @@ impl WorkView {
                     .px_3()
                     .py_2()
                     .child(fonts::figures(div().text_xl().font_weight(FontWeight::SEMIBOLD).text_color(fg)).child(SharedString::from(n.to_string())))
-                    .child(div().flex().flex_wrap().gap_x(px(3.)).text_xs().text_color(colors.text_muted).children(words))
+                    .child(div().flex().flex_wrap().gap_x(tokens::space::XS).text_xs().text_color(colors.text_muted).children(words))
                     .child(hit_target(&self.hits, format!("work-tile-{label}={n}"))),
             );
         }
@@ -296,15 +283,9 @@ impl WorkView {
                     .child(SharedString::from(runs_line(project)))
                     .child(hit_target(&self.hits, format!("work-overview-runs-{qref}"))),
             );
-        let mut card = div()
+        let mut card = card::card(cx)
             .relative()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .rounded_md()
-            .border_1()
-            .border_color(colors.border_variant)
-            .bg(colors.panel_background)
+            .gap(tokens::space::L)
             .min_w_0()
             .overflow_hidden()
             .pb_1()
@@ -314,14 +295,12 @@ impl WorkView {
         for run in active(project) {
             let id = run.item.id.clone();
             card = card.child(
-                supraman_ui::list::row(&self.hits, button::RowKeys::one(SharedString::from(format!("work-overview-run-{}", run.item.qualified_ref))), supraman_ui::list::Chrome::new(), cx)
+                card::ruled(supraman_ui::list::row(&self.hits, button::RowKeys::one(SharedString::from(format!("work-overview-run-{}", run.item.qualified_ref))), supraman_ui::list::Chrome::new(), cx), cx)
                     .flex()
                     .items_center()
                     .gap_3()
                     .px_3()
-                    .py(px(5.))
-                    .border_t_1()
-                    .border_color(colors.border_variant)
+                    .py(card::ROW_Y)
                     .child(
                         div()
                             .flex_1()

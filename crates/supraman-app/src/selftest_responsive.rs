@@ -1,6 +1,6 @@
 //! Keystroke-to-paint with René's load (460 live sessions, 2800 closed ones): characters typed at a typist's pace
 //! into New task…'s prompt and into a shell tab, each timed from when it was due to the first frame painted with it,
-//! and every UI-thread stall over 100 ms (supraman_ui::stall) with what ran.
+//! and every UI-thread stall over 100 ms (supraman_runtime::stall) with what ran.
 
 use std::time::{Duration, Instant};
 
@@ -8,7 +8,7 @@ use anyhow::{bail, Context as _};
 use gpui::{AsyncWindowContext, Entity, Keystroke, Modifiers};
 use supraman_claude::Session;
 use supraman_term::Terminal;
-use supraman_ui::{percentile, stall};
+use supraman_runtime::{frames::percentile, stall};
 
 use crate::selftest::{GROUP, frames, sleep, until, until_with, wait_for_tab_terminal};
 use crate::view::FleetView;

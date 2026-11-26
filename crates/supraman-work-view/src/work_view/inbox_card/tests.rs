@@ -123,3 +123,15 @@ fn every_kinds_card_shows_open_as_a_word_and_its_other_actions_as_icons(cx: &mut
         assert!(open.left() >= dismiss.right(), "{}: the word after the hover icons", card.kind);
     }
 }
+
+#[gpui::test]
+fn blocked_is_the_warning_colour_whoever_raised_it(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        supraman_ui::init_globals(cx, "test");
+        let status = cx.theme().status().clone();
+        assert_eq!(kind_color("blocked", cx), status.warning);
+        assert_eq!(kind_color("blocker_finding", cx), status.error);
+        assert_eq!(kind_color("duplicate", cx), status.hint);
+        assert_eq!(kind_color("stale_in_progress", cx), status.info);
+    });
+}

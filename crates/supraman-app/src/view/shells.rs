@@ -6,7 +6,7 @@ use std::sync::Arc;
 use gpui::{AppContext as _, Context, SharedString};
 use supraman_core::shells::{Shell, ShellSetting, Shells};
 use supraman_core::{Settings, TerminalSettings};
-use supraman_ui::menu::item;
+use supraman_ui::controls::menu::item;
 
 use super::menu::{ContextMenu, MenuAction, MenuItem};
 use super::{FleetView, TabKind};

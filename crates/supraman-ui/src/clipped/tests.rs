@@ -20,7 +20,7 @@ mod pair {
 
     use super::*;
     use crate::hit::{HitTargets, hit_target};
-    use crate::tooltip::LAST_SHOWN;
+    use crate::controls::tooltip::LAST_SHOWN;
 
     const BRIGHT: &str = "feature-branch";
     const MUTED: &str = "P:/Projects/somewhere/far/away";

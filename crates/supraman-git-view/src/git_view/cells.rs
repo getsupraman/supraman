@@ -1,7 +1,8 @@
 //! The Branch / Tag, Commit Message, Date and Sha cells.
 
-use gpui::{AnyElement, ClickEvent, Context, Div, Hsla, MouseButton, MouseDownEvent, SharedString, Stateful, Svg, canvas, deferred, div, prelude::*, px, relative};
+use gpui::{AnyElement, ClickEvent, Context, Div, Hsla, MouseButton, MouseDownEvent, Pixels, SharedString, Stateful, Svg, canvas, deferred, div, prelude::*, px, relative};
 use supraman_gitman::{RefGroup, RefKind, Row, short_sha};
+use supraman_ui::tokens;
 use supraman_ui::clipped::clipped;
 use supraman_ui::dnd::{self, DropZone};
 use supraman_ui::fonts;
@@ -14,6 +15,11 @@ use super::branch::DraggedPill;
 use super::colours::Palette;
 use super::graph::{self, BAR, CELL_PAD, GAP, LINE};
 use super::load::GraphRow;
+
+/// The least length of a row's connector to its pills.
+const LINK_MIN: gpui::Pixels = px(4.);
+/// The widest a pill group's hover list grows.
+const HOVER_LIST_WIDTH: gpui::Pixels = px(320.);
 
 /// The hover list shows at most this many groups.
 const LISTED: usize = 100;
@@ -109,7 +115,7 @@ pub(crate) fn pill(key: impl Into<String>, face: Face, colour: usize, palette: &
         .overflow_hidden()
         .h(px(LINE))
         .px(pad)
-        .rounded(px(4.))
+        .rounded(tokens::radius::S)
         .map(|d| pill_look(pill_fill(colour, false, palette), hover).paint(d, None))
         .child(supraman_ui::popup::open_fill(key.clone()).radius(supraman_ui::tokens::radius::S).fill(hover))
         .text_color(text)
@@ -159,7 +165,7 @@ fn icons(key: &str, icons: Vec<Icon>, colour: Hsla, hits: &HitTargets) -> Div {
     let shown = icons.into_iter().enumerate().rev().map(|(n, i)| {
         div().relative().flex_none().when(n < last, |d| d.mr(px(PILL_GAP))).child(i.svg(PILL_ICON, colour)).child(hit_target(hits, format!("{key}-icon-{n}")))
     });
-    div().flex().flex_row_reverse().flex_wrap().justify_end().min_w_0().h(px(PILL_ICON)).overflow_hidden().child(div().flex_none().w(px(0.)).h(px(PILL_ICON))).children(shown).child(div().flex_none().w(px(ICON_SLACK)).h(px(PILL_ICON)))
+    div().flex().flex_row_reverse().flex_wrap().justify_end().min_w_0().h(px(PILL_ICON)).overflow_hidden().child(div().flex_none().w(gpui::Pixels::ZERO).h(px(PILL_ICON))).children(shown).child(div().flex_none().w(px(ICON_SLACK)).h(px(PILL_ICON)))
 }
 
 /// A pill of row `ix`'s group `group`: its menu, double-click checkout, drag and drop.
@@ -182,13 +188,13 @@ pub(crate) fn acting(pill: Div, key: String, ix: usize, group: &RefGroup, at: us
 }
 
 /// The cell of a row whose name field stands in place of its pills.
-pub(crate) fn naming(ix: usize, field: gpui::Entity<supraman_ui::text_input::TextInput>, hits: &HitTargets) -> AnyElement {
+pub(crate) fn naming(ix: usize, field: gpui::Entity<supraman_ui::text::input::TextInput>, hits: &HitTargets) -> AnyElement {
     div().relative().size_full().flex().items_center().child(hit_target(hits, format!("git-refs-{ix}"))).child(div().w_full().child(field)).into_any_element()
 }
 
 pub(crate) fn refs(ix: usize, row: &GraphRow, view: RefCellView, selected: bool, palette: &Palette, hits: &HitTargets, cx: &mut Context<GitView>) -> AnyElement {
     let colour = row.row.colour;
-    let group = supraman_ui::table::row_group(super::TABLE);
+    let group = supraman_ui::list::table::row_group(super::TABLE);
     let mut cell = div()
         .id(SharedString::from(format!("git-refs-{ix}")))
         .relative()
@@ -216,12 +222,12 @@ pub(crate) fn refs(ix: usize, row: &GraphRow, view: RefCellView, selected: bool,
     });
     let (link, hits) = (palette.connector(colour), hits.clone());
     let connector = canvas(|_, _, _| {}, move |bounds, _, window, _| graph::link_line(window, bounds.left(), bounds.right(), bounds, link, &hits, format!("git-link-{ix}")));
-    cell.child(connector.flex_1().min_w(px(4.)).mr(px(-CELL_PAD)).h_full()).into_any_element()
+    cell.child(connector.flex_1().min_w(LINK_MIN).mr(px(-CELL_PAD)).h_full()).into_any_element()
 }
 
 /// A group's `+N`: its own fill, [`GAP`] from the pill, as two graph stripes stand apart.
 fn more_chip(more: SharedString, colour: usize, palette: &Palette) -> Div {
-    div().relative().flex_none().flex().items_center().h(px(LINE)).px_1p5().rounded(px(4.)).bg(palette.pill(colour)).text_xs().text_color(palette.text).child(Label::element(more).centred())
+    div().relative().flex_none().flex().items_center().h(px(LINE)).px_1p5().rounded(tokens::radius::S).bg(palette.pill(colour)).text_xs().text_color(palette.text).child(Label::element(more).centred())
 }
 
 /// Every group in one block over the row's pill, as wide as its widest group and never narrower than the pill.
@@ -234,17 +240,17 @@ fn list(ix: usize, row: &GraphRow, groups: &[RefGroup], colour: usize, palette: 
         .top_0()
         .left_0()
         .min_w(relative(1.))
-        .max_w(px(320.))
+        .max_w(HOVER_LIST_WIDTH)
         .flex()
         .flex_col()
         .children(groups.iter().enumerate().map(|(i, g)| {
             let key = format!("git-reflist-{ix}-{i}");
-            let top = if i == 0 { px(4.) } else { px(0.) };
-            let bottom = if i == last { px(4.) } else { px(0.) };
+            let top = if i == 0 { tokens::radius::S } else { Pixels::ZERO };
+            let bottom = if i == last { tokens::radius::S } else { Pixels::ZERO };
             let hover = palette.pill_hover_solid(colour);
             let shown = pill(format!("{key}-name"), Face::of(g), colour, palette, hits)
                 .relative()
-                .rounded(px(0.))
+                .rounded(gpui::Pixels::ZERO)
                 .rounded_t(top)
                 .rounded_b(bottom)
                 .map(|d| pill_look(palette.pill_solid(colour), hover).paint(d, None))

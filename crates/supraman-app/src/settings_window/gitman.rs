@@ -6,12 +6,15 @@ use gpui::{AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focus
 use supraman_core::Settings;
 use supraman_gitman::{BackgroundSettings, background_settings, set_setting};
 use supraman_ui::hit::HitTargets;
-use supraman_ui::settings_page::row;
-use supraman_ui::text_input::{InputEvent, TextInput};
+use supraman_ui::patterns::settings_page::row;
+use supraman_ui::text::input::{InputEvent, TextInput};
 use theme::ActiveTheme as _;
 
 use crate::view::writes::Serial;
-use supraman_ui::checkbox::Checkbox;
+use supraman_ui::controls::checkbox::Checkbox;
+
+/// The fetch interval field: a few digits.
+const MINUTES_WIDTH: gpui::Pixels = px(72.);
 
 pub const MAINTENANCE_KEY: &str = "gitman-maintenance";
 pub const WORKTREE_WIP_KEY: &str = "gitman-worktree-wip";
@@ -141,7 +144,7 @@ impl GitmanPage {
     }
 
     fn rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let field = div().w(px(72.)).child(self.every.clone()).into_any_element();
+        let field = div().w(MINUTES_WIDTH).child(self.every.clone()).into_any_element();
         let [maintenance, worktree_wip] = &self.ticks;
         let tick = Checkbox::new(&self.hits, MAINTENANCE_KEY, self.settings.maintains()).focus(maintenance).on_toggle(cx.listener(|this, _: &bool, _, cx| this.toggle_maintenance(cx)));
         let worktrees = Checkbox::new(&self.hits, WORKTREE_WIP_KEY, self.settings.worktree_wips()).focus(worktree_wip).on_toggle(cx.listener(|this, _: &bool, _, cx| this.toggle_worktree_wip(cx)));
@@ -151,7 +154,7 @@ impl GitmanPage {
             row("Show other worktrees' work in progress", "A row in the graph above each other worktree's HEAD while it has changes or a Claude session works in it.", worktrees.into_any_element(), None, cx),
         ];
         if let Some(error) = &self.error {
-            rows.insert(0, supraman_ui::banner::tinted(cx.theme().status().error).my_2().child(error.clone()).into_any_element());
+            rows.insert(0, supraman_ui::surfaces::banner::tinted(cx.theme().status().error).my_2().child(error.clone()).into_any_element());
         }
         rows
     }
@@ -173,7 +176,7 @@ mod tests {
     fn the_page_shows_the_defaults_and_saves_both_keys_with_the_tables_others_kept(cx: &mut TestAppContext) {
         cx.update(|cx| {
             supraman_ui::init_globals(cx, "test");
-            supraman_ui::text_input::bind_keys(cx);
+            supraman_ui::text::input::bind_keys(cx);
         });
         let home = tempfile::tempdir().unwrap();
         std::fs::write(Settings::path(home.path()), "[sessions]\nmax_working = 3\n\n[gitman]\npull = \"rebase\"\nprune = false\n").unwrap();
@@ -206,7 +209,7 @@ mod tests {
     fn the_worktree_wip_tick_is_on_by_default_and_saves_off(cx: &mut TestAppContext) {
         cx.update(|cx| {
             supraman_ui::init_globals(cx, "test");
-            supraman_ui::text_input::bind_keys(cx);
+            supraman_ui::text::input::bind_keys(cx);
         });
         let home = tempfile::tempdir().unwrap();
         std::fs::write(Settings::path(home.path()), "[gitman]
@@ -228,7 +231,7 @@ maintenance = false
     fn the_pages_members_are_its_field_then_its_tick_boxes_and_space_ticks_the_focused_one(cx: &mut TestAppContext) {
         cx.update(|cx| {
             supraman_ui::init_globals(cx, "test");
-            supraman_ui::text_input::bind_keys(cx);
+            supraman_ui::text::input::bind_keys(cx);
             supraman_ui::focus_order::bind_keys(cx);
         });
         let home = tempfile::tempdir().unwrap();

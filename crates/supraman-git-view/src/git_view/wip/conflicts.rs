@@ -1,13 +1,14 @@
 //! The conflict panel: the WIP panel's header while an operation is under way, the conflicted files' buttons and their writes.
 
 use supraman_core::text::count;
-use gpui::{Context, Div, SharedString, div, prelude::*, px};
+use gpui::{Context, Div, SharedString, div, prelude::*};
 use supraman_gitman::write::conflicts::{self, Marked, Sequence, Side};
 use supraman_gitman::{OperationState, UnderWay};
-use supraman_ui::button;
+use supraman_ui::tokens;
+use supraman_ui::controls::button;
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::controls::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
 use super::actions::{Doing, Kept, index_write};
@@ -123,7 +124,7 @@ impl WipPanel {
         let words = shown.as_ref().and_then(|s| s.conflicts.get(path)).map_or("conflicted", |c| c.words());
         let (current, incoming) = shown.as_ref().and_then(|s| s.under_way.clone()).map_or_else(Default::default, |u| (u.current, u.incoming));
         let icon = |key: String, icon: Icon, tip: String| {
-            let button = button::Button::new(&hits, key).icon(icon.svg(12., muted)).icon_only(px(20.));
+            let button = button::Button::new(&hits, key).icon(icon.svg(12., muted)).icon_only(tokens::control::SMALL.height);
             if busy.is_none() { button.tooltip(Tooltip::text(tip)) } else { button }
         };
         let named = |what: &str, name: &str| if name.is_empty() { format!("Take {what} whole") } else { format!("Take {what} ({name}) whole") };

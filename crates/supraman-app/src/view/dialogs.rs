@@ -10,6 +10,6 @@ pub struct Dialogs {
     pub confirm: Option<Confirm>,
     /// Remove Folder's or Remove Group's question while it would leave schedules without a row.
     pub remove: Option<RemoveQuestion>,
-    pub dialog: supraman_ui::dialog::Dialog,
+    pub dialog: supraman_ui::surfaces::dialog::Dialog,
     pub pick_folder: Option<PathBuf>,
 }

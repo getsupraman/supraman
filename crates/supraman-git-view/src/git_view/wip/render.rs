@@ -2,14 +2,15 @@
 
 use std::rc::Rc;
 
-use gpui::{AnyElement, ClickEvent, Context, Div, Render, SharedString, Window, div, prelude::*, px};
+use gpui::{AnyElement, ClickEvent, Context, Div, Render, SharedString, Window, div, prelude::*};
 use supraman_gitman::{ChangeKind, FileChange};
-use supraman_ui::banner;
-use supraman_ui::button;
+use supraman_ui::tokens;
+use supraman_ui::surfaces::banner;
+use supraman_ui::controls::button;
 use supraman_ui::hit::HitTargets;
 use supraman_ui::icon::Icon;
-use supraman_ui::stall;
-use supraman_ui::tooltip::Tooltip;
+use supraman_runtime::stall;
+use supraman_ui::controls::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
 use super::{Ask, Branch, Section, Shown, State, WipPanel, file_changes};
@@ -37,7 +38,7 @@ impl WipPanel {
 
     /// The red trash button: Discard all changes, asked first.
     fn discard_all_button(&self, cx: &mut Context<Self>) -> button::Button {
-        let trash = button::Button::new(&self.hits, "wip-discard-all").icon(Icon::Trash.svg(14., cx.theme().status().error)).icon_only(px(24.)).tone(button::Tone::Danger);
+        let trash = button::Button::new(&self.hits, "wip-discard-all").icon(Icon::Trash.svg(14., cx.theme().status().error)).icon_only(tokens::bar::ICON_BUTTON).tone(button::Tone::Danger);
         let busy = self.busy(cx);
         let trash = if busy.is_none() { trash.tooltip(Tooltip::text("Discard all changes")) } else { trash };
         live(trash, busy, cx, |this, cx| this.ask(Ask::DiscardAll, cx))
@@ -51,7 +52,7 @@ impl WipPanel {
         };
         let branch = cells::branch_header("wip", name, &shown.track, self.colour, &palette, &self.hits);
         let words = div().flex_1().flex().justify_center().items_center().gap_1p5().min_w_0().child(div().id("wip-header").flex_none().child(Self::header_words(shown))).child(branch);
-        div().flex().flex_none().items_center().py_1p5().px_2().text_color(palette.text).child(self.discard_all_button(cx)).child(words).child(div().w(px(24.)))
+        div().flex().flex_none().items_center().py_1p5().px_2().text_color(palette.text).child(self.discard_all_button(cx)).child(words).child(div().w(tokens::bar::ICON_BUTTON))
     }
 
     /// A row's hover buttons per section; a conflicted file's are the conflict panel's.
@@ -63,13 +64,13 @@ impl WipPanel {
             let (hits, busy, file) = (this.hits.clone(), this.busy(cx), this.shown().and_then(|s| s.files(section).iter().find(|f| f.path == path).cloned()));
             let file = file.unwrap_or_else(|| FileChange { kind, path: path.to_string(), old_path: None, similarity: None });
             let muted = cx.theme().colors().text_muted;
-            let stash = button::Button::new(&hits, format!("wip-stash-{path}")).icon(Icon::Stash.svg(12., muted)).icon_only(px(20.)).tooltip(Tooltip::text("Stash file"));
+            let stash = button::Button::new(&hits, format!("wip-stash-{path}")).icon(Icon::Stash.svg(12., muted)).icon_only(tokens::control::SMALL.height).tooltip(Tooltip::text("Stash file"));
             let stashed = file.clone();
             let stash = live(stash, busy, cx, move |_, cx| cx.emit(PanelEvent::StashFiles(vec![stashed.clone()])));
             let row = div().flex().items_center().gap_1().child(stash.reveal(group.clone(), false));
             match section {
                 Section::Unstaged => {
-                    let discard = button::Button::new(&hits, format!("wip-discard-{path}")).icon(Icon::Trash.svg(12., muted)).icon_only(px(20.)).tooltip(Tooltip::text("Discard changes"));
+                    let discard = button::Button::new(&hits, format!("wip-discard-{path}")).icon(Icon::Trash.svg(12., muted)).icon_only(tokens::control::SMALL.height).tooltip(Tooltip::text("Discard changes"));
                     let (gone, staged) = (file.clone(), vec![file]);
                     let discard = live(discard, busy, cx, move |this, cx| this.ask(Ask::Discard(vec![gone.clone()]), cx));
                     let stage = live(button::Button::new(&hits, format!("wip-stage-{path}")).label("Stage File").tone(button::Tone::Success).fill(button::Fill::Outline), busy, cx, move |this, cx| this.stage(staged.clone(), cx));
@@ -99,7 +100,7 @@ impl WipPanel {
     fn toolbar(&self, cx: &mut Context<Self>) -> Div {
         let sort = files::sort_button(&self.hits, "wip", self.order, |this: &mut WipPanel, order, cx| this.set_order(order, cx), cx);
         let toggle = files::view_toggle(&self.hits, "wip", self.view, |_: &mut WipPanel, view, cx| cx.emit(PanelEvent::View(view)), cx);
-        div().flex().flex_none().items_center().h(px(28.)).px_2().child(sort).child(div().flex_1().flex().justify_center().child(toggle)).child(div().w(px(24.)))
+        div().flex().flex_none().items_center().h(tokens::bar::HEADER).px_2().child(sort).child(div().flex_1().flex().justify_center().child(toggle)).child(div().w(tokens::bar::ICON_BUTTON))
     }
 
     fn file_list(&self, section: Section, shown: &Rc<Shown>, cx: &mut Context<Self>) -> AnyElement {
@@ -146,14 +147,14 @@ impl WipPanel {
             .flex_none()
             .items_center()
             .gap_1()
-            .h(px(26.))
+            .h(tokens::control::MEDIUM.height)
             .px_1()
-            .rounded_sm()
+            .rounded(tokens::radius::S)
             .text_color(colors.text)
             .child(chevron.svg(12., colors.text_muted))
             .child(SharedString::from(title))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(section, cx)));
-        let rule = div().flex_none().h(px(1.)).bg(colors.border_variant);
+        let rule = div().flex_none().h(tokens::stroke::HAIRLINE).bg(colors.border_variant);
         let all = (!shown.files(section).is_empty()).then(|| self.all_button(section, cx));
         let header = div().flex().flex_none().items_center().justify_between().child(header).children(all);
         let column = div().flex().flex_col().min_h_0().px_1().child(header).child(rule);
@@ -175,7 +176,7 @@ impl WipPanel {
             .size_full()
             .gap_1()
             .child(header)
-            .child(self.toolbar(cx).border_b_1().border_color(colors.border_variant))
+            .child(self.toolbar(cx).border_b(tokens::stroke::HAIRLINE).border_color(colors.border_variant))
             .children(sections)
             .children(self.commit_area(&shown, cx))
     }

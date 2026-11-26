@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use supraman_ui::session::{LiveSession, Opening};
+use supraman_ui::patterns::session::{LiveSession, Opening};
 use supraman_workman::{Claim, ItemPage};
 
 use super::*;
@@ -66,7 +66,7 @@ impl WorkView {
             let Some(open) = view.upgrade().map(|v| v.read(cx).link.open.clone()) else { return };
             open(&sid, window, cx);
         };
-        supraman_ui::session::open(&self.hits, key, &opening, supraman_ui::button::Fill::Solid, on_open, cx).into_any_element()
+        supraman_ui::patterns::session::open(&self.hits, key, &opening, supraman_ui::controls::button::Fill::Solid, on_open, cx).into_any_element()
     }
 
     pub(crate) fn show_detail(&mut self, id: String, cx: &mut Context<Self>) {

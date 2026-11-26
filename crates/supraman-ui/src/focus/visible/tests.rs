@@ -1,6 +1,6 @@
 use gpui::{Context, Entity, Modifiers, Render, TestAppContext, VisualTestContext, Window, prelude::*};
 
-use crate::button::{Button, Size};
+use crate::controls::button::{Button, Size};
 use crate::focus::{root, visible};
 use crate::focus_order::Members;
 use crate::hit::HitTargets;

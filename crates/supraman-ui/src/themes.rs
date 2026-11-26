@@ -90,6 +90,32 @@ pub fn open(colors: &ThemeColors) -> Hsla {
     .unwrap_or(tint)
 }
 
+/// The least contrast of a reorder's insertion line and a drop target's border against the panel (WCAG 1.4.11, non-text).
+pub const DROP_LINE_FLOOR: f32 = 3.;
+
+/// A reorder's insertion line: the focus colour, moved to the nearest lightness where it holds [`DROP_LINE_FLOOR`] on the panel.
+pub fn drop_line(colors: &ThemeColors) -> Hsla {
+    let panel = colors.panel_background;
+    let ring: Hsla = over(colors.border_focused, panel).into();
+    nearest_holding(ring, |c| contrast(c, panel) >= DROP_LINE_FLOOR).unwrap_or(ring)
+}
+
+/// A drop target's border while a payload it takes hovers it: the theme's, moved to the nearest lightness where it holds
+/// [`DROP_LINE_FLOOR`] on the panel.
+pub fn drop_border(colors: &ThemeColors) -> Hsla {
+    let panel = colors.panel_background;
+    let border: Hsla = over(colors.drop_target_border, panel).into();
+    nearest_holding(border, |c| contrast(c, panel) >= DROP_LINE_FLOOR).unwrap_or_else(|| drop_line(colors))
+}
+
+/// A drop target's fill while a payload it takes hovers it: the theme's on the panel, moved to the nearest lightness where it
+/// shows ([`INACTIVE_SELECTION_SHOWS`]) and its text holds [`NAME_FLOOR`].
+pub fn drop_over(colors: &ThemeColors) -> Hsla {
+    let panel = colors.panel_background;
+    let fill: Hsla = over(colors.drop_target_background, panel).into();
+    nearest_holding(fill, |c| contrast(c, panel) >= INACTIVE_SELECTION_SHOWS && contrast(colors.text, c) >= NAME_FLOOR).unwrap_or(fill)
+}
+
 /// The distance of two fills' colours over `bg`.
 pub fn apart(a: Hsla, b: Hsla, bg: Hsla) -> f32 {
     let (a, b) = (over(a, bg), over(b, bg));
@@ -1040,6 +1066,19 @@ mod tests {
         assert_eq!(TerminalColors::from_setting(Some("other")), TerminalColors::Theme);
         for t in [TerminalColors::Theme, TerminalColors::Campbell] {
             assert_eq!(TerminalColors::from_setting(t.setting().as_deref()), t);
+        }
+    }
+
+    #[test]
+    fn a_drop_targets_look_and_the_insertion_line_show_on_every_bundled_theme() {
+        let light = from_zed(&one_dark(), &parse_family(selftest_light::LIGHT).unwrap().themes[0]).theme;
+        for theme in [dark_modern().theme, supraman_dark().theme, one_dark(), light] {
+            let c = theme.colors();
+            let panel = c.panel_background;
+            assert!(contrast(drop_line(c), panel) >= DROP_LINE_FLOOR, "{}: the insertion line {} on the panel", theme.name, hex(drop_line(c)));
+            assert!(contrast(drop_border(c), panel) >= DROP_LINE_FLOOR, "{}: the drop border {} on the panel", theme.name, hex(drop_border(c)));
+            assert!(contrast(drop_over(c), panel) >= INACTIVE_SELECTION_SHOWS, "{}: the drop fill {} on the panel", theme.name, hex(drop_over(c)));
+            assert!(contrast(c.text, drop_over(c)) >= NAME_FLOOR, "{}: text on the drop fill {}", theme.name, hex(drop_over(c)));
         }
     }
 

@@ -89,7 +89,7 @@ impl FleetView {
 
     /// Called on every render, so every change to the tabs reaches the file; nothing is written while a quit closes them.
     pub(super) fn persist_tabs(&mut self, cx: &App) {
-        let _stall = supraman_ui::stall::section("render: persist_tabs");
+        let _stall = supraman_runtime::stall::section("render: persist_tabs");
         if !self.saving.tabs_restored || self.saving.tabs_frozen || self.lifecycle.quit_asked || self.home.is_none() {
             return;
         }
@@ -256,7 +256,7 @@ impl FleetView {
             .text_color(colors.text_muted)
             .child(SharedString::from(format!("{what} Nothing runs until you resume it.")))
             .child(
-                supraman_ui::button::Button::new(&self.hits, format!("resume-tab-{id}")).label("Resume")
+                supraman_ui::controls::button::Button::new(&self.hits, format!("resume-tab-{id}")).label("Resume")
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.resume_saved(id, cx))),
             )
             .into_any_element()

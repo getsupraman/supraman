@@ -1,20 +1,26 @@
 //! The right column: the selected item, else the run, over Overview | Evidence | Notes | Activity | Brief.
 
+use supraman_ui::tokens;
 use std::rc::Rc;
 
 use gpui::{FontWeight, Hsla};
 use supraman_core::time::{near, rfc3339_local, rfc3339_ms};
-use supraman_ui::placeholder::placeholder;
-use supraman_ui::details::{self, Section};
+use supraman_ui::patterns::placeholder::placeholder;
+use supraman_ui::patterns::details::{self, Section};
 use supraman_ui::hit::hit_target;
-use supraman_ui::segmented::{Segment, segmented};
-use supraman_ui::{banner, fonts};
+use supraman_ui::controls::segmented::{Segment, segmented};
+use supraman_ui::{surfaces::banner, fonts};
 use supraman_workman::{BriefFor, ItemPage, Report, Verification};
 
 use super::item::holder_session;
 use super::state::{StateKey, independent};
 use super::*;
 use supraman_ui::label::Label;
+
+/// An event's time.
+const WHEN_WIDTH: gpui::Pixels = gpui::px(96.);
+/// An event's kind.
+const KIND_WIDTH: gpui::Pixels = gpui::px(84.);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum DetailTab {
@@ -196,7 +202,7 @@ impl WorkView {
                 .flex_none()
                 .gap_1()
                 .px_1()
-                .rounded_sm()
+                .rounded(tokens::radius::S)
                 .bg(colors.element_background)
                 .text_xs()
                 .child(div().text_color(colors.text_muted).child(label))
@@ -263,10 +269,10 @@ impl WorkView {
             .relative()
             .flex()
             .flex_col()
-            .gap(px(2.))
+            .gap(tokens::space::XS)
             .p_2()
-            .rounded_md()
-            .border_1()
+            .rounded(tokens::radius::M)
+            .border(tokens::stroke::HAIRLINE)
             .border_dashed()
             .border_color(colors.border)
             .child(
@@ -284,15 +290,15 @@ impl WorkView {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let color = if !v.passed { status.error } else if independent(v.passed, &v.run_by) { status.success } else { status.warning };
-        let pill = div().flex_none().px_2().rounded_full().bg(banner::tint(color)).text_xs().text_color(color).child(if v.passed { "Passed" } else { "Failed" });
+        let pill = div().flex_none().px_2().rounded(tokens::radius::FULL).bg(banner::tint(color)).text_xs().text_color(color).child(if v.passed { "Passed" } else { "Failed" });
         div()
             .relative()
             .flex()
             .flex_col()
             .gap_1()
             .p_2()
-            .rounded_md()
-            .border_1()
+            .rounded(tokens::radius::M)
+            .border(tokens::stroke::HAIRLINE)
             .border_color(colors.border_variant)
             .child(
                 div()
@@ -304,7 +310,7 @@ impl WorkView {
             )
             .when(!v.result_line.is_empty(), |d| d.child(div().text_sm().whitespace_normal().child(SharedString::from(v.result_line.clone()))))
             .when_some(v.command.as_deref().filter(|c| !c.is_empty()), |d, c| {
-                d.child(div().p_1().rounded_sm().bg(colors.element_background).font_family(fonts::MONO).text_xs().whitespace_normal().child(SharedString::from(c.to_string())))
+                d.child(div().p_1().rounded(tokens::radius::S).bg(colors.element_background).font_family(fonts::MONO).text_xs().whitespace_normal().child(SharedString::from(c.to_string())))
             })
             .child(hit_target(&self.hits, format!("work-evidence-verification-{index}={}", if v.passed { "pass" } else { "fail" })))
             .into_any_element()
@@ -324,11 +330,11 @@ impl WorkView {
                     .items_start()
                     .gap_3()
                     .py_1()
-                    .border_b_1()
+                    .border_b(tokens::stroke::HAIRLINE)
                     .border_color(colors.border_variant)
                     .text_sm()
-                    .child(fonts::figures(div().flex_none().w(px(96.)).text_xs().text_color(colors.text_muted)).child(SharedString::from(when(&e.at, (self.now)()))))
-                    .child(div().flex_none().w(px(84.)).text_xs().child(SharedString::from(e.kind.clone())))
+                    .child(fonts::figures(div().flex_none().w(WHEN_WIDTH).text_xs().text_color(colors.text_muted)).child(SharedString::from(when(&e.at, (self.now)()))))
+                    .child(div().flex_none().w(KIND_WIDTH).text_xs().child(SharedString::from(e.kind.clone())))
                     .child(div().flex_1().min_w_0().whitespace_normal().child(SharedString::from(e.summary.clone().unwrap_or_default())))
                     .child(div().flex_none().text_xs().text_color(colors.text_muted).child(SharedString::from(by(e.session.as_ref(), &e.actor))))
                     .child(hit_target(&self.hits, format!("work-event-{}", e.seq))),

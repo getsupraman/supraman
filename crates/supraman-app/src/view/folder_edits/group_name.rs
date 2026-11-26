@@ -3,7 +3,7 @@
 
 use gpui::{AppContext as _, Context, Entity, EventEmitter, Focusable as _, Subscription, Window};
 use supraman_core::{name_char, validate_name};
-use supraman_ui::text_input::{InputEvent, TextInput};
+use supraman_ui::text::input::{InputEvent, TextInput};
 
 use super::FolderEdit;
 

@@ -16,7 +16,7 @@ use gpui::{App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Key
 use supraman_editor::{Diff, SplitDiff, ZedEditor};
 use supraman_gitman::Repo;
 use supraman_ui::hit::HitTargets;
-use supraman_ui::stall;
+use supraman_runtime::stall;
 
 pub(crate) use load::{MAX_SHOWN_BYTES, Of, Sizes, TooLarge};
 pub use load::Target;

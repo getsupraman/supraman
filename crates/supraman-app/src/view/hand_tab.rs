@@ -11,8 +11,8 @@ use std::{
 use futures::StreamExt as _;
 use gpui::{AsyncApp, Context, WeakEntity, Window};
 use supraman_claude::{Session, Transcripts, main_repo, now_ms};
-use supraman_ui::nudge::{self, Nudged};
-use supraman_ui::timeline;
+use supraman_runtime::nudge::{self, Nudged};
+use supraman_core::timeline;
 
 use super::shells::powershell;
 use super::{FleetView, QUIT_RELEASE_WITHIN, TabKind, held_line, left};
@@ -329,7 +329,7 @@ async fn list_cached(this: &WeakEntity<FleetView>, s: Transcripts, ask: &Transcr
         .await;
     let repos = known.clone();
     this.update(cx, |this, cx| {
-        timeline(&format!("transcripts from the cache done ({} listed)", closed.len()), scanning.elapsed());
+        timeline::phase(&format!("transcripts from the cache done ({} listed)", closed.len()), scanning.elapsed());
         this.listing.main_repos.extend(known.clone());
         this.listing.closed_repos = known;
         this.set_closed(closed, continued, cx);
@@ -392,7 +392,7 @@ async fn scan_transcripts(
         this.listing.main_repos.extend(known.clone());
         this.listing.closed_repos = known;
         if this.transcripts.scanned() {
-            timeline(&format!("transcripts done ({read} files read, {} listed)", closed.len()), scanning.elapsed());
+            timeline::phase(&format!("transcripts done ({read} files read, {} listed)", closed.len()), scanning.elapsed());
         }
         this.set_closed(closed, continued, cx);
         this.polls.transcripts_answered = asks;

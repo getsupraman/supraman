@@ -39,6 +39,10 @@ what each costs. The release itself is docs/RELEASE.md.
   `overflow_*scroll`, render-time focus, `.hover(` or `px(` passed its ceiling in `crates/supraman-ui/src/ratchet/ceilings.toml`
   (use the kit's component instead), or fell below it: then set that file's ceiling to the count the message gives (`lower the
   ceiling to N`), in the same unit, so the gain holds; `print_ceilings -- --ignored --nocapture` prints today's whole table.
+  `overflow_scroll`, `render_focus`, `hover` and `ink` are at 0. `px` and `kit_px` are at their floor (ui-kit/12): a `px(`
+  that remains is geometry or measurement (cell, lane, split and drag maths, hit slop, a table column's default width) or a
+  named decision constant (`const NAME: Pixels = px(…)` with its reason); padding, gap, radius, text size, a control's or
+  bar's size and a border come from `supraman_ui::tokens`, so a new styling `px(` fails review even under its ceiling.
 - Where a test lives and the shared test helpers: docs/ARCHITECTURE.md "Testing". GitMan's integration tests are one
   binary: `cargo test --profile unit -p supraman-gitman --test it <filter>` runs them without its lib's tests.
 - The `unit` profile (`Cargo.toml`) is `release` with the workspace members incremental in 256 codegen units; the

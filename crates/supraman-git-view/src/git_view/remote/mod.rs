@@ -23,9 +23,9 @@ use supraman_gitman::write::rebase::Rebased;
 use supraman_gitman::write::{LockSet, Session, WriteError};
 use supraman_core::Settings;
 use supraman_gitman::{Head, Refs, Remote, Repo};
-use supraman_ui::confirm::{Answer, Confirm};
+use supraman_ui::surfaces::confirm::{Answer, Confirm};
 use supraman_ui::hit::HitTargets;
-use supraman_ui::menu::{ContextMenu, MenuItem};
+use supraman_ui::controls::menu::{ContextMenu, MenuItem};
 
 use super::write_gate::{Verb, WriteGate, Writes, Written};
 use supraman_core::text::capitalised;
@@ -591,14 +591,14 @@ impl RemoteActions {
                 None => RemoteAct::FetchAll,
                 Some(mode) => RemoteAct::Pull(mode),
             };
-            let it = supraman_ui::menu::item(format!("pull-{}", bar::key_of(choice)), bar::words(choice), act);
+            let it = supraman_ui::controls::menu::item(format!("pull-{}", bar::key_of(choice)), bar::words(choice), act);
             items.push(match self.pull_why_not(choice.mode()).filter(|_| choice.mode().is_some()) {
                 Some(why) => it.dimmed(why),
                 None => it,
             });
         }
         for (i, choice) in PullChoice::ALL.into_iter().enumerate() {
-            let it = supraman_ui::menu::item(format!("pull-default-{}", bar::key_of(choice)), bar::words(choice), RemoteAct::SetDefault(choice)).ticked(choice == self.pull);
+            let it = supraman_ui::controls::menu::item(format!("pull-default-{}", bar::key_of(choice)), bar::words(choice), RemoteAct::SetDefault(choice)).ticked(choice == self.pull);
             items.push(if i == 0 { it.under("Set as default") } else { it });
         }
         self.menu = Some(ContextMenu::new("The button does the default", position, items).anchored(bar::PULL_MENU_KEY));

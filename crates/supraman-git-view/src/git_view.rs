@@ -46,16 +46,17 @@ use std::sync::Arc;
 use gpui::{AnyElement, App, AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle, Pixels, Render, SharedString, Subscription, Task, Window, deferred, div, prelude::*, px};
 use supraman_gitman::write::Occupancy;
 use supraman_gitman::{Repo, WipCounts, WorktreeRow};
+use supraman_ui::tokens;
 use supraman_ui::hit::{HitTargets, hit_target};
-use supraman_ui::{banner, button, focus};
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::{surfaces::banner, controls::button, focus};
+use supraman_ui::controls::tooltip::Tooltip;
 use supraman_ui::icon::Icon;
-use supraman_ui::placeholder::placeholder;
+use supraman_ui::patterns::placeholder::placeholder;
 use supraman_ui::split::SplitPane;
-use supraman_ui::stall;
-use supraman_ui::store::save_off_thread;
-use supraman_ui::table::{self, Column, Table, TableState};
-use supraman_ui::toast::ToastSlot;
+use supraman_runtime::stall;
+use supraman_runtime::save_off_thread;
+use supraman_ui::list::table::{self, Column, Table, TableState};
+use supraman_ui::surfaces::toast::ToastSlot;
 use theme::ActiveTheme as _;
 
 use cells::ref_cell;
@@ -218,7 +219,7 @@ pub struct GitView {
     _remote_events: Subscription,
     _gate_events: [Subscription; 2],
     hidden_columns: Vec<String>,
-    column_menu: Option<supraman_ui::menu::ContextMenu<columns::ColumnAct>>,
+    column_menu: Option<supraman_ui::controls::menu::ContextMenu<columns::ColumnAct>>,
     /// The commit summary takes the keyboard on the next frame.
     focus_summary: bool,
     /// The tab's own: a click on nothing focusable in it keeps the keyboard in the tab's key context.
@@ -895,7 +896,7 @@ impl GitView {
         let panel = self.ref_panel.clone();
         if shut {
             let border = cx.theme().colors().border;
-            let strip = div().flex_none().h_full().border_r_1().border_color(border).child(panel);
+            let strip = div().flex_none().h_full().border_r(tokens::stroke::HAIRLINE).border_color(border).child(panel);
             return div().flex().size_full().child(strip).child(div().flex_1().min_w_0().h_full().child(rest)).into_any_element();
         }
         let rest_min = px(GRAPH_MIN + PANEL_MIN + 1.);
@@ -929,7 +930,7 @@ impl GitView {
     /// A warning over the tab whose × under `key` runs `dismiss`.
     fn notice_banner(&self, key: &'static str, text: String, dismiss: impl Fn(&mut GitView, &mut Context<GitView>) + 'static, cx: &mut Context<Self>) -> AnyElement {
         let color = cx.theme().status().warning;
-        let close = button::Button::new(&self.hits, key).icon(Icon::Close.svg(14., cx.theme().colors().text_muted)).icon_only(px(20.))
+        let close = button::Button::new(&self.hits, key).icon(Icon::Close.svg(14., cx.theme().colors().text_muted)).icon_only(tokens::control::SMALL.height)
             .tooltip(Tooltip::text("Dismiss"))
             .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
                 dismiss(this, cx);
@@ -941,7 +942,7 @@ impl GitView {
 
 impl GitView {
     fn toolbar(&self, cx: &mut Context<Self>) -> Div {
-        let bar = div().h(TOOLBAR).flex().items_start().border_b_1().border_color(cx.theme().colors().border);
+        let bar = div().h(TOOLBAR).flex().items_start().border_b(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border);
         let bar = bar.child(self.undo.clone()).child(self.stash_buttons(cx)).child(self.remote_buttons(cx));
         div().relative().flex_none().child(bar).child(hit_target(&self.hits, "git-toolbar".into()))
     }
@@ -1010,6 +1011,6 @@ impl Render for GitView {
             )
             .children(self.render_find().map(|f| deferred(f).with_priority(supraman_ui::tokens::Layer::OverPrompt.priority())))
             .children(self.render_column_menu(cx));
-        supraman_ui::dialog::over(tab, prompt)
+        supraman_ui::surfaces::dialog::over(tab, prompt)
     }
 }

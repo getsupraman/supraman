@@ -2,8 +2,9 @@
 
 use gpui::{MouseButton, MouseDownEvent, Pixels, Point};
 use supraman_ui::icon::Icon;
-use supraman_ui::menu::{ContextMenu, item};
-use supraman_ui::{button, open};
+use supraman_ui::controls::menu::{ContextMenu, item};
+use supraman_core::open;
+use supraman_ui::controls::button;
 
 use super::*;
 
@@ -81,12 +82,12 @@ impl WorkView {
             .items_center()
             .child(
                 button::Button::new(&self.hits, format!("{prefix}-copy")).icon(Icon::Copy.svg(12., muted)).icon_only(px(COPY_SIDE))
-                    .tooltip(supraman_ui::tooltip::Tooltip::text("Copy ref"))
+                    .tooltip(supraman_ui::controls::tooltip::Tooltip::text("Copy ref"))
                     .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| this.copy_ref(&copied, cx))),
             )
             .child(
                 button::Button::new(&self.hits, format!("{prefix}-web")).icon(Icon::ArrowUpRight.svg(12., muted)).icon_only(px(COPY_SIDE))
-                    .tooltip(supraman_ui::tooltip::Tooltip::text("Open in Workman web"))
+                    .tooltip(supraman_ui::controls::tooltip::Tooltip::text("Open in Workman web"))
                     .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| this.open_web(&opened, cx))),
             )
     }

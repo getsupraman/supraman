@@ -1,11 +1,12 @@
 //! The Graph column's lanes, edges and nodes; geometry per docs/research/gitkraken-12.6.1.md §3.
 
+use supraman_ui::tokens;
 use gpui::{AnyElement, Bounds, Div, FontWeight, Hsla, SharedString, PathBuilder, Pixels, Window, canvas, div, fill, point, prelude::*, px};
 use supraman_gitman::{Edge, EdgeKind};
 use supraman_ui::fonts;
 use supraman_ui::hit::{Hit, HitTargets, hit_target};
 use supraman_ui::icon::Icon;
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::controls::tooltip::Tooltip;
 
 use super::colours::Palette;
 use super::load::GraphRow;
@@ -165,22 +166,22 @@ fn node(row: &GraphRow, palette: &Palette) -> AnyElement {
         .left(px(lane_x(row.row.lane) - size / 2.))
         .top(px((ROW - size) / 2.))
         .size(px(size))
-        .rounded_full()
+        .rounded(tokens::radius::FULL)
         .flex()
         .items_center()
         .justify_center();
     if row.agent.is_some() {
-        return at.border_1().border_dashed().border_color(lane).bg(palette.background).child(Icon::Bot.svg(13., lane)).into_any_element();
+        return at.border(tokens::stroke::HAIRLINE).border_dashed().border_color(lane).bg(palette.background).child(Icon::Bot.svg(13., lane)).into_any_element();
     }
     if row.wip() || row.worktree().is_some() {
-        return at.border_2().border_dashed().border_color(lane).bg(palette.background).into_any_element();
+        return at.border(tokens::stroke::FOCUS).border_dashed().border_color(lane).bg(palette.background).into_any_element();
     }
     if row.stash().is_some() {
         return at
             .id(SharedString::from(format!("git-stash-{}", row.sha)))
-            .border_1()
+            .border(tokens::stroke::HAIRLINE)
             .border_dashed()
-            .rounded_sm()
+            .rounded(tokens::radius::S)
             .border_color(lane)
             .bg(palette.background)
             .child(Icon::Stash.svg(13., lane))
@@ -202,8 +203,8 @@ pub(crate) fn avatar(initials: SharedString, colour: usize, side: f32, palette: 
         .items_center()
         .justify_center()
         .size(px(side))
-        .rounded_full()
-        .border_2()
+        .rounded(tokens::radius::FULL)
+        .border(tokens::stroke::FOCUS)
         .border_color(palette.lane(colour))
         .bg(palette.avatar(colour))
         .text_color(palette.initials(colour))

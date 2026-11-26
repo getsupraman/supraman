@@ -1,7 +1,7 @@
 use supraman_gitman::write::branch::current_branch;
 use supraman_gitman::write::remote::{PullChoice, PullMode};
 use supraman_gitman::{Link, Refs, Remote, web_link};
-use supraman_ui::menu::{MenuItem, item};
+use supraman_ui::controls::menu::{MenuItem, item};
 
 use super::RemoteAct;
 use super::bar::words;

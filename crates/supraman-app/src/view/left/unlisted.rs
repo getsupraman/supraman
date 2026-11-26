@@ -13,7 +13,7 @@ const HIT: &str = "unlisted";
 impl FleetView {
     /// Other sessions' row: muted, no icon, no count, and no folder's actions; a click folds or opens it.
     pub(super) fn render_unlisted_row(&self, open: bool, cx: &mut Context<Self>) -> AnyElement {
-        let keys = supraman_ui::button::RowKeys { id: KEY.into(), group: KEY.into(), hit: format!("{HIT}-row").into() };
+        let keys = supraman_ui::controls::button::RowKeys { id: KEY.into(), group: KEY.into(), hit: format!("{HIT}-row").into() };
         self.sidebar_row(keys, Some(KEY), cx)
             .flex()
             .flex_none()
@@ -37,7 +37,7 @@ pub(in crate::view) fn first_collapsed() -> HashSet<String> {
     HashSet::from([KEY.to_string()])
 }
 
-/// The hit keys Other sessions' row paints, for the sidebar's [`supraman_ui::keyed_list::KeyedList`].
+/// The hit keys Other sessions' row paints, for the sidebar's [`supraman_ui::list::keyed_list::KeyedList`].
 pub(super) fn tokens() -> Vec<String> {
     vec![format!("{HIT}-row"), format!("tree-icon-{HIT}"), format!("tree-label-{HIT}")]
 }

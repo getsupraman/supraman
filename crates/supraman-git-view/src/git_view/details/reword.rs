@@ -8,12 +8,12 @@ use gpui::{App, ClickEvent, Context, Div, Entity, Focusable, SharedString, Subsc
 use supraman_gitman::Amendable;
 use supraman_gitman::write::rebase::{self, Autostash, Rebased};
 use supraman_gitman::write::{LockSet, Session, WriteError, wip};
-use supraman_ui::confirm::{Answer, Confirm};
-use supraman_ui::dialog::Dialog;
+use supraman_ui::surfaces::confirm::{Answer, Confirm};
+use supraman_ui::surfaces::dialog::Dialog;
 use supraman_ui::focus_order::FocusOrder;
 use supraman_ui::hit::hit_target;
-use supraman_ui::text_input::{InputEvent, TextInput};
-use supraman_ui::button;
+use supraman_ui::text::input::{InputEvent, TextInput};
+use supraman_ui::controls::button;
 use theme::ActiveTheme as _;
 
 use super::{CommitPanel, PanelEvent, Shown};

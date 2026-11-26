@@ -10,7 +10,7 @@ use futures::StreamExt as _;
 use futures::channel::mpsc;
 use gpui::{App, AppContext as _, Entity, Global};
 use supraman_supervisor::{Bearer, CHECK_EVERY, Checked, HttpMinter, Keeper, Keeping, PING_TIMEOUT, bearer};
-use supraman_ui::nudge::{self, Nudge};
+use supraman_runtime::nudge::{self, Nudge};
 
 static NUDGE: OnceLock<Nudge> = OnceLock::new();
 static SIGNED_IN: AtomicBool = AtomicBool::new(false);
@@ -38,7 +38,7 @@ impl Renewals {
         }
         self.failed.retain(|name, _| checked.kept.contains(name));
         let current: Vec<String> = self.failed.values().cloned().collect();
-        supraman_ui::notices::keep_dismissed(&mut self.dismissed, &current);
+        supraman_ui::surfaces::notices::keep_dismissed(&mut self.dismissed, &current);
         self.failed != before
     }
 

@@ -150,7 +150,7 @@ fn a_wip_files_stash_button_asks_and_a_stashs_file_applies_to_the_work_tree(cx: 
 
 #[gpui::test]
 fn a_stashs_apply_file_is_dimmed_with_the_gates_why_while_it_is_busy_and_applies_once_free(cx: &mut TestAppContext) {
-    use supraman_ui::tooltip::LAST_SHOWN;
+    use supraman_ui::controls::tooltip::LAST_SHOWN;
     let f = Fixture::copy();
     let (view, cx) = open(&f.dir, occupancy::Live::default(), cx);
     let feature = f.sha("stash_feature_index").to_string();

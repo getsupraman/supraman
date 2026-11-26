@@ -8,7 +8,7 @@ use theme::ActiveTheme as _;
 
 use crate::hit::{HitTargets, hit_target};
 use crate::matcher::highlighted;
-use crate::palette::{Entry, Paint};
+use crate::list::palette::{Entry, Paint};
 use crate::tokens;
 
 /// The palette's id: its rows paint under `tab-list-row-<tab id>`.

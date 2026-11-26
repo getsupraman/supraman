@@ -426,7 +426,7 @@ impl WorkInbox {
 
     /// A save of rows Supraman pruned itself: a failure leaves them in the file, harmless, so it is logged.
     fn save_pruned(save: Option<Save>, cx: &mut Context<Self>) {
-        supraman_ui::store::save_off_thread(save, cx, |this, saved, cx| match saved {
+        supraman_runtime::save_off_thread(save, cx, |this, saved, cx| match saved {
             Ok(()) => {
                 this.notice = None;
                 cx.notify();
@@ -436,7 +436,7 @@ impl WorkInbox {
     }
 
     fn save(save: Option<Save>, cx: &mut Context<Self>) {
-        supraman_ui::store::save_off_thread(save, cx, |this, saved, cx| {
+        supraman_runtime::save_off_thread(save, cx, |this, saved, cx| {
             this.notice = saved.err().map(|e| format!("Cannot save the dismissed rows ({e}): a dismissed row shows again after a restart"));
             cx.notify();
         });
@@ -515,7 +515,7 @@ impl WorkInbox {
                 .await;
             this.update(cx, |this, cx| {
                 if this.applied == 0 {
-                    supraman_ui::timeline("workman inbox done", began.elapsed());
+                    supraman_core::timeline::phase("workman inbox done", began.elapsed());
                 }
                 this.applied += 1;
                 this.keys.extend(keys);

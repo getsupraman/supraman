@@ -1,15 +1,16 @@
 //! The viewer's header (change mark, path, encoding, ×), its toolbar and the editor or placeholder below.
 
-use gpui::{AnyElement, ClickEvent, Context, Div, SharedString, Window, div, prelude::*, px};
+use gpui::{AnyElement, ClickEvent, Context, Div, SharedString, Window, div, prelude::*};
 use supraman_gitman::ChangeKind;
-use supraman_ui::button;
+use supraman_ui::controls::{button, pill};
 use supraman_ui::clipped::path_label;
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
-use supraman_ui::placeholder::placeholder;
-use supraman_ui::segmented::{Segment, segmented};
-use supraman_ui::stall;
-use supraman_ui::tooltip::Tooltip;
+use supraman_ui::patterns::placeholder::placeholder;
+use supraman_ui::controls::segmented::{Segment, segmented};
+use supraman_runtime::stall;
+use supraman_ui::controls::tooltip::Tooltip;
+use supraman_ui::tokens;
 use theme::ActiveTheme as _;
 
 use super::image::{self, Picture};
@@ -47,26 +48,26 @@ impl DiffView {
         let colors = cx.theme().colors().clone();
         let mark = self.target.kind().map(|kind| {
             let (icon, colour) = mark_icon(kind, cx);
-            div().flex().flex_none().items_center().child(icon.svg(13., colour)).id("diff-mark").tooltip(Tooltip::text(kind_word(kind)))
+            div().flex().flex_none().items_center().child(icon.svg(tokens::icon::M, colour)).id("diff-mark").tooltip(Tooltip::text(kind_word(kind)))
         });
         let renamed = matches!(self.target.kind(), Some(ChangeKind::Renamed | ChangeKind::Copied));
         let encoding = self.encoding_word();
-        let close = button::Button::new(&self.hits, "diff-close").icon(Icon::Close.svg(14., colors.text_muted)).icon_only(px(22.))
+        let close = button::Button::new(&self.hits, "diff-close").icon(Icon::Close.svg(tokens::icon::M, colors.text_muted)).icon_only(tokens::bar::ICON_BUTTON)
             .tooltip(Tooltip::text("Close (Esc): back to the graph"))
             .on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(super::Close)));
         div()
             .flex()
             .flex_none()
             .items_center()
-            .gap_2()
-            .h(px(32.))
-            .px_2()
-            .border_b_1()
+            .gap(tokens::space::L)
+            .h(tokens::bar::TOOLBAR)
+            .px(tokens::space::L)
+            .border_b(tokens::stroke::HAIRLINE)
             .border_color(colors.border_variant)
             .children(mark)
-            .when(renamed, |d| d.child(path("diff-old-path", self.target.old_path(), cx)).child(Icon::Renamed.svg(12., colors.text_muted)))
+            .when(renamed, |d| d.child(path("diff-old-path", self.target.old_path(), cx)).child(Icon::Renamed.svg(tokens::icon::S, colors.text_muted)))
             .child(path("diff-path", &self.target.path, cx).flex_1())
-            .children(self.target.side_word().map(|word| div().id("diff-side").flex_none().px_1p5().rounded_sm().border_1().border_color(colors.border).text_xs().text_color(colors.text_muted).child(word)))
+            .children(self.target.side_word().map(|word| pill::tag(cx).id("diff-side").child(word)))
             .child(div().flex_none().text_xs().text_color(colors.text_muted).child(encoding))
             .child(close)
     }
@@ -76,7 +77,7 @@ impl DiffView {
         let modes = [Segment::new("file").icon(Icon::File).label("File View"), Segment::new("diff").icon(Icon::FileDiff).label("Diff View")];
         let chosen = usize::from(self.mode == Mode::Diff);
         let mode = segmented(&self.hits, "diff-mode", &modes, chosen, |this: &mut DiffView, i, _, cx| this.set_mode(if i == 0 { Mode::File } else { Mode::Diff }, cx), cx);
-        let bar = div().flex().flex_none().items_center().gap_2().h(px(34.)).px_2().border_b_1().border_color(colors.border_variant).child(mode);
+        let bar = div().flex().flex_none().items_center().gap(tokens::space::L).h(tokens::bar::TOOLBAR).px(tokens::space::L).border_b(tokens::stroke::HAIRLINE).border_color(colors.border_variant).child(mode);
         if self.mode == Mode::File || !matches!(self.content, Content::Text(_) | Content::Image(_)) {
             return bar;
         }
@@ -93,10 +94,10 @@ impl DiffView {
             (None, 1) => "1 change".to_string(),
             (None, n) => format!("{n} changes"),
         };
-        let previous = button::Button::new(&self.hits, "diff-previous").icon(Icon::ChevronUp.svg(14., colors.text_muted)).icon_only(px(24.))
+        let previous = button::Button::new(&self.hits, "diff-previous").icon(Icon::ChevronUp.svg(tokens::icon::M, colors.text_muted)).icon_only(tokens::bar::ICON_BUTTON)
             .tooltip(Tooltip::text("Previous change (Shift+F7)"))
             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.previous_change(window, cx)));
-        let next = button::Button::new(&self.hits, "diff-next").icon(Icon::ChevronDown.svg(14., colors.text_muted)).icon_only(px(24.))
+        let next = button::Button::new(&self.hits, "diff-next").icon(Icon::ChevronDown.svg(tokens::icon::M, colors.text_muted)).icon_only(tokens::bar::ICON_BUTTON)
             .tooltip(Tooltip::text("Next change (F7)"))
             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.next_change(window, cx)));
         let (previous, next) = if count == 0 { (previous.dimmed_if(true), next.dimmed_if(true)) } else { (previous, next) };

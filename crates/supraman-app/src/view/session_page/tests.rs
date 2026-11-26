@@ -1,5 +1,5 @@
 use supraman_claude::{Health, parse};
-use supraman_ui::details::Section;
+use supraman_ui::patterns::details::Section;
 
 use super::*;
 use crate::view::menu::session_items;

@@ -1,7 +1,5 @@
 //! The selftests' Win32: posted window messages, window captures, named mutexes, CPU times and the foreground window.
 
-use std::path::Path;
-
 use anyhow::{anyhow, bail};
 #[cfg(windows)]
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
@@ -279,9 +277,9 @@ pub fn window(title: Option<&str>) -> anyhow::Result<isize> {
     })
 }
 
-/// Writes the window `hwnd` as it paints itself to `out`; off the UI thread, which must keep pumping messages.
+/// The window `hwnd` as it paints itself; off the UI thread, which must keep pumping messages.
 #[cfg(windows)]
-pub fn print_window(hwnd: isize, out: &Path) -> anyhow::Result<()> {
+pub fn print_window(hwnd: isize) -> anyhow::Result<image::RgbaImage> {
     use windows::Win32::Foundation::{HWND, RECT};
     use windows::Win32::Graphics::Gdi::{
         BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleBitmap, CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits,
@@ -334,11 +332,7 @@ pub fn print_window(hwnd: isize, out: &Path) -> anyhow::Result<()> {
         px.swap(0, 2);
         px[3] = 255;
     }
-    if let Some(dir) = out.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    image::RgbaImage::from_raw(w as u32, h as u32, pixels).ok_or_else(|| anyhow!("a {w}×{h} frame"))?.save(out)?;
-    Ok(())
+    image::RgbaImage::from_raw(w as u32, h as u32, pixels).ok_or_else(|| anyhow!("a {w}×{h} frame"))
 }
 
 #[cfg(not(windows))]
@@ -347,7 +341,7 @@ pub fn window(_title: Option<&str>) -> anyhow::Result<isize> {
 }
 
 #[cfg(not(windows))]
-pub fn print_window(_hwnd: isize, _out: &Path) -> anyhow::Result<()> {
+pub fn print_window(_hwnd: isize) -> anyhow::Result<image::RgbaImage> {
     bail!("window captures are Windows captures")
 }
 

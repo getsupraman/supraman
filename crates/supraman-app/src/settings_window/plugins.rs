@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use gpui::{AnyElement, Context, SharedString, div, prelude::*};
 use supraman_core::Settings;
-use supraman_ui::settings_page::row;
+use supraman_ui::patterns::settings_page::row;
 use theme::ActiveTheme as _;
 
 use super::SettingsView;

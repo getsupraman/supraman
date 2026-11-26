@@ -1,13 +1,15 @@
 //! The sidebar's action bar: add, expand and collapse, stopped sessions, refresh, the CLI warning, the busy limit, Settings.
 
+use supraman_ui::tokens;
 use super::*;
+use supraman_ui::controls::stepper::stepper;
 
 impl FleetView {
     pub(super) fn render_action_bar(&self, hidden_stopped: usize, cx: &mut Context<Self>) -> Stateful<Div> {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let hits = &self.hits;
-        let separator = || div().w(px(1.)).h(px(16.)).mx_1().bg(colors.border_variant);
+        let separator = || div().w(tokens::stroke::HAIRLINE).h(tokens::space::XXL).mx_1().bg(colors.border_variant);
         let warning = match &self.cli {
             Cli::Supported(version) => version.untested(),
             _ => None,
@@ -17,10 +19,10 @@ impl FleetView {
             .flex()
             .flex_none()
             .items_center()
-            .gap(px(2.))
+            .gap(tokens::space::XS)
             .px_2()
-            .py(px(3.))
-            .border_b_1()
+            .py(tokens::space::XS)
+            .border_b(tokens::stroke::HAIRLINE)
             .border_color(colors.border)
             .child(
                 icon_button(hits, "add-folder", Icon::FolderAdd, "Add Folder or Group…", false, cx)
@@ -88,45 +90,15 @@ impl FleetView {
     }
 
     fn busy_limit(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let colors = cx.theme().colors().clone();
-        let hits = &self.hits;
         let n = self.polled.max_working;
         let busy_tip: SharedString = format!(
             "At most {n} session(s) of this Supraman working at once, across its folders; launches wait while it is reached. 0 pauses them all. Another Supraman's sessions are not counted."
         )
         .into();
-        div()
-            .id("busy-limit")
-            .flex()
-            .flex_none()
-            .items_center()
-            .h(px(26.))
-            .rounded_md()
-            .border_1()
-            .border_color(colors.border_variant)
-            .child(
-                icon_button(hits, "busy-dec", Icon::Minus, "One fewer busy session", false, cx)
-                    .h(px(24.))
-                    .min_w(px(22.))
-                    .px(px(3.))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.set_max_working(this.polled.max_working.saturating_sub(1), cx))),
-            )
-            .child(
-                div()
-                    .id("busy-value")
-                    .px_1()
-                    .text_xs()
-                    .text_color(colors.text_muted)
-                    .child(SharedString::from(format!("busy ≤ {n}")))
-                    .tooltip(Tooltip::text(busy_tip)),
-            )
-            .child(
-                icon_button(hits, "busy-inc", Icon::Plus, "One more busy session", false, cx)
-                    .h(px(24.))
-                    .min_w(px(22.))
-                    .px(px(3.))
-                    .when(n >= MAX_WORKING_LIMIT, |d| d.opacity(0.4))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.set_max_working(this.polled.max_working + 1, cx))),
-            )
+        let limit = stepper(&self.hits, "busy", format!("busy ≤ {n}"), None, |this: &mut Self, by, _, cx| {
+            let n = this.polled.max_working;
+            this.set_max_working(if by < 0 { n.saturating_sub(1) } else { n + 1 }, cx);
+        }, cx);
+        div().id("busy-limit").flex_none().child(limit).tooltip(Tooltip::text(busy_tip))
     }
 }

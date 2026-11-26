@@ -71,9 +71,9 @@ async fn probed(gallery: WindowHandle<Gallery>, section: Section, probe: &Probe,
             pointer(gallery, Pointer::Up(corner(gallery, cx)?), cx)?;
         }
         Act::Tooltip(key, text) => {
-            supraman_ui::tooltip::LAST_SHOWN.with(|last| *last.borrow_mut() = None);
+            supraman_ui::controls::tooltip::LAST_SHOWN.with(|last| *last.borrow_mut() = None);
             pointer(gallery, Pointer::Move(middle(gallery, key, cx)?), cx)?;
-            let shown = |_: &mut AsyncWindowContext| supraman_ui::tooltip::LAST_SHOWN.with(|last| (last.borrow().as_deref() == Some(text.as_str())).then_some(()));
+            let shown = |_: &mut AsyncWindowContext| supraman_ui::controls::tooltip::LAST_SHOWN.with(|last| (last.borrow().as_deref() == Some(text.as_str())).then_some(()));
             crate::selftest::until_with(cx, Duration::from_secs(10), &format!("{key}'s tooltip"), shown).await?;
             frame(gallery, out, &name, cx).await?;
         }

@@ -1,13 +1,13 @@
 //! A ref row's mark, right-click menu and double-click; hit keys `<list>-mark-<path>`, `menu-ref-solo`, `menu-ref-hide`.
 
 use gpui::{AnyElement, ClickEvent, Context, MouseButton, MouseDownEvent, Pixels, Point, SharedString, Window, div, prelude::*, px};
-use supraman_ui::button;
+use supraman_ui::controls::button;
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
-use supraman_ui::menu::{ContextMenu, MenuItem, item};
-use supraman_ui::table::row_group;
-use supraman_ui::tooltip::Tooltip;
-use supraman_ui::tree::{Item, Row};
+use supraman_ui::controls::menu::{ContextMenu, MenuItem, item};
+use supraman_ui::list::table::row_group;
+use supraman_ui::controls::tooltip::Tooltip;
+use supraman_ui::list::tree::{Item, Row};
 use theme::ActiveTheme as _;
 
 use super::overlay::OVERLAY;
@@ -97,7 +97,7 @@ impl RefPanel {
     pub(super) fn interactive(&self, list: &str, path: &SharedString, content: gpui::Div, cx: &mut Context<Self>) -> AnyElement {
         let whole = self.whole(list, path);
         let (menu, double) = (whole.clone(), whole);
-        let anchor = SharedString::from(supraman_ui::table::row_hit(list, path));
+        let anchor = SharedString::from(supraman_ui::list::table::row_hit(list, path));
         content
             .id(SharedString::from(format!("{list}-ref-{path}")))
             .on_mouse_down(MouseButton::Right, cx.listener(move |this, e: &MouseDownEvent, _, cx| {

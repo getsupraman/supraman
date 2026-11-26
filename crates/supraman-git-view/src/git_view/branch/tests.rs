@@ -286,7 +286,7 @@ fn bounds(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) -> gpui
 }
 
 fn prompt_has_keys(cx: &mut VisualTestContext) -> bool {
-    crate::git_view::test_support::pane_focused(cx).as_deref() == Some(supraman_ui::dialog::PANE)
+    crate::git_view::test_support::pane_focused(cx).as_deref() == Some(supraman_ui::surfaces::dialog::PANE)
 }
 
 #[gpui::test]
@@ -299,7 +299,7 @@ fn a_question_is_a_prompt_centred_over_the_tab_that_enter_and_esc_answer(cx: &mu
     let [toolbar, scrim, panel, text, yes, cancel] = ["git-toolbar", "git-ref-ask-scrim", "git-ref-ask-dialog", "git-ref-ask-text", "git-ref-ask-yes", "git-ref-ask-cancel"].map(|k| bounds(&view, k, cx));
     assert_eq!((scrim.origin, scrim.size.width), (toolbar.origin, toolbar.size.width), "the scrim covers the tab from its top, toolbar and all");
     assert!((panel.center() - scrim.center()).x.abs() < px(1.) && (panel.center() - scrim.center()).y.abs() < px(1.), "the panel centred on it: {panel:?} {scrim:?}");
-    assert!(panel.size.width <= supraman_ui::dialog::WIDTH, "at most the dialog's width");
+    assert!(panel.size.width <= supraman_ui::surfaces::dialog::WIDTH, "at most the dialog's width");
     assert!(text.bottom() <= yes.top() && yes.right() < cancel.left() && cancel.right() <= panel.right(), "the text, then the answers right-aligned");
     click(&view, "git-pull-menu", cx);
     assert!(view.read_with(cx, |v, cx| v.remote.read(cx).menu_labels().is_empty()), "a click on a toolbar button under the scrim does not reach it");

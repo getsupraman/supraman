@@ -1,5 +1,5 @@
 use gpui::{Context, Entity, Render, TestAppContext, VisualTestContext, Window, div, prelude::*, px};
-use supraman_ui::button::RowKeys;
+use supraman_ui::controls::button::RowKeys;
 use supraman_ui::hit::HitTargets;
 use supraman_ui::list::{self, Chrome};
 use supraman_ui::popup::Popup;
