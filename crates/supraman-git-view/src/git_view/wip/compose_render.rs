@@ -27,8 +27,10 @@ impl WipPanel {
             .items_center()
             .gap_2()
             .cursor_pointer()
+            .relative()
             .child(button::focusable_checkbox(&self.hits, "wip-amend", c.amend, &c.amend_focus, cx.listener(|this, _: &Press, _, cx| this.toggle_amend(cx)), cx))
             .child("Amend previous commit")
+            .child(supraman_ui::focus::ring(&c.amend_focus, supraman_ui::tokens::radius::S))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_amend(cx)))
     }
 

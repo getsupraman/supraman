@@ -242,7 +242,7 @@ impl Button {
             el = el.on_mouse_down(button, move |e, window, cx| down(e, window, cx));
         }
         if let Some((handle, press)) = self.focus.take() {
-            el = crate::focus_order::pressable(el, &handle, move |p: &Press, window, cx| press(p, window, cx), cx);
+            el = crate::focus_order::pressable(el, &handle, move |p: &Press, window, cx| press(p, window, cx));
         }
         el.style().refine(&self.style);
         el.children(self.children)

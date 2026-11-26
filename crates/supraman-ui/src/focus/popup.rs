@@ -143,3 +143,6 @@ pub(super) fn painted(handle: &FocusHandle, window: &mut Window, cx: &mut App) -
     handle.dispatch_action(&Probe, window, cx);
     seen.get()
 }
+
+#[cfg(test)]
+mod tests;

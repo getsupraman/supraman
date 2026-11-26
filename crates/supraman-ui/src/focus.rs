@@ -14,8 +14,10 @@ use crate::focus_order;
 use crate::hit::{Hit, HitTargets};
 
 mod popup;
+mod visible;
 
 pub use popup::{popup, request};
+pub use visible::{keyed, ring, visible};
 
 gpui::actions!(focus, [NextPane, PreviousPane]);
 
@@ -153,7 +155,10 @@ pub fn root<E: InteractiveElement + ParentElement>(element: E) -> E {
             state.shown.clear();
             state.frame += 1;
         },
-        |_, _, window, cx| window.defer(cx, popup::settle),
+        |_, _, window, cx| {
+            visible::track(window, cx);
+            window.defer(cx, popup::settle);
+        },
     )
     .absolute()
     .size_0();
@@ -250,6 +255,8 @@ struct State {
     /// What held the focus after the last frame.
     settled: Option<WeakFocusHandle>,
     popups: Vec<popup::Popup>,
+    /// A key came since the last mouse press: a focus ring shows.
+    keyboard: bool,
 }
 
 impl State {

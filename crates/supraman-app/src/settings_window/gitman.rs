@@ -144,8 +144,12 @@ impl GitmanPage {
         let field = div().w(px(72.)).child(self.every.clone()).into_any_element();
         let [maintenance, worktree_wip] = &self.ticks;
         let tick = button::focusable_checkbox(&self.hits, MAINTENANCE_KEY, self.settings.maintains(), maintenance, cx.listener(|this, _, _, cx| this.toggle_maintenance(cx)), cx)
+            .relative()
+            .child(supraman_ui::focus::ring(maintenance, supraman_ui::tokens::radius::S))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_maintenance(cx)));
         let worktrees = button::focusable_checkbox(&self.hits, WORKTREE_WIP_KEY, self.settings.worktree_wips(), worktree_wip, cx.listener(|this, _, _, cx| this.toggle_worktree_wip(cx)), cx)
+            .relative()
+            .child(supraman_ui::focus::ring(worktree_wip, supraman_ui::tokens::radius::S))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_worktree_wip(cx)));
         let mut rows = vec![
             row("Fetch every N minutes (0 = off)", "An open Git tab fetches every remote when it opens, each time it becomes the active tab, and then this often. A failure shows on the Pull button.", field, None, cx),

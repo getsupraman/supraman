@@ -84,6 +84,8 @@ use supraman_ui::{FrameProbe, init_globals, mib, ms_since_start, percentile, ter
 struct SpikeView {
     terminal: Option<Entity<Terminal>>,
     focus: FocusHandle,
+    blink: Entity<supraman_ui::blink::Blink>,
+    _blink: [gpui::Subscription; 4],
     probe: FrameProbe,
 }
 
@@ -112,7 +114,11 @@ impl Render for SpikeView {
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down));
         match &self.terminal {
-            Some(terminal) => root.child(term_element::terminal_grid(terminal.clone(), term_element::TermFont { family: "Consolas".into(), size: term_element::FONT_SIZE, ligatures: false })),
+            Some(terminal) => {
+                let font = term_element::TermFont { family: "Consolas".into(), size: term_element::FONT_SIZE, ligatures: false };
+                let cursor = term_element::Cursor { focus: self.focus.clone(), blink: self.blink.clone() };
+                root.child(term_element::terminal_grid(terminal.clone(), font, cursor))
+            }
             None => root,
         }
     }
@@ -213,10 +219,10 @@ fn main() {
                 ..Default::default()
             },
             move |window, cx| {
-                let view = cx.new(|cx| SpikeView {
-                    terminal: None,
-                    focus: cx.focus_handle(),
-                    probe: FrameProbe::default(),
+                let view = cx.new(|cx| {
+                    let focus = cx.focus_handle();
+                    let (blink, following) = supraman_ui::blink::Blink::follow(&focus, window, cx);
+                    SpikeView { terminal: None, focus, blink, _blink: following, probe: FrameProbe::default() }
                 });
                 let focus = view.read(cx).focus.clone();
                 focus.focus(window, cx);
