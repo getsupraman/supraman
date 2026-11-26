@@ -50,10 +50,9 @@ async fn lit_within(terminal: &Entity<Terminal>, time: Duration, cx: &mut AsyncW
 async fn check(view: &Entity<FleetView>, tab: u64, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let terminal = wait_for_tab_terminal(view, tab, Duration::from_secs(10), cx).await?;
     until_with(cx, WITHIN, "the shell's prompt", |cx| terminal.read_with(cx, |t, _| t.get_content().contains("PS ")).then_some(())).await?;
-    let active = cx.update(|window, _| window.is_window_active())?;
-    if !active {
-        bail!("the main window is not active: the rule only holds in an active window");
-    }
+    // an earlier step's window (settings, a modal) may have held the activation; the hidden desktop's activation is ours
+    cx.update(|window, _| window.activate_window())?;
+    until_with(cx, WITHIN, "the main window active", |cx| cx.update(|window, _| window.is_window_active()).ok().filter(|a| *a).map(|_| ())).await?;
     if !lit_within(&terminal, BLINKS, cx).await? {
         bail!("the shown terminal holding the keys painted no cursor over {} ms", BLINKS.as_millis());
     }
