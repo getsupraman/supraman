@@ -92,6 +92,7 @@ impl IntoElement for OpenFill {
                 let state = crate::state::State { open: is_open(&anchor, window, cx), ..Default::default() };
                 let open = chosen.unwrap_or_else(|| crate::tokens::roles(cx).open);
                 if let Some(bg) = crate::state::resolve(state, crate::state::Fills { open: Some(open), ..Default::default() }).fill {
+                    note_painted(&anchor);
                     window.paint_quad(fill(bounds, bg).corner_radii(radius));
                 }
             },
@@ -101,6 +102,19 @@ impl IntoElement for OpenFill {
         .left_0()
         .size_full()
     }
+}
+
+thread_local! {
+    static PAINTED: RefCell<HashMap<SharedString, u64>> = RefCell::default();
+}
+
+/// How many frames painted `anchor`'s open fill: a selftest's read of what only paint shows.
+pub fn painted_open(anchor: &str) -> u64 {
+    PAINTED.with(|p| p.borrow().get(anchor).copied().unwrap_or(0))
+}
+
+pub(crate) fn note_painted(anchor: &SharedString) {
+    PAINTED.with(|p| *p.borrow_mut().entry(anchor.clone()).or_default() += 1);
 }
 
 type Layers = HashMap<Layer, Weak<Open>>;

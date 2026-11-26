@@ -108,10 +108,11 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
 
 async fn check(view: &Entity<FleetView>, f: &Arc<Fixture>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let (git, opened) = open(view, f, cx).await?;
+    let open_row = crate::selftest_open::row(view, "git-row-1", cx).await?;
     let media = crate::selftest_git_media::check(view, &git, f, cx).await?;
     let narrow = narrow(view, &git, f, cx).await?;
     let panel = panel_min(view, &git, cx).await?;
-    Ok([opened, media, narrow, panel].join("; "))
+    Ok([opened, open_row, media, narrow, panel].join("; "))
 }
 
 async fn open(view: &Entity<FleetView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<(Entity<GitView>, String)> {

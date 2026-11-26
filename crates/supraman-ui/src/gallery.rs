@@ -7,6 +7,7 @@ use gpui::{AnyElement, App, Context, Entity, FocusHandle, Focusable, IntoElement
 use theme::ActiveTheme as _;
 
 use crate::hit::HitTargets;
+use crate::icon::Icon;
 use crate::menu::{ContextMenu, MenuItem, item};
 use crate::palette::{Entry, Palette};
 use crate::split::StackState;
@@ -82,9 +83,9 @@ impl Section {
             Section::Buttons => "Buttons: action × tone × fill × size, icon, toolbar, split, revealed",
             Section::Toggles => "Toggles: checkbox, tick, pill, segmented, stepper, choices",
             Section::Inputs => "Text input: one-line, quiet, inline, invalid, masked, multi-line, form fields",
-            Section::Menu => "Context menu: sections, a rule, a dimmed and a ticked item",
+            Section::Menu => "Context menu: sections, a rule, a dimmed and a ticked item, icons and shortcuts, the highlight, a submenu",
             Section::Palette => "Palette: query, ranked rows, a dimmed row",
-            Section::Lists => "Table and tree: the selected row with and without the keys; rows",
+            Section::Lists => "Table and tree: the selected row with and without the keys; rows; a row open under its menu",
             Section::Tabs => "Tab strip: more tabs than its room, the last active",
             Section::Splits => "Split pane, height bar, stack",
             Section::Dialog => "Dialog: a question over the scrim",
@@ -157,9 +158,9 @@ impl Section {
                 focus("focus-stepper"),
             ],
             Section::Inputs => vec![focus("focus-line"), focus("focus-quiet"), focus("focus-inline"), focus("focus-invalid"), focus("focus-multi")],
-            Section::Menu => vec![hover("hover-item", "menu-kit-copy"), tip("hover-dimmed", "menu-kit-move", "Nothing to move it to")],
+            Section::Menu => vec![hover("hover-item", "menu-kit-copy"), tip("hover-dimmed", "menu-kit-move", "Nothing to move it to"), focus("open-submenu")],
             Section::Palette => vec![hover("hover-row", "kit-palette-row-beta")],
-            Section::Lists => vec![hover("hover-table-row", "kit-table-b-row-3"), hover("hover-tree-row", "kit-tree-b-row-docs/guide.md"), hover("hover-row", "kit-row-2"), focus("focus-table-b"), focus("focus-tree-a")],
+            Section::Lists => vec![hover("hover-table-row", "kit-table-b-row-3"), hover("hover-tree-row", "kit-tree-b-row-docs/guide.md"), hover("hover-row", "kit-row-2"), focus("focus-table-b"), focus("focus-tree-a"), focus("open-row")],
             Section::Tabs => vec![hover("hover-tab", "tab-3")],
             Section::Splits => vec![hover("hover-bar", "kit-height-bar")],
             Section::Dialog => vec![hover("hover-answer", "kit-dialog-alt")],
@@ -218,6 +219,8 @@ pub struct Gallery {
     pub(crate) trees: [TreeState<(), usize>; 2],
     pub(crate) toast: ToastSlot,
     pub(crate) menu: ContextMenu<()>,
+    /// The lists' table row menu, open in its frame.
+    pub(crate) row_menu: Option<ContextMenu<()>>,
     pub(crate) dialog: crate::dialog::Dialog,
     pub(crate) stack: StackState,
     pub(crate) scroll: ScrollHandle,
@@ -280,6 +283,7 @@ impl Gallery {
             trees,
             toast: ToastSlot::default(),
             menu,
+            row_menu: None,
             dialog: Default::default(),
             stack: StackState::default(),
             scroll: ScrollHandle::new(),
@@ -298,6 +302,8 @@ impl Gallery {
         self.section = section;
         self.hits.borrow_mut().clear();
         self.menu = ContextMenu::new("Sample", self.menu.position, menu_items());
+        self.menu.show_highlighted(1);
+        self.row_menu = None;
         cx.notify();
     }
 
@@ -311,7 +317,21 @@ impl Gallery {
     }
 
     /// The keys to the sample `name` of [`Act::Focus`]; false when the shown section has none by that name.
-    pub fn focus_sample(&self, name: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+    pub fn focus_sample(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        match name {
+            "open-submenu" if self.section == Section::Menu => {
+                let share = self.menu.items.iter().position(|i| !i.submenu.is_empty());
+                share.into_iter().for_each(|ix| self.menu.show_highlighted(ix));
+                cx.notify();
+                return share.is_some();
+            }
+            "open-row" if self.section == Section::Lists => {
+                self.row_menu = Some(row_menu(&self.hits));
+                cx.notify();
+                return true;
+            }
+            _ => {}
+        }
         let handle = match name {
             "focus-line" => Some(self.inputs.line.focus_handle(cx)),
             "focus-quiet" => Some(self.inputs.quiet.focus_handle(cx)),
@@ -336,7 +356,7 @@ impl Gallery {
     }
 
     /// The section's rest frame: what holds the keys while it is captured without a probe.
-    pub fn rest_focus(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn rest_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.section {
             Section::Lists => {
                 self.focus_sample("focus-table-a", window, cx);
@@ -355,14 +375,26 @@ impl Gallery {
 }
 
 fn menu_items() -> Vec<MenuItem<()>> {
+    let share = MenuItem::submenu("kit-share", "Share", vec![item("kit-share-link", "Copy link", ()).icon(Icon::Copy), item("kit-share-web", "Open in browser", ()).icon(Icon::ArrowUpRight)]);
     vec![
-        item("kit-open", "Open", ()),
-        item("kit-copy", "Copy words", ()),
+        item("kit-open", "Open", ()).icon(Icon::Folder).shortcut("Enter"),
+        item("kit-copy", "Copy words", ()).icon(Icon::Copy).shortcut("Ctrl+C"),
         item("kit-move", "Move to…", ()).dimmed("Nothing to move it to"),
         item("kit-show-a", "Show column A", ()).under("Columns").ticked(true),
         item("kit-show-b", "Show column B", ()).ticked(false),
         item("kit-remove", "Remove", ()).rule(),
     ]
+    .into_iter()
+    .chain(share)
+    .collect()
+}
+
+/// The menu a lists frame shows open at the middle of its table's second row, as a right-click there opens it.
+fn row_menu(hits: &HitTargets) -> ContextMenu<()> {
+    let anchor = crate::table::row_hit("kit-table-b", "1");
+    let at = hits.borrow().get(&anchor).map(|h| h.bounds.center()).unwrap_or_default();
+    let items = vec![item("kit-row-open", "Open", ()), item("kit-row-copy", "Copy name", ()).icon(Icon::Copy), item("kit-row-remove", "Remove", ()).rule()];
+    ContextMenu::new("Row 2", at, items).anchored(anchor)
 }
 
 impl Focusable for Gallery {

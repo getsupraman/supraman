@@ -188,8 +188,9 @@ pub fn lists(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
         button::row(&g.hits, format!("kit-row-{i}"), fill, cx).px(tokens::space::L).py(tokens::space::S).child(format!("button::row {}", i + 1))
     }));
     let top = row().items_start().child(table(0, "kit-table-a", "table, the keys in it: selection active", cx)).child(table(1, "kit-table-b", "table without the keys: inactive selection", cx));
+    let menu = g.row_menu.as_ref().map(|m| m.render(&g.hits, |_: &mut Gallery, _, _, _| {}, |_: &mut Gallery, _| {}, cx));
     let bottom = row().items_start().child(tree(0, "kit-tree-a", "tree (its focus frame gives it the keys)", cx)).child(tree(1, "kit-tree-b", "tree without the keys", cx)).child(group("button::row, the second selected", cx).child(rows));
-    div().flex().flex_col().gap(tokens::space::XXL).child(top).child(bottom).into_any_element()
+    div().flex().flex_col().gap(tokens::space::XXL).child(top).child(bottom).children(menu).into_any_element()
 }
 
 pub fn tabs(g: &Gallery, window: &mut Window, cx: &mut Context<Gallery>) -> AnyElement {

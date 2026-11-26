@@ -546,6 +546,9 @@ impl<V: 'static> Table<V> {
                     .collect();
                 let (state, on_select, on_click) = (state.clone(), on_select.clone(), on_click.clone());
                 let row = crate::state::State { selected: selected == Some(ix), open: crate::popup::is_open(&key, window, cx), ..Default::default() };
+                if row.open {
+                    crate::popup::note_painted(&key.clone().into());
+                }
                 let fills = crate::state::Fills { rest: background, hover: Some(hover), selected: Some(selection), open: Some(open), ..Default::default() };
                 let fill = crate::state::resolve(row, fills).paint(div().absolute().left_0().right_0().top(inset).bottom(inset), Some(group.clone())).child(hit_target(&hits, fill_key));
                 out.push(

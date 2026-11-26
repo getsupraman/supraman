@@ -105,7 +105,7 @@ pub(crate) fn pill(key: impl Into<String>, face: Face, colour: usize, palette: &
         .rounded(px(4.))
         .bg(pill_fill(colour, false, palette))
         .hover(move |s| s.bg(hover))
-        .child(supraman_ui::popup::open_fill(key.clone()).radius(px(4.)).fill(hover))
+        .child(supraman_ui::popup::open_fill(key.clone()).radius(supraman_ui::tokens::radius::S).fill(hover))
         .text_color(text)
         .text_xs()
         .when(face.head, |d| d.child(div().flex_none().child(current_mark(text, PILL_ICON))))

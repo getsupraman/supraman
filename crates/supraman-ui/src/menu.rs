@@ -157,6 +157,14 @@ impl<A> ContextMenu<A> {
         self.nav.borrow().sub.as_ref().map(|s| s.parent)
     }
 
+    /// The gallery's highlighted item, its submenu open when it has one.
+    #[cfg(any(test, feature = "gallery"))]
+    pub(crate) fn show_highlighted(&self, ix: usize) {
+        let mut nav = self.nav.borrow_mut();
+        nav.highlighted = Some(ix);
+        nav.sub = self.items.get(ix).filter(|it| !it.submenu.is_empty()).map(|it| Sub::new(ix, nav::end(&it.submenu.iter().map(MenuItem::acts).collect::<Vec<_>>(), false)));
+    }
+
     /// Focuses the menu as it first prepaints, before its list, so the frame that first shows it holds the focus; records it in the window's registry.
     fn take_focus(&self, cx: &mut App) -> impl IntoElement + use<A> {
         let focus = self.focus.get_or_init(|| cx.focus_handle()).clone();
