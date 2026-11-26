@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use supraman_core::Settings;
 use supraman_term::{Event as TerminalEvent, Search, Terminal};
-use gpui::{AnyElement, App, Context, Entity, Keystroke, MouseButton, MouseDownEvent, Pixels, ScrollDelta, SharedString, Subscription, Window, div, prelude::*, px};
+use gpui::{AnyElement, App, Context, Entity, Keystroke, MouseButton, MouseDownEvent, Pixels, ScrollDelta, SharedString, Subscription, Window, div, prelude::*};
 use theme::ActiveTheme as _;
 
 use super::{FleetView, hit_target};
@@ -392,7 +392,7 @@ impl FleetView {
 mod tests {
     use super::*;
 
-    use gpui::Modifiers;
+    use gpui::{Modifiers, px};
 
     fn k(key: &str, control: bool, shift: bool) -> Keystroke {
         Keystroke { modifiers: Modifiers { control, shift, ..Default::default() }, key: key.into(), key_char: None }
