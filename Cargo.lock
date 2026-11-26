@@ -8798,6 +8798,7 @@ dependencies = [
  "supraman-term",
  "tempfile",
  "theme",
+ "toml 0.9.8",
  "unicode-segmentation",
  "url",
 ]

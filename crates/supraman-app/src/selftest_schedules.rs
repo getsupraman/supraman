@@ -7,7 +7,6 @@ use std::time::Duration;
 use anyhow::{Context as _, anyhow, bail};
 use supraman_core::schedule::{self, FakeRegistrar, Fired, Outcome, RunEvent, RunRecord, Status, TaskState};
 use gpui::{AsyncWindowContext, Entity, MouseButton};
-use supraman_ui::themes::selftest_light::LIGHT;
 
 use crate::selftest::{cargo_root, click, double_click, until};
 use crate::selftest_manage::{menu_open, press_painted, shot};
@@ -94,21 +93,11 @@ pub(crate) async fn themed_shots(home: &Path, name: &str, cx: &mut AsyncWindowCo
         return;
     }
     shot(&format!("{name}-dark"), cx).await;
-    let dir = supraman_ui::themes::themes_dir(home);
-    if std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join("selftest-light.json"), LIGHT)).is_err() {
+    if !crate::selftest_shots::light_theme(home, cx) {
         return;
     }
-    let apply = |name: Option<&str>, cx: &mut AsyncWindowContext| {
-        let home = home.to_path_buf();
-        cx.update(|_, cx| {
-            supraman_ui::themes::apply(cx, name, supraman_ui::themes::TerminalColors::Theme, Some(&home));
-        })
-        .ok();
-    };
-    apply(Some("Selftest Light"), cx);
     shot(&format!("{name}-light"), cx).await;
-    apply(None, cx);
-    std::fs::remove_file(dir.join("selftest-light.json")).ok();
+    crate::selftest_shots::default_theme(home, cx);
 }
 
 static OPENED: Mutex<Option<PathBuf>> = Mutex::new(None);

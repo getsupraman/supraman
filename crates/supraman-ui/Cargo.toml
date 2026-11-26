@@ -5,6 +5,10 @@ edition = "2024"
 publish = false
 license.workspace = true
 
+[features]
+# `gallery`: the kit gallery (UI-KIT §10), for `--selftest-shots`.
+gallery = []
+
 [dependencies]
 chrono = { version = "0.4.42", default-features = false, features = ["clock"] }
 supraman-core = { path = "../supraman-core" }
@@ -21,4 +25,5 @@ theme = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba0670
 
 [dev-dependencies]
 tempfile = "3.27.0"
+toml = "0.9.8"
 gpui = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c", default-features = false, features = ["test-support"] }
