@@ -1,6 +1,9 @@
-use std::{cell::RefCell, collections::HashMap};
+use std::{cell::{Cell, RefCell}, collections::HashMap, rc::Rc};
 
-use gpui::{Bounds, Div, ElementId, Hsla, Pixels, SharedString, Stateful, canvas, div, prelude::*};
+use gpui::{
+    AnyElement, App, Bounds, Div, Element, ElementId, GlobalElementId, Hsla, InspectorElementId, LayoutId, Pixels, SharedString, Stateful, StyledText, Window, canvas, div, point,
+    prelude::*,
+};
 
 use crate::tooltip::Tooltip;
 use crate::tokens;
@@ -11,9 +14,17 @@ const KEPT: usize = 512;
 struct Cut {
     paints: u64,
     labels: HashMap<SharedString, (u64, Bounds<Pixels>)>,
+    gaps: HashMap<SharedString, Pixels>,
 }
 
 impl Cut {
+    fn gap(&mut self, key: &SharedString, gap: Pixels) {
+        if self.gaps.len() >= KEPT && !self.gaps.contains_key(key) {
+            self.gaps.clear();
+        }
+        self.gaps.insert(key.clone(), gap);
+    }
+
     fn painted(&mut self, key: &SharedString, bounds: Option<Bounds<Pixels>>) {
         let Some(bounds) = bounds else {
             self.labels.remove(key);
@@ -43,7 +54,12 @@ pub fn clipped(key: impl Into<SharedString>, text: impl Into<SharedString>, midd
 }
 
 pub fn clipped_with(key: impl Into<SharedString>, text: impl Into<SharedString>, middle: bool, own_tooltip: bool) -> Stateful<Div> {
-    let (key, text) = (key.into(), text.into());
+    let text = text.into();
+    cut_box(key.into(), text.clone(), text, middle, own_tooltip)
+}
+
+/// `shown`, the element painting `text`, cut with an ellipsis under `key`.
+fn cut_box(key: SharedString, text: SharedString, shown: impl IntoElement, middle: bool, own_tooltip: bool) -> Stateful<Div> {
     let label = div()
         .id(ElementId::Name(key.clone()))
         .relative()
@@ -53,7 +69,7 @@ pub fn clipped_with(key: impl Into<SharedString>, text: impl Into<SharedString>,
     let label = if middle { label.text_ellipsis_middle() } else { label.text_ellipsis() };
     let tooltip = cut_at(&key).is_some();
     let measure = measure(key.clone(), text.clone(), tooltip);
-    let label = label.child(text.clone()).child(measure);
+    let label = label.child(shown).child(measure);
     if tooltip && own_tooltip { label.tooltip(Tooltip::text(text)) } else { label }
 }
 
@@ -135,18 +151,83 @@ pub fn clamped(key: impl Into<SharedString>, text: impl Into<SharedString>, line
     if tooltip { label.tooltip(Tooltip::text(text)) } else { label }
 }
 
-/// A `/` path as one line: its `dir/` in `folder`, cut in the middle under `dir_key` when narrow, then its name in `name`.
+/// A `/` path as one line: its `dir/` in `folder`, cut in the middle under `dir_key` when narrow, then its name in `name` against
+/// the folder's last letter ([`path_gap`]).
 pub fn path_label(dir_key: impl Into<SharedString>, path: &str, folder: Hsla, name: Hsla) -> Div {
     let (dir, file) = match path.rsplit_once('/') {
         Some((dir, file)) => (format!("{dir}/"), file.to_string()),
         None => (String::new(), path.to_string()),
     };
-    div()
-        .flex()
-        .min_w_0()
-        .whitespace_nowrap()
-        .when(!dir.is_empty(), |d| d.child(clipped(dir_key, dir, true).flex_shrink(1.).text_color(folder)))
-        .child(div().flex_none().text_color(name).child(SharedString::from(file)))
+    let name = div().flex_none().text_color(name).child(SharedString::from(file));
+    let line = div().flex().min_w_0().whitespace_nowrap();
+    if dir.is_empty() {
+        return line.child(name);
+    }
+    let (key, dir) = (dir_key.into(), SharedString::from(dir));
+    let (letters, shift) = (StyledText::new(dir.clone()), Rc::new(Cell::new(Pixels::ZERO)));
+    let (painted, end) = (letters.layout().clone(), Rc::new(Cell::new(Pixels::ZERO)));
+    let room = {
+        let (shift, end) = (shift.clone(), end.clone());
+        canvas(
+            move |bounds, _, _| {
+                let width = painted.line_layout_for_index(0).map_or(bounds.size.width, |l| l.width()).min(bounds.size.width);
+                shift.set(bounds.size.width - width);
+                end.set(bounds.left() + width);
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+    };
+    let dir = cut_box(key.clone(), dir, letters, true, true).flex_shrink(1.).text_color(folder).child(room);
+    let at = canvas(move |bounds, _, _| CUT.with(|cut| cut.borrow_mut().gap(&key, bounds.left() - end.get())), |_, _, _, _| {}).absolute().top_0().left_0().size_full();
+    line.child(dir).child(Shifted { child: name.relative().child(at).into_any_element(), by: shift })
+}
+
+/// The painted room between a [`path_label`]'s folder's last letter and its name's first, under its `dir_key`, as of its last paint.
+pub fn path_gap(dir_key: &str) -> Option<Pixels> {
+    CUT.with(|cut| cut.borrow().gaps.get(dir_key).copied())
+}
+
+/// A child laid out in place and painted `by` to the left, so nothing beside it moves.
+struct Shifted {
+    child: AnyElement,
+    by: Rc<Cell<Pixels>>,
+}
+
+impl IntoElement for Shifted {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for Shifted {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, window: &mut Window, cx: &mut App) -> (LayoutId, ()) {
+        (self.child.request_layout(window, cx), ())
+    }
+
+    fn prepaint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, _: Bounds<Pixels>, _: &mut (), window: &mut Window, cx: &mut App) {
+        window.with_element_offset(point(-self.by.get(), Pixels::ZERO), |window| self.child.prepaint(window, cx));
+    }
+
+    fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, _: Bounds<Pixels>, _: &mut (), _: &mut (), window: &mut Window, cx: &mut App) {
+        self.child.paint(window, cx);
+    }
 }
 
 #[cfg(test)]

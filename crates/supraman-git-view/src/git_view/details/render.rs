@@ -19,6 +19,7 @@ use crate::git_view::colours::{Palette, blend};
 use crate::git_view::commit::files::{FileClick, Listed};
 use crate::git_view::graph::avatar;
 use crate::git_view::load::initials;
+use supraman_ui::checkbox::Checkbox;
 
 /// The panel and the message box as steps of the theme's text over its editor background.
 pub(crate) const PANEL_STEP: f32 = 0.025;
@@ -179,7 +180,7 @@ impl CommitPanel {
         let sort = files::sort_button(&self.hits, "commit", self.order, |this: &mut CommitPanel, order, cx| this.set_order(order, cx), cx);
         let toggle = (!self.all_files).then(|| files::view_toggle(&self.hits, "commit", self.view, |_: &mut CommitPanel, view, cx| cx.emit(PanelEvent::View(view)), cx));
         let all = self.all_files;
-        let tick = button::checkbox(&self.hits, "commit-all-files", all, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_all_files(!all, cx)));
+        let tick = Checkbox::new(&self.hits, "commit-all-files", all).label("View all files").on_toggle(cx.listener(|this, on: &bool, _, cx| this.set_all_files(*on, cx)));
         div()
             .flex()
             .flex_none()
@@ -189,7 +190,7 @@ impl CommitPanel {
             .px_2()
             .child(sort)
             .child(div().flex().children(toggle))
-            .child(div().flex().items_center().gap_1p5().text_xs().text_color(colors.text).child(tick).child("View all files"))
+            .child(div().flex().text_xs().text_color(colors.text).child(tick))
     }
 
     fn files(&mut self, shown: &Rc<Shown>, window: &mut Window, cx: &mut Context<Self>) -> Div {

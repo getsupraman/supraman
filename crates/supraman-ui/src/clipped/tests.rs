@@ -99,3 +99,42 @@ mod pair {
         assert_eq!(tooltip(&view, cx).as_deref(), Some(format!("{BRIGHT} {MUTED}").as_str()));
     }
 }
+
+mod path {
+    use gpui::{Context, Render, TestAppContext, Window, px};
+
+    use super::*;
+
+    const PATH: &str = "crates/sample-kit/src/a/deeply/nested/folder/module_file.rs";
+
+    struct Holder {
+        width: f32,
+    }
+
+    impl Render for Holder {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().w(px(self.width)).child(path_label("path-dir", PATH, gpui::black(), gpui::black()))
+        }
+    }
+
+    #[gpui::test]
+    fn a_cut_folder_leaves_no_room_before_the_name(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::init_globals(cx, "test"));
+        for width in [120., 147., 163., 181., 200., 233.] {
+            let (_, cx) = cx.add_window_view(|_, _| Holder { width });
+            cx.run_until_parked();
+            assert!(cut_at("path-dir").is_some(), "{width} px cuts the folder");
+            let gap = path_gap("path-dir").expect("the path paints");
+            assert!(gap.abs() <= px(0.5), "{width} px: the name {gap:?} after the folder's last letter");
+        }
+    }
+
+    #[gpui::test]
+    fn a_whole_path_paints_its_name_after_the_folder(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::init_globals(cx, "test"));
+        let (_, cx) = cx.add_window_view(|_, _| Holder { width: 900. });
+        cx.run_until_parked();
+        assert!(cut_at("path-dir").is_none(), "900 px holds it whole");
+        assert!(path_gap("path-dir").expect("the path paints").abs() <= px(0.5));
+    }
+}

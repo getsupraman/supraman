@@ -658,7 +658,7 @@ impl FleetView {
     /// The Edit dialog's rows of choices: Every, Days, Profile and Overlap.
     fn schedule_edit_choices(&self, edit: &ScheduleEdit, line: &dyn Fn(&'static str) -> gpui::Div, cx: &mut Context<Self>) -> (gpui::Div, gpui::Div, gpui::Div, gpui::Div) {
         let choice = |key: String, text: &'static str, selected: bool, cx: &mut Context<Self>| {
-            button::choice(SharedString::from(key.clone()), text, selected, cx).relative().child(hit_target(&self.hits, key))
+            button::choice(&self.hits, key, text, selected, cx)
         };
         let mut kinds = line("Every");
         for (kind, text) in [(TriggerKind::Weekly, "weekly"), (TriggerKind::Daily, "daily"), (TriggerKind::Interval, "interval")] {

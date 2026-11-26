@@ -7,10 +7,11 @@ use supraman_ui::clipped;
 use supraman_ui::focus;
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
-use supraman_ui::ink;
+use supraman_ui::label::{Label, LabelMark};
 use supraman_ui::matcher::highlighted;
 use supraman_ui::split::{Pane, Stack};
 use supraman_ui::stall;
+use supraman_ui::tokens;
 use supraman_ui::tooltip::Tooltip;
 use supraman_ui::tree::{Item, LEAD, Row, TreeList};
 use theme::ActiveTheme as _;
@@ -66,8 +67,7 @@ impl RefPanel {
             .gap_1p5()
             .w_full()
             .min_w_0()
-            .child(ink::mark(section.icon().svg(ICON, muted)))
-            .child(div().flex_1().min_w_0().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(muted).child(section.title()))
+            .child(Label::new(section.title()).mark(LabelMark::Svg(section.icon().svg(ICON, muted))).gap(tokens::space::M).size(tokens::text::SMALL).color(muted).font_weight(FontWeight::SEMIBOLD).flex_1())
             .child(count)
             .into_any_element()
     }
@@ -208,8 +208,7 @@ impl RefPanel {
             .px_2()
             .border_t_1()
             .border_color(cx.theme().colors().border_variant)
-            .child(ink::mark(div().flex().flex_none().items_center().justify_center().w(px(LEAD)).child(chevron.svg(ICON, secondary(cx.theme().colors())))))
-            .child(self.header(section, open, self.add_button(section, cx), cx))
+            .child(Label::element(self.header(section, open, self.add_button(section, cx), cx)).mark(LabelMark::Svg(chevron.svg(ICON, secondary(cx.theme().colors())))).slot(px(LEAD)).gap(gpui::Pixels::ZERO).size(tokens::text::SMALL).flex_1())
             .children((section == Section::Worktrees).then(|| self.refresh_wips(cx)).flatten())
             .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
                 cx.stop_propagation();

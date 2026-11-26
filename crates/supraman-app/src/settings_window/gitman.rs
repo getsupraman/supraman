@@ -2,16 +2,16 @@
 
 use std::path::PathBuf;
 
-use gpui::{AnyElement, App, AppContext as _, ClickEvent, Context, Entity, FocusHandle, Focusable as _, IntoElement, Render, Subscription, Window, div, prelude::*, px};
+use gpui::{AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable as _, IntoElement, Render, Subscription, Window, div, prelude::*, px};
 use supraman_core::Settings;
 use supraman_gitman::{BackgroundSettings, background_settings, set_setting};
-use supraman_ui::button;
 use supraman_ui::hit::HitTargets;
 use supraman_ui::settings_page::row;
 use supraman_ui::text_input::{InputEvent, TextInput};
 use theme::ActiveTheme as _;
 
 use crate::view::writes::Serial;
+use supraman_ui::checkbox::Checkbox;
 
 pub const MAINTENANCE_KEY: &str = "gitman-maintenance";
 pub const WORKTREE_WIP_KEY: &str = "gitman-worktree-wip";
@@ -143,14 +143,8 @@ impl GitmanPage {
     fn rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let field = div().w(px(72.)).child(self.every.clone()).into_any_element();
         let [maintenance, worktree_wip] = &self.ticks;
-        let tick = button::focusable_checkbox(&self.hits, MAINTENANCE_KEY, self.settings.maintains(), maintenance, cx.listener(|this, _, _, cx| this.toggle_maintenance(cx)), cx)
-            .relative()
-            .child(supraman_ui::focus::ring(maintenance, supraman_ui::tokens::radius::S))
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_maintenance(cx)));
-        let worktrees = button::focusable_checkbox(&self.hits, WORKTREE_WIP_KEY, self.settings.worktree_wips(), worktree_wip, cx.listener(|this, _, _, cx| this.toggle_worktree_wip(cx)), cx)
-            .relative()
-            .child(supraman_ui::focus::ring(worktree_wip, supraman_ui::tokens::radius::S))
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_worktree_wip(cx)));
+        let tick = Checkbox::new(&self.hits, MAINTENANCE_KEY, self.settings.maintains()).focus(maintenance).on_toggle(cx.listener(|this, _: &bool, _, cx| this.toggle_maintenance(cx)));
+        let worktrees = Checkbox::new(&self.hits, WORKTREE_WIP_KEY, self.settings.worktree_wips()).focus(worktree_wip).on_toggle(cx.listener(|this, _: &bool, _, cx| this.toggle_worktree_wip(cx)));
         let mut rows = vec![
             row("Fetch every N minutes (0 = off)", "An open Git tab fetches every remote when it opens, each time it becomes the active tab, and then this often. A failure shows on the Pull button.", field, None, cx),
             row("Run git maintenance in the background", "Once an hour at most per repository, while no Claude session works in it: the commit-graph written, loose objects packed, packs repacked.", tick.into_any_element(), None, cx),

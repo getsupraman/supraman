@@ -1,14 +1,12 @@
 //! The commit area under the WIP panel's lists; a cherry-pick, revert or am shows only its steps, an external rebase only its Abort.
 
-use gpui::{ClickEvent, Context, Div, SharedString, Stateful, div, prelude::*};
+use gpui::{ClickEvent, Context, Div, SharedString, div, prelude::*};
 use supraman_gitman::OperationState;
 use supraman_gitman::write::conflicts::Sequence;
 use supraman_gitman::write::wip::Step;
 use supraman_ui::button;
 use supraman_ui::hit::hit_target;
-use supraman_ui::focus_order::Press;
 use supraman_ui::icon::Icon;
-use supraman_ui::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
 use super::compose::{Composer, failure_banner, summary_row};
@@ -16,22 +14,13 @@ use super::render::live;
 use super::actions::noun;
 use super::{Ask, Shown, WipPanel};
 use crate::git_view::keys::{MESSAGE_CONTEXT, StageAllAndCommit};
+use supraman_ui::checkbox::Checkbox;
 
 pub(super) const AREA: &str = "wip-commit-area";
 
 impl WipPanel {
-    fn amend_row(&self, c: &Composer, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .id("wip-amend-row")
-            .flex()
-            .items_center()
-            .gap_2()
-            .cursor_pointer()
-            .relative()
-            .child(button::focusable_checkbox(&self.hits, "wip-amend", c.amend, &c.amend_focus, cx.listener(|this, _: &Press, _, cx| this.toggle_amend(cx)), cx))
-            .child("Amend previous commit")
-            .child(supraman_ui::focus::ring(&c.amend_focus, supraman_ui::tokens::radius::S))
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_amend(cx)))
+    fn amend_row(&self, c: &Composer, cx: &mut Context<Self>) -> Checkbox {
+        Checkbox::new(&self.hits, "wip-amend", c.amend).label("Amend previous commit").focus(&c.amend_focus).on_toggle(cx.listener(|this, _: &bool, _, cx| this.toggle_amend(cx)))
     }
 
     /// The summary with its count of characters left, and the description.
@@ -79,22 +68,13 @@ impl WipPanel {
                 cx.notify();
             }));
         let skip = c.options_open.then(|| {
-            div()
-                .id("wip-skip-hooks-row")
-                .flex()
-                .items_center()
-                .gap_2()
-                .pl_5()
-                .cursor_pointer()
-                .child(button::checkbox(&self.hits, "wip-skip-hooks", c.skip_hooks, cx))
-                .child("Skip hooks")
-                .tooltip(Tooltip::text("Commit without running the repository's commit hooks (--no-verify)"))
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    if let Some(c) = &mut this.composer {
-                        c.skip_hooks = !c.skip_hooks;
-                    }
-                    cx.notify();
-                }))
+            let check = Checkbox::new(&self.hits, "wip-skip-hooks", c.skip_hooks).label("Skip hooks").tooltip("Commit without running the repository's commit hooks (--no-verify)").on_toggle(cx.listener(|this, _: &bool, _, cx| {
+                if let Some(c) = &mut this.composer {
+                    c.skip_hooks = !c.skip_hooks;
+                }
+                cx.notify();
+            }));
+            div().flex().pl_5().child(check)
         });
         Some(div().flex().flex_col().gap_1().child(fold).children(skip))
     }

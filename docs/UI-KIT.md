@@ -183,7 +183,7 @@ letters' middle by `ink::mark`, clipped with its tooltip (`clipped`). Buttons, r
 pills, tree rows and checkboxes are built on it, so alignment is right everywhere because it is
 written once.
 
-`Checkbox::new(checked).label("Check out after creating")`: the whole row (square and label) is one
+`Checkbox::new(hits, key, checked).label("Check out after creating")`: the whole row (square and label) is one
 hit target, toggles on click, Space and Enter, and carries the focus ring. Same for `Radio` and
 `Switch` if they are ever needed.
 

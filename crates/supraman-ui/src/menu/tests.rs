@@ -203,3 +203,20 @@ fn a_menu_taller_than_the_window_scrolls_to_the_highlighted_item(cx: &mut TestAp
     let last = view.read_with(cx, |v, _| v.hits.borrow()["menu-i79"].clone());
     assert!(last.fully_visible(), "the last item scrolled into view: {last:?}");
 }
+
+#[gpui::test]
+fn a_tick_and_an_icon_sit_on_their_items_letters(cx: &mut TestAppContext) {
+    let (view, cx) = host(cx);
+    view.update(cx, |v, cx| v.open(vec![item("a", "Alpha", 1).ticked(true), item("b", "Beta", 2).icon(Icon::Copy), item("c", "Gamma", 3)], cx));
+    settle(&view, cx);
+    let below = cx.update(|window, _| {
+        let mut style = window.text_style();
+        style.font_size = tokens::text::BODY.size.into();
+        crate::ink::offset(&style, window)
+    });
+    let centre = |key: &str, cx: &mut VisualTestContext| view.read_with(cx, |v, _| v.hits.borrow().get(key).map(|h| h.bounds.center().y)).unwrap_or_else(|| panic!("{key} paints"));
+    for key in ["a", "b"] {
+        let (mark, text) = (centre(&format!("menu-{key}-mark"), cx), centre(&format!("menu-{key}-text"), cx));
+        assert!(crate::ink::level(mark, text + below), "{key}: its mark on its letters: {mark:?} {text:?} by {below:?}");
+    }
+}

@@ -10,6 +10,7 @@ use crate::button::{self, Button};
 use crate::clipped::{clamped, clipped, clipped_with};
 use crate::hit::{HitTargets, hit_target};
 use crate::tooltip::Tooltip;
+use crate::label::{Label, LabelMark};
 use crate::tokens;
 
 pub const TINT: f32 = 0.06;
@@ -157,19 +158,24 @@ impl InboxCard {
         let color = kind_color(&self.kind, cx);
         let muted = crate::themes::secondary(colors);
         let part = self.part.clone();
+        let context = self.context.map(|text| {
+            let context = match self.context_tip {
+                Some(tip) => clipped_with(part("context"), text, false, false).tooltip(Tooltip::text(tip)),
+                None => clipped(part("context"), text, false),
+            };
+            context.flex_shrink(1.).text_color(muted)
+        });
+        let lead = match context {
+            Some(context) => Label::element(context),
+            None => Label::none(),
+        };
+        let lead = lead.mark_if(self.mark.map(LabelMark::Element)).gap(tokens::space::L).flex_shrink(1.);
         let head = div()
             .flex()
             .items_center()
             .gap(tokens::space::L)
             .text_size(tokens::text::SMALL)
-            .children(self.mark)
-            .children(self.context.map(|text| {
-                let context = match self.context_tip {
-                    Some(tip) => clipped_with(part("context"), text, false, false).tooltip(Tooltip::text(tip)),
-                    None => clipped(part("context"), text, false),
-                };
-                context.flex_shrink(1.).text_color(muted)
-            }))
+            .child(lead)
             .children(self.when.and_then(|(at, now)| when(part("when"), at, now, cx)))
             .child(div().flex_none().px(tokens::space::S).rounded(tokens::radius::S).bg(color.opacity(BADGE_TINT)).text_color(color).font_weight(FontWeight::BOLD).child(self.badge))
             .child(div().flex_1())

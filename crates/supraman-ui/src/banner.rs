@@ -3,6 +3,7 @@
 
 use gpui::{App, Div, Hsla, IntoElement, div, prelude::*};
 use theme::ActiveTheme as _;
+use crate::label::{Label, LabelMark};
 use crate::tokens;
 
 pub const TINT: f32 = 0.12;
@@ -31,10 +32,14 @@ pub fn dismissable(body: impl IntoElement, dismiss: impl IntoElement) -> Div {
     div().flex().items_start().gap(tokens::space::L).child(div().flex_1().min_w_0().child(body)).child(dismiss)
 }
 
-/// `mark` (an icon, a logo) beside `text` that wraps in the room the mark leaves.
+/// `mark` (an icon, a logo) on the letters of `text`'s first line, the text wrapping in the room the mark leaves.
 pub fn marked(mark: impl IntoElement, text: impl IntoElement) -> Div {
-    div().flex().items_start().gap(tokens::space::L).child(mark).child(div().flex_1().min_w_0().child(text))
+    let first_line = Label::new(WORD_JOINER).mark(LabelMark::Element(mark.into_any_element())).gap(gpui::Pixels::ZERO).flex_none();
+    div().flex().items_start().gap(tokens::space::L).child(first_line).child(div().flex_1().min_w_0().child(text))
 }
+
+/// Text of no width, so the mark's slot is one line high.
+const WORD_JOINER: &str = "\u{2060}";
 
 #[cfg(test)]
 mod tests {

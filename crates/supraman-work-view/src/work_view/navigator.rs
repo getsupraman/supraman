@@ -9,6 +9,8 @@ use supraman_workman::{OverviewRun, Rollup};
 
 use super::projects::{active, closed_runs};
 use super::*;
+use supraman_ui::label::{Label, LabelMark};
+use supraman_ui::tokens;
 
 pub(crate) fn done_total(r: &Rollup) -> String {
     format!("{}/{}", r.done, r.counted())
@@ -27,8 +29,7 @@ impl WorkView {
             .py(px(3.))
             .rounded_sm()
             .text_sm()
-            .child(icon.svg(14., colors.icon_muted))
-            .child(div().flex_1().min_w_0().child(SharedString::from(label.to_string())))
+            .child(Label::new(label.to_string()).mark(LabelMark::Svg(icon.svg(14., colors.icon_muted))).gap(tokens::space::L).flex_1())
             .children(badge.filter(|n| *n > 0).map(|n| {
                 div().flex_none().px(px(6.)).rounded_full().bg(error).text_xs().text_color(colors.background).child(SharedString::from(n.to_string()))
             }))
@@ -107,8 +108,7 @@ impl WorkView {
                     .rounded_sm()
                     .text_xs()
                     .text_color(colors.text_muted)
-                    .child((if open { Icon::ChevronDown } else { Icon::ChevronRight }).svg(12., colors.icon_muted))
-                    .child(SharedString::from(format!("{} closed", closed.len())))
+                    .child(Label::new(format!("{} closed", closed.len())).mark(LabelMark::Svg((if open { Icon::ChevronDown } else { Icon::ChevronRight }).svg(12., colors.icon_muted))).gap(tokens::space::S))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle_closed(&id, cx))),
             );
             if open {

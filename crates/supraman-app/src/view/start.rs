@@ -280,14 +280,14 @@ impl FleetView {
         for (i, (name, path)) in folders(ws, Some(&page.folder)).into_iter().enumerate() {
             let key = format!("start-folder-{i}");
             let selected = path_key(&path) == path_key(&page.folder);
-            folder_line = folder_line.child(button::choice(SharedString::from(key.clone()), SharedString::from(name), selected, cx).relative().child(hit_target(&self.hits, key)).on_click(cx.listener(
+            folder_line = folder_line.child(button::choice(&self.hits, key, SharedString::from(name), selected, cx).on_click(cx.listener(
                 move |this, _: &ClickEvent, window, cx| this.set_start_choice(tab, Some(path.clone()), None, window, cx),
             )));
         }
         let mut mode_line = line("Mode");
         for mode in MODES {
             let key = format!("start-mode-{mode}");
-            mode_line = mode_line.child(button::choice(SharedString::from(key.clone()), mode, page.mode == mode, cx).relative().child(hit_target(&self.hits, key)).on_click(cx.listener(
+            mode_line = mode_line.child(button::choice(&self.hits, key, mode, page.mode == mode, cx).on_click(cx.listener(
                 move |this, _: &ClickEvent, window, cx| this.set_start_choice(tab, None, Some(mode), window, cx),
             )));
         }

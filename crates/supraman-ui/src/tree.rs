@@ -7,7 +7,7 @@ use theme::ActiveTheme as _;
 
 use crate::hit::{HitTargets, hit_target};
 use crate::icon::Icon;
-use crate::ink;
+use crate::label::{Label, LabelMark};
 use crate::matcher::find_all;
 use crate::table::{CELL_PAD, Column, Table, TableState};
 use crate::tokens;
@@ -741,13 +741,19 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
             let depth = inner.depth(node);
             let content = paint(this, row(), window, cx);
             let marked = mark.as_ref().map(|(width, f)| {
-                let slot = div().absolute().top_0().bottom_0().left(gpui::rems(-CELL_PAD)).w(*width).flex().items_center().justify_center();
-                (*width, ink::mark(slot.children(f(this, row(), window, cx))))
+                let mark = div().flex().items_center().justify_center().children(f(this, row(), window, cx)).into_any_element();
+                let slot = Label::none().mark(LabelMark::Element(mark)).slot(*width).absolute().top_0().bottom_0().left(gpui::rems(-CELL_PAD));
+                (*width, slot)
             });
-            let lead = match (&node.kind, &lead) {
-                (Kind::File(_), Some(f)) => Some(ink::mark(div().flex().flex_none().items_center().justify_center().w(px(LEAD)).children(f(this, row(), window, cx)))),
+            let lead = match (&node.kind, chevron, &lead) {
+                (Kind::Folder { .. }, Some(c), _) => {
+                    let slot = div().relative().flex().flex_none().items_center().justify_center().w(px(LEAD)).child(c.svg(tokens::icon::S, muted));
+                    Some(slot.child(hit_target(&hits, format!("{id}-chevron-{}", node.path))))
+                }
+                (Kind::File(_), _, Some(f)) => Some(div().flex().flex_none().items_center().justify_center().w(px(LEAD)).children(f(this, row(), window, cx))),
                 _ => None,
             };
+            let content = div().flex().flex_1().min_w_0().items_center().child(content);
             div()
                 .relative()
                 .flex()
@@ -756,12 +762,7 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
                 .min_w_0()
                 .pl(indent * depth as f32 + marked.as_ref().map_or(Pixels::ZERO, |(w, _)| *w))
                 .children(marked.map(|(_, slot)| slot))
-                .children(chevron.map(|c| {
-                    let slot = div().relative().flex().flex_none().items_center().justify_center().w(px(LEAD)).child(c.svg(tokens::icon::S, muted));
-                    ink::mark(slot.child(hit_target(&hits, format!("{id}-chevron-{}", node.path))))
-                }))
-                .children(lead)
-                .child(div().flex().flex_1().min_w_0().items_center().child(content))
+                .child(Label::element(content).mark_if(lead.map(|l| LabelMark::Element(l.into_any_element()))).gap(Pixels::ZERO).flex_1())
                 .into_any_element()
         }
     }

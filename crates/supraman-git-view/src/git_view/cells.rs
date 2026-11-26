@@ -6,7 +6,7 @@ use supraman_ui::clipped::clipped;
 use supraman_ui::fonts;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
-use supraman_ui::ink;
+use supraman_ui::label::{Label, LabelMark};
 
 use super::GitView;
 use super::branch::DraggedPill;
@@ -93,23 +93,30 @@ pub(crate) fn pill(key: impl Into<String>, face: Face, colour: usize, palette: &
     let key = key.into();
     let (text, hover) = (palette.text, pill_fill(colour, true, palette));
     let name = clipped(key.clone(), face.name, false).min_w(px(NAME_MIN)).flex_shrink(BODY_SHRINK).child(hit_target(hits, format!("{key}-text")));
-    let least = 2. * PILL_PAD + NAME_MIN + if face.head { PILL_ICON + PILL_GAP } else { 0. };
+    let (gap, pad) = (px(PILL_GAP), px(PILL_PAD));
+    let least = px(NAME_MIN + if face.head { PILL_ICON + PILL_GAP } else { 0. });
     div()
         .flex()
         .items_center()
-        .gap(px(PILL_GAP))
-        .min_w(px(least))
+        .gap(gap)
+        .min_w(least + pad * 2.)
         .overflow_hidden()
         .h(px(LINE))
-        .px(px(PILL_PAD))
+        .px(pad)
         .rounded(px(4.))
         .bg(pill_fill(colour, false, palette))
         .hover(move |s| s.bg(hover))
         .child(supraman_ui::popup::open_fill(key.clone()).radius(supraman_ui::tokens::radius::S).fill(hover))
         .text_color(text)
         .text_xs()
-        .when(face.head, |d| d.child(div().flex_none().child(current_mark(text, PILL_ICON))))
-        .child(ink::text(name))
+        .child(
+            Label::element(name)
+                .mark_if(face.head.then(|| LabelMark::Svg(current_mark(text, PILL_ICON))))
+                .gap(gap)
+                .centred()
+                .min_w(least)
+                .flex_shrink(BODY_SHRINK),
+        )
         .when(!face.icons.is_empty(), |d| d.child(icons(&key, face.icons, text, hits)))
 }
 
@@ -209,7 +216,7 @@ pub(crate) fn refs(ix: usize, row: &GraphRow, view: RefCellView, selected: bool,
 
 /// A group's `+N`: its own fill, [`GAP`] from the pill, as two graph stripes stand apart.
 fn more_chip(more: SharedString, colour: usize, palette: &Palette) -> Div {
-    div().relative().flex_none().flex().items_center().h(px(LINE)).px_1p5().rounded(px(4.)).bg(palette.pill(colour)).text_xs().text_color(palette.text).child(ink::text(more))
+    div().relative().flex_none().flex().items_center().h(px(LINE)).px_1p5().rounded(px(4.)).bg(palette.pill(colour)).text_xs().text_color(palette.text).child(Label::element(more).centred())
 }
 
 /// Every group in one block over the row's pill, as wide as its widest group and never narrower than the pill.

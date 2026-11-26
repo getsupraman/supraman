@@ -22,10 +22,12 @@ pub enum Kind {
     Px,
     /// `px(` in the kit's own sources.
     KitPx,
+    /// `ink::` or a `use` of `ink` in a feature crate: a mark beside text is a `label::Label`.
+    Ink,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 5] = [Kind::OverflowScroll, Kind::RenderFocus, Kind::Hover, Kind::Px, Kind::KitPx];
+    pub const ALL: [Kind; 6] = [Kind::OverflowScroll, Kind::RenderFocus, Kind::Hover, Kind::Px, Kind::KitPx, Kind::Ink];
 
     /// The table of `ceilings.toml` holding this kind.
     pub fn key(self) -> &'static str {
@@ -35,6 +37,7 @@ impl Kind {
             Kind::Hover => "hover",
             Kind::Px => "px",
             Kind::KitPx => "kit_px",
+            Kind::Ink => "ink",
         }
     }
 
@@ -45,6 +48,7 @@ impl Kind {
             Kind::Hover => ".hover( calls",
             Kind::Px => "px( literals",
             Kind::KitPx => "px( literals",
+            Kind::Ink => "ink:: uses",
         }
     }
 
@@ -92,6 +96,7 @@ pub fn scan(crates: &Path) -> Found {
                     Kind::Hover => calls(&source.code, &[".hover("], |_| true),
                     Kind::Px | Kind::KitPx => calls(&source.code, &["px("], |before| !before.is_some_and(|c| c == '.' || is_ident(c))),
                     Kind::RenderFocus => render_focus(&source.code, &focusing),
+                    Kind::Ink => calls(&source.code, &["ink::", "ink;", "ink,", "ink}"], |before| !before.is_some_and(is_ident)),
                 };
                 if !lines.is_empty() {
                     found.entry(kind).or_default().insert(source.key.clone(), lines);

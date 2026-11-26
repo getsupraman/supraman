@@ -37,6 +37,21 @@ fn kit_px_holds_its_ceilings() {
     holds(Kind::KitPx);
 }
 
+/// `[ink]` holds no file: a feature crate places a mark beside text through `label::Label`.
+#[test]
+fn no_feature_crate_calls_ink() {
+    holds(Kind::Ink);
+}
+
+#[test]
+fn the_ink_scan_finds_a_features_ink_but_not_link_or_blink() {
+    let view = "use supraman_ui::ink;
+fn v() { ink::mark(a); Link::Url(u); Blink::new(); supraman_ui::ink::text(b); }
+";
+    let planted = Planted::new(&[("supraman-git-view/src/v.rs", view)]);
+    assert_eq!(lines(&scan(&planted.0), Kind::Ink, "supraman-git-view/src/v.rs"), [1, 2, 2]);
+}
+
 /// `cargo test -p supraman-ui print_ceilings -- --ignored --nocapture`: today's counts as `ceilings.toml`.
 #[test]
 #[ignore]
