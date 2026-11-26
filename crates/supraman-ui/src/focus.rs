@@ -176,6 +176,13 @@ pub fn restore_on_loss<V: 'static>(window: &mut Window, cx: &mut Context<V>) -> 
 /// the focus held, while that pane is shown, else gpui's nearest focusable ancestor of what lost it; a popup opened
 /// while nothing held the focus gives it only to that ancestor, and to nothing when there is none. Whether the loss is handled.
 pub fn restore(window: &mut Window, cx: &mut App) -> bool {
+    let handled = restored(window, cx);
+    // gpui draws no frame for a focus a focus-lost listener moves; this focuses only painted handles, so one more frame cannot loop.
+    window.defer(cx, |window, _| window.refresh());
+    handled
+}
+
+fn restored(window: &mut Window, cx: &mut App) -> bool {
     let given = popup::give_back(window, cx);
     if matches!(given, Some(popup::Given::Back)) {
         return true;

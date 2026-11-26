@@ -789,3 +789,13 @@ fn a_tab_is_titled_by_its_one_bound_project_else_by_its_folder_or_group(cx: &mut
     let needs = folder.read_with(cx, |v, cx| v.needs_you(cx));
     assert_eq!(needs, 6, "only pa's rows are this tab's");
 }
+
+#[gpui::test]
+fn the_overview_shown_while_the_detail_held_the_keys_gives_them_to_its_page(cx: &mut TestAppContext) {
+    let Opened { view, cx, .. } = open(cx);
+    click(&view, "work-row-ra/3", cx);
+    click(&view, "work-tab-evidence", cx);
+    view.update(cx, |v, cx| v.show_page(Page::Overview, cx));
+    settle(&view, cx);
+    assert_eq!(holding(cx).as_deref(), Some(FOCUS_MAIN), "the Overview's page has the keys");
+}
