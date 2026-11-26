@@ -116,7 +116,8 @@
 "supraman-ui/src/tabs/fit.rs" = 7
 "supraman-ui/src/tabs/list.rs" = 1
 "supraman-ui/src/term_element.rs" = 25
-"supraman-ui/src/text_input.rs" = 8
+"supraman-ui/src/text_input.rs" = 5
+"supraman-ui/src/text_input/element.rs" = 3
 "supraman-ui/src/tokens.rs" = 18
 "supraman-ui/src/tooltip.rs" = 1
 "supraman-ui/src/tree.rs" = 4

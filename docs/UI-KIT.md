@@ -146,10 +146,10 @@ again; a scan test enforces it (like `clipboard::tests`).
 One text engine, two modes, the same box:
 
 - `TextInput` (exists): editable, IME and dead keys through `EntityInputHandler`, selection, undo.
-- **`TextView`** (new): the same layout and the same selection model, read-only: mouse selection,
-  double-click word, triple-click line, Shift+arrows once focused, Ctrl+C, Ctrl+A. Copy goes through
-  `supraman_ui::clipboard`.
-- **Editable is a mode, not a different widget.** `TextBox::read_only(bool)`: switching mode keeps the
+- **`TextView`**: a read-only, plain `TextInput` kept per element id, so the same layout and the same
+  selection model: mouse selection, double-click word, triple-click line, Shift+arrows once focused, Ctrl+C,
+  Ctrl+A. Copy goes through `supraman_ui::clipboard`.
+- **Editable is a mode, not a different widget.** `TextInput::set_read_only(bool)`: switching mode keeps the
   font, size, wrap, padding and border, so nothing moves. Only the caret appears. The commit panel's
   message is one box: click places the caret where you clicked (on a commit that can be reworded) and
   the actions (Cancel, Update Message) appear in a reserved row, not inserted above content.

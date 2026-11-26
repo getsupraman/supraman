@@ -462,6 +462,7 @@ impl FleetView {
         match event {
             InputEvent::Confirm | InputEvent::ConfirmBack | InputEvent::Submit => self.save_schedule_edit(cx),
             InputEvent::Cancel => self.scheduling.schedule_edit = None,
+            InputEvent::Pressed => {}
             InputEvent::Edited | InputEvent::Refused(_) => {
                 if let Some(e) = &mut self.scheduling.schedule_edit {
                     e.error = None;

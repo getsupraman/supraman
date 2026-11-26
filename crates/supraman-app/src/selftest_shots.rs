@@ -617,6 +617,7 @@ async fn git_palette(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowC
     let shot = capture(out.join("supraman-git-palette.png"), None, cx).await?;
     println!("shot: {}", shot.display());
     cx.update(|_, cx| git.update(cx, |g, cx| g.close_find(cx)))?;
+    git::message(view, &git, fixture.sha("ahead"), out, cx).await?;
     git_wip(view, &git, out, cx).await?;
     git_add_remote(view, out, cx).await?;
     git_add_worktree(view, out, cx).await?;

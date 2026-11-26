@@ -1201,7 +1201,7 @@ impl FleetView {
             InputEvent::Cancel if self.dismiss_popup() => cx.notify(),
             InputEvent::Cancel if !self.search.read(cx).text().is_empty() => self.clear_search(cx),
             InputEvent::Cancel => self.focus.focus(window, cx),
-            InputEvent::Confirm | InputEvent::ConfirmBack | InputEvent::Refused(_) | InputEvent::Submit => {}
+            InputEvent::Confirm | InputEvent::ConfirmBack | InputEvent::Refused(_) | InputEvent::Submit | InputEvent::Pressed => {}
         }
     }
 

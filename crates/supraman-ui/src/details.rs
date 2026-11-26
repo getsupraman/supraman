@@ -1,5 +1,6 @@
 //! A details page: a title with a status pill, sections of `label  value` rows and paragraphs, and an actions
-//! bar under them. The owner builds the [`Section`]s from its data and keeps the [`ScrollHandle`].
+//! bar under them; their text is a [`TextView`] the user selects and copies. The owner builds the [`Section`]s
+//! from its data and keeps the [`ScrollHandle`].
 
 use std::rc::Rc;
 
@@ -10,6 +11,7 @@ use crate::banner;
 use crate::button;
 use crate::clipped::path_label;
 use crate::hit::{HitTargets, hit_target};
+use crate::text_input::TextView;
 use crate::tokens;
 
 const LABEL: f32 = 128.;
@@ -172,14 +174,14 @@ fn render_section<V: 'static>(page: &str, section: &Section, on_link: Option<OnL
         .child(div().text_size(tokens::text::SMALL).font_weight(FontWeight::BOLD).text_color(colors.text_muted).child(SharedString::from(section.caption.to_uppercase())));
     for (i, line) in section.lines.iter().enumerate() {
         out = out.child(match line {
-            Line::Row(label, value) => labelled(label, &colors).child(div().flex_1().min_w_0().child(SharedString::from(value.clone()))).into_any_element(),
+            Line::Row(label, value) => labelled(label, &colors).child(div().flex_1().min_w_0().child(TextView::new(SharedString::from(format!("{key}-row-{i}")), value.clone()))).into_any_element(),
             Line::Path(label, path) => labelled(label, &colors)
                 .child(path_label(format!("{key}-path-{i}"), path, crate::themes::secondary(&colors), colors.text).flex_1())
                 .into_any_element(),
             Line::Link { label, value, target } => link_line(label, value, target, format!("{key}-link-{i}"), on_link.clone(), hits, cx),
-            Line::Text(t) => div().text_size(tokens::text::BODY).whitespace_normal().child(SharedString::from(t.clone())).into_any_element(),
+            Line::Text(t) => div().text_size(tokens::text::BODY).child(TextView::new(SharedString::from(format!("{key}-text-{i}")), t.clone())).into_any_element(),
             Line::Check { done, text, note } => check_line(*done, text, note.as_deref(), format!("{key}-check-{i}"), hits, cx),
-            Line::Long(t) => long_line(t, format!("{key}-copy-{i}"), hits, cx),
+            Line::Long(t) => long_line(t, format!("{key}-long-{i}"), format!("{key}-copy-{i}"), hits, cx),
         });
     }
     out.into_any_element()
@@ -239,7 +241,7 @@ fn check_line<V: 'static>(done: bool, text: &str, note: Option<&str>, key: Strin
         .into_any_element()
 }
 
-fn long_line<V: 'static>(text: &str, copy_key: String, hits: &HitTargets, cx: &mut Context<V>) -> AnyElement {
+fn long_line<V: 'static>(text: &str, key: String, copy_key: String, hits: &HitTargets, cx: &mut Context<V>) -> AnyElement {
     let copied = text.to_string();
     div()
         .flex()
@@ -248,7 +250,7 @@ fn long_line<V: 'static>(text: &str, copy_key: String, hits: &HitTargets, cx: &m
         .p(tokens::space::L)
         .rounded(tokens::radius::M)
         .bg(cx.theme().colors().element_background)
-        .child(div().flex_1().min_w_0().font_family(crate::fonts::MONO).text_size(tokens::text::BODY).child(SharedString::from(text.to_string())))
+        .child(div().flex_1().min_w_0().font_family(crate::fonts::MONO).text_size(tokens::text::BODY).child(TextView::new(SharedString::from(key), text.to_string())))
         .child(button::Button::new(hits, copy_key).label("Copy").on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
             crate::clipboard::write_text(cx, copied.clone());
         })))
