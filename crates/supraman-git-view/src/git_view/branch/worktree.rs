@@ -238,7 +238,7 @@ impl BranchActions {
             p.set_top("Search local and remote branches and tags", "REFERENCE TO CHECK OUT", cx);
             p
         });
-        palette.update(cx, |p, cx| p.focus(window, cx));
+        supraman_ui::focus::request(&palette.focus_handle(cx), window, cx);
         let sub = cx.subscribe_in(&palette, window, |this: &mut BranchActions, _, e: &PaletteEvent<GitEntry>, window, cx| match e {
             PaletteEvent::Query(_) => {}
             PaletteEvent::Close => this.close_picker(window, cx),

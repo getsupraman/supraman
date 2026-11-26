@@ -223,12 +223,11 @@ impl WipPanel {
         Some(self.composer.as_ref()?.order(from_row, amend, cx))
     }
 
-    /// The summary takes the keyboard.
+    /// The summary takes the keyboard once painted.
     pub(crate) fn focus_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.ensure_composer(window, cx);
         if let Some(c) = &self.composer {
-            let summary = c.summary.clone();
-            summary.update(cx, |i, cx| i.focus(window, cx));
+            supraman_ui::focus::request(&c.summary.focus_handle(cx), window, cx);
         }
     }
 

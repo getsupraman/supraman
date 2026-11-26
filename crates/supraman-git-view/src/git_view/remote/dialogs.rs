@@ -1,6 +1,6 @@
 //! The remote calls' prompts in the tab's band: a branch's upstream and ssh's prompt.
 
-use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Div, Entity, Subscription, Window, div, prelude::*, px};
+use gpui::{Focusable as _, AnyElement, AppContext as _, ClickEvent, Context, Div, Entity, Subscription, Window, div, prelude::*, px};
 use supraman_core::askpass::{Asked, Prompt, Reply};
 use supraman_gitman::write::remote::PullMode;
 use supraman_gitman::Remote;
@@ -118,8 +118,9 @@ impl RemoteActions {
             });
             input.update(cx, |i, cx| {
                 i.set_text(text, cx);
-                i.focus_all(window, cx);
+                i.select_all_text(cx);
             });
+            supraman_ui::focus::request(&input.focus_handle(cx), window, cx);
             let sub = cx.subscribe(&input, move |this: &mut RemoteActions, _, e: &InputEvent, cx| match e {
                 InputEvent::Confirm => on_confirm(this, cx),
                 InputEvent::Cancel => this.close_dialogs(cx),

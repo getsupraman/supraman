@@ -54,6 +54,7 @@ pub struct Panel<V> {
 #[derive(Default)]
 pub struct Dialog {
     members: Members,
+    region: std::cell::OnceCell<FocusHandle>,
 }
 
 impl Dialog {
@@ -121,12 +122,13 @@ impl Dialog {
             .collect();
         let first = panel.first.as_ref().and_then(|k| self.members.get(k)).or_else(|| panel.fields.first().cloned()).or_else(|| self.members.order().first());
         let order = self.members.order();
+        let region = self.region.get_or_init(|| cx.focus_handle()).clone();
         // Focused as it prepaints, before its members, so the frame that first shows it holds the focus (closed unseen, a focus lost all the same).
         let take_focus = {
-            let order = order.clone();
+            let region = region.clone();
             canvas(
                 move |_, window, cx| {
-                    if let Some(first) = first.clone().filter(|_| order.focused(window, cx).is_none()) {
+                    if let Some(first) = first.clone().filter(|_| !region.contains_focused(window, cx)) {
                         window.focus(&first, cx);
                     }
                 },
@@ -138,6 +140,7 @@ impl Dialog {
         let (key, cancel, escape) = (panel.key, panel.cancel.clone(), panel.cancel);
         let title = panel.title.map(|t| div().relative().text_size(tokens::text::TITLE).font_weight(gpui::FontWeight::SEMIBOLD).child(t).child(hit_target(hits, format!("{key}-title"))));
         let body = crate::scroll::area(SharedString::from(format!("{key}-body"))).flex_1().min_h_0().child(panel.body);
+        let marker = crate::focus::popup(std::iter::once(region.clone()).chain(order.handles().to_vec()));
         let card = order
             .on(div().id(SharedString::from(format!("{key}-dialog"))))
             .relative()
@@ -155,6 +158,8 @@ impl Dialog {
             .shadow(vec![shade(tokens::space::S, tokens::space::XL), shade(tokens::space::XXL, px(40.))])
             .text_size(tokens::text::BODY)
             .text_color(colors.text)
+            .track_focus(&region)
+            .child(marker)
             .child(take_focus)
             .on_action(cx.listener(move |this, _: &Dismiss, window, cx| cancel(this, window, cx)))
             .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {

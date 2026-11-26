@@ -648,7 +648,7 @@ impl GitView {
         if !std::mem::take(&mut self.focus_graph) && !held {
             return;
         }
-        window.focus(self.table.focus_handle(), cx);
+        supraman_ui::focus::request(self.table.focus_handle(), window, cx);
         if self.table.selected().is_none() {
             self.select_head(cx);
         }
@@ -976,7 +976,7 @@ impl Render for GitView {
         self.watch_activation(window, cx);
         let focus = self.viewer.update(cx, |v, cx| std::mem::take(&mut v.focus).then(|| v.view().map(|d| d.read(cx).focus_handle().clone())).flatten());
         if let Some(focus) = focus {
-            window.focus(&focus, cx);
+            supraman_ui::focus::request(&focus, window, cx);
         }
         self.graph_takes_keys(window, cx);
         self.wip_panel.update(cx, |p, cx| p.ensure_composer(window, cx));

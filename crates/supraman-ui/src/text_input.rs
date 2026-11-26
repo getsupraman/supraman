@@ -772,6 +772,12 @@ impl TextInput {
         cx.notify();
     }
 
+    /// Everything selected, the focus left where it is (a field [`crate::focus::request`]ed as it opens).
+    pub fn select_all_text(&mut self, cx: &mut Context<Self>) {
+        self.line.select_all();
+        self.lit(cx);
+    }
+
     /// Focused, everything selected (Ctrl+Shift+E on the search box).
     pub fn focus_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.line.select_all();

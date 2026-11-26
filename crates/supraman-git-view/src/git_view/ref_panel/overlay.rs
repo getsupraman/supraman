@@ -103,7 +103,7 @@ impl RefPanel {
     pub(super) fn render_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let overlay = self.overlay.as_mut().filter(|o| o.ready)?;
         if std::mem::take(&mut overlay.take_keys) {
-            window.focus(&overlay.focus, cx);
+            supraman_ui::focus::request(&overlay.focus, window, cx);
         }
         let (section, tree, focus) = (overlay.section, overlay.tree.clone(), overlay.focus.clone());
         let rows = tree.visible().len().clamp(1, MOST_ROWS);

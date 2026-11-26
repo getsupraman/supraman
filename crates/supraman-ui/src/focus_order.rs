@@ -40,6 +40,10 @@ impl FocusOrder {
         Self(handles.into_iter().collect())
     }
 
+    pub fn handles(&self) -> &[FocusHandle] {
+        &self.0
+    }
+
     pub fn first(&self) -> Option<FocusHandle> {
         self.0.first().cloned()
     }

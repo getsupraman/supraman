@@ -1,6 +1,6 @@
 //! The panel painted; hit keys `refpanel-{row,name,mark}-<path>`, `-filter`, `-show-all`, `-collapse`, `-expand`, `-strip-<section>`, `-sections-divider-<pane>`, `-{remote,worktrees}-add`, `-{remote,worktrees}-count`.
 
-use gpui::{AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla, IntoElement, Render, Window, div, prelude::*, px};
+use gpui::{Focusable as _, AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla, IntoElement, Render, Window, div, prelude::*, px};
 use supraman_gitman::short_sha;
 use supraman_ui::button;
 use supraman_ui::clipped;
@@ -140,7 +140,8 @@ impl RefPanel {
     fn bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let input = self.filter_box(window, cx);
         if std::mem::take(&mut self.focus_filter) {
-            input.update(cx, |i, cx| i.focus_all(window, cx));
+            input.update(cx, |i, cx| i.select_all_text(cx));
+            supraman_ui::focus::request(&input.focus_handle(cx), window, cx);
         }
         let show_all = (self.walk != Walk::default()).then(|| {
             button::ghost(&self.hits, format!("{LIST}-show-all"), cx)

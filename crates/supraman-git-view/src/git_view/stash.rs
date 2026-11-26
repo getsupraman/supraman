@@ -2,7 +2,7 @@
 
 use supraman_core::text::count;
 
-use gpui::{AppContext as _, ClickEvent, Context, Entity, EventEmitter, Pixels, Point, Render, Subscription, Window, div, prelude::*};
+use gpui::{Focusable as _, AppContext as _, ClickEvent, Context, Entity, EventEmitter, Pixels, Point, Render, Subscription, Window, div, prelude::*};
 use supraman_gitman::write::stash::{self, Applied};
 use supraman_gitman::write::{LockSet, Session, WriteError};
 use supraman_gitman::FileChange;
@@ -295,8 +295,9 @@ impl StashActions {
         let input = cx.new(|cx| TextInput::new("Stash message", None, window, cx));
         input.update(cx, |i, cx| {
             i.set_text(&label, cx);
-            i.focus_all(window, cx);
+            i.select_all_text(cx);
         });
+        supraman_ui::focus::request(&input.focus_handle(cx), window, cx);
         let events = cx.subscribe(&input, |this: &mut StashActions, _, e: &InputEvent, cx| {
             if *e == InputEvent::Confirm {
                 this.save_message(cx);

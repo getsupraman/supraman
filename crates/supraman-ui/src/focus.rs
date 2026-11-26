@@ -13,6 +13,10 @@ use theme::ActiveTheme as _;
 use crate::focus_order;
 use crate::hit::{Hit, HitTargets};
 
+mod popup;
+
+pub use popup::{popup, request};
+
 gpui::actions!(focus, [NextPane, PreviousPane]);
 
 pub fn bind_keys(cx: &mut App) {
@@ -142,27 +146,59 @@ impl Group {
 
 /// The window's root element: its panes registered afresh each frame from here, F6 and Shift+F6 handled.
 pub fn root<E: InteractiveElement + ParentElement>(element: E) -> E {
-    let start = canvas(|_, window, cx| state(window, cx).borrow_mut().shown.clear(), |_, _, _, _| {}).absolute().size_0();
+    let start = canvas(
+        |_, window, cx| {
+            let state = state(window, cx);
+            let mut state = state.borrow_mut();
+            state.shown.clear();
+            state.frame += 1;
+        },
+        |_, _, window, cx| window.defer(cx, popup::settle),
+    )
+    .absolute()
+    .size_0();
     element.child(start).on_action(|_: &NextPane, window, cx| step(false, window, cx)).on_action(|_: &PreviousPane, window, cx| step(true, window, cx))
 }
 
-/// The root view's subscription: focus lost (a popup closed with it) goes back to the pane that held it.
+/// The root view's subscription: focus lost with a popup goes back to what held it as the popup opened, else to the pane that held it.
 pub fn restore_on_loss<V: 'static>(window: &mut Window, cx: &mut Context<V>) -> Subscription {
     cx.on_focus_lost(window, |_, window, cx| {
         restore(window, cx);
     })
 }
 
-/// Focuses what the pane that last held the focus held, while that pane is shown, else gpui's nearest focusable
-/// ancestor of what lost it; whether it focused anything.
+/// Gives the focus a closed popup held back to what held it as it opened; else focuses what the pane that last held
+/// the focus held, while that pane is shown, else gpui's nearest focusable ancestor of what lost it; a popup opened
+/// while nothing held the focus gives it only to that ancestor, and to nothing when there is none. Whether the loss is handled.
 pub fn restore(window: &mut Window, cx: &mut App) -> bool {
+    let given = popup::give_back(window, cx);
+    if matches!(given, Some(popup::Given::Back)) {
+        return true;
+    }
     let state = state(window, cx);
-    let target = {
-        let state = state.borrow();
-        state.held.as_ref().and_then(|key| state.shown.iter().find(|p| &p.key == key)).map(|pane| state.target(pane, window))
+    let target = match given {
+        Some(popup::Given::Nothing) => None,
+        _ => {
+            let state = state.borrow();
+            state.held.as_ref().and_then(|key| state.shown.iter().find(|p| &p.key == key)).map(|pane| state.target(pane, window))
+        }
     };
     let target = target.or_else(|| window.focus_lost_restore_target(cx));
+    if target.is_none() && given.is_some() {
+        window.blur(cx);
+        return true;
+    }
     state.borrow_mut().restored = target.as_ref().map(FocusHandle::downgrade);
+    target.map(|t| window.focus(&t, cx)).is_some()
+}
+
+/// Focuses the shown pane `key` as F6 would: what it last held, else its entry; whether it is shown.
+pub fn to_pane(key: &str, window: &mut Window, cx: &mut App) -> bool {
+    let target = {
+        let state = state(window, cx);
+        let state = state.borrow();
+        state.shown.iter().find(|p| p.key == key).map(|pane| state.target(pane, window))
+    };
     target.map(|t| window.focus(&t, cx)).is_some()
 }
 
@@ -207,6 +243,13 @@ struct State {
     group_leaves: HashMap<SharedString, WeakFocusHandle>,
     /// What [`restore`] last focused: a pane's, never a shown group's own pick.
     restored: Option<WeakFocusHandle>,
+    /// Frames begun in this window.
+    frame: u64,
+    /// The pending [`request`] and the frame it was made in.
+    requested: Option<(FocusHandle, u64)>,
+    /// What held the focus after the last frame.
+    settled: Option<WeakFocusHandle>,
+    popups: Vec<popup::Popup>,
 }
 
 impl State {

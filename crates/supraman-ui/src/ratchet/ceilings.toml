@@ -3,14 +3,6 @@
 [overflow_scroll]
 
 [render_focus]
-"supraman-git-view/src/git_view.rs" = 5
-"supraman-git-view/src/git_view/branch/mod.rs" = 1
-"supraman-git-view/src/git_view/details/render.rs" = 1
-"supraman-git-view/src/git_view/ref_panel/overlay.rs" = 1
-"supraman-git-view/src/git_view/ref_panel/render.rs" = 1
-"supraman-git-view/src/git_view/remote/mod.rs" = 1
-"supraman-git-view/src/git_view/stash.rs" = 1
-"supraman-work-view/src/work_view.rs" = 1
 
 [hover]
 "supraman-app/src/settings_window.rs" = 1

@@ -1,6 +1,6 @@
 //! The name of a new or renamed branch or tag, or an annotated tag's message: a dialog, or a field in the row's cell.
 
-use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, Subscription, Window, div, prelude::*, px};
+use gpui::{Focusable as _, AnyElement, AppContext as _, ClickEvent, Context, Entity, Subscription, Window, div, prelude::*, px};
 use supraman_gitman::write::branch::name_problem;
 use supraman_ui::button;
 use supraman_ui::text_input::{InputEvent, TextInput};
@@ -121,7 +121,8 @@ impl BranchActions {
         name.update(cx, |i, cx| i.set_text(&given, cx));
         let message = dialog.ask.has_message().then(|| cx.new(|cx| TextInput::new("Message", None, window, cx)));
         let first = if dialog.ask.has_name() { name.clone() } else { message.clone().unwrap_or(name.clone()) };
-        first.update(cx, |i, cx| i.focus_all(window, cx));
+        first.update(cx, |i, cx| i.select_all_text(cx));
+        supraman_ui::focus::request(&first.focus_handle(cx), window, cx);
         let listen = |input: &Entity<TextInput>, cx: &mut Context<Self>| {
             cx.subscribe(input, |this: &mut BranchActions, _, e: &InputEvent, cx| match e {
                 InputEvent::Confirm => this.submit_name(cx),
