@@ -1,4 +1,4 @@
-//! Create Worktree beside the ref panel: the reference picked in the shared palette, an optional new branch and the folder;
+//! Create Worktree in the tab's prompt: the reference picked in the shared palette, an optional new branch and the folder;
 //! hit keys `git-add-worktree{,-close,-ok,-ref,-branch,-folder,-browse}`, the palette's rows `git-add-worktree-refs-row-<key>`.
 
 use std::collections::HashSet;
@@ -83,12 +83,17 @@ impl AddWorktree {
         }
     }
 
-    /// The reference (its open picker with it), the new branch, the folder, Browse, then Create Worktree.
-    fn order(&self, cx: &gpui::App) -> FocusOrder {
-        let Some(f) = &self.fields else { return FocusOrder::default() };
+    /// The reference (its open picker with it), the new branch, the folder and Browse: the form's fields in Tab order.
+    fn members(&self, cx: &gpui::App) -> Vec<FocusHandle> {
+        let Some(f) = &self.fields else { return Vec::new() };
         let picker = self.picking.as_ref().map(|(p, _)| p.focus_handle(cx));
-        let fields = [f.branch.focus_handle(cx), f.folder.focus_handle(cx), f.browse.clone(), f.ok.clone()];
-        FocusOrder::new(std::iter::once(f.reference.clone()).chain(picker).chain(fields))
+        let fields = [f.branch.focus_handle(cx), f.folder.focus_handle(cx), f.browse.clone()];
+        std::iter::once(f.reference.clone()).chain(picker).chain(fields).collect()
+    }
+
+    /// [`AddWorktree::members`], then Create Worktree.
+    fn order(&self, cx: &gpui::App) -> FocusOrder {
+        FocusOrder::new(self.members(cx).into_iter().chain(self.fields.as_ref().map(|f| f.ok.clone())))
     }
 
     #[cfg(test)]
@@ -328,7 +333,7 @@ impl BranchActions {
             .child(Icon::ChevronDown.svg(12., muted))
             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_picker(window, cx)));
         let field = supraman_ui::focus_order::pressable(field, focus, cx.listener(|this, _: &Press, window, cx| this.open_picker(window, cx)));
-        let picker = adding.picking.as_ref().map(|(p, _)| deferred(div().absolute().top_full().left_0().right_0().child(p.clone())).with_priority(supraman_ui::tokens::Layer::Form.priority()));
+        let picker = adding.picking.as_ref().map(|(p, _)| deferred(div().absolute().top_full().left_0().right_0().child(p.clone())).with_priority(supraman_ui::tokens::Layer::OverPrompt.priority()));
         div()
             .relative()
             .when(picker.is_some(), |d| {
@@ -340,7 +345,7 @@ impl BranchActions {
             .into_any_element()
     }
 
-    /// The form as the tab's form slot shows it, while it is open.
+    /// The form in the tab's prompt, while it is open.
     pub(crate) fn render_add_worktree(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let adding = self.adding.as_ref()?;
         let fields = adding.fields.as_ref()?;
@@ -355,8 +360,8 @@ impl BranchActions {
         ];
         let running = self.creating();
         let why = if running { Some(CREATING) } else { adding.why_not(cx).or_else(|| self.busy(cx)) };
-        let form = Form { key: KEY.into(), icon: Icon::Worktree, title: "Create Worktree".into(), ok: "Create Worktree".into(), why: why.map(Into::into), running, answers: ANSWERS };
-        Some(form.render(&self.hits, rows, adding.order(cx), Some(&fields.ok), cx))
+        let form = Form { key: KEY.into(), title: "Create Worktree".into(), ok: "Create Worktree".into(), why: why.map(Into::into), running, answers: ANSWERS };
+        Some(form.render(self.writes.dialog(), &self.hits, rows, adding.members(cx), Some(&fields.ok), cx))
     }
 
     /// The worktree is made: the form closed.

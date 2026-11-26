@@ -170,8 +170,8 @@ impl Render for UndoBar {
 }
 
 impl UndoBar {
-    pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
-        self.writes.band(&self.hits, "git-undo-stash", Self::answer, cx)
+    pub(crate) fn prompt(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        self.writes.prompt(&self.hits, "git-undo-stash", Self::answer, cx)
     }
 }
 

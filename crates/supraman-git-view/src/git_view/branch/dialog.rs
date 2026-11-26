@@ -1,8 +1,12 @@
-//! The name of a new or renamed branch or tag, or an annotated tag's message: a dialog, or a field in the row's cell.
+//! The name of a new or renamed branch or tag, or an annotated tag's message: the tab's prompt, or a field in the row's cell.
 
-use gpui::{Focusable as _, AnyElement, AppContext as _, ClickEvent, Context, Entity, Subscription, Window, div, prelude::*, px};
+use gpui::{Focusable as _, AnyElement, AppContext as _, ClickEvent, Context, Entity, FocusHandle, SharedString, Subscription, Window, div, prelude::*};
 use supraman_gitman::write::branch::name_problem;
 use supraman_ui::button;
+use supraman_ui::dialog::{Button as DialogButton, Panel};
+use supraman_ui::focus_order::Press;
+use supraman_ui::form;
+use supraman_ui::hit::hit_target;
 use supraman_ui::text_input::{InputEvent, TextInput};
 use theme::ActiveTheme as _;
 
@@ -43,6 +47,8 @@ impl NameAsk {
 struct Fields {
     name: Entity<TextInput>,
     message: Option<Entity<TextInput>>,
+    /// Check out after creating.
+    tick: FocusHandle,
     _events: Vec<Subscription>,
 }
 
@@ -132,7 +138,7 @@ impl BranchActions {
         };
         let mut events = vec![listen(&name, cx)];
         events.extend(message.as_ref().map(|m| listen(m, cx)));
-        dialog.fields = Some(Fields { name, message, _events: events });
+        dialog.fields = Some(Fields { name, message, tick: cx.focus_handle(), _events: events });
     }
 
     pub(crate) fn cancel_name(&mut self, cx: &mut Context<Self>) {
@@ -145,42 +151,55 @@ impl BranchActions {
         self.naming.as_ref().filter(|d| d.inline.as_deref() == Some(sha))?.input()
     }
 
-    pub(super) fn render_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn toggle_checkout(&mut self, cx: &mut Context<Self>) {
+        if let Some(d) = &mut self.naming {
+            d.checkout = !d.checkout;
+        }
+        cx.notify();
+    }
+
+    /// The name asked in the tab's prompt: its fields, why it cannot be made yet, Check out after creating, then Create
+    /// (Rename) and Cancel; hit keys `git-name-field`, `git-name-message`, `git-name-checkout`, `git-name-create`, `git-name-cancel`.
+    pub(super) fn render_naming(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let dialog = self.naming.as_ref().filter(|d| d.inline.is_none())?;
         let fields = dialog.fields.as_ref()?;
-        let colors = cx.theme().colors();
         let problem = dialog.problem(cx);
-        let create = button::Button::new(&self.hits, "git-name-create").label(if matches!(dialog.ask, NameAsk::Rename { .. }) { "Rename" } else { "Create" }).tone(button::Tone::Success);
-        let create = match problem {
-            Some(_) => create.dimmed_if(true),
-            None => create.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.submit_name(cx))),
-        };
-        let cancel = button::Button::new(&self.hits, "git-name-cancel").label("Cancel").fill(button::Fill::Outline).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_name(cx)));
+        let words = if matches!(dialog.ask, NameAsk::Rename { .. }) { "Rename" } else { "Create" };
+        let create = DialogButton::new("git-name-create", words, button::Tone::Neutral, |this: &mut Self, _, cx| this.submit_name(cx)).dimmed(problem);
+        let cancel = DialogButton::new("git-name-cancel", "Cancel", button::Tone::Neutral, |this: &mut Self, _, cx| this.cancel_name(cx));
         let checkout = matches!(dialog.ask, NameAsk::Branch { .. }).then(|| {
-            let tick = button::checkbox(&self.hits, "git-name-checkout", dialog.checkout, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                if let Some(d) = &mut this.naming {
-                    d.checkout = !d.checkout;
-                }
-                cx.notify();
-            }));
-            div().flex().items_center().gap_2().child(tick).child("Check out after creating")
+            let tick = button::focusable_checkbox(&self.hits, "git-name-checkout", dialog.checkout, &fields.tick, cx.listener(|this, _: &Press, _, cx| this.toggle_checkout(cx)), cx);
+            let ring = supraman_ui::focus::ring(&fields.tick, supraman_ui::tokens::radius::S);
+            div().id("git-name-checkout-row").relative().flex().items_center().gap_2().cursor_pointer().child(tick).child("Check out after creating").child(ring).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_checkout(cx)))
         });
-        let card = div()
+        let shown_problem = problem.filter(|_| !dialog.name(cx).is_empty() || !dialog.ask.has_name());
+        let body = div()
             .flex()
             .flex_col()
-            .gap_2()
-            .m_2()
-            .p_2()
-            .rounded_md()
-            .border_1()
-            .border_color(colors.border)
-            .bg(colors.elevated_surface_background)
-            .child(div().text_xs().text_color(colors.text_muted).child(dialog.ask.title()))
-            .when(dialog.ask.has_name(), |d| d.child(fields.name.clone()))
-            .children(fields.message.clone())
-            .children(problem.filter(|_| !dialog.name(cx).is_empty() || !dialog.ask.has_name()).map(|p| div().text_xs().text_color(cx.theme().status().error).child(p)))
-            .children(checkout)
-            .child(div().flex().justify_end().gap_2().child(create).child(cancel));
-        Some(div().max_w(px(480.)).child(card).into_any_element())
+            .gap_3()
+            .when(dialog.ask.has_name(), |d| d.child(form::input(&self.hits, "git-name-field", &fields.name)))
+            .children(fields.message.as_ref().map(|m| form::input(&self.hits, "git-name-message", m)))
+            .children(shown_problem.map(|p| div().relative().text_xs().text_color(cx.theme().status().error).child(p).child(hit_target(&self.hits, "git-name-problem".into()))))
+            .children(checkout);
+        let mut members: Vec<FocusHandle> = Vec::new();
+        if dialog.ask.has_name() {
+            members.push(fields.name.focus_handle(cx));
+        }
+        members.extend(fields.message.as_ref().map(|m| m.focus_handle(cx)));
+        if matches!(dialog.ask, NameAsk::Branch { .. }) {
+            members.push(fields.tick.clone());
+        }
+        let panel = Panel {
+            key: "git-name".into(),
+            title: Some(SharedString::from(dialog.ask.title())),
+            body: body.into_any_element(),
+            fields: members,
+            buttons: vec![create, cancel],
+            first: None,
+            default: Some("git-name-create".into()),
+            close: None,
+            cancel: std::rc::Rc::new(|this: &mut Self, _, cx| this.cancel_name(cx)),
+        };
+        Some(self.writes.dialog().render(&self.hits, panel, cx))
     }
 }

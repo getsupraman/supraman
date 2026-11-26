@@ -117,12 +117,12 @@ pub mod motion {
 pub enum Layer {
     /// A pill group's list.
     Float = 1,
-    /// A side form laid over its view, and its picker.
-    Form,
     /// The ref panel's overlay card.
     Card,
-    /// The Git tab's graph toast, palette and prompt band.
-    OverForm,
+    /// A tab's Prompt over its content.
+    Prompt,
+    /// Over a tab's Prompt: the Git tab's toast and Ctrl+P palette, a Prompt's picker.
+    OverPrompt,
     /// A context menu.
     Menu,
     /// The modal dialog.

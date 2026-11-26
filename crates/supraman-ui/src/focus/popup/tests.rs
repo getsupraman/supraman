@@ -4,10 +4,8 @@ use gpui::{AnyElement, Context, Entity, Focusable as _, Modifiers, MouseButton, 
 
 use crate::dialog::{self, Dialog, Panel};
 use crate::focus::{request, restore_on_loss, root};
-use crate::focus_order::FocusOrder;
 use crate::form::{self, Answers, Form};
 use crate::hit::HitTargets;
-use crate::icon::Icon;
 use crate::menu::{ContextMenu, item};
 use crate::palette::{Entry, Palette, PaletteEvent, Paint};
 use crate::text_input::TextInput;
@@ -41,6 +39,7 @@ struct Host {
     dialog: Option<Dialog>,
     palette: Option<(Entity<Palette<E>>, Subscription)>,
     form: Option<(Entity<TextInput>, Subscription)>,
+    form_dialog: Dialog,
     _restore: Subscription,
 }
 
@@ -89,16 +88,16 @@ impl Host {
                 cx.notify();
             };
             let ok = dialog::Button::new("d-ok", "OK", crate::button::Tone::Neutral, shut);
-            let panel = Panel { key: "d".into(), title: None, body: div().into_any_element(), fields: Vec::new(), buttons: vec![ok], first: None, cancel: Rc::new(shut) };
+            let panel = Panel { key: "d".into(), title: None, body: div().into_any_element(), fields: Vec::new(), buttons: vec![ok], first: None, default: None, close: None, cancel: Rc::new(shut) };
             return Some(dialog.render(&self.hits, panel, cx));
         }
         if let Some((palette, _)) = &self.palette {
             return Some(palette.clone().into_any_element());
         }
         let (input, _) = self.form.as_ref()?;
-        let form = Form { key: "f".into(), icon: Icon::Plus, title: "Form".into(), ok: "OK".into(), why: None, running: false, answers: ANSWERS };
-        let order = FocusOrder::new([input.focus_handle(cx)]);
-        Some(div().w(px(300.)).h(px(200.)).child(form.render(&self.hits, vec![("Name".into(), form::input(&self.hits, "f-name", input))], order, None, cx)).into_any_element())
+        let form = Form { key: "f".into(), title: "Form".into(), ok: "OK".into(), why: None, running: false, answers: ANSWERS };
+        let members = vec![input.focus_handle(cx)];
+        Some(div().w(px(300.)).h(px(200.)).child(form.render(&self.form_dialog, &self.hits, vec![("Name".into(), form::input(&self.hits, "f-name", input))], members, None, cx)).into_any_element())
     }
 }
 
@@ -118,7 +117,7 @@ fn host(cx: &mut TestAppContext) -> (Entity<Host>, &mut VisualTestContext) {
     });
     let (view, cx) = cx.add_window_view(|window, cx| {
         let field = cx.new(|cx| TextInput::new("Field", None, window, cx));
-        Host { hits: HitTargets::default(), pane: cx.focus_handle(), field, menu: None, dialog: None, palette: None, form: None, _restore: restore_on_loss(window, cx) }
+        Host { hits: HitTargets::default(), pane: cx.focus_handle(), field, menu: None, dialog: None, palette: None, form: None, form_dialog: Dialog::default(), _restore: restore_on_loss(window, cx) }
     });
     cx.update(|window, _| window.activate_window());
     cx.run_until_parked();

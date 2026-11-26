@@ -7,7 +7,8 @@ use gpui::{App, ClickEvent, Context, Div, Focusable, Hsla, Stateful, Subscriptio
 use supraman_gitman::Amendable;
 use supraman_gitman::write::rebase::{self, Autostash, Rebased};
 use supraman_gitman::write::{LockSet, Session, WriteError, wip};
-use supraman_ui::confirm::Confirm;
+use supraman_ui::confirm::{Answer, Confirm};
+use supraman_ui::dialog::Dialog;
 use supraman_ui::focus_order::FocusOrder;
 use supraman_ui::hit::hit_target;
 use supraman_ui::text_input::{InputEvent, TextInput};
@@ -63,6 +64,8 @@ pub(crate) struct Reword {
     /// The commit whose message field opens once the panel shows it.
     pub(crate) edit_next: Option<String>,
     asking: Option<Confirm<String>>,
+    /// The tab's prompt the question shows in.
+    dialog: Dialog,
     failure: Option<String>,
     /// Whether a remote holds the field's commit is being read before Update Message asks or writes.
     checking: bool,
@@ -72,6 +75,13 @@ pub(crate) struct Reword {
     reworded: Arc<Mutex<Option<String>>>,
     /// How an older commit's reword ended, as the job left it.
     rebased: Arc<Mutex<Option<Rebased>>>,
+}
+
+impl Reword {
+    /// Its question asked in `dialog`.
+    pub(crate) fn new(dialog: Dialog) -> Reword {
+        Reword { dialog, ..Reword::default() }
+    }
 }
 
 /// The muted line the read-only box shows, and what a click on it edits.
@@ -362,8 +372,8 @@ impl CommitPanel {
             .when(!matches!(field.target, Target::Stash(_)), |d| d.child(field.description.clone()))
     }
 
-    pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<Div> {
-        self.reword.asking.as_ref().map(|asked| asked.render_band(&self.hits, ASK_KEY, |this: &mut Self, yes, _, cx| this.answer_amend(yes, cx), cx))
+    pub(crate) fn prompt(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        self.reword.asking.as_ref().map(|asked| self.reword.dialog.ask(&self.hits, ASK_KEY, asked, |this: &mut Self, answer, _, cx| this.answer_amend(answer == Answer::Yes, cx), cx))
     }
 
     /// Under the open field: a failure, what a reword rebases, Cancel and Update Message (Reword).

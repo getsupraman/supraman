@@ -38,10 +38,15 @@ pub fn visible(focus: &FocusHandle, window: &mut Window, cx: &mut App) -> bool {
 /// corners `radius` out, painted while `focus` is [`visible`]; never a shadow, which would fill a clear box.
 pub fn ring(focus: &FocusHandle, radius: Pixels) -> impl IntoElement {
     let focus = focus.clone();
+    ring_while(radius, move |window, cx| visible(&focus, window, cx))
+}
+
+/// [`ring`] painted while `shown` holds: a default answer's, Enter's while nothing else in its panel holds the keys.
+pub fn ring_while(radius: Pixels, shown: impl Fn(&mut Window, &mut App) -> bool + 'static) -> impl IntoElement {
     canvas(
         |_, _, _| {},
         move |bounds, _, window, cx| {
-            if visible(&focus, window, cx) {
+            if shown(window, cx) {
                 let color = cx.theme().colors().border_focused;
                 window.paint_quad(quad(bounds.dilate(RING), radius + RING, gpui::transparent_black(), RING, color, BorderStyle::Solid));
             }

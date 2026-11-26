@@ -1,11 +1,15 @@
-//! The remote calls' prompts in the tab's band: a branch's upstream and ssh's prompt.
+//! The remote calls' prompts in the tab's prompt: a branch's upstream and ssh's prompt.
 
-use gpui::{Focusable as _, AnyElement, AppContext as _, ClickEvent, Context, Div, Entity, Subscription, Window, div, prelude::*, px};
+use std::rc::Rc;
+
+use gpui::{Focusable as _, AnyElement, AppContext as _, ClickEvent, Context, Entity, FocusHandle, SharedString, Subscription, Window, div, prelude::*};
 use supraman_core::askpass::{Asked, Prompt, Reply};
 use supraman_gitman::write::remote::PullMode;
 use supraman_gitman::Remote;
 use supraman_ui::button;
-use supraman_ui::confirm::{answer, band};
+use supraman_ui::dialog::{Button as DialogButton, Panel};
+use supraman_ui::focus_order::Press;
+use supraman_ui::form;
 use supraman_ui::hit::hit_target;
 use supraman_ui::segmented::{Segment, segmented};
 use supraman_ui::tooltip::Tooltip;
@@ -61,12 +65,14 @@ pub(crate) struct Prompting {
     prompt: Prompt,
     remember: bool,
     field: Option<(Entity<TextInput>, Subscription)>,
+    /// Remember's tick box, for a key's passphrase.
+    tick: Option<FocusHandle>,
 }
 
 impl Prompting {
     pub(crate) fn new(asked: Asked) -> Prompting {
         let prompt = asked.prompt.clone();
-        Prompting { asked: Some(asked), prompt, remember: false, field: None }
+        Prompting { asked: Some(asked), prompt, remember: false, field: None, tick: None }
     }
 
     /// No answer: ssh fails and says so.
@@ -137,6 +143,9 @@ impl RemoteActions {
             let made = field("", "Passphrase", true, |this, cx| this.answer_prompt(true, cx), window, cx);
             self.prompting.as_mut().map(|p| p.field = Some(made));
         }
+        if let Some(p) = self.prompting.as_mut().filter(|p| p.tick.is_none() && matches!(p.prompt, Prompt::Passphrase { key: Some(_) })) {
+            p.tick = Some(cx.focus_handle());
+        }
     }
 
     fn close_dialogs(&mut self, cx: &mut Context<Self>) {
@@ -172,23 +181,14 @@ impl RemoteActions {
         self.upstream.as_ref()
     }
 
-    /// The question, else the upstream or ssh's prompt, as the tab's band; `true` when its field holds the keyboard.
-    pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<(Div, bool)> {
-        if let Some(band) = self.writes.band_answer(&self.hits, "git-remote-ask", Self::answer_force, cx) {
-            return Some((band, false));
-        }
-        self.render_upstream(cx).or_else(|| self.render_prompt(cx))
+    /// The question, else the upstream or ssh's prompt, else Add or Edit Remote, in the tab's prompt.
+    pub(crate) fn prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        self.ensure_fields(window, cx);
+        self.writes.prompt_answer(&self.hits, "git-remote-ask", Self::answer_force, cx).or_else(|| self.render_upstream(cx)).or_else(|| self.render_prompt(cx)).or_else(|| self.render_add(cx))
     }
 
-    fn cancel_button(&self, key: &str, words: &str, cx: &mut Context<Self>) -> AnyElement {
-        answer(&self.hits, key.to_string(), words.to_string(), button::Tone::Neutral, false, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.close_dialogs(cx))).into_any_element()
-    }
-
-    fn field(&self, field: &Entity<TextInput>, key: &str, width: f32) -> AnyElement {
-        div().relative().w(px(width)).child(field.clone()).child(hit_target(&self.hits, key.to_string())).into_any_element()
-    }
-
-    fn render_upstream(&self, cx: &mut Context<Self>) -> Option<(Div, bool)> {
+    /// The upstream to push to, pull from or track: a remote picked, then the branch on it.
+    fn render_upstream(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let d = self.upstream.as_ref()?;
         let (field, _) = d.field.as_ref()?;
         let segments: Vec<Segment> = self.remotes.iter().map(|r| Segment::new(r.name.clone()).label(r.name.clone())).collect();
@@ -203,40 +203,64 @@ impl RemoteActions {
             Then::Pull(_) => ("Pull", "Pull {} with no upstream from"),
             Then::Set => ("Set upstream", "Track {} at"),
         };
-        let ok = supraman_ui::confirm::answer_button(&self.hits, "git-upstream-ok", ok_words, button::Tone::Success, true, cx);
-        let ok = if d.chosen(&self.remotes, cx).is_some() { ok.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.submit_upstream(cx))) } else { ok.dimmed_if(true) };
-        let items = vec![
-            remotes.into_any_element(),
-            div().text_color(cx.theme().colors().text_muted).child("/").into_any_element(),
-            self.field(field, "git-upstream-field", FIELD),
-            ok.into_any_element(),
-            self.cancel_button("git-upstream-cancel", "Cancel", cx),
-        ];
-        Some((band(&self.hits, "git-upstream", ask.replace("{}", &d.local), items, cx), true))
+        let why = d.chosen(&self.remotes, cx).is_none().then_some(NEEDS_BRANCH);
+        let ok = DialogButton::new("git-upstream-ok", ok_words, button::Tone::Neutral, |this: &mut Self, _, cx| this.submit_upstream(cx)).dimmed(why);
+        let cancel = DialogButton::new("git-upstream-cancel", "Cancel", button::Tone::Neutral, |this: &mut Self, _, cx| this.close_dialogs(cx));
+        let muted = supraman_ui::themes::secondary(cx.theme().colors());
+        let line = div().flex().items_center().gap_2().child(remotes).child(div().text_color(muted).child("/")).child(form::input(&self.hits, "git-upstream-field", field));
+        let text = div().relative().child(ask.replace("{}", &d.local)).child(hit_target(&self.hits, "git-upstream-text".into()));
+        let panel = Panel {
+            key: "git-upstream".into(),
+            title: Some(ok_words.into()),
+            body: div().flex().flex_col().gap_3().child(text).child(line).into_any_element(),
+            fields: vec![field.focus_handle(cx)],
+            buttons: vec![ok, cancel],
+            first: None,
+            default: Some("git-upstream-ok".into()),
+            close: None,
+            cancel: Rc::new(|this: &mut Self, _, cx| this.close_dialogs(cx)),
+        };
+        Some(self.writes.dialog().render(&self.hits, panel, cx))
     }
 
-    fn render_prompt(&self, cx: &mut Context<Self>) -> Option<(Div, bool)> {
+    /// ssh's prompt: its words, its field and Remember for a key's passphrase; an unknown host's No is the default.
+    fn render_prompt(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let p = self.prompting.as_ref()?;
         let host = matches!(p.prompt, Prompt::HostKey { .. });
-        let ok = answer(&self.hits, "git-askpass-ok", if host { "Yes, trust it" } else { "OK" }, button::Tone::Success, p.field.is_some(), cx)
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.answer_prompt(true, cx)));
-        let cancel = answer(&self.hits, "git-askpass-cancel", if host { "No" } else { "Cancel" }, button::Tone::Neutral, false, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.answer_prompt(false, cx)));
-        let remember = matches!(p.prompt, Prompt::Passphrase { key: Some(_) }).then(|| {
-            let tick = button::checkbox(&self.hits, "git-askpass-remember", p.remember, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                if let Some(p) = this.prompting.as_mut() {
-                    p.remember = !p.remember;
-                }
-                cx.notify();
-            }));
-            div().flex().items_center().gap_2().text_xs().child(tick).child(div().id("git-askpass-remember-words").child("Remember").tooltip(Tooltip::text("Keep it in Supraman's secret store"))).into_any_element()
+        let ok = DialogButton::new("git-askpass-ok", if host { "Yes, trust it" } else { "OK" }, button::Tone::Neutral, |this: &mut Self, _, cx| this.answer_prompt(true, cx));
+        let cancel = DialogButton::new("git-askpass-cancel", if host { "No" } else { "Cancel" }, button::Tone::Neutral, |this: &mut Self, _, cx| this.answer_prompt(false, cx));
+        let remember = p.tick.as_ref().map(|tick| {
+            let square = button::focusable_checkbox(&self.hits, "git-askpass-remember", p.remember, tick, cx.listener(|this, _: &Press, _, cx| this.toggle_remember(cx)), cx);
+            let words = div().id("git-askpass-remember-words").child("Remember").tooltip(Tooltip::text("Keep it in Supraman's secret store"));
+            let ring = supraman_ui::focus::ring(tick, supraman_ui::tokens::radius::S);
+            div().id("git-askpass-remember-row").relative().flex().items_center().gap_2().cursor_pointer().child(square).child(words).child(ring).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_remember(cx)))
         });
-        let mut items: Vec<AnyElement> = p.field.as_ref().map(|(field, _)| self.field(field, "git-askpass-field", FIELD)).into_iter().collect();
-        items.extend(remember);
-        items.extend([ok.into_any_element(), cancel.into_any_element()]);
         let message = if host { format!("ssh does not know this host. {}", p.words()) } else { p.words() };
-        Some((band(&self.hits, "git-askpass", message, items, cx), p.field.is_some()))
+        let text = div().relative().child(message).child(hit_target(&self.hits, "git-askpass-text".into()));
+        let body = div().flex().flex_col().gap_3().child(text).children(p.field.as_ref().map(|(f, _)| form::input(&self.hits, "git-askpass-field", f))).children(remember);
+        let fields = p.field.as_ref().map(|(f, _)| f.focus_handle(cx)).into_iter().chain(p.tick.clone()).collect();
+        let default = SharedString::from(if host { "git-askpass-cancel" } else { "git-askpass-ok" });
+        let panel = Panel {
+            key: "git-askpass".into(),
+            title: Some(if host { "Unknown host" } else { "ssh" }.into()),
+            body: body.into_any_element(),
+            fields,
+            buttons: vec![ok, cancel],
+            first: host.then(|| default.clone()),
+            default: Some(default),
+            close: None,
+            cancel: Rc::new(|this: &mut Self, _, cx| this.answer_prompt(false, cx)),
+        };
+        Some(self.writes.dialog().render(&self.hits, panel, cx))
+    }
+
+    fn toggle_remember(&mut self, cx: &mut Context<Self>) {
+        if let Some(p) = self.prompting.as_mut() {
+            p.remember = !p.remember;
+        }
+        cx.notify();
     }
 }
 
-/// A band's text field's width, GitKraken's select's.
-const FIELD: f32 = 160.;
+/// Why the upstream's OK cannot act: no branch typed on the remote.
+const NEEDS_BRANCH: &str = "Type the branch on the remote";

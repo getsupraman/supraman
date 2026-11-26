@@ -23,11 +23,12 @@ pub(crate) struct Opts {
     editor: bool,
     size: (f32, f32),
     hidden: bool,
+    aside: bool,
 }
 
 impl Default for Opts {
     fn default() -> Opts {
-        Opts { home: None, live: None, following: false, background: false, editor: false, size: (1200., 800.), hidden: false }
+        Opts { home: None, live: None, following: false, background: false, editor: false, size: (1200., 800.), hidden: false, aside: false }
     }
 }
 
@@ -60,6 +61,20 @@ impl Opts {
     pub(crate) fn size(self, width: f32, height: f32) -> Opts {
         Opts { size: (width, height), ..self }
     }
+
+    /// With a pane of the window's own beside the tab, [`ASIDE`] wide, as the app's sidebar is: [`aside`] reads its keys.
+    pub(crate) fn aside(self) -> Opts {
+        Opts { aside: true, ..self }
+    }
+}
+
+/// The width of [`Opts::aside`]'s pane.
+pub(crate) const ASIDE: f32 = 200.;
+
+/// [`Opts::aside`]'s pane: its focus and the keys it took.
+pub(crate) struct Aside {
+    pub focus: FocusHandle,
+    pub keys: Rc<RefCell<Vec<String>>>,
 }
 
 /// A window holding one view at a fixed size, a root as the app's: its panes in [`supraman_ui::focus`]'s order, focus lost given back.
@@ -68,12 +83,19 @@ pub(crate) struct Holder<V: 'static> {
     size: (f32, f32),
     /// Opened hidden: the window's own element, and whether the view is shown in it as the app's tab, by its [`supraman_ui::focus::Group`].
     tab: Option<(FocusHandle, FocusHandle, bool)>,
+    aside: Option<Aside>,
     _restore: Subscription,
 }
 
 impl<V: Render> Render for Holder<V> {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let root = supraman_ui::focus::root(div().w(px(self.size.0)).h(px(self.size.1)));
+        if let Some(aside) = &self.aside {
+            let keys = aside.keys.clone();
+            let pane = div().id("aside").relative().flex_none().w(px(ASIDE)).h_full().track_focus(&aside.focus).on_key_down(move |e, _, _| keys.borrow_mut().push(e.keystroke.key.clone()));
+            let pane = pane.child(supraman_ui::focus::Pane::new("aside", &aside.focus).paint(&HitTargets::default()));
+            return root.flex().child(pane).child(div().flex_1().min_w_0().h_full().child(self.view.clone()));
+        }
         let Some((area, entry, shown)) = &self.tab else { return root.child(self.view.clone()) };
         let root = root.track_focus(area);
         if !shown {
@@ -127,7 +149,7 @@ pub(crate) fn open_unchecked<'a>(folder: &Path, opts: Opts, cx: &'a mut TestAppC
             background::start_for_test(QUIET, cx);
         }
     });
-    let Opts { home, live, following, size, hidden, .. } = opts;
+    let Opts { home, live, following, size, hidden, aside, .. } = opts;
     let folder = folder.to_path_buf();
     let (holder, cx) = cx.add_window_view(|window, cx| {
         let hits = HitTargets::default();
@@ -141,13 +163,25 @@ pub(crate) fn open_unchecked<'a>(folder: &Path, opts: Opts, cx: &'a mut TestAppC
             area.focus(window, cx);
             (area, view.focus_handle(cx), false)
         });
-        Holder { view, size, tab, _restore: supraman_ui::focus::restore_on_loss(window, cx) }
+        let aside = aside.then(|| Aside { focus: cx.focus_handle(), keys: Rc::default() });
+        Holder { view, size, tab, aside, _restore: supraman_ui::focus::restore_on_loss(window, cx) }
     });
     cx.update(|window, _| window.activate_window());
     let view = holder.read_with(cx, |h, _| h.view.clone());
     cx.run_until_parked();
     redraw(&view, cx);
     (view, cx)
+}
+
+/// [`Opts::aside`]'s pane.
+pub(crate) fn aside(cx: &mut VisualTestContext) -> (FocusHandle, Rc<RefCell<Vec<String>>>) {
+    let holder = cx.update(|window, _| window.root::<Holder<GitView>>()).flatten().expect("a Git tab's holder");
+    holder.read_with(cx, |h, _| h.aside.as_ref().map(|a| (a.focus.clone(), a.keys.clone()))).expect("opened with Opts::aside")
+}
+
+/// The pane holding the keys, by F6's key: the tab's [`supraman_ui::dialog::PANE`] while its prompt has them.
+pub(crate) fn pane_focused(cx: &mut VisualTestContext) -> Option<String> {
+    cx.update(|window, cx| supraman_ui::focus::focused(window, cx).map(|k| k.to_string()))
 }
 
 /// Panics with the tab's problem unless its first load is done, so a failed load is named, not a missing row.

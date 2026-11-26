@@ -1,23 +1,20 @@
-//! Every side form: a title with its icon and ×, labelled fields, and its OK (a Success Solid `button::Button` at `button::Size::Medium`) dimmed with why,
-//! turning while the owner's write runs;
-//! Tab and Shift+Tab through its `FocusOrder`, Enter in a field its OK, Esc its close; hit keys `<key>`, `<key>-close`, `<key>-ok`.
+//! Every small form, in its owner's [`Dialog`]: a title with its ×, labelled fields, then its OK (Enter's, dimmed with
+//! why and turning while the owner's write runs); Tab and Shift+Tab through its fields and OK, Enter in a field its OK,
+//! Esc its close; hit keys `<key>` (its fields), `<key>-close`, `<key>-ok`.
 
-use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, FocusHandle, FontWeight, SharedString, Subscription, Window, div, prelude::*, px};
-use theme::ActiveTheme as _;
+use std::rc::Rc;
 
-use crate::button::{self, Button};
-use crate::focus_order::{Dismiss, FocusOrder, Press};
+use gpui::{AnyElement, AppContext as _, Context, Entity, FocusHandle, SharedString, Subscription, Window, div, prelude::*};
+
+use crate::button;
+use crate::dialog::{Button, Dialog, Panel};
 use crate::hit::{HitTargets, hit_target};
-use crate::icon::Icon;
 use crate::text_input::{InputEvent, TextInput};
 use crate::themes::secondary;
 use crate::tokens;
-use crate::tooltip::Tooltip;
+use theme::ActiveTheme as _;
 
-/// The title's ×.
-const CLOSE: gpui::Pixels = px(22.);
-
-/// The owner's OK and close, what the form's button, ×, Enter and Esc run.
+/// The owner's OK and close, what the form's buttons, Enter and Esc run.
 pub struct Answers<V> {
     pub ok: fn(&mut V, &mut Context<V>),
     pub close: fn(&mut V, &mut Context<V>),
@@ -33,7 +30,6 @@ impl<V> Copy for Answers<V> {}
 
 pub struct Form<V> {
     pub key: SharedString,
-    pub icon: Icon,
     pub title: SharedString,
     /// The OK button's words.
     pub ok: SharedString,
@@ -78,52 +74,26 @@ pub fn input(hits: &HitTargets, key: impl Into<SharedString>, input: &Entity<Tex
 }
 
 impl<V: 'static> Form<V> {
-    /// The form over its owner's place, `fields` as `(label, field)` in order; `ok_focus` makes OK a member of `order`'s Tab.
-    pub fn render(self, hits: &HitTargets, fields: Vec<(SharedString, AnyElement)>, order: FocusOrder, ok_focus: Option<&FocusHandle>, cx: &mut Context<V>) -> AnyElement {
-        let colors = cx.theme().colors();
-        let (muted, border, background) = (secondary(colors), colors.border, colors.panel_background);
+    /// The form in `dialog`, `fields` as `(label, field)` in order, `members` their focus handles in Tab order before OK
+    /// (under `ok_focus` when the owner keeps its handle); the first member takes the focus as it opens.
+    pub fn render(self, dialog: &Dialog, hits: &HitTargets, fields: Vec<(SharedString, AnyElement)>, members: Vec<FocusHandle>, ok_focus: Option<&FocusHandle>, cx: &mut Context<V>) -> AnyElement {
+        let muted = secondary(cx.theme().colors());
         let Answers { ok: on_ok, close: on_close } = self.answers;
-        let close = Button::new(hits, format!("{}-close", self.key))
-            .icon(Icon::Close.svg(tokens::icon::M, muted))
-            .icon_only(CLOSE)
-            .tooltip(Tooltip::text("Close (Esc)"))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| on_close(this, cx)));
-        let title = div()
-            .flex()
-            .items_center()
-            .gap(tokens::space::L)
-            .px(tokens::space::XL)
-            .py(tokens::space::L)
-            .border_b(tokens::stroke::HAIRLINE)
-            .border_color(border)
-            .child(self.icon.svg(tokens::icon::L, muted))
-            .child(div().flex_1().min_w_0().font_weight(FontWeight::SEMIBOLD).child(self.title))
-            .child(close);
-        let fields = fields.into_iter().map(|(label, field)| div().flex().flex_col().gap(tokens::space::S).child(div().text_size(tokens::text::SMALL).text_color(muted).child(label)).child(field));
-        let ok_key = format!("{}-ok", self.key);
-        let pressed = on_ok.clone();
-        let ok = Button::new(hits, ok_key)
-            .label(self.ok)
-            .tone(button::Tone::Success)
-            .size(button::Size::Medium)
-            .when(self.running, |b| b.icon(Icon::Refresh).turning(true))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| on_ok(this, cx)))
-            .dimmed(self.why)
-            .when_some(ok_focus, |b, focus| b.focus(focus, cx.listener(move |this, _: &Press, _, cx| pressed(this, cx))));
-        let body = div().flex().flex_col().gap(tokens::space::XL).p(tokens::space::XL).children(fields).child(div().flex().child(ok));
-        let popup = crate::focus::popup(order.handles().to_vec());
-        order
-            .on(div())
-            .child(popup)
-            .on_action(cx.listener(move |this, _: &Dismiss, _, cx| on_close(this, cx)))
-            .relative()
-            .size_full()
-            .flex()
-            .flex_col()
-            .bg(background)
-            .child(title)
-            .child(body)
-            .child(hit_target(hits, self.key.to_string()))
-            .into_any_element()
+        let rows = fields.into_iter().map(|(label, field)| div().flex().flex_col().gap(tokens::space::S).child(div().text_size(tokens::text::SMALL).text_color(muted).child(label)).child(field));
+        let body = div().relative().flex().flex_col().gap(tokens::space::XL).children(rows).child(hit_target(hits, self.key.to_string()));
+        let ok_key = SharedString::from(format!("{}-ok", self.key));
+        let ok = Button::new(ok_key.clone(), self.ok, button::Tone::Neutral, move |this: &mut V, _, cx| on_ok(this, cx)).dimmed(self.why).turning(self.running).focus(ok_focus);
+        let panel = Panel {
+            key: self.key.to_string(),
+            title: Some(self.title),
+            body: body.into_any_element(),
+            fields: members,
+            buttons: vec![ok],
+            first: None,
+            default: Some(ok_key),
+            close: Some(format!("{}-close", self.key).into()),
+            cancel: Rc::new(move |this: &mut V, _, cx| on_close(this, cx)),
+        };
+        dialog.render(hits, panel, cx)
     }
 }

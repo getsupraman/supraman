@@ -6,11 +6,12 @@ use std::time::{Duration, Instant};
 
 use futures::FutureExt as _;
 use futures::future::Shared;
-use gpui::{App, AppContext as _, Context, Div, Entity, EventEmitter, Subscription, Task};
+use gpui::{AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Subscription, Task};
 use supraman_gitman::Repo;
 use supraman_gitman::OperationState;
 use supraman_gitman::write::{Cancel, Left, LockSet, Occupancy, Session, WriteError, Writer, left};
 use supraman_ui::confirm::{Answer, Confirm};
+use supraman_ui::dialog::Dialog;
 use supraman_ui::hit::HitTargets;
 
 /// Why a write cannot start while another runs.
@@ -70,6 +71,8 @@ pub(crate) struct WriteGate {
     tickets: u64,
     writer: Option<Writer>,
     opening: Option<Opening>,
+    /// The tab's own element, which its writers' prompts lie over.
+    tab: Option<FocusHandle>,
 }
 
 impl EventEmitter<Written> for WriteGate {}
@@ -77,7 +80,17 @@ impl EventEmitter<Written> for WriteGate {}
 impl WriteGate {
     /// `occupancy` answers from memory: it is asked on the UI thread.
     pub(crate) fn new(occupancy: Arc<dyn Occupancy>) -> WriteGate {
-        WriteGate { occupancy, running: None, tickets: 0, writer: None, opening: None }
+        WriteGate { occupancy, running: None, tickets: 0, writer: None, opening: None, tab: None }
+    }
+
+    /// The gate of the tab whose element tracks `tab`: its writers ask in a [`Dialog::in_tab`] over it.
+    pub(crate) fn in_tab(self, tab: FocusHandle) -> WriteGate {
+        WriteGate { tab: Some(tab), ..self }
+    }
+
+    /// A prompt over the tab (over the window for a gate of no tab).
+    pub(crate) fn dialog(&self) -> Dialog {
+        self.tab.clone().map_or_else(Dialog::default, Dialog::in_tab)
     }
 
     /// The tab's one writer of `repo`, opened off the UI thread by the first call and again after an open failed.
@@ -205,6 +218,8 @@ impl WriteGate {
 pub(crate) struct Writes<A, D, O = ()> {
     gate: Entity<WriteGate>,
     pub(crate) asking: Option<Confirm<A>>,
+    /// The tab's prompt this actor asks in: its question, its forms.
+    dialog: Dialog,
     doing: Option<(u64, D)>,
     kept: Arc<Mutex<Option<O>>>,
     _gate: [Subscription; 2],
@@ -215,11 +230,16 @@ impl<A: 'static, D: Verb + 'static, O: Send + 'static> Writes<A, D, O> {
     pub(crate) fn new<T: 'static>(gate: Entity<WriteGate>, written: fn(&mut T, &Written, &mut Context<T>), cx: &mut Context<T>) -> Self {
         let heard = cx.subscribe(&gate, move |this, _, w: &Written, cx| written(this, w, cx));
         let observed = cx.observe(&gate, |_, _, cx| cx.notify());
-        Writes { gate, asking: None, doing: None, kept: Arc::default(), _gate: [heard, observed] }
+        let dialog = gate.read(cx).dialog();
+        Writes { gate, asking: None, dialog, doing: None, kept: Arc::default(), _gate: [heard, observed] }
     }
 
     pub(crate) fn gate(&self) -> &Entity<WriteGate> {
         &self.gate
+    }
+
+    pub(crate) fn dialog(&self) -> &Dialog {
+        &self.dialog
     }
 
     pub(crate) fn busy(&self, cx: &App) -> Option<&'static str> {
@@ -299,14 +319,14 @@ impl<A: 'static, D: Verb + 'static, O: Send + 'static> Writes<A, D, O> {
         self.asking.as_ref().map(|c| c.text.as_str())
     }
 
-    /// The question as the tab's prompt band under `key`, answered yes or no.
-    pub(crate) fn band<T: 'static>(&self, hits: &HitTargets, key: &str, on_answer: fn(&mut T, bool, &mut Context<T>), cx: &mut Context<T>) -> Option<Div> {
-        self.asking.as_ref().map(|asked| asked.render_band(hits, key, move |this: &mut T, yes, _, cx| on_answer(this, yes, cx), cx))
+    /// The question in the tab's prompt under `key`, answered yes or no.
+    pub(crate) fn prompt<T: 'static>(&self, hits: &HitTargets, key: &str, on_answer: fn(&mut T, bool, &mut Context<T>), cx: &mut Context<T>) -> Option<AnyElement> {
+        self.prompt_answer(hits, key, move |this: &mut T, answer, cx| on_answer(this, answer == Answer::Yes, cx), cx)
     }
 
-    /// [`Writes::band`] answered with its [`Answer`].
-    pub(crate) fn band_answer<T: 'static>(&self, hits: &HitTargets, key: &str, on_answer: fn(&mut T, Answer, &mut Context<T>), cx: &mut Context<T>) -> Option<Div> {
-        self.asking.as_ref().map(|asked| asked.render_band_answer(hits, key, move |this: &mut T, answer, _, cx| on_answer(this, answer, cx), cx))
+    /// [`Writes::prompt`] answered with its [`Answer`].
+    pub(crate) fn prompt_answer<T: 'static>(&self, hits: &HitTargets, key: &str, on_answer: impl Fn(&mut T, Answer, &mut Context<T>) + Clone + 'static, cx: &mut Context<T>) -> Option<AnyElement> {
+        self.asking.as_ref().map(|asked| self.dialog.ask(hits, key, asked, move |this: &mut T, answer, _, cx| on_answer(this, answer, cx), cx))
     }
 }
 

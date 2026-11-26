@@ -89,7 +89,7 @@ impl Section {
             Section::Tabs => "Tab strip: more tabs than its room, the last active",
             Section::Splits => "Split pane, height bar, stack",
             Section::Dialog => "Dialog: a question over the scrim",
-            Section::Prompts => "Band, form, banners, notices, toast",
+            Section::Prompts => "Prompts over a tab: a question, a danger question, a form, the upstream prompt; banners, notices, toast",
             Section::Cards => "Hover card, tooltip, details page, inbox card, placeholder",
             Section::Marks => "Marks: dots, rings, activity, squares, progress line",
             Section::Text => "Clipped labels: cut with their tooltip, path labels, pairs, clamped",
@@ -164,7 +164,7 @@ impl Section {
             Section::Tabs => vec![hover("hover-tab", "tab-3")],
             Section::Splits => vec![hover("hover-bar", "kit-height-bar")],
             Section::Dialog => vec![hover("hover-answer", "kit-dialog-alt")],
-            Section::Prompts => vec![hover("hover-band-answer", "kit-band-yes"), hover("hover-form-ok", "kit-form-ok")],
+            Section::Prompts => vec![hover("hover-answer", "kit-ask-alt"), hover("hover-form-ok", "kit-form-ok")],
             Section::Cards => vec![hover("hover-card", "kit-inbox-a")],
             Section::Marks => Vec::new(),
             Section::Scroll => vec![hover("hover-area", "kit-scroll-div"), hover("hover-thumb", "kit-scroll-div-bar-thumb"), press("scrolling", "kit-scroll-div-bar-track")],
@@ -206,6 +206,7 @@ pub(crate) struct Inputs {
     pub multi: Entity<TextInput>,
     pub form_name: Entity<TextInput>,
     pub form_url: Entity<TextInput>,
+    pub upstream: Entity<TextInput>,
 }
 
 pub struct Gallery {
@@ -222,6 +223,8 @@ pub struct Gallery {
     /// The lists' table row menu, open in its frame.
     pub(crate) row_menu: Option<ContextMenu<()>>,
     pub(crate) dialog: crate::dialog::Dialog,
+    /// The prompts section's: a question, a danger question, a form, the upstream prompt.
+    pub(crate) prompts: [crate::dialog::Dialog; 4],
     pub(crate) stack: StackState,
     pub(crate) scroll: ScrollHandle,
     pub(crate) scrolls: sections::Scrolls,
@@ -248,6 +251,7 @@ impl Gallery {
             multi: input("Description", "A longer text over several lines, which wraps where the field ends and keeps going on the next line.\nA second paragraph.", TextInput::multi_line, window, cx),
             form_name: input("Name", "sample", |i| i, window, cx),
             form_url: input("Address", "", |i| i, window, cx),
+            upstream: input("Branch on the remote", "main", |i| i, window, cx),
         };
         inputs.invalid.update(cx, |i, cx| i.set_invalid(true, cx));
         let rows = [
@@ -285,6 +289,7 @@ impl Gallery {
             menu,
             row_menu: None,
             dialog: Default::default(),
+            prompts: std::array::from_fn(|_| crate::dialog::Dialog::in_tab(cx.focus_handle())),
             stack: StackState::default(),
             scroll: ScrollHandle::new(),
             scrolls: sections::Scrolls::default(),

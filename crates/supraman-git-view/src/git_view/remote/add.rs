@@ -1,13 +1,13 @@
-//! Add Remote and Edit Remote beside the ref panel: Name, Pull URL and an optional Push URL;
+//! Add Remote and Edit Remote in the tab's prompt: Name, Pull URL and an optional Push URL;
 //! hit keys `git-add-remote{,-close,-ok,-name,-pull,-push}`, Edit's `git-edit-remote…`.
 
 use gpui::{AnyElement, Context, Entity, FocusHandle, Focusable, SharedString, Subscription, Window};
 use supraman_gitman::write::LockSet;
 use supraman_gitman::write::remote;
 use supraman_gitman::{Remote, mask_userinfo};
+#[cfg(test)]
 use supraman_ui::focus_order::FocusOrder;
 use supraman_ui::form::{self, Answers, Form};
-use supraman_ui::icon::Icon;
 use supraman_ui::text_input::TextInput;
 
 use super::{Doing, Done, RemoteActions};
@@ -39,6 +39,7 @@ impl AddRemote {
     }
 
     /// Name, Pull URL, Push URL, then OK.
+    #[cfg(test)]
     fn order(&self, cx: &gpui::App) -> FocusOrder {
         FocusOrder::new(self.fields.iter().map(|(f, _)| f.focus_handle(cx)).chain(self.ok.clone()))
     }
@@ -186,7 +187,7 @@ impl RemoteActions {
         cx.notify();
     }
 
-    /// The form as the tab's form slot shows it, while it is open.
+    /// The form in the tab's prompt, while it is open.
     pub(crate) fn render_add(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let adding = self.adding.as_ref()?;
         let key = adding.key();
@@ -194,7 +195,8 @@ impl RemoteActions {
         let fields = FIELDS.iter().zip(&adding.fields).map(|((field, label, _), (input, _))| (SharedString::from(*label), form::input(&self.hits, format!("{key}-{field}"), input))).collect();
         let running = self.writes.doing().is_some_and(|(_, r)| matches!(r.doing, super::Doing::AddRemote(_) | super::Doing::EditRemote(_)));
         let why = if running { self.busy(cx) } else { adding.why_not(cx).map(str::to_string).or_else(|| self.busy(cx)) };
-        let form = Form { key: key.into(), icon: Icon::Remote, title: title.into(), ok: ok.into(), why: why.map(Into::into), running, answers: ANSWERS };
-        Some(form.render(&self.hits, fields, adding.order(cx), adding.ok.as_ref(), cx))
+        let form = Form { key: key.into(), title: title.into(), ok: ok.into(), why: why.map(Into::into), running, answers: ANSWERS };
+        let members = adding.fields.iter().map(|(f, _)| f.focus_handle(cx)).collect();
+        Some(form.render(self.writes.dialog(), &self.hits, fields, members, adding.ok.as_ref(), cx))
     }
 }

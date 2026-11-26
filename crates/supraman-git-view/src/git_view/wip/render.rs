@@ -31,8 +31,8 @@ pub(super) fn live(button: button::Button, busy: Option<&'static str>, cx: &mut 
 }
 
 impl WipPanel {
-    pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<Div> {
-        self.writes.band(&self.hits, "wip-confirm", Self::answer, cx)
+    pub(crate) fn prompt(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        self.writes.prompt(&self.hits, "wip-confirm", Self::answer, cx)
     }
 
     /// The red trash button: Discard all changes, asked first.

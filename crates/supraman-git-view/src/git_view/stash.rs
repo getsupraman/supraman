@@ -2,12 +2,14 @@
 
 use supraman_core::text::count;
 
-use gpui::{Focusable as _, AppContext as _, ClickEvent, Context, Entity, EventEmitter, Pixels, Point, Render, Subscription, Window, div, prelude::*};
+use gpui::{Focusable as _, AppContext as _, Context, Entity, EventEmitter, Pixels, Point, Render, Subscription, Window, div, prelude::*};
 use supraman_gitman::write::stash::{self, Applied};
 use supraman_gitman::write::{LockSet, Session, WriteError};
 use supraman_gitman::FileChange;
 use supraman_ui::button;
 use supraman_ui::confirm::Confirm;
+use supraman_ui::dialog::{Button as DialogButton, Panel};
+use supraman_ui::form;
 use supraman_ui::hit::HitTargets;
 use supraman_ui::menu::{ContextMenu, MenuItem, item};
 use supraman_ui::text_input::{InputEvent, TextInput};
@@ -116,8 +118,10 @@ pub(crate) struct StashActions {
 impl EventEmitter<StashEvent> for StashActions {}
 
 impl StashActions {
-    pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
-        self.writes.band(&self.hits, "git-stash-ask", Self::answer, cx)
+    /// The question, else the message box, in the tab's prompt.
+    pub(crate) fn prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        self.ensure_field(window, cx);
+        self.writes.prompt(&self.hits, "git-stash-ask", Self::answer, cx).or_else(|| self.render_editing(cx))
     }
 
     pub(crate) fn new(gate: Entity<WriteGate>, hits: HitTargets, cx: &mut Context<Self>) -> StashActions {
@@ -299,25 +303,36 @@ impl StashActions {
             i.select_all_text(cx);
         });
         supraman_ui::focus::request(&input.focus_handle(cx), window, cx);
-        let events = cx.subscribe(&input, |this: &mut StashActions, _, e: &InputEvent, cx| {
-            if *e == InputEvent::Confirm {
-                this.save_message(cx);
-            }
+        let events = cx.subscribe(&input, |this: &mut StashActions, _, e: &InputEvent, cx| match e {
+            InputEvent::Confirm => this.save_message(cx),
+            InputEvent::Cancel => this.cancel_message(cx),
+            _ => {}
         });
         *field = Some((input, events));
     }
 
-    fn render_editing(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+    /// The stash's message box: its field, Save and Cancel.
+    fn render_editing(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let (_, Some((input, _))) = self.editing.as_ref()? else { return None };
-        let save = button::Button::new(&self.hits, "git-stash-message-save").label("Save").tone(button::Tone::Success).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.save_message(cx)));
-        let cancel = button::Button::new(&self.hits, "git-stash-message-cancel").label("Cancel").fill(button::Fill::Outline).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_message(cx)));
-        Some(div().flex().items_center().gap_2().m_2().child(div().flex_1().min_w_0().child(input.clone())).child(save).child(cancel))
+        let save = DialogButton::new("git-stash-message-save", "Save", button::Tone::Neutral, |this: &mut Self, _, cx| this.save_message(cx));
+        let cancel = DialogButton::new("git-stash-message-cancel", "Cancel", button::Tone::Neutral, |this: &mut Self, _, cx| this.cancel_message(cx));
+        let panel = Panel {
+            key: "git-stash-message".into(),
+            title: Some("Stash message".into()),
+            body: form::input(&self.hits, "git-stash-message-field", input),
+            fields: vec![input.focus_handle(cx)],
+            buttons: vec![save, cancel],
+            first: None,
+            default: Some("git-stash-message-save".into()),
+            close: None,
+            cancel: std::rc::Rc::new(|this: &mut Self, _, cx| this.cancel_message(cx)),
+        };
+        Some(self.writes.dialog().render(&self.hits, panel, cx))
     }
 }
 
 impl Render for StashActions {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.ensure_field(window, cx);
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let menu = self.menu.as_ref().map(|menu| {
             menu.render(&self.hits, |this: &mut StashActions, (act, stash), _, cx| {
                 this.menu = None;
@@ -328,7 +343,7 @@ impl Render for StashActions {
                 cx.notify();
             }, cx)
         });
-        div().children(self.render_editing(cx)).children(menu)
+        div().children(menu)
     }
 }
 

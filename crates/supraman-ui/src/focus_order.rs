@@ -88,6 +88,14 @@ impl Members {
         handle
     }
 
+    /// `given` kept for `key` when there is one, else [`Members::handle`]'s.
+    pub fn handle_or(&self, key: impl Into<SharedString>, given: Option<&FocusHandle>, cx: &App) -> FocusHandle {
+        let Some(given) = given else { return self.handle(key, cx) };
+        self.handles.borrow_mut().insert(key.into(), given.clone());
+        self.add(given.clone());
+        given.clone()
+    }
+
     /// `handle` (a field's) as the next member of this frame's order.
     pub fn add(&self, handle: FocusHandle) {
         self.order.borrow_mut().push(handle);

@@ -285,33 +285,31 @@ fn bounds(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) -> gpui
     view.read_with(cx, |v, _| v.hits.borrow().get(key).map(|h| h.bounds)).unwrap_or_else(|| panic!("{key} is painted"))
 }
 
-fn band_has_keys(view: &Entity<GitView>, cx: &mut VisualTestContext) -> bool {
-    cx.update(|window, cx| view.read(cx).band_focused(window))
+fn prompt_has_keys(cx: &mut VisualTestContext) -> bool {
+    crate::git_view::test_support::pane_focused(cx).as_deref() == Some(supraman_ui::dialog::PANE)
 }
 
 #[gpui::test]
-fn a_question_is_one_band_over_the_toolbar_twice_its_height_that_enter_and_esc_answer(cx: &mut TestAppContext) {
+fn a_question_is_a_prompt_centred_over_the_tab_that_enter_and_esc_answer(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let (view, cx) = open(&f.worktree, cx);
     press(&view, "refpanel-name-local/feature", MouseButton::Right, 1, cx);
     click(&view, "menu-ref-delete-feature", cx);
-    assert!(painted(&view, "git-ref-ask-band", cx));
-    let [toolbar, band, text, yes, cancel] = ["git-toolbar", "git-ref-ask-band", "git-ref-ask-text", "git-ref-ask-yes", "git-ref-ask-cancel"].map(|k| bounds(&view, k, cx));
-    assert_eq!(toolbar.origin, gpui::Point::default(), "the toolbar is the tab's top");
-    assert_eq!((band.origin, band.size.width), (toolbar.origin, toolbar.size.width), "from the tab's top across the toolbar");
-    assert_eq!(band.size.height, toolbar.size.height * 2., "twice the toolbar's height");
-    for (b, k) in [(text, "text"), (yes, "yes"), (cancel, "cancel")] {
-        assert!((b.center().y - band.center().y).abs() < px(1.), "the {k} on the band's middle: {b:?} in {band:?}");
-    }
+    assert!(painted(&view, "git-ref-ask-dialog", cx));
+    let [toolbar, scrim, panel, text, yes, cancel] = ["git-toolbar", "git-ref-ask-scrim", "git-ref-ask-dialog", "git-ref-ask-text", "git-ref-ask-yes", "git-ref-ask-cancel"].map(|k| bounds(&view, k, cx));
+    assert_eq!((scrim.origin, scrim.size.width), (toolbar.origin, toolbar.size.width), "the scrim covers the tab from its top, toolbar and all");
+    assert!((panel.center() - scrim.center()).x.abs() < px(1.) && (panel.center() - scrim.center()).y.abs() < px(1.), "the panel centred on it: {panel:?} {scrim:?}");
+    assert!(panel.size.width <= supraman_ui::dialog::WIDTH, "at most the dialog's width");
+    assert!(text.bottom() <= yes.top() && yes.right() < cancel.left() && cancel.right() <= panel.right(), "the text, then the answers right-aligned");
     click(&view, "git-pull-menu", cx);
-    assert!(view.read_with(cx, |v, cx| v.remote.read(cx).menu_labels().is_empty()), "a click on a toolbar button under the band does not reach it");
+    assert!(view.read_with(cx, |v, cx| v.remote.read(cx).menu_labels().is_empty()), "a click on a toolbar button under the scrim does not reach it");
 
-    assert!(band_has_keys(&view, cx), "the band takes the keyboard");
+    assert!(prompt_has_keys(cx), "the prompt takes the keyboard");
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
     redraw(&view, cx);
     assert!(asking(&view, cx).is_none() && exists(&f, "refs/heads/feature"), "Enter cancels a delete");
-    assert!(!band_has_keys(&view, cx) && cx.update(|window, cx| view.read(cx).focus.contains_focused(window, cx)), "the keyboard goes back into the tab");
+    assert!(!prompt_has_keys(cx) && cx.update(|window, cx| view.read(cx).focus.contains_focused(window, cx)), "the keyboard goes back into the tab");
 
     press(&view, "refpanel-name-local/feature", MouseButton::Right, 1, cx);
     click(&view, "menu-ref-delete-feature", cx);
