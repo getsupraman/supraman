@@ -682,17 +682,11 @@ impl WorkView {
                 cx.notify();
                 true
             }
-            "enter" | "right" if self.selected.is_some() && !detail => {
-                window.focus(&self.panes.detail, cx);
-                true
-            }
-            "left" if detail => {
-                window.focus(&self.panes.main, cx);
-                true
-            }
+            "enter" | "right" if self.selected.is_some() && !detail => focus::to_pane(FOCUS_DETAIL, window, cx),
+            "left" if detail => focus::to_pane(FOCUS_MAIN, window, cx),
             "escape" if detail => {
                 if !self.close_popups(cx) {
-                    window.focus(&self.panes.main, cx);
+                    focus::to_pane(FOCUS_MAIN, window, cx);
                 }
                 true
             }
@@ -754,7 +748,7 @@ impl Focusable for WorkView {
 impl Render for WorkView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.focus.is_focused(window) && self.shown == Shown::Ready {
-            window.focus(&self.panes.main, cx);
+            focus::request(&self.panes.main, window, cx);
         }
         let colors = cx.theme().colors().clone();
         let body = match &self.shown {

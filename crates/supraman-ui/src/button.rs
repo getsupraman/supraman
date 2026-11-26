@@ -212,18 +212,17 @@ pub fn checkbox(hits: &HitTargets, key: impl Into<SharedString>, on: bool, cx: &
     div().id(key.clone()).group(key.clone()).flex_none().cursor_pointer().child(ink::mark(square.child(hit_target(hits, key.to_string()))))
 }
 
-/// [`checkbox`] taking the keyboard under `focus` (a form's [`crate::focus_order::FocusOrder`] member): its square bordered in the focus colour while focused, Space toggling it by `press`.
+/// [`checkbox`] taking the keyboard under `focus` (a form's [`crate::focus_order::FocusOrder`] member), Space toggling it by
+/// `press`; the caller puts [`crate::focus::ring`] on the row holding it and its label, so the ring takes in both.
 pub fn focusable_checkbox(hits: &HitTargets, key: impl Into<SharedString>, on: bool, focus: &FocusHandle, press: impl Fn(&Press, &mut Window, &mut App) + 'static, cx: &App) -> Stateful<Div> {
     let key = key.into();
     let colors = cx.theme().colors();
-    let ring = colors.border_focused;
     let square = tick(on, colors.text_accent, cx)
         .relative()
         .group_hover(key.clone(), |s| s.border_color(if on { colors.text_accent } else { colors.border_selected }))
         .track_focus(focus)
         .key_context(BUTTON_CONTEXT)
-        .on_action(press)
-        .focus(move |s| s.border(stroke::FOCUS).border_color(ring));
+        .on_action(press);
     div().id(key.clone()).group(key.clone()).flex_none().cursor_pointer().child(ink::mark(square.child(hit_target(hits, key.to_string()))))
 }
 
@@ -256,11 +255,10 @@ pub fn choice(id: impl Into<ElementId>, label: impl Into<SharedString>, selected
         .child(div().flex_1().child(label.into()))
 }
 
-/// `list`, a row or column of `count` [`choice`]s, one keyboard member under `focus`: [`ring`]ed in the focus colour
-/// while focused, an arrow key picking the choice before or after `chosen` (`pick` its index), stopping at the ends.
+/// `list`, a row or column of `count` [`choice`]s, one keyboard member under `focus`: one [`crate::focus::ring`] around
+/// the group while the focus came by keyboard, an arrow key picking the choice before or after `chosen` (`pick` its index), stopping at the ends.
 pub fn choices<V: 'static>(list: Div, focus: &FocusHandle, count: usize, chosen: Option<usize>, pick: impl Fn(&mut V, usize, &mut Window, &mut Context<V>) + 'static, cx: &mut Context<V>) -> Div {
-    let focused = ring(cx.theme().colors().border_focused);
-    list.track_focus(focus).rounded(radius::S).focus(move |s| s.shadow(vec![focused])).on_key_down(cx.listener(move |this, e: &gpui::KeyDownEvent, window, cx| {
+    list.relative().track_focus(focus).rounded(radius::S).child(crate::focus::ring(focus, radius::S)).on_key_down(cx.listener(move |this, e: &gpui::KeyDownEvent, window, cx| {
         let back = match e.keystroke.key.as_str() {
             "up" | "left" => true,
             "down" | "right" => false,

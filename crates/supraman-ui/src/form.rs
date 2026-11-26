@@ -111,8 +111,10 @@ impl<V: 'static> Form<V> {
             .dimmed(self.why)
             .when_some(ok_focus, |b, focus| b.focus(focus, cx.listener(move |this, _: &Press, _, cx| pressed(this, cx))));
         let body = div().flex().flex_col().gap(tokens::space::XL).p(tokens::space::XL).children(fields).child(div().flex().child(ok));
+        let popup = crate::focus::popup(order.handles().to_vec());
         order
             .on(div())
+            .child(popup)
             .on_action(cx.listener(move |this, _: &Dismiss, _, cx| on_close(this, cx)))
             .relative()
             .size_full()

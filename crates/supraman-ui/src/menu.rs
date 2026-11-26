@@ -51,7 +51,7 @@ impl<A> MenuItem<A> {
     }
 }
 
-/// While shown it holds the focus, given back by [`crate::focus`] when it closes; Esc closes it.
+/// While shown it holds the focus, given back to what held it when it closes ([`crate::focus::popup`]); Esc closes it.
 pub struct ContextMenu<A> {
     pub title: String,
     pub position: Point<Pixels>,
@@ -65,11 +65,11 @@ impl<A> ContextMenu<A> {
         Self { title: title.into(), position, items, focus: OnceCell::new(), asked: Cell::new(false) }
     }
 
-    /// Focuses the menu once, after the frame that first paints it.
+    /// Focuses the menu as it first prepaints, before its list, so the frame that first shows it holds the focus.
     fn take_focus(&self, cx: &mut App) -> impl IntoElement + use<A> {
         let focus = self.focus.get_or_init(|| cx.focus_handle()).clone();
         let ask = !self.asked.replace(true);
-        canvas(move |_, window, cx| if ask { window.defer(cx, move |window, cx| window.focus(&focus, cx)) }, |_, _, _, _| {}).absolute().size_0()
+        canvas(move |_, window, cx| if ask { window.focus(&focus, cx) }, |_, _, _, _| {}).absolute().size_0()
     }
 }
 
@@ -110,7 +110,6 @@ impl<A: Clone + 'static> ContextMenu<A> {
             .occlude()
             .on_mouse_down_out(cx.listener(move |this, _: &MouseDownEvent, _, cx| on_dismiss(this, cx)))
             .child(hit_target(hits, "menu".into()))
-            .child(taken)
             .child(caption(&self.title, &colors));
         for entry in &self.items {
             let key = format!("menu-{}", entry.key);
@@ -131,7 +130,8 @@ impl<A: Clone + 'static> ContextMenu<A> {
                 }
             });
         }
-        deferred(anchored().position(self.position).snap_to_window_with_margin(tokens::space::L).child(list)).with_priority(tokens::Layer::Menu.priority()).into_any_element()
+        let menu = div().child(crate::focus::popup([focus.clone()])).child(taken).child(list);
+        deferred(anchored().position(self.position).snap_to_window_with_margin(tokens::space::L).child(menu)).with_priority(tokens::Layer::Menu.priority()).into_any_element()
     }
 }
 

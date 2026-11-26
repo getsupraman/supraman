@@ -32,9 +32,9 @@ impl GitView {
         if let Some((_, false)) = &found
             && !was
         {
-            window.focus(&self.band.focus, cx);
+            supraman_ui::focus::request(&self.band.focus, window, cx);
         }
-        found.map(|(band, _)| band.track_focus(&self.band.focus))
+        found.map(|(band, _)| band.track_focus(&self.band.focus).child(supraman_ui::focus::popup([self.band.focus.clone()])))
     }
 }
 

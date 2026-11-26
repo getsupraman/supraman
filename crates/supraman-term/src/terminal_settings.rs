@@ -45,9 +45,6 @@ pub const PATH_HYPERLINK_REGEXES: [&str; 2] = [
 /// Zed's default `terminal.path_hyperlink_timeout_ms`.
 pub const PATH_HYPERLINK_TIMEOUT: Duration = Duration::from_millis(1);
 
-/// Windows Terminal's caret blink: Windows' default `GetCaretBlinkTime`.
-pub const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(530);
-
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AlternateScroll {

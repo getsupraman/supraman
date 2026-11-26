@@ -96,7 +96,10 @@ pub fn toggles(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
     let checks = row()
         .child(labelled(button::checkbox(hits, "kit-check-off", false, cx), "Off"))
         .child(labelled(button::checkbox(hits, "kit-check-on", true, cx), "On"))
-        .child(labelled(button::focusable_checkbox(hits, "kit-check-focus", true, &g.members.handle("kit-check-focus", cx), |_, _, _| {}, cx), "Focusable"))
+        .child({
+            let focus = g.members.handle("kit-check-focus", cx);
+            labelled(button::focusable_checkbox(hits, "kit-check-focus", true, &focus, |_, _, _| {}, cx), "Focusable").relative().child(crate::focus::ring(&focus, tokens::radius::S))
+        })
         .child(div().flex().items_center().gap(tokens::space::L).child(button::tick(false, cx.theme().colors().text_accent, cx)).child(button::tick(true, cx.theme().colors().text_accent, cx)).child("tick"));
     let fg = cx.theme().colors().text_muted;
     let pills = row().child(button::pill(hits, "kit-pill", "pill", fg, cx)).child(button::pill(hits, "kit-pill-accent", "accent", cx.theme().colors().text_accent, cx));

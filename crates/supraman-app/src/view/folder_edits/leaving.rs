@@ -168,7 +168,7 @@ impl FleetView {
                     .flex()
                     .flex_col()
                     .gap_0p5()
-                    .child(div().id(SharedString::from(format!("{KEY}-tick-row"))).flex().items_center().gap_2().cursor_pointer().child(tick).child(format!("Also delete {label}")).on_click(cx.listener(Self::clicked_remove_tick)))
+                    .child(div().id(SharedString::from(format!("{KEY}-tick-row"))).relative().flex().items_center().gap_2().cursor_pointer().child(tick).child(format!("Also delete {label}")).child(supraman_ui::focus::ring(&q.tick, supraman_ui::tokens::radius::S)).on_click(cx.listener(Self::clicked_remove_tick)))
                     .child(div().relative().pl_6().text_xs().text_color(muted).child(q.note()).child(hit_target(&self.hits, format!("{KEY}-note")))),
             );
         let mut buttons: Vec<_> = q

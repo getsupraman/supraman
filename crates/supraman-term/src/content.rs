@@ -4,11 +4,10 @@
 use crate::alacritty::{
     AlacrittyCell, AlacrittyHyperlink, content_text, display_offset, make_content, total_lines,
 };
-use crate::terminal_settings::{CURSOR_BLINK_INTERVAL, CursorShape as SettingsCursorShape};
+use crate::terminal_settings::CursorShape as SettingsCursorShape;
 use crate::{Event, Terminal, TerminalBounds};
 use gpui::{Context, Window};
 use std::ops::{BitOr, BitOrAssign, Deref};
-use std::time::{Duration, Instant};
 use vte::ansi::{Color, NamedColor};
 
 pub fn is_default_background_color(color: Color) -> bool {
@@ -230,16 +229,6 @@ impl Default for Content {
     }
 }
 
-/// Lit for the first interval after a move, then off and on every [`CURSOR_BLINK_INTERVAL`]; with the
-/// time until the next change.
-pub fn blink_phase(since_move: Duration) -> (bool, Duration) {
-    let interval = CURSOR_BLINK_INTERVAL.as_nanos();
-    let elapsed = since_move.as_nanos();
-    let lit = (elapsed / interval) % 2 == 0;
-    let next = Duration::from_nanos((interval - elapsed % interval) as u64);
-    (lit, next)
-}
-
 impl Terminal {
     pub fn last_content(&self) -> &Content {
         &self.last_content
@@ -255,15 +244,6 @@ impl Terminal {
         (display_offset(&term), total_lines(&term))
     }
 
-    /// Whether the cursor is lit at `now`, and how long until that changes (`None`: it does not blink).
-    pub fn cursor_blink(&self, now: Instant) -> (bool, Option<Duration>) {
-        if !self.last_content.cursor_blinking {
-            return (true, None);
-        }
-        let (lit, next) = blink_phase(now.saturating_duration_since(self.cursor_moved_at));
-        (lit, Some(next))
-    }
-
     pub fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let term = self.term.clone();
         let mut terminal = term.lock_unfair();
@@ -272,11 +252,7 @@ impl Terminal {
             self.process_terminal_event(&e, &mut terminal, window, cx)
         }
 
-        let cursor_before = self.last_content.cursor.point;
         self.last_content = make_content(&terminal, &self.last_content);
-        if self.last_content.cursor.point != cursor_before {
-            self.cursor_moved_at = Instant::now();
-        }
         self.refresh_hovered_link(&terminal, window.mouse_position(), cx);
         if self.last_content.grid_lines_change == GridLinesChange::Changed {
             debug_assert!(self.last_content.last_hovered_word.is_none());
@@ -300,7 +276,6 @@ mod tests {
     use super::*;
 
     use std::sync::Arc;
-    use std::time::Duration;
 
     #[test]
     fn terminal_cell_clone_shares_extra_storage() {
@@ -313,15 +288,5 @@ mod tests {
             (Some(extra), Some(clone_extra)) => assert!(Arc::ptr_eq(extra, clone_extra)),
             _ => panic!("expected extra storage on both cells"),
         }
-    }
-
-    #[test]
-    fn blink_is_lit_for_one_interval_after_a_move_then_alternates() {
-        let ms = Duration::from_millis;
-        assert_eq!(blink_phase(ms(0)), (true, ms(530)));
-        assert_eq!(blink_phase(ms(529)), (true, ms(1)));
-        assert_eq!(blink_phase(ms(530)), (false, ms(530)));
-        assert_eq!(blink_phase(ms(1000)), (false, ms(60)));
-        assert_eq!(blink_phase(ms(1060)), (true, ms(530)));
     }
 }

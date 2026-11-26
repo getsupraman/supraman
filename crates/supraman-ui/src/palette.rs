@@ -406,6 +406,7 @@ impl<T: Entry> Render for Palette<T> {
             .shadow_lg()
             .overflow_hidden()
             .child(hit_target(&self.hits, self.id.to_string()))
+            .child(crate::focus::popup([self.input.focus_handle(cx)]))
             .on_action(cx.listener(|this, _: &text_input::Up, _, cx| this.step(-1, cx)))
             .on_action(cx.listener(|this, _: &text_input::Down, _, cx| this.step(1, cx)))
             .capture_action(cx.listener(|this, _: &text_input::Backspace, _, cx| {

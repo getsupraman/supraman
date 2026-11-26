@@ -149,7 +149,7 @@ impl FleetView {
                                 cx.notify();
                             })
                         })
-                        .child(term_element::terminal_grid(terminal.clone(), self.term_font()))
+                        .child(term_element::terminal_grid(terminal.clone(), self.term_font(), self.term_cursor()))
                         .children(self.link_hint(*tab_id, terminal, cx))
                         .child(self.terminal_drop(*tab_id, cx)),
                 )

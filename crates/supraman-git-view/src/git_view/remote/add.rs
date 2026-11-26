@@ -127,7 +127,7 @@ impl RemoteActions {
         let shown = AddRemote::shown(adding.editing.as_ref());
         let fields: Vec<_> = FIELDS.iter().zip(&shown).map(|((_, _, placeholder), text)| form::field(placeholder, text, ANSWERS, |_, cx| cx.notify(), window, cx)).collect();
         if let Some((name, _)) = fields.first() {
-            name.update(cx, |i, cx| i.focus(window, cx));
+            supraman_ui::focus::request(&name.focus_handle(cx), window, cx);
         }
         if let Some(a) = self.adding.as_mut() {
             a.fields = fields;

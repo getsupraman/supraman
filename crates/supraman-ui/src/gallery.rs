@@ -329,6 +329,7 @@ impl Gallery {
             _ => None,
         };
         let Some(handle) = handle else { return false };
+        crate::focus::keyed(window, cx);
         window.focus(&handle, cx);
         cx.notify();
         true

@@ -141,10 +141,8 @@ impl CommitPanel {
         let Some((_, Some(target))) = offer(&shown) else { return };
         let body = if matches!(target, Target::Stash(_)) { String::new() } else { shown.body.to_string() };
         let (summary, description) = message_fields(window, cx);
-        summary.update(cx, |i, cx| {
-            i.set_text(&shown.summary, cx);
-            i.focus(window, cx);
-        });
+        summary.update(cx, |i, cx| i.set_text(&shown.summary, cx));
+        supraman_ui::focus::request(&summary.focus_handle(cx), window, cx);
         description.update(cx, |i, cx| i.set_text(&body, cx));
         let events = [
             cx.subscribe_in(&summary, window, |this: &mut Self, _, e: &InputEvent, window, cx| this.field_event(e, true, window, cx)),
