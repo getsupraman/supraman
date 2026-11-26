@@ -24,7 +24,6 @@ use supraman_ui::split::SplitPane;
 use supraman_ui::tabs::{TabHeader, tab_strip};
 use supraman_ui::surfaces::toast::ToastSlot;
 use supraman_ui::controls::tooltip::Tooltip;
-use supraman_runtime::frames::FrameProbe;
 use supraman_ui::{controls::button, term_element};
 use gpui::{
     AnyElement, AnyWindowHandle, App, ClickEvent, Context, Entity, FocusHandle,
@@ -247,7 +246,7 @@ pub struct FleetView {
     next_tab_id: u64,
     pub shell_args: Vec<String>,
     focus: FocusHandle,
-    pub probe: FrameProbe,
+    pub probe: supraman_runtime::frames::FrameProbe,
     pub hits: HitTargets,
     pub(crate) window: AnyWindowHandle,
     pub home: Option<PathBuf>,
@@ -344,7 +343,7 @@ impl FleetView {
             next_tab_id: 1,
             shell_args: vec!["-NoLogo".into()],
             focus,
-            probe: FrameProbe::default(),
+            probe: Default::default(),
             hits: HitTargets::default(),
             window: window.window_handle(),
             home,
