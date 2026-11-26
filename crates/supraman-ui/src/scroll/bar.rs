@@ -102,6 +102,12 @@ struct Bar {
 
 type State = Rc<Cell<Bar>>;
 
+fn edit(state: &State, f: &dyn Fn(&mut Bar)) {
+    let mut s = state.get();
+    f(&mut s);
+    state.set(s);
+}
+
 /// The overlay bar of one scroller, laid out at no size and painted over its handle's viewport; [`super::area`]'s,
 /// or beside a list or a custom viewport.
 pub struct Scrollbar {
@@ -268,39 +274,8 @@ impl Scrollbar {
 
     fn listen(&self, shown: &Shown, state: &State, window: &mut Window) {
         let view = window.current_view();
-        let line_height = window.line_height();
         let (thumb, area, track) = (shown.thumb, shown.area.clone(), shown.track.clone());
-        let edit = |state: &State, f: &dyn Fn(&mut Bar)| {
-            let mut s = state.get();
-            f(&mut s);
-            state.set(s);
-        };
-        window.on_mouse_event({
-            let (handle, area) = (self.handle.clone(), area.clone());
-            move |e: &ScrollEvent, phase, window, cx| {
-                if !phase.capture() || !area.should_handle_scroll(window) {
-                    return;
-                }
-                user_scrolled(cx);
-                if !handle.takes_wheel() || e.modifiers.control {
-                    return;
-                }
-                let delta = e.delta.pixel_delta(line_height);
-                if delta.x.abs() > delta.y.abs() {
-                    return;
-                }
-                // Clamped first: a scroll that bubbled leaves the shared offset past the edge until the next prepaint.
-                let max = (handle.content_size().height - handle.viewport_bounds().size.height).max(Pixels::ZERO);
-                let offset = handle.offset();
-                let current = offset.y.clamp(-max, Pixels::ZERO);
-                let next = (current + delta.y).clamp(-max, Pixels::ZERO);
-                if next != current {
-                    handle.set_offset(point(offset.x, next));
-                    cx.notify(view);
-                    cx.stop_propagation();
-                }
-            }
-        });
+        self.wheel(&area, view, window);
         window.on_mouse_event({
             let (handle, state, track) = (self.handle.clone(), state.clone(), track.clone());
             move |e: &MouseDownEvent, phase, window, cx| {
@@ -369,6 +344,37 @@ impl Scrollbar {
                         s.on_thumb = false;
                     });
                     cx.notify(view);
+                }
+            }
+        });
+    }
+
+    /// The wheel over the area: its own while it can move that way (gpui-kit's vertical `ScrollableMask`), else its parent's.
+    fn wheel(&self, area: &Hitbox, view: gpui::EntityId, window: &mut Window) {
+        window.on_mouse_event({
+            let (handle, area) = (self.handle.clone(), area.clone());
+            let line_height = window.line_height();
+            move |e: &ScrollEvent, phase, window, cx| {
+                if !phase.capture() || !area.should_handle_scroll(window) {
+                    return;
+                }
+                user_scrolled(cx);
+                if !handle.takes_wheel() || e.modifiers.control {
+                    return;
+                }
+                let delta = e.delta.pixel_delta(line_height);
+                if delta.x.abs() > delta.y.abs() {
+                    return;
+                }
+                // Clamped first: a scroll that bubbled leaves the shared offset past the edge until the next prepaint.
+                let max = (handle.content_size().height - handle.viewport_bounds().size.height).max(Pixels::ZERO);
+                let offset = handle.offset();
+                let current = offset.y.clamp(-max, Pixels::ZERO);
+                let next = (current + delta.y).clamp(-max, Pixels::ZERO);
+                if next != current {
+                    handle.set_offset(point(offset.x, next));
+                    cx.notify(view);
+                    cx.stop_propagation();
                 }
             }
         });
