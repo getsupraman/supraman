@@ -324,7 +324,7 @@ fn entry<V: 'static, A: Clone + 'static>(
     let lead_slot = lead.then(|| {
         let mark = match (it.ticked, it.icon) {
             (Some(on), _) => Some(crate::button::tick(on, colors.text_accent, cx).into_any_element()),
-            (None, Some(icon)) => Some(icon.svg(tokens::icon::M, colors.icon).into_any_element()),
+            (None, Some(icon)) => Some(icon.svg(tokens::icon::M, colors.text_muted).into_any_element()),
             (None, None) => None,
         };
         crate::ink::mark(div().flex_none().w(crate::button::TICK).flex().justify_center().children(mark))
@@ -352,11 +352,11 @@ fn entry<V: 'static, A: Clone + 'static>(
     row = look.paint(row, None);
     let nav_move = nav.clone();
     let (acts_ix, has_sub) = (it.acts(), !it.submenu.is_empty());
-    row = row.on_mouse_move(cx.listener(move |_, _: &MouseMoveEvent, _, cx| {
-        if acts_ix && pointed(&nav_move, level, ix, has_sub, cx) {
-            cx.notify();
+    row = row.on_mouse_move(move |_: &MouseMoveEvent, window, cx| {
+        if acts_ix && pointed(&nav_move, level, ix, has_sub, window, cx) {
+            window.refresh();
         }
-    }));
+    });
     row = match &it.dimmed {
         Some(why) => row.text_color(colors.text_disabled).tooltip(crate::tooltip::Tooltip::text(why.clone())).on_click(|_, _, cx| cx.stop_propagation()),
         None => {
@@ -377,7 +377,7 @@ fn entry<V: 'static, A: Clone + 'static>(
 }
 
 /// The pointer rests on item `ix` of `level`: it is highlighted, and after [`SUBMENU_DELAY`] its submenu (`has_sub`) opens or another closes.
-fn pointed<V: 'static>(nav: &Rc<RefCell<Nav>>, level: Level, ix: usize, has_sub: bool, cx: &mut Context<V>) -> bool {
+fn pointed(nav: &Rc<RefCell<Nav>>, level: Level, ix: usize, has_sub: bool, window: &mut Window, cx: &mut App) -> bool {
     let mut n = nav.borrow_mut();
     n.epoch += 1;
     if level == Level::Sub {
@@ -391,19 +391,20 @@ fn pointed<V: 'static>(nav: &Rc<RefCell<Nav>>, level: Level, ix: usize, has_sub:
     let epoch = n.epoch;
     drop(n);
     let nav = nav.clone();
-    cx.spawn(async move |this, cx| {
-        cx.background_executor().timer(SUBMENU_DELAY).await;
-        this.update(cx, |_, cx| {
-            let mut n = nav.borrow_mut();
-            if n.epoch != epoch || n.highlighted != Some(ix) || n.sub.as_ref().is_some_and(|s| s.parent == ix) {
-                return;
-            }
-            n.sub = has_sub.then(|| Sub::new(ix, None));
-            cx.notify();
+    window
+        .spawn(cx, async move |cx| {
+            cx.background_executor().timer(SUBMENU_DELAY).await;
+            cx.update(|window, _| {
+                let mut n = nav.borrow_mut();
+                if n.epoch != epoch || n.highlighted != Some(ix) || n.sub.as_ref().is_some_and(|s| s.parent == ix) {
+                    return;
+                }
+                n.sub = has_sub.then(|| Sub::new(ix, None));
+                window.refresh();
+            })
+            .ok();
         })
-        .ok();
-    })
-    .detach();
+        .detach();
     true
 }
 
