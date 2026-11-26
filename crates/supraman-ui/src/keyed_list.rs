@@ -23,6 +23,11 @@ impl KeyedList {
         self.state.clone()
     }
 
+    /// The list's bar, laid beside its [`gpui::list`] in a `relative` parent.
+    pub fn scrollbar(&self, id: impl Into<gpui::ElementId>) -> crate::scroll::Scrollbar {
+        crate::scroll::Scrollbar::new(id, &self.state)
+    }
+
     pub fn len(&self) -> usize {
         self.keys.len()
     }

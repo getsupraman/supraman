@@ -6,6 +6,7 @@ use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, SharedString, State
 use theme::ActiveTheme as _;
 
 use supraman_ui::icon::Icon;
+use supraman_ui::scroll::ScrollArea;
 use super::left::{disclosure, fold, grid, icon_slot, quiet, secondary, tree_label};
 use super::{FleetView, hit_target};
 use crate::fleet::{Open, Tree, TreeInputs};
@@ -60,7 +61,7 @@ impl FleetView {
         }
     }
 
-    pub(super) fn render_results(&mut self, mut body: Stateful<Div>, query: &str, cx: &mut Context<Self>) -> Stateful<Div> {
+    pub(super) fn render_results(&mut self, mut body: ScrollArea, query: &str, cx: &mut Context<Self>) -> ScrollArea {
         let results = search::search(&self.search_tree(), query);
         self.sidebar.search_marks = results
             .entries
@@ -105,7 +106,7 @@ impl FleetView {
             .child(hit_target(&self.hits, key))
     }
 
-    fn render_result_entry(&self, mut body: Stateful<Div>, w: &EntryHit, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn render_result_entry(&self, mut body: ScrollArea, w: &EntryHit, cx: &mut Context<Self>) -> ScrollArea {
         let group = w.group.then(|| w.name.clone());
         if w.group {
             let (name, key) = (w.name.clone(), format!("result-group-{}", w.name));

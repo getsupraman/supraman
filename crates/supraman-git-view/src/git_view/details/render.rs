@@ -90,11 +90,9 @@ impl CommitPanel {
                 cx.stop_propagation();
                 supraman_ui::clipboard::write_text(cx, text.clone());
             });
-        let content = div()
-            .id("commit-message")
+        let content = supraman_ui::scroll::area("commit-message")
+            .track(&self.message_scroll)
             .size_full()
-            .overflow_y_scroll()
-            .track_scroll(&self.message_scroll)
             .flex()
             .flex_col()
             .gap_2()

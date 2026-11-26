@@ -76,11 +76,29 @@ pub struct AppearanceSettings {
     /// "campbell" paints ANSI 0-15 in Windows Terminal's Campbell. Unset: the theme's.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_colors: Option<String>,
+    /// Unset or not a known word: [`Scrollbars::Auto`].
+    #[serde(deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
+    pub scrollbars: Option<Scrollbars>,
+}
+
+impl AppearanceSettings {
+    pub fn scrollbars(&self) -> Scrollbars {
+        self.scrollbars.unwrap_or_default()
+    }
 }
 
 impl Section for AppearanceSettings {
     const KEY: &'static str = "appearance";
-    const FIELDS: &'static [&'static str] = &["theme", "terminal_colors"];
+    const FIELDS: &'static [&'static str] = &["theme", "terminal_colors", "scrollbars"];
+}
+
+/// When a scroller shows its bar: while it scrolls or the pointer is over it, or always.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Scrollbars {
+    #[default]
+    Auto,
+    Always,
 }
 
 /// `[terminal]`: every terminal tab's font.
@@ -423,7 +441,7 @@ mod tests {
                 reopen_tabs: false,
                 resume_tabs_on_click: true,
             },
-            appearance: AppearanceSettings { theme: Some("Supraman Dark".into()), terminal_colors: Some("campbell".into()) },
+            appearance: AppearanceSettings { theme: Some("Supraman Dark".into()), terminal_colors: Some("campbell".into()), scrollbars: Some(Scrollbars::Always) },
             terminal: TerminalSettings {
                 font_size: Some(20),
                 font_family: Some("Lucida Console".into()),

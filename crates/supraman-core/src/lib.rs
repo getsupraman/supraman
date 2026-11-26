@@ -37,7 +37,7 @@ pub use plugin::{AGENTS_SERVER, AGENT_TOOLS, find_plugin_dir, hook_exe, sm_allow
 pub use home::{HOME_VAR, env_home, home_from, home_from_env};
 pub use branch::branch_at;
 pub use settings::{
-    AppearanceSettings, DEFAULT_MAX_WORKING, DEFAULT_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Section,
+    AppearanceSettings, DEFAULT_MAX_WORKING, Scrollbars, DEFAULT_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Section,
     SessionSettings, Settings, TERMINAL_FONT_PREFERENCE, TabKeys, TerminalSettings, UpdateSettings, WindowSettings, clamp_terminal_font_size,
     default_terminal_font_family,
 };

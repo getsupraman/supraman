@@ -31,6 +31,7 @@ pub mod palette;
 pub mod placeholder;
 #[cfg(test)]
 mod ratchet;
+pub mod scroll;
 pub mod segmented;
 pub mod session;
 pub mod settings_page;

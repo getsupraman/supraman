@@ -110,8 +110,8 @@ impl WorkView {
             )
             .children(self.overview.as_ref().map(|o| div().flex_none().text_xs().text_color(colors.text_muted).child(SharedString::from(as_of(&o.as_of, now)))));
         let side = div().flex().flex_col().gap_3().flex_1().min_w(px(260.)).child(self.render_working(now, cx)).children(self.render_tiles(cx));
-        let mut root = div()
-            .id("work-overview")
+        let mut root = supraman_ui::scroll::area("work-overview")
+            .track(&self.list_scroll)
             .size_full()
             .flex()
             .flex_col()
@@ -119,8 +119,6 @@ impl WorkView {
             .px_5()
             .pt_4()
             .pb_6()
-            .overflow_y_scroll()
-            .track_scroll(&self.list_scroll)
             .child(head)
             .child(div().flex().flex_wrap().gap_3().items_start().child(self.render_needs(&needs, now, cx)).child(side));
         for project in self.projects.clone() {

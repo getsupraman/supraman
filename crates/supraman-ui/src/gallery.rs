@@ -36,10 +36,11 @@ pub enum Section {
     Cards,
     Marks,
     Text,
+    Scroll,
 }
 
 impl Section {
-    pub const ALL: [Section; 13] = [
+    pub const ALL: [Section; 14] = [
         Section::Buttons,
         Section::Toggles,
         Section::Inputs,
@@ -53,6 +54,7 @@ impl Section {
         Section::Cards,
         Section::Marks,
         Section::Text,
+        Section::Scroll,
     ];
 
     /// Its part of the shot's name, `kit-<key>-dark.png`.
@@ -71,6 +73,7 @@ impl Section {
             Section::Cards => "cards",
             Section::Marks => "marks",
             Section::Text => "text",
+            Section::Scroll => "scroll",
         }
     }
 
@@ -89,6 +92,7 @@ impl Section {
             Section::Cards => "Hover card, tooltip, details page, inbox card, placeholder",
             Section::Marks => "Marks: dots, rings, activity, squares, progress line",
             Section::Text => "Clipped labels: cut with their tooltip, path labels, pairs, clamped",
+            Section::Scroll => "Scroll areas: a list, a box, a nested pair, a grid, and a box set to always",
         }
     }
 }
@@ -162,6 +166,7 @@ impl Section {
             Section::Prompts => vec![hover("hover-band-answer", "kit-band-yes"), hover("hover-form-ok", "kit-form-ok")],
             Section::Cards => vec![hover("hover-card", "kit-inbox-a")],
             Section::Marks => Vec::new(),
+            Section::Scroll => vec![hover("hover-area", "kit-scroll-div"), hover("hover-thumb", "kit-scroll-div-bar-thumb"), press("scrolling", "kit-scroll-div-bar-track")],
             Section::Text => vec![tip("tooltip-clipped", "kit-clip-end", sections::LONG), tip("tooltip-path", "kit-path-long", sections::PATH_FOLDER)],
         }
     }
@@ -216,6 +221,7 @@ pub struct Gallery {
     pub(crate) dialog: crate::dialog::Dialog,
     pub(crate) stack: StackState,
     pub(crate) scroll: ScrollHandle,
+    pub(crate) scrolls: sections::Scrolls,
     pub(crate) split: gpui::Pixels,
     pub(crate) bar: gpui::Pixels,
     _subscriptions: Vec<Subscription>,
@@ -277,6 +283,7 @@ impl Gallery {
             dialog: Default::default(),
             stack: StackState::default(),
             scroll: ScrollHandle::new(),
+            scrolls: sections::Scrolls::default(),
             split: gpui::px(256.),
             bar: gpui::px(80.),
             _subscriptions: Vec::new(),
@@ -381,6 +388,7 @@ impl Render for Gallery {
             Section::Cards => sections::cards(self, window, cx),
             Section::Marks => sections::marks(cx),
             Section::Text => sections::text(self, cx),
+            Section::Scroll => sections::scroll(self, cx),
         };
         let title = div().flex_none().px(tokens::space::XXL).py(tokens::space::L).border_b(tokens::stroke::HAIRLINE).border_color(colors.border).text_size(tokens::text::BODY).text_color(crate::themes::secondary(&colors)).child(self.section.title());
         div()

@@ -374,7 +374,8 @@ impl<T: Entry> Palette<T> {
             let empty = mode.map_or_else(|| SharedString::from("Nothing matches."), |m| m.empty.clone());
             return line().child(hit_target(&self.hits, format!("{}-empty", self.id))).child(empty).into_any_element();
         }
-        gpui::list(self.list.state(), cx.processor(|this: &mut Self, ix: usize, window, cx| this.render_row(ix, window, cx))).w_full().h(px(LIST_HEIGHT)).into_any_element()
+        let list = gpui::list(self.list.state(), cx.processor(|this: &mut Self, ix: usize, window, cx| this.render_row(ix, window, cx))).size_full();
+        div().relative().w_full().h(px(LIST_HEIGHT)).child(list).child(self.list.scrollbar(SharedString::from(format!("{}-bar", self.id)))).into_any_element()
     }
 }
 

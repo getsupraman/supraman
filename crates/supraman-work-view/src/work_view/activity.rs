@@ -108,8 +108,8 @@ impl WorkView {
     pub(super) fn render_activity_page(&self, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let a = &self.activity;
-        let mut root = div()
-            .id("work-activity")
+        let mut root = supraman_ui::scroll::area("work-activity")
+            .track(&self.list_scroll)
             .size_full()
             .flex()
             .flex_col()
@@ -117,8 +117,6 @@ impl WorkView {
             .px_5()
             .pt_4()
             .pb_6()
-            .overflow_y_scroll()
-            .track_scroll(&self.list_scroll)
             .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("Activity"))
             .child(div().text_sm().text_color(colors.text_muted).child(SharedString::from(format!(
                 "The last {SHOWN} events across these projects. Older events are on each item's Activity tab."

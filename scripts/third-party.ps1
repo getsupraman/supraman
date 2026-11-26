@@ -101,6 +101,16 @@ Supraman reads the file unchanged. It adjusts one key when it loads the file, so
         Files = @(@{ From = 'crates/supraman-editor/queries/hcl/LICENSE'; To = 'hcl-highlights.LICENSE' })
     }
     [pscustomobject]@{
+        Title = 'gpui-kit scrollbar'
+        Text = @'
+- Source: https://github.com/longbridge/gpui-kit, `crates/base/src/scrollbar.rs` and `crates/base/src/scrollable_mask.rs` @ f807c1b
+- In Supraman: `crates/supraman-ui/src/scroll/bar.rs`, ported with changes (its header says which), compiled into `supraman.exe`
+- Licence: Apache-2.0, © 2024 - 2026 Longbridge. Full text: `crates/supraman-ui/src/scroll/gpui-kit.LICENSE`, in a release
+  `licenses\gpui-kit.LICENSE`
+'@
+        Files = @(@{ From = 'crates/supraman-ui/src/scroll/gpui-kit.LICENSE'; To = 'gpui-kit.LICENSE' })
+    }
+    [pscustomobject]@{
         Title = 'The Rust standard library'
         Text = @'
 - Source: the Rust toolchain of `rust-toolchain.toml`, linked into every exe

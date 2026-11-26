@@ -137,7 +137,7 @@ impl Dialog {
         };
         let (key, cancel, escape) = (panel.key, panel.cancel.clone(), panel.cancel);
         let title = panel.title.map(|t| div().relative().text_size(tokens::text::TITLE).font_weight(gpui::FontWeight::SEMIBOLD).child(t).child(hit_target(hits, format!("{key}-title"))));
-        let body = div().id(SharedString::from(format!("{key}-body"))).flex_1().min_h_0().overflow_y_scroll().child(panel.body);
+        let body = crate::scroll::area(SharedString::from(format!("{key}-body"))).flex_1().min_h_0().child(panel.body);
         let card = order
             .on(div().id(SharedString::from(format!("{key}-dialog"))))
             .relative()
