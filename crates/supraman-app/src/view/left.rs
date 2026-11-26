@@ -120,7 +120,7 @@ pub(crate) const TOP_ROW: f32 = 30.;
 pub(super) const REPO_ROW: f32 = 26.;
 pub(super) const SESSION_LINE: f32 = 24.;
 /// A session's or a schedule's detail line's padding above and below, so the tree's lines sit close.
-pub(super) const LINE_PAD: f32 = 1.;
+pub(super) const LINE_PAD: Pixels = px(1.);
 /// One hover icon's place: always laid out, so a row's icons never shift.
 const SLOT: f32 = 20.;
 /// The widest an Other sessions row's folder name gets before it is cut.
@@ -889,7 +889,7 @@ impl FleetView {
             .flex_col()
             .pl(indent)
             .pr_2()
-            .py(gpui::px(LINE_PAD))
+            .py(LINE_PAD)
             .text_sm()
             .when(shown, |d| d.border_l(tokens::stroke::FOCUS).border_color(colors.border_focused).pl(indent - tokens::stroke::FOCUS))
             .when(dimmed, |d| d.opacity(DIMMED))
