@@ -1,8 +1,9 @@
 //! The Branch / Tag, Commit Message, Date and Sha cells.
 
-use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Div, Hsla, MouseButton, MouseDownEvent, SharedString, Stateful, Svg, canvas, deferred, div, prelude::*, px, relative};
+use gpui::{AnyElement, ClickEvent, Context, Div, Hsla, MouseButton, MouseDownEvent, SharedString, Stateful, Svg, canvas, deferred, div, prelude::*, px, relative};
 use supraman_gitman::{RefGroup, RefKind, Row, short_sha};
 use supraman_ui::clipped::clipped;
+use supraman_ui::dnd::{self, DropZone};
 use supraman_ui::fonts;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
@@ -162,10 +163,10 @@ fn icons(key: &str, icons: Vec<Icon>, colour: Hsla, hits: &HitTargets) -> Div {
 }
 
 /// A pill of row `ix`'s group `group`: its menu, double-click checkout, drag and drop.
-pub(crate) fn acting(pill: Div, key: String, ix: usize, group: &RefGroup, at: usize, sha: SharedString, palette: &Palette, cx: &mut Context<GitView>) -> Stateful<Div> {
-    let drop_border = palette.text;
+pub(crate) fn acting(pill: Div, key: String, ix: usize, group: &RefGroup, at: usize, sha: SharedString, cx: &mut Context<GitView>) -> Stateful<Div> {
     let dragged = DraggedPill { group: group.clone(), sha };
-    pill.id(SharedString::from(format!("{key}-act")))
+    let act = format!("{key}-act");
+    let pill = pill.id(SharedString::from(act.clone()))
         .on_mouse_down(MouseButton::Right, cx.listener(move |this, e: &MouseDownEvent, _, cx| {
             cx.stop_propagation();
             this.pill_menu(ix, at, e.position, cx);
@@ -174,10 +175,10 @@ pub(crate) fn acting(pill: Div, key: String, ix: usize, group: &RefGroup, at: us
             if e.click_count() == 2 {
                 this.pill_double_clicked(ix, at, window.mouse_position(), cx);
             }
-        }))
-        .on_drag(dragged, |pill, _, _, cx| cx.new(|_| pill.clone()))
-        .drag_over::<DraggedPill>(move |style, _, _, _| style.border_1().border_color(drop_border))
-        .on_drop(cx.listener(move |this, pill: &DraggedPill, window, cx| this.pill_dropped(pill, ix, at, window, cx)))
+        }));
+    let dropped = cx.listener(move |this, pill: &DraggedPill, window, cx| this.pill_dropped(pill, ix, at, window, cx));
+    let pill = DropZone::new(act.clone(), pill).take::<DraggedPill>(|_, _, _| true, dropped).element();
+    dnd::source(pill, act, dragged, cx)
 }
 
 /// The cell of a row whose name field stands in place of its pills.
@@ -207,7 +208,7 @@ pub(crate) fn refs(ix: usize, row: &GraphRow, view: RefCellView, selected: bool,
         let shown = if selected { shown.opacity(dim) } else { shown.opacity(0.).group_hover(group, move |s| s.opacity(dim)) };
         return cell.child(shown.relative().child(hit_target(hits, format!("git-ghost-{ix}")))).into_any_element();
     }
-    let shown = acting(shown.relative().child(hit_target(hits, format!("git-pill-{ix}"))), format!("git-pill-{ix}"), ix, first, 0, row.sha.clone(), palette, cx);
+    let shown = acting(shown.relative().child(hit_target(hits, format!("git-pill-{ix}"))), format!("git-pill-{ix}"), ix, first, 0, row.sha.clone(), cx);
     let shown = if view.list.is_empty() { shown } else { shown.child(deferred(list(ix, row, &view.list, colour, palette, hits, cx)).with_priority(supraman_ui::tokens::Layer::Float.priority())) };
     cell = cell.child(shown).when(view.more > 0, |d| {
         let more = SharedString::from(format!("+{}", view.more));
@@ -248,7 +249,7 @@ fn list(ix: usize, row: &GraphRow, groups: &[RefGroup], colour: usize, palette: 
                 .rounded_b(bottom)
                 .map(|d| pill_look(palette.pill_solid(colour), hover).paint(d, None))
                 .child(hit_target(hits, key.clone()));
-            acting(shown, key, ix, g, i, row.sha.clone(), palette, cx)
+            acting(shown, key, ix, g, i, row.sha.clone(), cx)
         }))
         .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
             this.over_list = if *hovered { Some(ix) } else { this.over_list.filter(|r| *r != ix) };

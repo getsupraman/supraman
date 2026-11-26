@@ -4,7 +4,7 @@ use super::*;
 
 fn fills() -> (Fills, [Hsla; 5]) {
     let c = [0.1, 0.2, 0.3, 0.4, 0.5].map(|h| hsla(h, 0.5, 0.5, 1.));
-    (Fills { rest: Some(c[0]), hover: Some(c[1]), pressed: Some(c[2]), selected: Some(c[3]), open: Some(c[4]) }, c)
+    (Fills { rest: Some(c[0]), hover: Some(c[1]), pressed: Some(c[2]), selected: Some(c[3]), open: Some(c[4]), drop_over: None }, c)
 }
 
 #[test]

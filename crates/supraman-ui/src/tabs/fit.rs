@@ -8,10 +8,8 @@ pub const TAB_MIN: Pixels = px(120.);
 pub const TAB_MAX: Pixels = px(240.);
 /// Below this an inactive tab shows its × only while hovered.
 pub const CLOSE_ON_HOVER_BELOW: Pixels = px(150.);
-/// How near an edge a dragged tab starts scrolling the strip.
-pub const EDGE: Pixels = px(40.);
-/// The most a drag scrolls per move, at the very edge.
-pub const EDGE_STEP: Pixels = px(24.);
+#[cfg(test)]
+use crate::dnd::{EDGE_STEP, edge_scroll};
 
 /// Each tab's width: the room shared evenly, between [`TAB_MIN`] and [`TAB_MAX`]; [`TAB_MAX`] while the room is unknown.
 pub fn tab_width(room: Pixels, tabs: usize) -> Pixels {
@@ -59,18 +57,6 @@ pub fn span(ix: usize, width: Pixels) -> (Pixels, Pixels) {
 pub fn cut(scroll: Pixels, viewport: Pixels, content: Pixels) -> (bool, bool) {
     let max = max_scroll(content, viewport);
     (scroll > px(0.5), max - scroll > px(0.5))
-}
-
-/// How far a drag at `x` (from the viewport's left) scrolls: towards the edge it is within [`EDGE`] of, more the nearer it is.
-pub fn edge_scroll(x: Pixels, viewport: Pixels) -> Pixels {
-    let depth = |into: Pixels| EDGE_STEP * ((EDGE - into.max(Pixels::ZERO)) / EDGE).clamp(0., 1.);
-    if x < EDGE {
-        -depth(x)
-    } else if x > viewport - EDGE {
-        depth(viewport - x)
-    } else {
-        Pixels::ZERO
-    }
 }
 
 #[cfg(test)]

@@ -84,8 +84,8 @@ last; idea from gpui-kit `base/state_style.rs`). Hover is still gpui's `.hover()
 its menu.
 
 `state.rs` holds the vector the call sites set (`hovered` for a hover the kit tracks itself, a menu's highlight;
-`selected`, `open`, `focus_visible`, `disabled`); the pointer's hover and press stay gpui's paint, and `dragging` and
-`drop_over` join with §4.7.
+`selected`, `open`, `focus_visible`, `disabled`, `dragging`, `drop_over` (§4.7)); the pointer's hover and
+press stay gpui's paint.
 
 ### 4.2 Anchors and popups
 
@@ -175,14 +175,20 @@ feature hands rows and their content; `hover` in the ratchets is at zero.
 
 One mechanic, three uses:
 
-- **Resize**: `split::DraggedDivider` (exists; already shared by splits, height bars, stacks and table
-  columns).
-- **Reorder**: `Sortable<T>` over a list: drag a row or tab, an insertion line where it would land,
-  edge auto-scroll (tabs have it, generalised), Esc cancels. Tab strip, sidebar folders and groups.
-- **Drop onto**: a typed payload (`DraggedSession`, a pill, a folder) and `DropZone` targets that
-  paint `drop_over` from tokens, one look (today written six times in `left/drag.rs`).
+- **Resize**: `split::DraggedDivider`, shared by splits, height bars, stacks and table columns.
+- **Reorder**: `dnd::Sortable<P>` over a list or the tab strip: each item says the `Edge` a payload
+  over it lands on (the owner's rule: `lands(from, to)` for an index, `folder_edits::landing` and
+  `group_landing` for the sidebar), the insertion line is drawn there in `Roles::drop_border` at
+  `stroke::FOCUS`, a drop calls the owner; `scrolls` gives any `ScrollbarHandle`'s area edge
+  auto-scroll, each move and on every `motion::EDGE_SCROLL` while the pointer rests at the edge.
+  Tab strip, sidebar folders and groups.
+- **Drop onto**: a typed `dnd::Payload` (`DraggedTab`, `DraggedSession`, a pill, a folder, a group)
+  and `DropZone` targets, which paint `drop_over` (`Roles::drop_over` inside `drop_border`, through
+  `state::resolve`) while a payload they accept hovers them and call their owner once on its drop.
+  A terminal, a group's row, the sidebar's drop row, a graph pill.
 
-Every drag shows the shared `tabs::chip`.
+Every drag starts at `dnd::source`: the shared `dnd::chip` under the pointer, the source `dragging`
+(dimmed) while it is dragged, and Esc cancels it with nothing dropped.
 
 ### 4.8 Label and alignment
 

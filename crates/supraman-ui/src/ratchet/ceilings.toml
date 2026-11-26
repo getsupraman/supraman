@@ -85,6 +85,7 @@
 "supraman-ui/src/clipped.rs" = 2
 "supraman-ui/src/details.rs" = 1
 "supraman-ui/src/dialog.rs" = 2
+"supraman-ui/src/dnd.rs" = 3
 "supraman-ui/src/gallery.rs" = 4
 "supraman-ui/src/gallery/sections.rs" = 16
 "supraman-ui/src/hit.rs" = 1
@@ -102,8 +103,8 @@
 "supraman-ui/src/session.rs" = 1
 "supraman-ui/src/split.rs" = 8
 "supraman-ui/src/table.rs" = 4
-"supraman-ui/src/tabs.rs" = 5
-"supraman-ui/src/tabs/fit.rs" = 7
+"supraman-ui/src/tabs.rs" = 4
+"supraman-ui/src/tabs/fit.rs" = 5
 "supraman-ui/src/tabs/list.rs" = 1
 "supraman-ui/src/term_element.rs" = 25
 "supraman-ui/src/text_input.rs" = 5

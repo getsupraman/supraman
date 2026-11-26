@@ -77,6 +77,18 @@ async fn probed(gallery: WindowHandle<Gallery>, section: Section, probe: &Probe,
             crate::selftest::until_with(cx, Duration::from_secs(10), &format!("{key}'s tooltip"), shown).await?;
             frame(gallery, out, &name, cx).await?;
         }
+        Act::Drag(from, to) => {
+            let (from, to) = (middle(gallery, from, cx)?, middle(gallery, to, cx)?);
+            pointer(gallery, Pointer::Move(from), cx)?;
+            pointer(gallery, Pointer::Down(from), cx)?;
+            for step in 1..=8 {
+                let t = step as f32 / 8.;
+                pointer(gallery, Pointer::Drag(point(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t)), cx)?;
+            }
+            frame(gallery, out, &name, cx).await?;
+            gallery.update(cx, |_, window, cx| supraman_ui::dnd::cancel(window, cx))?;
+            pointer(gallery, Pointer::Up(corner(gallery, cx)?), cx)?;
+        }
         Act::Focus(sample) => {
             if !gallery.update(cx, |g, window, cx| g.focus_sample(sample, window, cx))? {
                 return Err(anyhow!("the gallery's {} has no focus sample {sample}", section.key()));
@@ -118,6 +130,8 @@ fn away(gallery: WindowHandle<Gallery>, cx: &mut AsyncWindowContext) -> anyhow::
 
 enum Pointer {
     Move(Point<Pixels>),
+    /// A move with the left button held.
+    Drag(Point<Pixels>),
     Down(Point<Pixels>),
     Up(Point<Pixels>),
 }
@@ -126,6 +140,7 @@ fn pointer(gallery: WindowHandle<Gallery>, what: Pointer, cx: &mut AsyncWindowCo
     let modifiers = gpui::Modifiers::default();
     let input = match what {
         Pointer::Move(position) => PlatformInput::MouseMove(gpui::MouseMoveEvent { position, pressed_button: None, modifiers }),
+        Pointer::Drag(position) => PlatformInput::MouseMove(gpui::MouseMoveEvent { position, pressed_button: Some(MouseButton::Left), modifiers }),
         Pointer::Down(position) => PlatformInput::MouseDown(gpui::MouseDownEvent { button: MouseButton::Left, position, modifiers, click_count: 1, first_mouse: false }),
         Pointer::Up(position) => PlatformInput::MouseUp(gpui::MouseUpEvent { button: MouseButton::Left, position, modifiers, click_count: 1 }),
     };

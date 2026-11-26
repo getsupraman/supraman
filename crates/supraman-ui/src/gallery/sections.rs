@@ -21,12 +21,12 @@ pub const PATH: &str = "crates/sample-kit/src/a/deeply/nested/folder/module_file
 pub const PATH_FOLDER: &str = "crates/sample-kit/src/a/deeply/nested/folder/";
 pub const TREE: [&str; 6] = ["docs/guide.md", "docs/notes/today.md", "src/main.rs", "src/view/list.rs", "src/view/row.rs", "README.md"];
 
-fn group(caption: &str, cx: &App) -> Div {
+pub(super) fn group(caption: &str, cx: &App) -> Div {
     let muted = crate::themes::secondary(cx.theme().colors());
     div().flex().flex_col().gap(tokens::space::L).child(div().text_size(tokens::text::SMALL).text_color(muted).child(caption.to_string()))
 }
 
-fn row() -> Div {
+pub(super) fn row() -> Div {
     div().flex().flex_wrap().items_center().gap(tokens::space::XL)
 }
 
@@ -216,8 +216,7 @@ pub fn tabs(g: &Gallery, window: &mut Window, cx: &mut Context<Gallery>) -> AnyE
         window,
         cx,
     );
-    let chip = crate::tabs::chip("A dragged tab's chip".into(), cx);
-    div().flex().flex_col().gap(tokens::space::XXL).child(strip).child(group("tabs::chip", cx).child(row().child(chip))).into_any_element()
+    div().flex().flex_col().gap(tokens::space::XXL).child(strip).into_any_element()
 }
 
 pub fn splits(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {

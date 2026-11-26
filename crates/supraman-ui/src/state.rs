@@ -14,6 +14,10 @@ pub struct State {
     pub open: bool,
     pub focus_visible: bool,
     pub disabled: bool,
+    /// It is the source of the drag under way ([`crate::dnd::dragging`]).
+    pub dragging: bool,
+    /// A payload it accepts hovers it ([`crate::dnd::DropZone`]).
+    pub drop_over: bool,
 }
 
 /// A control's fill in each state; `None` keeps the one below it.
@@ -24,6 +28,7 @@ pub struct Fills {
     pub pressed: Option<Hsla>,
     pub selected: Option<Hsla>,
     pub open: Option<Hsla>,
+    pub drop_over: Option<Hsla>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -36,7 +41,7 @@ pub struct Look {
     pub opacity: f32,
 }
 
-/// Rest, then hovered, pressed, selected, open, the focus ring, disabled last.
+/// Rest, then hovered, pressed, selected, open, drop_over, the focus ring, disabled and dragging last.
 pub fn resolve(state: State, fills: Fills) -> Look {
     let mut fill = fills.rest;
     if state.hovered {
@@ -50,13 +55,17 @@ pub fn resolve(state: State, fills: Fills) -> Look {
     if open {
         fill = fills.open;
     }
+    let over = state.drop_over && fills.drop_over.is_some();
+    if over {
+        fill = fills.drop_over;
+    }
     let live = !state.disabled;
     Look {
         fill,
-        hover: fills.hover.filter(|_| live && !state.hovered && !selected && !open),
+        hover: fills.hover.filter(|_| live && !state.hovered && !selected && !open && !over),
         pressed: fills.pressed.filter(|_| live),
         ring: state.focus_visible,
-        opacity: if state.disabled { tokens::DIMMED } else { 1. },
+        opacity: if state.disabled || state.dragging { tokens::DIMMED } else { 1. },
     }
 }
 

@@ -192,7 +192,7 @@ impl GitView {
         let key = format!("git-worktree-label-{ix}");
         let label = cells::pill(key.clone(), face, row.row.colour, palette, &self.hits).relative().child(hit_target(&self.hits, format!("git-worktree-ref-{ix}")));
         let label = match row.row.refs.first() {
-            Some(group) => cells::acting(label, key, ix, group, 0, self.pill_sha(&row, cx), palette, cx).into_any_element(),
+            Some(group) => cells::acting(label, key, ix, group, 0, self.pill_sha(&row, cx), cx).into_any_element(),
             None => label.into_any_element(),
         };
         let open = button::Button::new(&self.hits, format!("git-worktree-open-{ix}")).icon(Icon::GitGraph.svg(12., palette.muted)).icon_only(px(18.))

@@ -110,6 +110,8 @@ pub mod motion {
     pub const TURN: Duration = Duration::from_secs(1);
     pub const SCROLLBAR_IDLE: Duration = Duration::from_millis(1500);
     pub const CARET_BLINK: Duration = Duration::from_millis(530);
+    /// A drag resting near its area's edge scrolls it once per this.
+    pub const EDGE_SCROLL: Duration = Duration::from_millis(16);
 }
 
 /// The deferred layers, lowest first: each draws over every layer before it.

@@ -9,6 +9,7 @@ use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, 
 use supraman_ui::banner;
 use supraman_ui::button;
 use supraman_ui::hit::{HitTargets, hit_target};
+use supraman_ui::dnd;
 use supraman_ui::tabs::DraggedSession;
 use theme::ActiveTheme as _;
 
@@ -901,9 +902,7 @@ impl FleetView {
             .when_some(hook, |d, h| {
                 d.child(clipped(format!("hook-{}{at}", s.id), h, false).pl(px(grid::LABEL)).text_xs().text_color(secondary(cx)))
             })
-            .on_drag(DraggedSession { session_id: s.session_id.clone(), title: fleet::display_name(s).to_string().into() }, |row, _, _, cx| {
-                cx.new(|_| row.clone())
-            })
+            .map(|d| dnd::source(d, format!("session-row-{}{at}", s.session_id), DraggedSession { session_id: s.session_id.clone(), title: fleet::display_name(s).to_string().into() }, cx))
             .when(shown, |d| d.child(hit_target(&self.hits, format!("marked-{}{at}", s.session_id))))
             .on_click(cx.listener(move |this, e: &ClickEvent, _, cx| {
                 if e.click_count() == 2 {

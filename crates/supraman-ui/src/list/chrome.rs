@@ -76,6 +76,7 @@ impl Chrome {
             pressed: live.then_some(colors.ghost_element_active),
             selected: Some(self.chosen.unwrap_or(if self.focused { roles.selection } else { roles.selection_inactive })),
             open: Some(roles.open),
+            drop_over: None,
         }
     }
 

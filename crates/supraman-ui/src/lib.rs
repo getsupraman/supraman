@@ -10,6 +10,7 @@ pub mod clipped;
 pub mod confirm;
 pub mod details;
 pub mod dialog;
+pub mod dnd;
 pub mod focus;
 pub mod focus_order;
 pub mod form;
@@ -79,6 +80,7 @@ pub fn init_globals(cx: &mut App, program_version: &str) {
     table::bind_keys(cx);
     focus_order::bind_keys(cx);
     focus::bind_keys(cx);
+    dnd::init(cx);
 }
 
 /// gpui's platform info, warnings and errors: to `<dir>/`[`LOG_FILE`] with a log folder, else to stderr.

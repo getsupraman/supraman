@@ -1,8 +1,8 @@
 //! A tab or a session row dropped on a terminal pastes that session's SendMessage name there.
 
+use supraman_ui::dnd::DropZone;
 use supraman_ui::tabs::{DraggedSession, DraggedTab};
 use gpui::{Context, Div, SharedString, div, prelude::*};
-use theme::ActiveTheme as _;
 
 use super::{FleetView, Tab, TabKind, manage::send_name_of};
 
@@ -42,38 +42,25 @@ impl FleetView {
         }
     }
 
-    /// Over the terminal of `tab_id`, shown only while a payload it takes hovers it.
+    /// Over the terminal of `tab_id`, in the `drop_over` look while a payload it takes hovers it.
     pub(super) fn terminal_drop(&self, tab_id: u64, cx: &mut Context<Self>) -> Div {
         let own = self.tab(tab_id).and_then(|t| self.tab_session_id(t));
-        let colors = cx.theme().colors();
-        div()
-            .invisible()
-            .absolute()
-            .top_0()
-            .right_0()
-            .bottom_0()
-            .left_0()
-            .bg(colors.drop_target_background)
-            .border_2()
-            .border_color(colors.drop_target_border)
-            .drag_over::<DraggedTab>(|style, _, _, _| style.visible())
-            .drag_over::<DraggedSession>(|style, _, _, _| style.visible())
-            .can_drop(move |dragged, _, _| {
-                if let Some(tab) = dragged.downcast_ref::<DraggedTab>() {
-                    tab.id != tab_id
-                } else if let Some(row) = dragged.downcast_ref::<DraggedSession>() {
-                    own.as_deref() != Some(row.session_id.as_str())
-                } else {
-                    false
-                }
-            })
-            .on_drop(cx.listener(move |this, dragged: &DraggedTab, _, cx| {
-                let session = this.tab(dragged.id).and_then(|t| this.tab_session_id(t));
-                this.drop_on_terminal(tab_id, Source::Tab(dragged.id, session.as_deref()), dragged.title.clone(), cx);
-            }))
-            .on_drop(cx.listener(move |this, dragged: &DraggedSession, _, cx| {
-                this.drop_on_terminal(tab_id, Source::Session(&dragged.session_id), dragged.title.clone(), cx);
-            }))
+        let overlay = div().absolute().top_0().right_0().bottom_0().left_0();
+        DropZone::new(format!("terminal-drop-{tab_id}"), overlay)
+            .take::<DraggedTab>(
+                move |tab, _, _| tab.id != tab_id,
+                cx.listener(move |this, dragged: &DraggedTab, _, cx| {
+                    let session = this.tab(dragged.id).and_then(|t| this.tab_session_id(t));
+                    this.drop_on_terminal(tab_id, Source::Tab(dragged.id, session.as_deref()), dragged.title.clone(), cx);
+                }),
+            )
+            .take::<DraggedSession>(
+                move |row, _, _| own.as_deref() != Some(row.session_id.as_str()),
+                cx.listener(move |this, dragged: &DraggedSession, _, cx| {
+                    this.drop_on_terminal(tab_id, Source::Session(&dragged.session_id), dragged.title.clone(), cx);
+                }),
+            )
+            .element()
     }
 
     fn drop_on_terminal(&mut self, target: u64, source: Source, title: SharedString, cx: &mut Context<Self>) {
