@@ -5,16 +5,6 @@
 [render_focus]
 
 [hover]
-"supraman-app/src/settings_window.rs" = 1
-"supraman-app/src/titlebar.rs" = 2
-"supraman-app/src/view/left.rs" = 4
-"supraman-app/src/view/left/excluded.rs" = 1
-"supraman-app/src/view/left/other_schedules.rs" = 1
-"supraman-app/src/view/left/unlisted.rs" = 1
-"supraman-app/src/view/results.rs" = 1
-"supraman-app/src/view/schedules.rs" = 4
-"supraman-git-view/src/git_view/cells.rs" = 2
-"supraman-work-view/src/work_view/run_list.rs" = 1
 
 [px]
 "supraman-app/src/brand.rs" = 3
@@ -85,9 +75,9 @@
 "supraman-work-view/src/work_view/inbox.rs" = 2
 "supraman-work-view/src/work_view/item.rs" = 2
 "supraman-work-view/src/work_view/layout.rs" = 8
-"supraman-work-view/src/work_view/navigator.rs" = 10
+"supraman-work-view/src/work_view/navigator.rs" = 9
 "supraman-work-view/src/work_view/overview.rs" = 8
-"supraman-work-view/src/work_view/run_list.rs" = 7
+"supraman-work-view/src/work_view/run_list.rs" = 5
 
 [kit_px]
 "supraman-ui/src/button.rs" = 2

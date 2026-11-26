@@ -1,7 +1,7 @@
-use gpui::{AnyElement, App, Div, FontWeight, Hsla, Pixels, Rgba, Stateful, Window, WindowControlArea, div, prelude::*, px};
+use gpui::{AnyElement, App, Div, FontWeight, Pixels, Stateful, Window, WindowControlArea, div, prelude::*, px};
 use supraman_ui::button;
 use supraman_ui::fonts;
-use supraman_ui::hit::{HitTargets, hit_target};
+use supraman_ui::hit::HitTargets;
 use theme::ActiveTheme as _;
 
 pub const HEIGHT: Pixels = px(34.);
@@ -44,8 +44,7 @@ pub fn render(title: &'static str, actions: Option<AnyElement>, minimizable: boo
 }
 
 pub fn icon_button(hits: &HitTargets, key: &'static str, glyph: &'static str, cx: &App) -> Stateful<Div> {
-    let colors = cx.theme().colors();
-    button::ghost(hits, key, cx)
+    button::ghost_muted(hits, key, cx)
         .flex()
         .items_center()
         .justify_center()
@@ -54,8 +53,6 @@ pub fn icon_button(hits: &HitTargets, key: &'static str, glyph: &'static str, cx
         .h_full()
         .font_family(fonts::icons())
         .text_size(px(12.))
-        .text_color(colors.text_muted)
-        .hover(|s| s.bg(colors.ghost_element_hover).text_color(colors.text))
         .child(glyph)
 }
 
@@ -82,20 +79,13 @@ enum Caption {
 impl Caption {
     // Windows answers a click through the non-client `area`, so this is no `button`: the hit key only records where it is painted.
     fn render(self, hits: &HitTargets, cx: &App) -> AnyElement {
-        let colors = cx.theme().colors();
         let (id, glyph, area) = match self {
             Self::Minimize => ("caption-min", "\u{e921}", WindowControlArea::Min),
             Self::Maximize => ("caption-max", "\u{e922}", WindowControlArea::Max),
             Self::Restore => ("caption-max", "\u{e923}", WindowControlArea::Max),
             Self::Close => ("caption-close", "\u{e8bb}", WindowControlArea::Close),
         };
-        let (hover_bg, hover_fg): (Hsla, Hsla) = match self {
-            Self::Close => (Rgba { r: 232. / 255., g: 17. / 255., b: 32. / 255., a: 1. }.into(), gpui::white()),
-            _ => (colors.ghost_element_hover, colors.text),
-        };
-        div()
-            .id(id)
-            .relative()
+        button::caption(hits, id, matches!(self, Self::Close), cx)
             .flex()
             .items_center()
             .justify_center()
@@ -103,10 +93,8 @@ impl Caption {
             .w(px(46.))
             .h_full()
             .text_size(px(10.))
-            .hover(move |s| s.bg(hover_bg).text_color(hover_fg))
             .window_control_area(area)
             .child(glyph)
-            .child(hit_target(hits, id.to_string()))
             .into_any_element()
     }
 }

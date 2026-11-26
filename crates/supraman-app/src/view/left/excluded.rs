@@ -1,12 +1,10 @@
 use gpui::{AnyElement, ClickEvent, Context, MouseButton, MouseDownEvent, SharedString, div, prelude::*, px};
-use theme::ActiveTheme as _;
 
 use super::{REPO_ROW, disclosure, folder_level, grid, icon_slot, secondary, tree_label};
 use crate::fleet::{EntryNode, FolderNode};
 use crate::view::FleetView;
 use crate::view::menu::MenuTarget;
 use supraman_ui::icon::Icon;
-use supraman_ui::hit::hit_target;
 
 /// An excluded sub folder's mark, icon and name: shown only with the stopped sessions, this see-through.
 pub(super) const OPACITY: f32 = 0.45;
@@ -17,12 +15,9 @@ impl FleetView {
         let key = folder.key.clone();
         let tree_key = format!("repo-{key}");
         let icon = if folder.kind == supraman_core::FolderKind::Git { Icon::GitFolder } else { Icon::Folder };
-        let colors = cx.theme().colors().clone();
         let menu_key = key.clone();
-        div()
-            .id(SharedString::from(format!("excluded:{key}")))
-            .relative()
-            .child(supraman_ui::popup::open_fill(format!("excluded-row-{key}")))
+        let keys = supraman_ui::button::RowKeys { id: format!("excluded:{key}").into(), group: format!("excluded-group-{key}").into(), hit: format!("excluded-row-{key}").into() };
+        self.sidebar_row(keys, Some(&super::fold::folder(&key)), cx)
             .flex()
             .flex_none()
             .items_center()
@@ -31,9 +26,6 @@ impl FleetView {
             .pl(grid::indent(folder_level(entry, folder)))
             .pr_2()
             .text_sm()
-            .cursor_pointer()
-            .hover(|s| s.bg(colors.ghost_element_hover))
-            .active(|s| s.bg(colors.ghost_element_active))
             .child(
                 div()
                     .flex()
@@ -44,7 +36,6 @@ impl FleetView {
                     .child(icon_slot(&self.hits, &tree_key, Some(icon.slotted(grid::ICON, secondary(cx)).into_any_element())))
                     .child(tree_label(&self.hits, &tree_key, div().flex_none().whitespace_nowrap().child(SharedString::from(folder.name.clone())))),
             )
-            .child(hit_target(&self.hits, format!("excluded-row-{key}")))
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.open_menu(MenuTarget::Folder(menu_key.clone()), Some(format!("excluded-row-{menu_key}")), window.mouse_position(), cx);
             }))

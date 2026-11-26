@@ -87,6 +87,11 @@ pub(crate) fn pill_fill(colour: usize, hovered: bool, palette: &Palette) -> Hsla
     if hovered { palette.pill_hover(colour) } else { palette.pill(colour) }
 }
 
+/// A pill's fills at rest and hovered, painted by the kit.
+fn pill_look(rest: Hsla, hover: Hsla) -> supraman_ui::state::Look {
+    supraman_ui::state::resolve(supraman_ui::state::State::default(), supraman_ui::state::Fills { rest: Some(rest), hover: Some(hover), ..Default::default() })
+}
+
 /// Every ref pill: the row band's height in lane `colour`, its name cut under `key` and painted under `<key>-text`, each icon under `<key>-icon-<n>`;
 /// its hover fill held while a menu anchored to `key` is open.
 pub(crate) fn pill(key: impl Into<String>, face: Face, colour: usize, palette: &Palette, hits: &HitTargets) -> Div {
@@ -104,8 +109,7 @@ pub(crate) fn pill(key: impl Into<String>, face: Face, colour: usize, palette: &
         .h(px(LINE))
         .px(pad)
         .rounded(px(4.))
-        .bg(pill_fill(colour, false, palette))
-        .hover(move |s| s.bg(hover))
+        .map(|d| pill_look(pill_fill(colour, false, palette), hover).paint(d, None))
         .child(supraman_ui::popup::open_fill(key.clone()).radius(supraman_ui::tokens::radius::S).fill(hover))
         .text_color(text)
         .text_xs()
@@ -242,8 +246,7 @@ fn list(ix: usize, row: &GraphRow, groups: &[RefGroup], colour: usize, palette: 
                 .rounded(px(0.))
                 .rounded_t(top)
                 .rounded_b(bottom)
-                .bg(palette.pill_solid(colour))
-                .hover(move |s| s.bg(hover))
+                .map(|d| pill_look(palette.pill_solid(colour), hover).paint(d, None))
                 .child(hit_target(hits, key.clone()));
             acting(shown, key, ix, g, i, row.sha.clone(), palette, cx)
         }))

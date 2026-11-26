@@ -87,6 +87,11 @@ pub fn row_hit(id: &str, part: &str) -> String {
     format!("{id}-row-{part}")
 }
 
+/// The header's hit key, the anchor of its menu ([`Table::on_header_menu`]).
+pub fn header_hit(id: &str) -> String {
+    format!("{id}-header")
+}
+
 /// The hover group of every row of table `id`, for a cell's `group_hover`.
 pub fn row_group(id: &str) -> SharedString {
     SharedString::from(format!("{id}-row"))
@@ -450,9 +455,12 @@ impl<V: 'static> Table<V> {
                     .children(divider),
             );
         }
+        let key = header_hit(&self.id);
         div()
-            .id(SharedString::from(format!("{}-header", self.id)))
+            .id(SharedString::from(key.clone()))
             .relative()
+            .child(crate::popup::open_fill(key.clone()))
+            .child(hit_target(&self.hits, key))
             .flex()
             .flex_none()
             .w_full()

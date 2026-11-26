@@ -431,14 +431,12 @@ impl Render for SettingsView {
             .border_color(colors.border);
         nav = nav.children(self.pages.nav(&self.hits, self.page, |this, page, cx| this.show(page, cx), cx));
         nav = nav.child(div().flex_1()).child(
-            button::ghost(&self.hits, "open-file", cx)
+            button::ghost_muted(&self.hits, "open-file", cx)
                 .mx_2()
                 .px_2()
                 .py_1()
                 .rounded_sm()
                 .text_xs()
-                .text_color(colors.text_muted)
-                .hover(|s| s.bg(colors.ghost_element_hover).text_color(colors.text))
                 .child("Open settings.toml")
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_file(cx))),
         );

@@ -43,7 +43,7 @@ impl Chrome {
     }
 
     /// In place of the ghost hover (a tinted row's stronger tint).
-    pub fn hover(self, hover: Hsla) -> Self {
+    pub fn hover_fill(self, hover: Hsla) -> Self {
         Self { hover: Some(hover), ..self }
     }
 

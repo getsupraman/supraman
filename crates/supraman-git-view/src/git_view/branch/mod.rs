@@ -447,7 +447,7 @@ impl BranchActions {
     }
 
     /// The menu of `subject` at `position` once its relation to HEAD is read; `graph` the ref panel's own items.
-    pub(crate) fn open_menu(&mut self, subject: Subject, graph: Vec<MenuItem<RefAct>>, anchor: Option<SharedString>, position: Point<Pixels>, cx: &mut Context<Self>) {
+    pub(crate) fn open_menu(&mut self, subject: Subject, graph: Vec<MenuItem<RefAct>>, anchor: SharedString, position: Point<Pixels>, cx: &mut Context<Self>) {
         let Some(writer) = self.writes.writer(cx) else { return cx.emit(BranchEvent::Why(STILL_OPENING.into())) };
         let head = self.refs.head.sha().map(str::to_string);
         let pair = subject.sha().map(str::to_string).zip(head);
@@ -468,7 +468,7 @@ impl BranchActions {
     }
 
     /// The graph's menu of the commit `sha` with its branch groups `subjects`; `graph` the ref panel's items.
-    pub(crate) fn open_commit_menu(&mut self, subjects: Vec<Subject>, sha: String, graph: Vec<MenuItem<RefAct>>, anchor: Option<SharedString>, position: Point<Pixels>, cx: &mut Context<Self>) {
+    pub(crate) fn open_commit_menu(&mut self, subjects: Vec<Subject>, sha: String, graph: Vec<MenuItem<RefAct>>, anchor: SharedString, position: Point<Pixels>, cx: &mut Context<Self>) {
         let Some(writer) = self.writes.writer(cx) else { return cx.emit(BranchEvent::Why(STILL_OPENING.into())) };
         let head = self.refs.head.sha().map(str::to_string);
         let at = sha.clone();
@@ -495,8 +495,8 @@ impl BranchActions {
         .detach();
     }
 
-    /// What dropping `dragged` on `target` offers, at `position`; nothing for none.
-    pub(crate) fn dropped(&mut self, dragged: Dragged, target: Dragged, position: Point<Pixels>, cx: &mut Context<Self>) {
+    /// What dropping `dragged` on `target` offers, at `position`, anchored to the target's pill; nothing for none.
+    pub(crate) fn dropped(&mut self, dragged: Dragged, target: Dragged, anchor: SharedString, position: Point<Pixels>, cx: &mut Context<Self>) {
         let Some(writer) = self.writes.writer(cx) else { return };
         let (a, b) = (dragged.sha.clone(), target.sha.clone());
         let read = cx.background_spawn(async move { relation(writer.repo(), &a, &b).ok() });
@@ -509,26 +509,23 @@ impl BranchActions {
                 let mut built = menu::drop_menu(&dragged, &target, relation, &facts);
                 remote_menu::drop_items(&mut built, &dragged, &target, &this.remote);
                 let items = built.items();
-                this.show_menu(format!("{} onto {}", dragged.name, target.name), items, position, cx);
+                this.show_anchored(format!("{} onto {}", dragged.name, target.name), items, anchor, position, cx);
             })
             .ok();
         })
         .detach();
     }
 
+    /// A test's `show_anchored` with no anchor: given no items, it closes the menu.
+    #[cfg(test)]
     pub(crate) fn show_menu(&mut self, title: String, items: Vec<MenuItem<RefAct>>, position: Point<Pixels>, cx: &mut Context<Self>) {
-        self.show_anchored(title, items, None, position, cx);
+        self.show_anchored(title, items, SharedString::default(), position, cx);
     }
 
-    /// The menu belonging to the element painted under `anchor`, which paints open while it is shown.
-    pub(crate) fn show_anchored(&mut self, title: String, items: Vec<MenuItem<RefAct>>, anchor: Option<SharedString>, position: Point<Pixels>, cx: &mut Context<Self>) {
-        self.menu = (!items.is_empty()).then(|| {
-            let menu = ContextMenu::new(title, position, items);
-            match anchor {
-                Some(anchor) => menu.anchored(anchor),
-                None => menu,
-            }
-        });
+    /// The one open path of every ref and commit menu: it belongs to the element painted under `anchor`, which paints open while it is shown.
+    pub(crate) fn show_anchored(&mut self, title: String, items: Vec<MenuItem<RefAct>>, anchor: impl Into<SharedString>, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let anchor = anchor.into();
+        self.menu = (!items.is_empty()).then(|| ContextMenu::new(title, position, items).anchored(anchor));
         cx.notify();
     }
 }

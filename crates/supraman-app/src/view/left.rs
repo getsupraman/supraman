@@ -25,6 +25,7 @@ use supraman_ui::label::{Label, LabelMark};
 mod action_bar;
 mod drag;
 mod excluded;
+pub(super) mod keys;
 pub(super) mod fold;
 pub(super) mod group_field;
 pub(super) mod unlisted;
@@ -145,12 +146,10 @@ pub(crate) mod grid {
     }
 }
 
-pub(super) fn disclosure(open: Option<bool>, color: Hsla) -> Div {
-    let slot = div().flex().flex_none().items_center().justify_center().size(px(grid::DISCLOSURE));
-    match open {
-        Some(open) => slot.child(if open { Icon::ChevronDown } else { Icon::ChevronRight }.svg(14., color)),
-        None => slot,
-    }
+/// A row's chevron, open or shut, in its slot on the name's letters (none: the slot kept empty).
+pub(super) fn disclosure(open: Option<bool>, color: Hsla) -> Label {
+    let chevron = open.map(|open| LabelMark::Svg(if open { Icon::ChevronDown } else { Icon::ChevronRight }.svg(14., color)));
+    Label::none().mark_if(chevron).slot(px(grid::DISCLOSURE)).flex_none()
 }
 
 /// A row's icon slot on its name's letters, painted under `tree-icon-<key>`.
@@ -278,6 +277,7 @@ impl FleetView {
             .track_focus(&self.sidebar.focus)
             .key_context(group_field::KEY_CONTEXT)
             .on_action(cx.listener(Self::rename_selected))
+            .on_key_down(cx.listener(Self::sidebar_key))
             .child(supraman_ui::focus::Pane::new("sidebar", &self.sidebar.focus).paint(&self.hits))
             .into_any_element()
     }
@@ -329,8 +329,8 @@ impl FleetView {
         if query.is_empty() {
             self.set_left_rows(tree, cx);
             let list = gpui::list(self.sidebar.left_list.state(), cx.processor(|this: &mut Self, ix: usize, window, cx| {
-                let focused = this.sidebar.focus.contains_focused(window, cx);
-                div().w_full().child(this.render_left_row(ix, focused, cx)).into_any_element()
+                this.sidebar.keys_held = this.sidebar.focus.contains_focused(window, cx);
+                div().w_full().child(this.render_left_row(ix, cx)).into_any_element()
             })).size_full().pb_4();
             let area = div().id("fleet").relative().child(hit_target(&self.hits, "tree-area".into())).flex().flex_col().flex_1().min_h(relative(TREE_MIN_SHARE)).child(list).child(self.sidebar.left_list.scrollbar("fleet-bar"));
             self.tree_room(area, cx).into_any_element()
@@ -441,7 +441,7 @@ impl FleetView {
         &self.sidebar.left_list
     }
 
-    fn render_left_row(&mut self, ix: usize, focused: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn render_left_row(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let rows = self.sidebar.left_rows.clone();
         let (tree, rows) = (&rows.0, &rows.1);
         let Some(row) = rows.get(ix) else { return div().into_any_element() };
@@ -449,7 +449,7 @@ impl FleetView {
             LeftRow::Group(e) => {
                 let entry = &tree.entries[e];
                 let open = !self.sidebar.collapsed.contains(&fold::group(&entry.name));
-                self.render_group_row(entry, open, focused, cx)
+                self.render_group_row(entry, open, cx)
             }
             LeftRow::Schedules(e, f) => {
                 let entry = &tree.entries[e];
@@ -466,7 +466,8 @@ impl FleetView {
             LeftRow::Session(e, f, i) => {
                 let (entry, folder) = (tree.node(e), &tree.node(e).folders[f]);
                 let row = &folder.sessions[i];
-                self.render_session(&entry.name, &folder.row_place(row), row, grid::indent(folder_level(entry, folder) + 1), cx)
+                let key = session_key(folder, row);
+                self.render_session(&entry.name, &folder.row_place(row), row, Some(&key), grid::indent(folder_level(entry, folder) + 1), cx)
             }
             LeftRow::More(e, f) => self.render_more_closed(tree.node(e), &tree.node(e).folders[f], cx),
             LeftRow::Unlisted => self.render_unlisted_row(!self.sidebar.collapsed.contains(unlisted::KEY), cx),
@@ -477,12 +478,9 @@ impl FleetView {
     }
 
     fn render_more_closed(&self, entry: &EntryNode, repo: &FolderNode, cx: &mut Context<Self>) -> AnyElement {
-        let colors = cx.theme().colors().clone();
         let key = repo.key.clone();
         let hit = format!("more-{key}");
-        div()
-            .id(SharedString::from(hit.clone()))
-            .relative()
+        self.sidebar_row(button::RowKeys::one(hit.clone().into()), Some(&format!("more:{key}")), cx)
             .flex()
             .flex_none()
             .items_center()
@@ -490,10 +488,7 @@ impl FleetView {
             .pl(grid::indent(folder_level(entry, repo) + 1) + px(grid::LABEL))
             .text_xs()
             .text_color(secondary(cx))
-            .cursor_pointer()
-            .hover(|s| s.bg(colors.ghost_element_hover).text_color(colors.text))
             .child(SharedString::from(format!("{} more closed…", repo.more)))
-            .child(hit_target(&self.hits, hit))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.sidebar.closed_expanded.insert(key.clone());
                 this.invalidate_tree();
@@ -691,7 +686,7 @@ impl FleetView {
         }
     }
 
-    fn render_group_row(&self, entry: &EntryNode, open: bool, focused: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn render_group_row(&self, entry: &EntryNode, open: bool, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let name = entry.name.clone();
         let pkey = fold::group(&name);
@@ -721,37 +716,30 @@ impl FleetView {
             .child(icon_slot(&self.hits, &format!("group-{name}"), Some(Icon::Group.slotted(grid::ICON, colors.text_muted).into_any_element())))
             .child(label)
             .when(!editing_now, |d| d.child(div().flex_1()).child(buttons));
-        let selected = self.sidebar.selected_group.as_deref() == Some(name.as_str());
-        let row = div()
-            .id(SharedString::from(pkey.clone()))
-            .group(group)
-            .relative()
+        let keys = button::RowKeys { id: pkey.clone().into(), group, hit: format!("group-row-{name}").into() };
+        let row = self
+            .sidebar_row(keys, Some(&pkey), cx)
             .flex()
             .flex_col()
             .flex_none()
             .pl(grid::indent(0))
             .pr_2()
             .map(top_text)
-            .when(selected, |d| d.bg(supraman_ui::themes::selection(&colors, focused)))
-            .child(supraman_ui::popup::open_fill(format!("group-row-{name}")))
-            .child(line)
-            .child(hit_target(&self.hits, format!("group-row-{name}")));
+            .child(line);
         if editing_now {
             return row.into_any_element();
         }
-        self.group_drag(row.cursor_pointer().hover(|s| s.bg(colors.ghost_element_hover)).active(|s| s.bg(colors.ghost_element_active)), &name, cx)
+        let selected = SharedString::from(pkey.clone());
+        self.group_drag(row, &name, cx)
             .on_mouse_down(MouseButton::Right, {
                 let name = name.clone();
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
-                    this.sidebar.selected_group = Some(name.clone());
+                    this.sidebar.left_list.select_key(Some(selected.clone()));
                     this.open_menu(MenuTarget::Group(name.clone()), Some(format!("group-row-{name}")), e.position, cx);
                 })
             })
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.sidebar.selected_group = Some(name.clone());
-                this.toggle(pkey.clone(), cx)
-            }))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(pkey.clone(), cx)))
             .into_any_element()
     }
 
@@ -783,7 +771,6 @@ impl FleetView {
     }
 
     fn render_folder_row(&self, entry: &EntryNode, repo: &FolderNode, open: bool, cx: &mut Context<Self>) -> AnyElement {
-        let colors = cx.theme().colors().clone();
         let key = &repo.key;
         let rkey = fold::folder(key);
         let tree_key = format!("repo-{key}");
@@ -822,11 +809,9 @@ impl FleetView {
         });
         let top = !entry.group && repo.listed();
         let work = top.then(|| self.work_button(entry, &group, self.entry_selected(entry, cx), cx)).flatten();
-        let row = div()
-            .id(SharedString::from(rkey.clone()))
-            .group(group)
-            .relative()
-            .child(supraman_ui::popup::open_fill(format!("repo-row-{key}")))
+        let keys = button::RowKeys { id: rkey.clone().into(), group, hit: format!("repo-row-{key}").into() };
+        let row = self
+            .sidebar_row(keys, Some(&rkey), cx)
             .flex()
             .flex_none()
             .items_center()
@@ -834,10 +819,7 @@ impl FleetView {
             .h(px(if top { TOP_ROW } else { REPO_ROW }))
             .pl(grid::indent(folder_level(entry, repo)))
             .pr_2()
-            .map(|d| if top { top_text(d) } else { d.text_sm() })
-            .cursor_pointer()
-            .hover(|s| s.bg(colors.ghost_element_hover))
-            .active(|s| s.bg(colors.ghost_element_active));
+            .map(|d| if top { top_text(d) } else { d.text_sm() });
         self.folder_drag(row, repo, cx)
             .when(empty, |d| d.text_color(quiet(cx)))
             .child(disclosure((!empty).then_some(open), secondary(cx)))
@@ -846,7 +828,6 @@ impl FleetView {
             .child(clipped(format!("branch-{key}"), branch, false).text_xs().text_color(secondary(cx)).child(hit_target(&self.hits, format!("branch-{key}"))))
             .child(div().relative().flex_1().child(hit_target(&self.hits, format!("repo-room-{key}"))))
             .child(div().flex().flex_none().items_center().gap(px(2.)).children(history).child(new_claude).child(terminal).children(work))
-            .child(hit_target(&self.hits, format!("repo-row-{key}")))
             .on_mouse_down(MouseButton::Right, {
                 let key = key.clone();
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
@@ -863,6 +844,7 @@ impl FleetView {
         entry: &str,
         place: &str,
         row: &SessionRow,
+        row_key: Option<&str>,
         indent: Pixels,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -895,7 +877,9 @@ impl FleetView {
             group,
             hit: format!("session-row-{}{at}", s.session_id).into(),
         };
-        button::row_in(&self.hits, keys, shown.then_some(if blocked { tint } else { colors.ghost_element_selected }), cx)
+        let band = if blocked { Some(tint) } else { shown.then_some(colors.ghost_element_selected) };
+        let chrome = supraman_ui::list::Chrome::new().band(band).hover_fill(if blocked && !shown { status.warning.opacity(0.18) } else { colors.ghost_element_hover });
+        self.sidebar_row_with(keys, row_key, chrome, cx)
             .flex()
             .flex_none()
             .flex_col()
@@ -904,7 +888,6 @@ impl FleetView {
             .py(px(1.))
             .text_sm()
             .when(shown, |d| d.border_l_2().border_color(colors.border_focused).pl(indent - px(2.)))
-            .when(blocked && !shown, |d| d.bg(tint).hover(|s| s.bg(status.warning.opacity(0.18))))
             .when(dimmed, |d| d.opacity(DIMMED))
             .child(line)
             .when_some(waiting_for, |d, w| {
@@ -1061,11 +1044,16 @@ impl FleetView {
     }
 }
 
+/// A session row's key in the sidebar's rows.
+fn session_key(folder: &FolderNode, row: &SessionRow) -> String {
+    format!("s:{}/{}{}", folder.key, row.session.session_id, row.scope)
+}
+
 /// A folder's session rows and its More, keyed by its key.
 fn session_rows(rows: &mut Vec<(LeftRow, String, Vec<String>)>, e: usize, f: usize, folder: &FolderNode) {
     let key = &folder.key;
     for (i, row) in folder.sessions.iter().enumerate() {
-        rows.push((LeftRow::Session(e, f, i), format!("s:{key}/{}{}", row.session.session_id, row.scope), vec![row.session.session_id.clone(), row.session.id.clone()]));
+        rows.push((LeftRow::Session(e, f, i), session_key(folder, row), vec![row.session.session_id.clone(), row.session.id.clone()]));
     }
     if folder.more > 0 {
         rows.push((LeftRow::More(e, f), format!("more:{key}"), vec![format!("more-{key}")]));

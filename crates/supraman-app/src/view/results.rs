@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use supraman_claude::now_ms;
 use supraman_ui::matcher::{count, highlighted};
 use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, SharedString, Stateful, div, prelude::*, px};
-use theme::ActiveTheme as _;
 
 use supraman_ui::icon::Icon;
 use supraman_ui::scroll::ScrollArea;
@@ -89,10 +88,7 @@ impl FleetView {
     }
 
     fn result_row(&self, key: String, level: usize, h: f32, cx: &mut Context<Self>) -> Stateful<Div> {
-        let colors = cx.theme().colors().clone();
-        div()
-            .id(SharedString::from(key.clone()))
-            .relative()
+        self.sidebar_row(supraman_ui::button::RowKeys::one(key.into()), None, cx)
             .flex()
             .flex_none()
             .items_center()
@@ -100,10 +96,6 @@ impl FleetView {
             .h(px(h))
             .pl(grid::indent(level))
             .pr_2()
-            .cursor_pointer()
-            .hover(|s| s.bg(colors.ghost_element_hover))
-            .active(|s| s.bg(colors.ghost_element_active))
-            .child(hit_target(&self.hits, key))
     }
 
     fn render_result_entry(&self, mut body: ScrollArea, w: &EntryHit, cx: &mut Context<Self>) -> ScrollArea {
@@ -156,7 +148,7 @@ impl FleetView {
             .id(SharedString::from(format!("result-session-{}{}", hit.row.session.session_id, hit.row.scope)))
             .flex_none()
             .cursor_pointer()
-            .child(self.render_session(entry, place, &hit.row, grid::indent(level), cx))
+            .child(self.render_session(entry, place, &hit.row, None, grid::indent(level), cx))
             .on_click(cx.listener(move |this, e: &ClickEvent, _, cx| {
                 if e.click_count() == 1 {
                     this.open_result(&p, &h, cx);

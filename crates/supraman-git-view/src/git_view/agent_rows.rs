@@ -29,6 +29,8 @@ pub struct OpenAgent(pub LiveSession);
 pub struct AgentMenu {
     pub session: LiveSession,
     pub position: Point<Pixels>,
+    /// The row's hit key: the menu's anchor.
+    pub anchor: SharedString,
 }
 
 /// One of a [`SessionPage`]'s actions: the fleet's menu item `key`, dimmed with why when it cannot run.
@@ -295,15 +297,15 @@ impl GitView {
                     this.open_agent(&id, cx);
                 }
             }))
-            .on_mouse_down(MouseButton::Right, cx.listener(move |this, e: &MouseDownEvent, _, cx| this.agent_menu(&menu_id, e.position, cx)))
+            .on_mouse_down(MouseButton::Right, cx.listener(move |this, e: &MouseDownEvent, _, cx| this.agent_menu(&menu_id, ix, e.position, cx)))
             .child(cell)
             .into_any_element()
     }
 
-    fn agent_menu(&mut self, id: &str, position: Point<Pixels>, cx: &mut Context<Self>) {
+    fn agent_menu(&mut self, id: &str, ix: usize, position: Point<Pixels>, cx: &mut Context<Self>) {
         if let Some(session) = self.shown_agent(id).cloned() {
             cx.stop_propagation();
-            cx.emit(AgentMenu { session, position });
+            cx.emit(AgentMenu { session, position, anchor: supraman_ui::table::row_hit(super::TABLE, &ix.to_string()).into() });
         }
     }
 

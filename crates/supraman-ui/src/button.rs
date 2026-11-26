@@ -34,6 +34,23 @@ pub fn ghost(hits: &HitTargets, key: impl Into<SharedString>, cx: &App) -> State
     base(hits, key.into(), |s| s.bg(colors.ghost_element_hover), colors.ghost_element_active)
 }
 
+/// A [`ghost`] in the muted text colour, the text colour while hovered (the title bar's icons, a quiet link).
+pub fn ghost_muted(hits: &HitTargets, key: impl Into<SharedString>, cx: &App) -> Stateful<Div> {
+    let colors = cx.theme().colors();
+    base(hits, key.into(), |s| s.bg(colors.ghost_element_hover).text_color(colors.text), colors.ghost_element_active).text_color(colors.text_muted)
+}
+
+/// A window's caption button under `id` (minimise, maximise, close: Windows answers its click through the non-client
+/// area, so it records only where it is painted): the ghost's hover, or `close`'s red with white.
+pub fn caption(hits: &HitTargets, id: &'static str, close: bool, cx: &App) -> Stateful<Div> {
+    let colors = cx.theme().colors();
+    let (bg, fg) = if close { (CLOSE_RED.into(), gpui::white()) } else { (colors.ghost_element_hover, colors.text) };
+    div().id(id).relative().hover(move |s| s.bg(bg).text_color(fg)).child(hit_target(hits, id.to_string()))
+}
+
+/// Windows' own close-button red.
+const CLOSE_RED: gpui::Rgba = gpui::Rgba { r: 232. / 255., g: 17. / 255., b: 32. / 255., a: 1. };
+
 /// A [`ghost`] list row; while it is the selected one it is filled `selected` and its hover is off.
 pub fn row(hits: &HitTargets, key: impl Into<SharedString>, selected: Option<Hsla>, cx: &App) -> Stateful<Div> {
     row_in(hits, RowKeys::one(key.into()), selected, cx)

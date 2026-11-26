@@ -76,15 +76,25 @@ pub fn highlighted(key: impl Into<SharedString>, text: impl Into<SharedString>, 
 /// A result group's count badge.
 pub fn count(n: usize, cx: &App) -> Div {
     let colors = cx.theme().colors();
+    badge(n, colors.element_background, colors.text)
+}
+
+/// A count of what waits for the user (the Work navigator's Needs you): [`count`] on the error colour.
+pub fn alert_count(n: usize, cx: &App) -> Div {
+    let error = cx.theme().status().error;
+    badge(n, error, crate::themes::on(error))
+}
+
+fn badge(n: usize, bg: gpui::Hsla, fg: gpui::Hsla) -> Div {
     div()
         .flex_none()
         .min_w(px(18.))
         .px(tokens::space::S)
         .rounded(tokens::radius::FULL)
-        .bg(colors.element_background)
+        .bg(bg)
         .text_size(tokens::text::SMALL)
         .text_center()
-        .text_color(colors.text)
+        .text_color(fg)
         .child(SharedString::from(n.to_string()))
 }
 

@@ -8,6 +8,8 @@ use supraman_gitman::short_sha;
 use supraman_gitman::write::remote::{PullChoice, PullMode};
 use supraman_ui::fonts;
 use supraman_ui::icon::Icon;
+use supraman_ui::label::{Label, LabelMark};
+use supraman_ui::tokens;
 use supraman_ui::matcher::highlighted;
 use supraman_ui::palette::{Entry, Fit, Marks, Rank, fuzzy, marks_in, path_fuzzy, ranked_by};
 use supraman_ui::tooltip::Tooltip;
@@ -249,10 +251,9 @@ pub(crate) fn paint(entry: &GitEntry, marks: &[Range<usize>], on: bool, cx: &mut
             .into_any_element(),
         GitEntry::Ref { name, kind, .. } => {
             let (icon, word) = kind_mark(*kind);
-            row()
-                .child(div().id(SharedString::from(format!("{key}-kind"))).flex_none().child(icon.svg(14., muted)).tooltip(Tooltip::text(word)))
-                .child(highlighted(format!("{key}-name"), name.clone(), marks, cx))
-                .into_any_element()
+            let mark = div().id(SharedString::from(format!("{key}-kind"))).flex_none().child(icon.svg(14., muted)).tooltip(Tooltip::text(word));
+            let name = Label::element(highlighted(format!("{key}-name"), name.clone(), marks, cx)).mark(LabelMark::Element(mark.into_any_element())).gap(tokens::space::L);
+            row().child(name).into_any_element()
         }
         GitEntry::File { path, .. } => paint_path(&key, path, marks, muted, cx),
         GitEntry::Commit { .. } => paint_commit(entry, marks, muted, cx),
@@ -269,8 +270,7 @@ fn paint_path(key: &str, path: &str, marks: &[Range<usize>], muted: gpui::Hsla, 
         .gap_2()
         .min_w_0()
         .text_sm()
-        .child(Icon::File.svg(14., muted))
-        .child(highlighted(format!("{key}-name"), path[name..].to_string(), &marks_in(marks, name..path.len()), cx).flex_none().max_w(px(300.)))
+        .child(Label::element(highlighted(format!("{key}-name"), path[name..].to_string(), &marks_in(marks, name..path.len()), cx).flex_none().max_w(px(300.))).mark(LabelMark::Svg(Icon::File.svg(14., muted))).gap(tokens::space::L).flex_none())
         .child(highlighted(format!("{key}-folder"), folder.to_string(), &marks_in(marks, 0..folder.len()), cx).text_xs().text_color(muted))
         .into_any_element()
 }

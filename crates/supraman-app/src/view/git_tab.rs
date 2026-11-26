@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use gpui::{App, Context, Entity, Pixels, Point, Window};
+use gpui::{App, Context, Entity, Pixels, Point, SharedString, Window};
 use supraman_core::paths::path_key;
 use supraman_git_view::occupancy::LiveSession;
 
@@ -47,7 +47,7 @@ impl FleetView {
                 this.open_git(e.0.clone(), self::title(&e.0), cx);
             })
             .detach();
-            cx.subscribe(view, |this, _, e: &AgentMenu, cx| this.agent_menu(&e.session, e.position, cx)).detach();
+            cx.subscribe(view, |this, _, e: &AgentMenu, cx| this.agent_menu(&e.session, e.anchor.clone(), e.position, cx)).detach();
             cx.subscribe(view, |this, _, e: &OpenAgent, cx| this.open_session(&e.0.claude_session_id, cx)).detach();
             let pages = self.session_pages(cx);
             view.update(cx, |v, cx| v.set_session_pages(pages, cx));
@@ -64,9 +64,9 @@ impl FleetView {
     }
 
     /// A Git tab's agent or worktree row's right-click: the sidebar's menu of the session.
-    fn agent_menu(&mut self, session: &LiveSession, position: Point<Pixels>, cx: &mut Context<Self>) {
+    fn agent_menu(&mut self, session: &LiveSession, anchor: SharedString, position: Point<Pixels>, cx: &mut Context<Self>) {
         let Some((entry, place, row)) = self.live_row(session) else { return };
-        self.open_menu(MenuTarget::Session { entry, place, session_id: row.session.session_id }, None, position, cx);
+        self.open_menu(MenuTarget::Session { entry, place, session_id: row.session.session_id }, Some(anchor.to_string()), position, cx);
     }
 
     /// The agent row's panel: the session's one page but its transcript, which a disk read off the UI thread finds.

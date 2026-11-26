@@ -39,11 +39,18 @@ enum Pane {
     Inline,
 }
 
+/// The line menu's anchor: a band over the lines it acts on, painted open while it shows.
+pub(crate) const LINES: &str = "diff-lines";
+/// The band lies over the code, so the text reads through it.
+const BAND_OPACITY: f32 = 0.35;
+
 pub(crate) struct Picks {
     gate: Entity<WriteGate>,
     /// The operation under way, once read with the tab's writer.
     state: Option<OperationState>,
     menu: Option<ContextMenu<Act>>,
+    /// Where the lines the menu acts on are shown, its anchor's band (window coordinates).
+    band: Option<gpui::Bounds<Pixels>>,
     doing: Option<(u64, Act)>,
     /// The inline editor's line of each row, read once per editor.
     inline_lines: Option<(gpui::EntityId, Vec<Option<(u32, bool)>>)>,
@@ -78,7 +85,7 @@ impl DiffView {
     pub(crate) fn enable_picks(&mut self, gate: Entity<WriteGate>, repo: Repo, cx: &mut Context<Self>) {
         let written = cx.subscribe(&gate, |this: &mut DiffView, _, w: &Written, cx| this.pick_written(w, cx));
         let observed = cx.observe(&gate, |_, _, cx| cx.notify());
-        self.picks = Some(Picks { gate, state: None, menu: None, doing: None, inline_lines: None, _gate: [written, observed] });
+        self.picks = Some(Picks { gate, state: None, menu: None, band: None, doing: None, inline_lines: None, _gate: [written, observed] });
         self.read_pick_tools(repo, cx);
     }
 
@@ -225,7 +232,9 @@ impl DiffView {
         let Some(side) = self.pick_side() else { return };
         let Some((pane, editor, row, line)) = self.under(position, window, cx) else { return };
         let mut selected = Vec::new();
-        for r in rows::selected_rows(&editor, cx).filter(|rows| rows.contains(&row)).unwrap_or_default() {
+        let chosen = rows::selected_rows(&editor, cx).filter(|rows| rows.contains(&row));
+        let band = rows::rows_bounds(&editor, chosen.clone().unwrap_or(row..row + 1), window, cx);
+        for r in chosen.unwrap_or_default() {
             if let Some(l) = self.line_of(pane, &editor, r, cx).filter(|l| self.changed(*l)) {
                 selected.push(l);
             }
@@ -244,7 +253,8 @@ impl DiffView {
             items = items.into_iter().map(|i| i.dimmed(why)).collect();
         }
         let picks = self.picks.as_mut().expect("picks are on");
-        picks.menu = Some(ContextMenu::new(title, position, items));
+        picks.menu = Some(ContextMenu::new(title, position, items).anchored(LINES));
+        picks.band = band;
         cx.notify();
     }
 
@@ -262,6 +272,10 @@ impl DiffView {
                 }
             }))
             .child(body)
+            .children(self.picks.as_ref().and_then(|p| p.band.filter(|_| p.menu.is_some())).map(|band| {
+                let open = supraman_ui::tokens::roles(cx).open.opacity(BAND_OPACITY);
+                gpui::anchored().position(band.origin).child(div().w(band.size.width).h(band.size.height).relative().child(supraman_ui::popup::open_fill(LINES).fill(open)))
+            }))
             .into_any_element()
     }
 
