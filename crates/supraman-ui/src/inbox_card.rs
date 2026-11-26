@@ -1,4 +1,4 @@
-//! Every Inbox card: a kind's tint and badge, a head line, the title, its lines, the owner's main remedy as a word and its other actions as hover icons.
+//! Every Inbox card: its colour's tint and badge, a head line, the title, its lines, the owner's main remedy as a word and its other actions as hover icons.
 
 use std::rc::Rc;
 
@@ -18,19 +18,6 @@ pub const TINT_HOVER: f32 = 0.14;
 const BADGE_TINT: f32 = 0.16;
 pub const ICON: f32 = 14.;
 const BUTTON: f32 = 20.;
-
-/// The one colour of an Inbox kind, whoever raised it: Workman's row kinds, a session's needs, a schedule's notices.
-pub fn kind_color(kind: &str, cx: &App) -> Hsla {
-    let status = cx.theme().status();
-    match kind {
-        "blocked" | "trust needed" | "question" | "assumption_due" | "done_unverified" | "approve" | "needs you" => status.warning,
-        "blocker_finding" | "gave up" | "launch failed" | "other server" | "stop failed" | "run failed" | "task not synced" => {
-            status.error
-        }
-        "duplicate" => status.hint,
-        _ => status.info,
-    }
-}
 
 /// `at` as `time::short` under `key`, its whole date as the tooltip; the Inbox's and the Overview's one time.
 pub fn when(key: impl Into<SharedString>, at: i64, now: i64, cx: &App) -> Option<Stateful<Div>> {
@@ -64,7 +51,7 @@ type OnClick = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 /// One card under `key` (its id, hover group and hit key); its parts paint under `part(name)`, `<key>-<name>` unless the owner names them.
 pub struct InboxCard {
     key: String,
-    kind: String,
+    color: Hsla,
     badge: SharedString,
     title: SharedString,
     part: Rc<dyn Fn(&str) -> String>,
@@ -79,13 +66,13 @@ pub struct InboxCard {
 }
 
 impl InboxCard {
-    /// `kind` picks the colour ([`kind_color`]); `badge` is its word.
-    pub fn new(key: impl Into<String>, kind: impl Into<String>, badge: impl Into<SharedString>, title: impl Into<SharedString>) -> Self {
+    /// `color` is the owner's colour of the card's kind; `badge` is its word.
+    pub fn new(key: impl Into<String>, color: Hsla, badge: impl Into<SharedString>, title: impl Into<SharedString>) -> Self {
         let key = key.into();
         let prefix = key.clone();
         Self {
             key,
-            kind: kind.into(),
+            color,
             badge: badge.into(),
             title: title.into(),
             part: Rc::new(move |part| format!("{prefix}-{part}")),
@@ -105,8 +92,8 @@ impl InboxCard {
         self
     }
 
-    pub fn mark(mut self, mark: impl Fn(Hsla) -> AnyElement, cx: &App) -> Self {
-        self.mark = Some(mark(kind_color(&self.kind, cx)));
+    pub fn mark(mut self, mark: impl Fn(Hsla) -> AnyElement) -> Self {
+        self.mark = Some(mark(self.color));
         self
     }
 
@@ -155,7 +142,7 @@ impl InboxCard {
 
     pub fn render(self, hits: &HitTargets, cx: &App) -> AnyElement {
         let colors = cx.theme().colors();
-        let color = kind_color(&self.kind, cx);
+        let color = self.color;
         let muted = crate::themes::secondary(colors);
         let part = self.part.clone();
         let context = self.context.map(|text| {

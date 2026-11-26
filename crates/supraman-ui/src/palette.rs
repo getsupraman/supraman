@@ -23,7 +23,6 @@ use crate::tokens;
 /// The most rows listed at once; a longer query narrows them.
 pub const MAX_SHOWN: usize = 200;
 const LIST_HEIGHT: f32 = 380.;
-const PLACEHOLDER: &str = "Search refs, titles…";
 
 pub trait Entry: Clone + 'static {
     /// Unique among the entries.
@@ -129,7 +128,7 @@ pub fn ranked<T: Entry>(entries: &[T], query: &str) -> Vec<(T, Marks)> {
 
 impl<T: Entry> Palette<T> {
     pub fn new(id: impl Into<SharedString>, hits: HitTargets, entries: Vec<T>, paint: Paint<T>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let input = cx.new(|cx| TextInput::new(PLACEHOLDER, None, window, cx));
+        let input = cx.new(|cx| TextInput::new("", None, window, cx));
         let sub = cx.subscribe(&input, |this: &mut Self, _, e: &InputEvent, cx| match e {
             InputEvent::Edited => this.edited(cx),
             InputEvent::Confirm => this.open_selected(cx),
@@ -146,12 +145,12 @@ impl<T: Entry> Palette<T> {
             remote: (String::new(), Vec::new()),
             modes: Vec::new(),
             mode: None,
-            placeholder: PLACEHOLDER.into(),
+            placeholder: SharedString::default(),
             shown: Vec::new(),
             selected: 0,
             list: KeyedList::default(),
             paint,
-            caption: "ITEMS".into(),
+            caption: SharedString::default(),
             selection_shown: None,
         };
         palette.refresh(false, cx);
@@ -190,7 +189,7 @@ impl<T: Entry> Palette<T> {
         self.refresh(true, cx);
     }
 
-    /// The top list's placeholder and caption.
+    /// The top list's placeholder and caption, the owner's words; none until set.
     pub fn set_top(&mut self, placeholder: impl Into<SharedString>, caption: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.placeholder = placeholder.into();
         self.caption = caption.into();

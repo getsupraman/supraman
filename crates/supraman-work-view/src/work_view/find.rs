@@ -110,7 +110,11 @@ impl WorkView {
         }
         let entries = loaded(&self.projects, &self.boards);
         let hits = self.hits.clone();
-        let palette = cx.new(|cx| Palette::new("work-find", hits, entries, Rc::new(paint), window, cx));
+        let palette = cx.new(|cx| {
+            let mut p = Palette::new("work-find", hits, entries, Rc::new(paint), window, cx);
+            p.set_top("Search refs, titles…", "ITEMS", cx);
+            p
+        });
         self.palette_sub = Some(cx.subscribe_in(&palette, window, Self::on_palette));
         palette.update(cx, |p, cx| p.focus(window, cx));
         self.palette = Some(palette);

@@ -354,8 +354,9 @@ pub fn cards(g: &Gallery, window: &mut Window, cx: &mut Context<Gallery>) -> Any
     let page = crate::details::Page { key: "kit-details", title: "A details page".into(), pill: Some(("state".into(), cx.theme().status().success)), sections: &sections, actions, scroll: &g.scroll, on_link: None, top: None, over: None, bar: None };
     let page = div().w(width(24.)).h(width(30.)).border(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border).child(crate::details::render(page, hits, cx));
     let fg = crate::inbox_card::icon_color(cx);
-    let inbox = |key: &str, kind: &str, badge: &str| {
-        crate::inbox_card::InboxCard::new(key, kind, badge.to_string(), "A card's title, long enough to wrap over its two lines and then be cut at the end")
+    let status = cx.theme().status().clone();
+    let inbox = |key: &str, color: Hsla, badge: &str| {
+        crate::inbox_card::InboxCard::new(key, color, badge.to_string(), "A card's title, long enough to wrap over its two lines and then be cut at the end")
             .context("context")
             .line("line", "A one-line line", false)
             .line("muted", "A muted line", true)
@@ -363,7 +364,7 @@ pub fn cards(g: &Gallery, window: &mut Window, cx: &mut Context<Gallery>) -> Any
             .primary(crate::inbox_card::primary(hits, format!("{key}-open"), "Open", cx))
             .render(hits, cx)
     };
-    let cards = div().flex().flex_col().gap(tokens::space::L).w(width(22.)).child(inbox("kit-inbox-a", "question", "question")).child(inbox("kit-inbox-b", "run failed", "failed")).child(inbox("kit-inbox-c", "note", "note"));
+    let cards = div().flex().flex_col().gap(tokens::space::L).w(width(22.)).child(inbox("kit-inbox-a", status.warning, "question")).child(inbox("kit-inbox-b", status.error, "failed")).child(inbox("kit-inbox-c", status.info, "note"));
     let placeholder = div().w(width(20.)).h(width(8.)).border(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border).flex().child(crate::placeholder::placeholder("Nothing to show", ["A muted detail line.", "Another."], cx).size_full());
     let left = div().flex().flex_col().gap(tokens::space::XL).w(width(20.)).child(group("hover_card", cx).child(card)).child(group("tooltip", cx).child(tooltip)).child(group("placeholder", cx).child(placeholder));
     row().items_start().child(left).child(group("details page", cx).child(page)).child(group("inbox cards: warning, error, info kinds", cx).child(cards)).into_any_element()

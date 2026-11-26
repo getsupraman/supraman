@@ -167,7 +167,7 @@ impl WorkView {
                         let text = div()
                             .child(div().whitespace_normal().child(SharedString::from(c.title.clone())))
                             .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(format!("{} · {}", c.badge, c.ref_))));
-                        banner::marked(dot(Mark::Filled(supraman_ui::inbox_card::kind_color(&c.kind, cx))), text).flex_1().min_w_0().text_sm()
+                        banner::marked(dot(Mark::Filled(crate::work_view::inbox_card::kind_color(&c.kind, cx))), text).flex_1().min_w_0().text_sm()
                     })
                     .children(c.since.and_then(|at| supraman_ui::inbox_card::when(format!("work-overview-needs-when-{}", c.ref_), at, now, cx)).map(|w| w.text_xs()))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.open_from_inbox(id.clone(), cx))),

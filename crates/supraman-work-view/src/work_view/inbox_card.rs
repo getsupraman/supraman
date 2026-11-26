@@ -26,6 +26,17 @@ pub type OnCard = Rc<dyn Fn(CardAction, &mut Window, &mut App)>;
 
 pub type Mark = fn(Hsla) -> AnyElement;
 
+/// The one colour of a Workman Inbox kind, its cards' and the Overview's Needs you's.
+pub fn kind_color(kind: &str, cx: &App) -> Hsla {
+    let status = cx.theme().status();
+    match kind {
+        "blocked" | "question" | "assumption_due" | "done_unverified" => status.warning,
+        "blocker_finding" => status.error,
+        "duplicate" => status.hint,
+        _ => status.info,
+    }
+}
+
 pub fn part_key(part: &str, card: &Card) -> String {
     format!("inbox-card-{part}-{}", card.key)
 }
@@ -49,9 +60,9 @@ fn acting(button: Stateful<Div>, card: &Card, on: &OnCard, does: CardAction) -> 
 /// Paints [`Card::texts`] and nothing else; Copy puts the card's full ref on the clipboard.
 pub fn render(card: &Card, hits: &HitTargets, now: i64, mark: Mark, on: OnCard, cx: &App) -> AnyElement {
     let item = card.clone();
-    let mut shown = InboxCard::new(work_view::row_key_of(&card.key), card.kind.clone(), card.badge.clone(), card.title.clone())
+    let mut shown = InboxCard::new(work_view::row_key_of(&card.key), kind_color(&card.kind, cx), card.badge.clone(), card.title.clone())
         .parts(move |part| part_key(part, &item))
-        .mark(mark, cx)
+        .mark(mark)
         .context(card.context.clone())
         .context_tip(card.context_tip.clone())
         .when(card.since, now)

@@ -140,6 +140,11 @@ pub fn table(found: &Found) -> String {
 }
 
 fn read_crate(crates: &Path, member: &str) -> Vec<Source> {
+    crate_files(crates, member).into_iter().map(|(key, text)| Source { key, code: without_tests(&code_of(&text)).0 }).collect()
+}
+
+/// A member's sources with its key, `crate/src/path.rs`, but for the out-of-line modules a `#[cfg(test)]` gates.
+pub fn crate_files(crates: &Path, member: &str) -> Vec<(String, String)> {
     let src = crates.join(member).join("src");
     let mut files = Vec::new();
     rust_files(&src, &mut files);
@@ -147,7 +152,7 @@ fn read_crate(crates: &Path, member: &str) -> Vec<Source> {
     let mut read = Vec::new();
     for file in files {
         let text = std::fs::read_to_string(&file).unwrap_or_default();
-        let (code, test_mods) = without_tests(&code_of(&text));
+        let (_, test_mods) = without_tests(&code_of(&text));
         let base = match file.file_stem().and_then(|s| s.to_str()) {
             Some("lib" | "main" | "mod") => file.parent().map(Path::to_path_buf).unwrap_or_default(),
             _ => file.with_extension(""),
@@ -156,15 +161,38 @@ fn read_crate(crates: &Path, member: &str) -> Vec<Source> {
             excluded.push(base.join(format!("{name}.rs")));
             excluded.push(base.join(name));
         }
-        read.push((file, code));
+        read.push((file, text));
     }
     read.into_iter()
         .filter(|(file, _)| !excluded.iter().any(|x| file.starts_with(x)))
-        .map(|(file, code)| {
-            let key = file.strip_prefix(crates).unwrap_or(&file).to_string_lossy().replace('\\', "/");
-            Source { key, code }
-        })
+        .map(|(file, text)| (file.strip_prefix(crates).unwrap_or(&file).to_string_lossy().replace('\\', "/"), text))
         .collect()
+}
+
+/// `text`'s string literals outside its test items, each with its line.
+pub fn literals(text: &str) -> Vec<(usize, String)> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut marked = String::with_capacity(text.len());
+    let mut spans = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        match blanked_end(&chars, i) {
+            Some(end) => {
+                let string = matches!(chars[i], '"' | 'r' | 'b');
+                if string {
+                    spans.push((i, end));
+                }
+                marked.extend(chars[i..end].iter().map(|c| if *c == '\n' { '\n' } else if string { 'x' } else { ' ' }));
+                i = end;
+            }
+            None => {
+                marked.push(chars[i]);
+                i += 1;
+            }
+        }
+    }
+    let kept: Vec<char> = without_tests(&marked).0.chars().collect();
+    spans.into_iter().filter(|(at, _)| kept[*at] == 'x').map(|(at, end)| (line_of(&chars, at), chars[at..end].iter().collect())).collect()
 }
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {

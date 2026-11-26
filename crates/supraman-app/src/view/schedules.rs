@@ -1050,11 +1050,11 @@ impl FleetView {
             } else {
                 (format!("{} waits for your approval", w.title), format!("Schedule {} of {}: nothing runs until you approve it.", w.id, w.place))
             };
-            out.push(InboxCard::new(card, "approve", "approve", title).context(w.place.clone()).line("detail", detail, false).action(dismiss).primary(open).render(&self.hits, cx));
+            out.push(InboxCard::new(card, cx.theme().status().warning, "approve", title).context(w.place.clone()).line("detail", detail, false).action(dismiss).primary(open).render(&self.hits, cx));
         }
         for a in runs {
             let needs_you = a.outcome == schedule::Outcome::NeedsYou;
-            let kind = if needs_you { "needs you" } else { "run failed" };
+            let (kind, color) = if needs_you { ("needs you", cx.theme().status().warning) } else { ("run failed", cx.theme().status().error) };
             let detail = if a.why.is_empty() { schedules::outcome_text(a.outcome).to_string() } else { format!("{}: {}", schedules::outcome_text(a.outcome), a.why) };
             let (w, id, run) = (a.folder_key.clone(), a.id.clone(), a.run.clone());
             let card = format!("inbox-sched-run-{}", a.run);
@@ -1069,7 +1069,7 @@ impl FleetView {
                 cx.stop_propagation();
                 this.dismiss_schedule_notice(&w, &run, cx);
             }));
-            out.push(InboxCard::new(card, kind, kind, a.id.clone()).context(a.place.clone()).when(Some(a.at), now).line("detail", detail, false).action(dismiss).primary(history).render(&self.hits, cx));
+            out.push(InboxCard::new(card, color, kind, a.id.clone()).context(a.place.clone()).when(Some(a.at), now).line("detail", detail, false).action(dismiss).primary(history).render(&self.hits, cx));
         }
         for (k, e) in syncs {
             let card = format!("inbox-sync-card-{k}");
@@ -1081,7 +1081,7 @@ impl FleetView {
                     cx.notify();
                 }
             }));
-            out.push(InboxCard::new(card, "task not synced", "task not synced", k).line("detail", e, false).action(dismiss).render(&self.hits, cx));
+            out.push(InboxCard::new(card, cx.theme().status().error, "task not synced", k).line("detail", e, false).action(dismiss).render(&self.hits, cx));
         }
         out
     }

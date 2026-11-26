@@ -25,8 +25,8 @@ impl Render for Holder {
             cx.stop_propagation();
             went.set(went.get() + 10);
         });
-        let card = InboxCard::new("c", "blocked", "blocked", "A title")
-            .mark(|color| div().size(px(12.)).bg(color).into_any_element(), cx)
+        let card = InboxCard::new("c", cx.theme().status().warning, "blocked", "A title")
+            .mark(|color| div().size(px(12.)).bg(color).into_any_element())
             .context("ws")
             .when(Some(NOW - 60_000), NOW)
             .line("ref", "r1/t1", true)
@@ -67,19 +67,6 @@ fn a_click_on_the_card_is_the_owners_and_an_action_stops_it(cx: &mut TestAppCont
     let act = at("c-act", cx);
     cx.simulate_click(act, Modifiers::none());
     view.read_with(cx, |h, _| assert_eq!((h.clicked.get(), h.acted.get()), (1, 1)));
-}
-
-#[gpui::test]
-fn blocked_is_the_warning_colour_whoever_raised_it(cx: &mut TestAppContext) {
-    cx.update(|cx| {
-        crate::init_globals(cx, "test");
-        let status = cx.theme().status().clone();
-        assert_eq!(kind_color("blocked", cx), status.warning);
-        assert_eq!(kind_color("blocker_finding", cx), status.error);
-        assert_eq!(kind_color("run failed", cx), status.error);
-        assert_eq!(kind_color("duplicate", cx), status.hint);
-        assert_eq!(kind_color("stale_in_progress", cx), status.info);
-    });
 }
 
 #[gpui::test]
