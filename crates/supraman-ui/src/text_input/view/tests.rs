@@ -7,7 +7,7 @@ use gpui::{
 
 use super::*;
 use crate::hit::{HitTargets, hit_target};
-use crate::text_input::{InputEvent, TextInput, row_of};
+use crate::text_input::{InputEvent, TextInput};
 
 const TEXT: &str = "alpha beta gamma\nsecond line here";
 const WRAPPING: &str = "fix(dolomiti): skipass error codes are camelCase on the wire and in the widget, so errors show translated";
@@ -59,13 +59,8 @@ fn redraw(view: &Entity<Holder>, cx: &mut VisualTestContext) {
     cx.run_until_parked();
 }
 
-/// Where `offset` is painted: its x on its row, the row's middle.
 fn spot(input: &Entity<TextInput>, offset: usize, cx: &mut VisualTestContext) -> Point<Pixels> {
-    input.read_with(cx, |i, _| {
-        let (bounds, layout, lh) = (i.last_bounds.expect("painted"), i.last_layout.as_ref().expect("laid out"), i.last_line_height);
-        let row = row_of(&layout.rows, offset);
-        point(bounds.left() + layout.x_in_row(row, offset), bounds.top() + lh * row as f32 + lh / 2.)
-    })
+    input.read_with(cx, |i, _| i.painted_at(offset)).expect("painted")
 }
 
 fn down(at: Point<Pixels>, clicks: usize, shift: bool, cx: &mut VisualTestContext) {
@@ -148,13 +143,8 @@ fn read_only_text_takes_the_keys_but_no_caret_and_no_edit_and_says_it_was_presse
     assert_eq!(view.read_with(cx, |h, _| h.pressed), 1);
 }
 
-/// The input's box and each row's range and x, as painted.
 fn laid_out(input: &Entity<TextInput>, cx: &mut VisualTestContext) -> (Bounds<Pixels>, Vec<(Range<usize>, Pixels)>) {
-    input.read_with(cx, |i, _| {
-        let layout = i.last_layout.as_ref().expect("laid out");
-        let rows = layout.rows.iter().enumerate().map(|(n, r)| (r.clone(), layout.x_in_row(n, r.end))).collect();
-        (i.last_bounds.expect("painted"), rows)
-    })
+    input.read_with(cx, |i, _| i.painted_rows()).expect("painted")
 }
 
 #[gpui::test]

@@ -405,6 +405,20 @@ impl TextInput {
         self.lit(cx);
     }
 
+    /// Where `offset` was last painted, in the window: its x on its row, the row's middle; a test's or selftest's press.
+    pub fn painted_at(&self, offset: usize) -> Option<Point<Pixels>> {
+        let (bounds, layout) = (self.last_bounds?, self.last_layout.as_ref()?);
+        let row = row_of(&layout.rows, offset);
+        let x = layout.x_in_row(row, offset) - self.scroll.x;
+        Some(gpui::point(bounds.left() + x, bounds.top() + self.last_line_height * (row as f32 + 0.5) - self.scroll.y))
+    }
+
+    /// The box and each row's byte range and where it ends, as last painted: what a mode switch must leave alone.
+    pub fn painted_rows(&self) -> Option<(Bounds<Pixels>, Vec<(std::ops::Range<usize>, Pixels)>)> {
+        let (bounds, layout) = (self.last_bounds?, self.last_layout.as_ref()?);
+        Some((bounds, layout.rows.iter().enumerate().map(|(n, r)| (r.clone(), layout.x_in_row(n, r.end))).collect()))
+    }
+
     /// Whether the caret shows: it holds the keys in an active window and its [`Blink`] is on.
     pub fn caret_shown(&self, window: &Window, cx: &App) -> bool {
         !self.read_only && self.focus_handle.is_focused(window) && window.is_window_active() && self.blink.read(cx).visible()

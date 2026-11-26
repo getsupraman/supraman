@@ -64,17 +64,29 @@ pub(crate) fn split(message: &str) -> (String, String) {
     (summary.trim_end().to_string(), rest.trim_start_matches(['\r', '\n']).trim_end().to_string())
 }
 
-/// A commit message's summary and description fields: Enter in the summary says Confirm, Ctrl+Enter Submit in either.
-pub(crate) fn message_fields<T: 'static>(window: &mut Window, cx: &mut Context<T>) -> (Entity<TextInput>, Entity<TextInput>) {
-    let summary = cx.new(|cx| TextInput::new("Commit summary", None, window, cx).submit_apart());
-    let description = cx.new(|cx| TextInput::new("Description", None, window, cx).multi_line().submit_apart());
+/// A commit message's summary and description fields: Enter in the summary says Confirm, Ctrl+Enter Submit in either;
+/// `in_place` the message shown read-only in the style it sits in, the summary wrapped, editable once asked.
+pub(crate) fn message_fields<T: 'static>(in_place: bool, window: &mut Window, cx: &mut Context<T>) -> (Entity<TextInput>, Entity<TextInput>) {
+    let summary = cx.new(|cx| {
+        let field = TextInput::new("Commit summary", None, window, cx).submit_apart();
+        if in_place { field.wrapped().plain().read_only() } else { field }
+    });
+    let description = cx.new(|cx| {
+        let field = TextInput::new("Description", None, window, cx).multi_line().submit_apart();
+        if in_place { field.plain().read_only() } else { field }
+    });
     (summary, description)
 }
 
-/// The summary field and its count of characters left (negative past 72, in the warning colour), painted as `counter`.
-pub(crate) fn summary_row(hits: &HitTargets, summary: &Entity<TextInput>, counter: &'static str, cx: &gpui::App) -> Div {
+/// The summary's count of characters left (negative past 72, in the warning colour), painted as `counter`.
+pub(crate) fn summary_count(hits: &HitTargets, summary: &Entity<TextInput>, counter: &'static str, cx: &gpui::App) -> gpui::Stateful<Div> {
     let left = left(summary.read(cx).text());
-    let count = div().id(counter).relative().flex_none().w(px(32.)).text_right().text_color(counter_colour(left, cx)).child(SharedString::from(left.to_string())).child(hit_target(hits, counter.into())).tooltip(Tooltip::text(SUMMARY_TOOLTIP));
+    div().id(counter).relative().flex_none().text_color(counter_colour(left, cx)).child(SharedString::from(left.to_string())).child(hit_target(hits, counter.into())).tooltip(Tooltip::text(SUMMARY_TOOLTIP))
+}
+
+/// The summary field and its [`summary_count`] beside it.
+pub(crate) fn summary_row(hits: &HitTargets, summary: &Entity<TextInput>, counter: &'static str, cx: &gpui::App) -> Div {
+    let count = summary_count(hits, summary, counter, cx).w(px(32.)).text_right();
     div().flex().items_center().gap_1().child(div().flex_1().min_w_0().child(summary.clone())).child(count)
 }
 
@@ -104,7 +116,7 @@ pub(crate) struct Composer {
 
 impl Composer {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<WipPanel>) -> Composer {
-        let (summary, description) = message_fields(window, cx);
+        let (summary, description) = message_fields(false, window, cx);
         let row = cx.new(|cx| TextInput::new("// WIP", None, window, cx).submit_apart().quiet());
         let inputs = [
             cx.subscribe_in(&summary, window, |this: &mut WipPanel, _, e: &InputEvent, window, cx| this.summary_event(e, false, window, cx)),
