@@ -163,6 +163,14 @@ by focus) applied by the list. A feature supplies rows and a row painter, never 
 The hand-hovered rows in `left.rs`, `schedules.rs`, `results.rs`, the Work navigator and overview move
 onto it.
 
+`list.rs` is that core as two parts each shape composes, not one type: `Selection` (one selection, moved by
+`key_of`'s one key map over `Rows`: a step, a page of the rows in view, the ends, type-ahead; `Rows::wrapping` for a
+menu) and `Chrome` (a row's fills, painted by `list::row` or a table's row under the content: its band, the ghost
+hover and press, the `selection` role while the list holds the keys and `selection_inactive` else, the open fill of
+the popup anchored to the row). The table keeps its columns and `uniform_list`, the menu its popup and submenu, the
+palette its query, the keyed list its `gpui::list`; each holds a `Selection` and paints its rows' `Chrome`. A
+feature hands rows and their content; `hover` in the ratchets is at zero.
+
 ### 4.7 Drag and drop
 
 One mechanic, three uses:

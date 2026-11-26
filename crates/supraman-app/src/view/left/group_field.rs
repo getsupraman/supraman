@@ -52,7 +52,7 @@ impl FleetView {
         }
         if let Some(edit) = edit {
             if let FolderEdit::AddGroup(to) | FolderEdit::RenameGroup { to, .. } = &edit {
-                self.sidebar.selected_group = Some(to.clone());
+                self.sidebar.left_list.select_key(Some(super::fold::group(to).into()));
             }
             self.edit_folders(edit, cx);
         }
@@ -60,7 +60,7 @@ impl FleetView {
     }
 
     pub(super) fn rename_selected(&mut self, _: &RenameSelected, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(name) = self.sidebar.selected_group.clone() else { return };
+        let Some(name) = self.selected_group() else { return };
         if self.listed.entries.groups().any(|(n, _)| n == name) {
             self.open_group_name(Some(name), window, cx);
         }

@@ -186,9 +186,14 @@ pub fn lists(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
         let fill = if i == 1 { selected } else { None };
         button::row(&g.hits, format!("kit-row-{i}"), fill, cx).px(tokens::space::L).py(tokens::space::S).child(format!("button::row {}", i + 1))
     }));
+    let states = [("at rest", false, false), ("selected, the keys in it", true, true), ("selected, without the keys", true, false), ("at rest", false, false)];
+    let core = div().flex().flex_col().w(width(16.)).children(states.iter().enumerate().map(|(i, (words, selected, focused))| {
+        let chrome = crate::list::Chrome::new().selected(*selected).focused(*focused);
+        crate::list::row(&g.hits, button::RowKeys::one(format!("kit-list-{i}").into()), chrome, cx).px(tokens::space::L).py(tokens::space::S).child(*words)
+    }));
     let top = row().items_start().child(table(0, "kit-table-a", "table, the keys in it: selection active", cx)).child(table(1, "kit-table-b", "table without the keys: inactive selection", cx));
     let menu = g.row_menu.as_ref().map(|m| m.render(&g.hits, |_: &mut Gallery, _, _, _| {}, |_: &mut Gallery, _| {}, cx));
-    let bottom = row().items_start().child(tree(0, "kit-tree-a", "tree (its focus frame gives it the keys)", cx)).child(tree(1, "kit-tree-b", "tree without the keys", cx)).child(group("button::row, the second selected", cx).child(rows));
+    let bottom = row().items_start().child(tree(0, "kit-tree-a", "tree (its focus frame gives it the keys)", cx)).child(tree(1, "kit-tree-b", "tree without the keys", cx)).child(group("button::row, the second selected", cx).child(rows)).child(group("list::row: the core's chrome (keyed lists, the sidebar)", cx).child(core));
     div().flex().flex_col().gap(tokens::space::XXL).child(top).child(bottom).children(menu).into_any_element()
 }
 

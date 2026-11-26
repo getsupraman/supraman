@@ -35,7 +35,7 @@ impl GitView {
             .collect();
         items.push(item("column-default", "Reset columns to default", ColumnAct::Default).rule());
         items.push(item("column-compact", "Compact layout", ColumnAct::Compact));
-        self.column_menu = Some(ContextMenu::new("Columns", position, items));
+        self.column_menu = Some(ContextMenu::new("Columns", position, items).anchored(supraman_ui::table::header_hit(super::TABLE)));
         cx.notify();
     }
 

@@ -24,6 +24,7 @@ pub mod inbox_card;
 pub mod ink;
 pub mod keyed_list;
 pub mod label;
+pub mod list;
 pub mod marks;
 pub mod matcher;
 pub mod menu;

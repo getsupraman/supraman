@@ -8,6 +8,7 @@ pub(crate) mod find;
 mod inbox;
 pub mod inbox_card;
 mod item;
+mod keys;
 mod layout;
 mod navigator;
 pub(crate) mod overview;
@@ -260,6 +261,11 @@ pub struct WorkView {
     wanted: Option<String>,
     pub boards: HashMap<String, BoardState>,
     closed_open: HashSet<String>,
+    /// The navigator entry the keys moved to; the one shown while `None`.
+    nav_cursor: Option<String>,
+    nav_scroll: ScrollHandle,
+    /// Whether the navigator and the main pane held the keys as this frame began: their selections' fill.
+    keys_in: (bool, bool),
     pub selected: Option<String>,
     pub(crate) filter: Filter,
     pub item: Option<OpenItem>,
@@ -342,6 +348,9 @@ impl WorkView {
             wanted: None,
             boards: HashMap::new(),
             closed_open: HashSet::new(),
+            nav_cursor: None,
+            nav_scroll: ScrollHandle::new(),
+            keys_in: (false, false),
             selected: None,
             filter: Filter::Open,
             item: None,
@@ -673,8 +682,19 @@ impl WorkView {
             return;
         }
         let detail = self.panes.detail.contains_focused(window, cx);
+        let listed = supraman_ui::list::key_of(&e.keystroke).filter(|_| !detail);
+        if let Some(key) = listed.clone().filter(|k| *k != supraman_ui::list::Key::Activate) {
+            let handled = if self.panes.nav.contains_focused(window, cx) { self.nav_key(&key, cx) } else { self.list_key(&key, cx) };
+            if handled {
+                cx.stop_propagation();
+            }
+            return;
+        }
+        if listed.is_some() && self.panes.nav.contains_focused(window, cx) && self.nav_key(&supraman_ui::list::Key::Activate, cx) {
+            cx.stop_propagation();
+            return;
+        }
         let handled = match e.keystroke.key.as_str() {
-            "up" | "down" if !detail => self.step(if e.keystroke.key == "up" { -1 } else { 1 }, cx),
             "up" | "down" => {
                 let by = if e.keystroke.key == "up" { -40. } else { 40. };
                 let offset = self.detail_scroll.offset();
@@ -696,23 +716,6 @@ impl WorkView {
         if handled {
             cx.stop_propagation();
         }
-    }
-
-    fn step(&mut self, by: isize, cx: &mut Context<Self>) -> bool {
-        let ids: Vec<String> = self.listed().iter().map(|r| r.item.id.clone()).collect();
-        if ids.is_empty() {
-            return false;
-        }
-        let at = self.selected.as_ref().and_then(|s| ids.iter().position(|id| id == s));
-        let next = match at {
-            Some(i) => (i as isize + by).clamp(0, ids.len() as isize - 1) as usize,
-            None if by > 0 => 0,
-            None => ids.len() - 1,
-        };
-        if at != Some(next) {
-            self.select(ids[next].clone(), cx);
-        }
-        true
     }
 
     pub(crate) fn needs_you(&self, cx: &App) -> usize {
@@ -747,6 +750,7 @@ impl Focusable for WorkView {
 
 impl Render for WorkView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.keys_in = (self.panes.nav.contains_focused(window, cx), self.panes.main.contains_focused(window, cx));
         if self.focus.is_focused(window) && self.shown == Shown::Ready {
             focus::request(&self.panes.main, window, cx);
         }
@@ -794,7 +798,7 @@ impl WorkView {
             let pane = focus::Pane::new(FOCUS_MAIN, &self.panes.main).paint(&self.hits);
             return div().relative().size_full().track_focus(&self.panes.main).child(page).child(hit_target(&self.hits, "work-page".into())).child(pane).into_any_element();
         };
-        let list = div().relative().flex_grow(1.).flex_basis(px(layout::LIST_MIN)).min_w_0().h_full().track_focus(&self.panes.main).child(self.render_run_page(&run, cx));
+        let list = div().relative().flex_grow(1.).flex_basis(px(layout::LIST_MIN)).min_w_0().h_full().track_focus(&self.panes.main).child(self.render_run_page(&run, self.keys_in.1, cx));
         let list = list.child(focus::Pane::new(FOCUS_MAIN, &self.panes.main).paint(&self.hits));
         let detail = div().flex_shrink(1.).min_w_0().w(self.layout.detail()).h_full().relative().border_l_1().border_color(cx.theme().colors().border).track_focus(&self.panes.detail).child(self.render_detail(cx));
         let detail = detail.child(hit_target(&self.hits, "work-detail-column".into())).child(focus::Pane::new(FOCUS_DETAIL, &self.panes.detail).paint(&self.hits));

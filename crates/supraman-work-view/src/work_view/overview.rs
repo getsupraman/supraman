@@ -155,7 +155,7 @@ impl WorkView {
         for c in needs.iter().take(NEEDS_SHOWN) {
             let id = c.item_id.clone();
             card = card.child(
-                button::ghost(&self.hits, format!("work-overview-needs-{}", c.ref_), cx)
+                supraman_ui::list::row(&self.hits, button::RowKeys::one(SharedString::from(format!("work-overview-needs-{}", c.ref_))), supraman_ui::list::Chrome::new(), cx)
                     .flex()
                     .items_start()
                     .gap_2()
@@ -176,7 +176,7 @@ impl WorkView {
         if needs.len() > NEEDS_SHOWN {
             let more = format!("+{} more in the inbox", needs.len() - NEEDS_SHOWN);
             card = card.child(
-                button::ghost(&self.hits, "work-overview-more", cx)
+                supraman_ui::list::row(&self.hits, button::RowKeys::one(SharedString::from("work-overview-more")), supraman_ui::list::Chrome::new(), cx)
                     .px_3()
                     .py_2()
                     .border_t_1()
@@ -314,7 +314,7 @@ impl WorkView {
         for run in active(project) {
             let id = run.item.id.clone();
             card = card.child(
-                button::ghost(&self.hits, format!("work-overview-run-{}", run.item.qualified_ref), cx)
+                supraman_ui::list::row(&self.hits, button::RowKeys::one(SharedString::from(format!("work-overview-run-{}", run.item.qualified_ref))), supraman_ui::list::Chrome::new(), cx)
                     .flex()
                     .items_center()
                     .gap_3()

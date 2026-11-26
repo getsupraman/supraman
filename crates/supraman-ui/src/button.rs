@@ -34,20 +34,32 @@ pub fn ghost(hits: &HitTargets, key: impl Into<SharedString>, cx: &App) -> State
     base(hits, key.into(), |s| s.bg(colors.ghost_element_hover), colors.ghost_element_active)
 }
 
+/// A [`ghost`] in the muted text colour, the text colour while hovered (the title bar's icons, a quiet link).
+pub fn ghost_muted(hits: &HitTargets, key: impl Into<SharedString>, cx: &App) -> Stateful<Div> {
+    let colors = cx.theme().colors();
+    base(hits, key.into(), |s| s.bg(colors.ghost_element_hover).text_color(colors.text), colors.ghost_element_active).text_color(colors.text_muted)
+}
+
+/// A window's caption button under `id` (minimise, maximise, close: Windows answers its click through the non-client
+/// area, so it records only where it is painted): the ghost's hover, or `close`'s red with white.
+pub fn caption(hits: &HitTargets, id: &'static str, close: bool, cx: &App) -> Stateful<Div> {
+    let colors = cx.theme().colors();
+    let (bg, fg) = if close { (CLOSE_RED.into(), gpui::white()) } else { (colors.ghost_element_hover, colors.text) };
+    div().id(id).relative().hover(move |s| s.bg(bg).text_color(fg)).child(hit_target(hits, id.to_string()))
+}
+
+/// Windows' own close-button red.
+const CLOSE_RED: gpui::Rgba = gpui::Rgba { r: 232. / 255., g: 17. / 255., b: 32. / 255., a: 1. };
+
 /// A [`ghost`] list row; while it is the selected one it is filled `selected` and its hover is off.
 pub fn row(hits: &HitTargets, key: impl Into<SharedString>, selected: Option<Hsla>, cx: &App) -> Stateful<Div> {
     row_in(hits, RowKeys::one(key.into()), selected, cx)
 }
 
-/// A [`row`] whose element id, hover group and hit key differ (the sidebar's session row).
-/// It paints open while a popup anchored to its hit key is ([`crate::popup::open_fill`]).
+/// A [`row`] whose element id, hover group and hit key differ, on [`crate::list::row`]: open while a popup anchored to its hit key is.
 pub fn row_in(hits: &HitTargets, keys: RowKeys, selected: Option<Hsla>, cx: &App) -> Stateful<Div> {
-    let colors = cx.theme().colors();
-    let state = crate::state::State { selected: selected.is_some(), ..Default::default() };
-    let look = crate::state::resolve(state, crate::state::Fills { hover: Some(colors.ghost_element_hover), pressed: Some(colors.ghost_element_active), selected, ..Default::default() });
-    let open = crate::popup::open_fill(keys.hit.clone());
-    let row = div().id(keys.id).group(keys.group).relative().cursor_pointer().child(hit_target(hits, keys.hit.to_string())).child(open);
-    look.paint_pressed(row, None)
+    let chrome = crate::list::Chrome::new().selected(selected.is_some());
+    crate::list::row(hits, keys, selected.map_or(chrome, |fill| chrome.chosen(fill)), cx)
 }
 
 /// A [`row_in`]'s element id, hover group and hit key.

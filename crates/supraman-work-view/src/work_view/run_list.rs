@@ -8,7 +8,8 @@ use supraman_ui::icon::Icon;
 use supraman_ui::marks::{dot, squares};
 use supraman_ui::segmented::{Segment, segmented};
 use supraman_ui::tooltip::Tooltip;
-use supraman_ui::{button, fonts};
+use supraman_ui::label::{Label, LabelMark};
+use supraman_ui::{button, fonts, tokens};
 use supraman_workman::BoardRow;
 
 use super::actions::COPY_SIDE;
@@ -44,7 +45,7 @@ pub(crate) fn filter_labels(board: &Board) -> Vec<String> {
 }
 
 impl WorkView {
-    pub(super) fn render_run_page(&self, run: &str, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_run_page(&self, run: &str, focused: bool, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let root = supraman_ui::scroll::area("work-list").track(&self.list_scroll).size_full().flex().flex_col().gap_2().px_5().pt_4().pb_6();
         let board = match self.boards.get(run) {
@@ -76,7 +77,7 @@ impl WorkView {
             list = list.child(div().relative().px_3().py_2().text_sm().text_color(colors.text_muted).child(NOTHING_MATCHES).child(hit_target(&self.hits, "work-list-empty".into())));
         }
         for row in rows {
-            list = list.child(self.render_row(row, cx));
+            list = list.child(self.render_row(row, focused, cx));
         }
         root.child(crumb)
             .child(title)
@@ -88,7 +89,7 @@ impl WorkView {
             .into_any_element()
     }
 
-    fn render_row(&self, row: &BoardRow, cx: &mut Context<Self>) -> AnyElement {
+    fn render_row(&self, row: &BoardRow, focused: bool, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let item = &row.item;
         let key = format!("work-row-{}", item.qualified_ref);
@@ -103,11 +104,10 @@ impl WorkView {
                 cx.stop_propagation();
                 this.copy_ref(&copied, cx);
             }));
-        div()
-            .id(SharedString::from(key.clone()))
-            .group(SharedString::from(key.clone()))
-            .relative()
-            .child(supraman_ui::popup::open_fill(key.clone()))
+        let chrome = supraman_ui::list::Chrome::new().selected(selected).focused(focused);
+        let mark = div().relative().child(dot(state.key.mark(cx))).child(hit_target(&self.hits, dot_key(&item.qualified_ref, state.key)));
+        let ref_ = Label::new(ref_).mark(LabelMark::Element(mark.into_any_element())).gap(tokens::space::L).size(tokens::text::SMALL).color(colors.text_muted);
+        supraman_ui::list::row(&self.hits, button::RowKeys::one(key.clone().into()), chrome, cx)
             .flex()
             .items_start()
             .gap_2()
@@ -115,17 +115,12 @@ impl WorkView {
             .pr_3()
             .py(px(4.))
             .text_sm()
-            .cursor_pointer()
-            .when(selected, |d| d.bg(colors.element_selected))
-            .when(!selected, |d| d.hover(|s| s.bg(colors.ghost_element_hover)))
-            .child(div().relative().flex_none().h(px(COPY_SIDE)).flex().items_center().child(dot(state.key.mark(cx))).child(hit_target(&self.hits, dot_key(&item.qualified_ref, state.key))))
-            .child(div().flex_none().h(px(COPY_SIDE)).flex().items_center().font_family(fonts::MONO).text_xs().text_color(colors.text_muted).child(SharedString::from(ref_)))
+            .child(div().flex_none().h(px(COPY_SIDE)).flex().items_center().font_family(fonts::MONO).child(ref_))
             .child(copy)
-            .child(div().flex_1().min_w_0().pt(px(1.)).child(clamped(format!("work-row-title-{}", item.qualified_ref), title, 2)))
+            .child(div().flex_1().min_w_0().child(clamped(format!("work-row-title-{}", item.qualified_ref), title, 2)))
             .when_some(criteria, |d, criteria| {
                 d.child(fonts::figures(div().flex_none().h(px(COPY_SIDE)).flex().items_center().text_xs().text_color(colors.text_muted)).child(SharedString::from(criteria)))
             })
-            .child(hit_target(&self.hits, key.clone()))
             .on_mouse_down(gpui::MouseButton::Right, self.on_row_mouse_down(item, key, cx))
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 window.focus(&this.panes.main, cx);

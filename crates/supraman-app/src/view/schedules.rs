@@ -747,7 +747,7 @@ impl FleetView {
             let sopen = !self.sidebar.collapsed.contains(&skey);
             out.push(self.render_schedule_row(row, level, runs.len(), sopen, entry == crate::fleet::UNROWED, cx));
             if sopen {
-                out.extend(runs.iter().map(|r| self.render_session(entry, &row.schedule.id, r, grid::indent(level + 1), cx)));
+                out.extend(runs.iter().map(|r| self.render_session(entry, &row.schedule.id, r, None, grid::indent(level + 1), cx)));
             }
         }
         out
@@ -756,18 +756,15 @@ impl FleetView {
     /// The runs of `runs` whose schedule is none of `rows`, at `level`.
     pub(super) fn render_gone_runs(&self, entry: &str, rows: &[ScheduleRow], runs: &BTreeMap<String, Vec<SessionRow>>, level: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let gone = runs.iter().filter(|(id, _)| !rows.iter().any(|r| &r.schedule.id == *id));
-        gone.flat_map(|(id, runs)| runs.iter().map(move |r| (id, r))).map(|(id, r)| self.render_session(entry, id, r, grid::indent(level), cx)).collect()
+        gone.flat_map(|(id, runs)| runs.iter().map(move |r| (id, r))).map(|(id, r)| self.render_session(entry, id, r, None, grid::indent(level), cx)).collect()
     }
 
     fn render_schedules_row(&self, entry: &str, folder: &FolderNode, level: usize, open: bool, cx: &mut Context<Self>) -> AnyElement {
-        let colors = cx.theme().colors().clone();
         let folder_key = schedule::folder_key(&folder.path);
         let gkey = format!("schedules:{folder_key}");
         let tree_key = format!("schedules-{folder_key}");
-        div()
-            .id(SharedString::from(gkey.clone()))
-            .relative()
-            .child(supraman_ui::popup::open_fill(format!("schedules-row-{folder_key}")))
+        let keys = supraman_ui::button::RowKeys { id: gkey.clone().into(), group: gkey.clone().into(), hit: format!("schedules-row-{folder_key}").into() };
+        self.sidebar_row(keys, Some(&format!("sched:{folder_key}")), cx)
             .flex()
             .flex_none()
             .items_center()
@@ -776,13 +773,9 @@ impl FleetView {
             .pl(grid::indent(level))
             .pr_2()
             .text_sm()
-            .cursor_pointer()
-            .hover(|s| s.bg(colors.ghost_element_hover))
-            .active(|s| s.bg(colors.ghost_element_active))
             .child(disclosure(Some(open), secondary(cx)))
             .child(icon_slot(&self.hits, &tree_key, Some(Icon::Clock.slotted(grid::ICON, secondary(cx)).into_any_element())))
             .child(tree_label(&self.hits, &tree_key, div().flex_none().whitespace_nowrap().child("Schedules")))
-            .child(hit_target(&self.hits, format!("schedules-row-{folder_key}")))
             .on_mouse_down(MouseButton::Right, {
                 let target = MenuTarget::Schedules { entry: entry.to_string(), folder: folder.path.clone() };
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
@@ -829,13 +822,11 @@ impl FleetView {
         if tasks.is_empty() {
             return vec![];
         }
-        let colors = cx.theme().colors().clone();
         let gkey = format!("others:{folder_key}");
         let open = !self.sidebar.collapsed.contains(&gkey);
         let (hit, tree_key) = (format!("others-row-{folder_key}"), format!("others-{folder_key}"));
-        let group = div()
-            .id(SharedString::from(hit.clone()))
-            .relative()
+        let group = self
+            .sidebar_row(supraman_ui::button::RowKeys::one(hit.into()), None, cx)
             .flex()
             .flex_none()
             .items_center()
@@ -844,13 +835,9 @@ impl FleetView {
             .pl(grid::indent(level))
             .pr_2()
             .text_sm()
-            .cursor_pointer()
-            .hover(|s| s.bg(colors.ghost_element_hover))
-            .active(|s| s.bg(colors.ghost_element_active))
             .child(disclosure(Some(open), secondary(cx)))
             .child(icon_slot(&self.hits, &tree_key, Some(Icon::Clock.slotted(grid::ICON, secondary(cx)).into_any_element())))
             .child(tree_label(&self.hits, &tree_key, div().flex_none().whitespace_nowrap().text_color(secondary(cx)).child("Other schedules")))
-            .child(hit_target(&self.hits, hit))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(gkey.clone(), cx)))
             .into_any_element();
         let mut out = vec![group];
@@ -862,14 +849,10 @@ impl FleetView {
 
     /// Muted: Supraman shows the task and never changes, runs or deletes it.
     pub(super) fn render_other_row(&self, t: &ForeignTask, level: usize, cx: &mut Context<Self>) -> AnyElement {
-        let colors = cx.theme().colors().clone();
         let path = t.path();
         let tree_key = format!("other-{path}");
         let target = MenuTarget::OtherSchedule(path.clone());
-        div()
-            .id(SharedString::from(format!("other-row-{path}")))
-            .relative()
-            .child(supraman_ui::popup::open_fill(format!("other-row-{path}")))
+        self.sidebar_row(supraman_ui::button::RowKeys::one(format!("other-row-{path}").into()), Some(&format!("other-row-{path}")), cx)
             .flex()
             .flex_none()
             .items_center()
@@ -879,7 +862,6 @@ impl FleetView {
             .pr_2()
             .text_sm()
             .opacity(super::left::DIMMED)
-            .hover(|s| s.bg(colors.ghost_element_hover))
             .child(disclosure(None, secondary(cx)))
             .child(icon_slot(&self.hits, &tree_key, Some(Icon::Clock.slotted(grid::ICON, secondary(cx)).into_any_element())))
             .child(tree_label(&self.hits, &tree_key, clipped(format!("other-name-{path}"), t.name.clone(), false).flex_shrink(4.)))
@@ -889,7 +871,6 @@ impl FleetView {
                     .text_xs()
                     .text_color(secondary(cx)),
             )
-            .child(hit_target(&self.hits, format!("other-row-{path}")))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
@@ -901,7 +882,6 @@ impl FleetView {
     }
 
     pub(super) fn render_schedule_row(&self, row: &ScheduleRow, level: usize, runs: usize, open: bool, named: bool, cx: &mut Context<Self>) -> AnyElement {
-        let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let (w, id) = (row.key.clone(), row.schedule.id.clone());
         let k = key(&w, &id);
@@ -990,11 +970,8 @@ impl FleetView {
             .child(div().flex().flex_none().items_center().child(action));
         let error = self.scheduling.sync_errors.get(&k).cloned();
         let target = MenuTarget::Schedule { folder_key: w.clone(), id: id.clone() };
-        div()
-            .id(SharedString::from(format!("sched-row-{k}")))
-            .group(group)
-            .relative()
-            .child(supraman_ui::popup::open_fill(format!("sched-row-{k}")))
+        let keys = supraman_ui::button::RowKeys { id: format!("sched-row-{k}").into(), group, hit: format!("sched-row-{k}").into() };
+        self.sidebar_row_with(keys, Some(&format!("sched-row-{k}")), super::left::keys::schedule_chrome(pending, cx), cx)
             .flex()
             .flex_none()
             .flex_col()
@@ -1002,14 +979,11 @@ impl FleetView {
             .pr_2()
             .py(px(1.))
             .text_sm()
-            .hover(|s| s.bg(colors.ghost_element_hover))
-            .when(pending, |d| d.bg(status.warning.opacity(0.08)))
             .when(row.status == Status::Paused, |d| d.opacity(super::left::DIMMED))
             .child(line)
             .children(error.map(|e| {
                 clipped(format!("sched-error-{k}"), e, false).pl(px(grid::LABEL)).text_xs().text_color(status.error).relative().child(hit_target(&self.hits, format!("sched-error-{k}")))
             }))
-            .child(hit_target(&self.hits, format!("sched-row-{k}")))
             .on_click(cx.listener(move |this, e: &ClickEvent, _, cx| {
                 if e.click_count() == 2 {
                     this.schedule_primary(&w, &id, cx);

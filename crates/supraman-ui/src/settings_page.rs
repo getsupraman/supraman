@@ -51,14 +51,15 @@ impl<V: 'static> SettingsPages<V> {
         id.and_then(|id| self.get(id)).or(self.pages.first()).map_or("", |page| page.id)
     }
 
-    /// One [`button::row`] per page with its icon and title under `settings-page-<id>`, `active` selected; a click calls `select` with its id.
+    /// One list row per page with its icon and title under `settings-page-<id>`, `active` selected; a click calls `select` with its id.
     pub fn nav(&self, hits: &HitTargets, active: &str, select: fn(&mut V, &'static str, &mut Context<V>), cx: &mut Context<V>) -> Vec<AnyElement> {
         let colors = cx.theme().colors().clone();
         self.pages
             .iter()
             .map(|page| {
                 let (id, on) = (page.id, page.id == active);
-                button::row(hits, format!("settings-page-{id}"), on.then_some(colors.element_selected), cx)
+                let chrome = crate::list::Chrome::new().selected(on).chosen(colors.element_selected).radius(tokens::radius::S);
+                crate::list::row(hits, button::RowKeys::one(format!("settings-page-{id}").into()), chrome, cx)
                     .mx(tokens::space::L)
                     .px(tokens::space::L)
                     .py(tokens::space::S)

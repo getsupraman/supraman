@@ -135,7 +135,7 @@ impl GitView {
 
     /// A ref panel row's menu: its writes, with the panel's own Solo and Hide in their group.
     /// `anchor`: the row's hit key.
-    pub(crate) fn ref_menu(&mut self, path: &str, anchor: Option<SharedString>, position: Point<Pixels>, cx: &mut Context<Self>) {
+    pub(crate) fn ref_menu(&mut self, path: &str, anchor: SharedString, position: Point<Pixels>, cx: &mut Context<Self>) {
         let panel = self.ref_panel.read(cx);
         let graph = panel.menu_items(path).into_iter().map(|i| item(i.key, i.label, RefAct::Panel(i.action))).collect();
         let subject = match panel.entry(path).cloned() {
@@ -167,17 +167,16 @@ impl GitView {
         self.branch.update(cx, |b, cx| b.checkout(target, cx));
     }
 
-    /// The graph pill of row `ix`'s group `group` right-clicked.
-    /// Anchored to the pill the row shows for that group: its first group's pill, another's in the row's list.
+    /// The graph pill of row `ix`'s group `group` right-clicked, anchored to the row's pill ([`pill_anchor`]).
     pub(crate) fn pill_menu(&mut self, ix: usize, group: usize, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let anchor = SharedString::from(if group == 0 { format!("git-ref-{ix}") } else { format!("git-reflist-{ix}-{group}-name") });
+        let anchor = pill_anchor(ix);
         let Some(row) = self.pages.read(cx).rows.get(ix).cloned() else { return };
         let Some(g) = row.row.refs.get(group).cloned() else { return };
         let refs = self.branch.read(cx).refs().clone();
         let sha = self.pill_sha(&row, cx).to_string();
         let Some(subject) = group_subject(&refs, &g, &sha) else { return };
         let graph = pill_graph_items(&self.ref_panel, &g, cx);
-        self.branch.update(cx, |b, cx| b.open_commit_menu(vec![subject], sha, graph, Some(anchor), position, cx));
+        self.branch.update(cx, |b, cx| b.open_commit_menu(vec![subject], sha, graph, anchor, position, cx));
     }
 
     /// The graph pill of row `ix`'s group `group` double-clicked: its local branch, else its one remote one, else a menu; a worktree row's cell opens it instead.
@@ -190,7 +189,7 @@ impl GitView {
             (None, []) => return,
             (None, many) => {
                 let items = many.iter().map(|r| item(format!("ref-checkout-{r}"), format!("Checkout {r}"), RefAct::Checkout(Target::Remote(r.clone())))).collect();
-                return self.branch.update(cx, |b, cx| b.show_menu(g.name.clone(), items, position, cx));
+                return self.branch.update(cx, |b, cx| b.show_anchored(g.name.clone(), items, pill_anchor(ix), position, cx));
             }
         };
         self.branch.update(cx, |b, cx| b.checkout(target, cx));
@@ -202,7 +201,7 @@ impl GitView {
         let Some(target) = row.row.refs.get(group).and_then(|g| dragged(g, &self.pill_sha(&row, cx))) else { return };
         let Some(source) = dragged(&pill.group, &pill.sha) else { return };
         let position = window.mouse_position();
-        self.branch.update(cx, |b, cx| b.dropped(source, target, position, cx));
+        self.branch.update(cx, |b, cx| b.dropped(source, target, pill_anchor(ix), position, cx));
     }
 }
 
@@ -211,4 +210,9 @@ pub(crate) fn pill_graph_items(panel: &Entity<RefPanel>, group: &RefGroup, cx: &
     let (locals, remotes, _) = split(group);
     let path = locals.first().map(|l| format!("local/{l}")).or_else(|| remotes.first().map(|r| format!("remote/{r}")));
     path.map(|p| panel.read(cx).menu_items(&p).into_iter().map(|i| item(i.key, i.label, RefAct::Panel(i.action))).collect()).unwrap_or_default()
+}
+
+/// Where row `ix`'s pill menus anchor: its first pill, which stays painted after the hover list of its other groups closes.
+pub(crate) fn pill_anchor(ix: usize) -> SharedString {
+    format!("git-ref-{ix}").into()
 }

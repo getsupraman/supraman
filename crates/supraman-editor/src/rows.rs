@@ -37,6 +37,20 @@ pub fn row_at(editor: &Entity<Editor>, position: Point<Pixels>, window: &mut Win
     })
 }
 
+/// Where `editor` shows the text rows `rows` (window coordinates), across its width and cut to its bounds; `None` while none is in view.
+pub fn rows_bounds(editor: &Entity<Editor>, rows: Range<u32>, window: &mut Window, cx: &mut App) -> Option<gpui::Bounds<Pixels>> {
+    editor.update(cx, |e, cx| {
+        let bounds = *e.last_bounds()?;
+        let height = line_height(e, window, cx);
+        let top = e.scroll_position(cx).y;
+        let snapshot = e.display_snapshot(cx);
+        let (first, last) = (display_span(&snapshot, rows.start).start, display_span(&snapshot, rows.end.saturating_sub(1).max(rows.start)).end);
+        let at = |display: u32| bounds.origin.y + height * (f64::from(display) - top) as f32;
+        let (y0, y1) = (at(first).max(bounds.top()), at(last).min(bounds.bottom()));
+        (y1 > y0).then(|| gpui::Bounds::from_corners(gpui::point(bounds.left(), y0), gpui::point(bounds.right(), y1)))
+    })
+}
+
 /// The window y of the top of `row` (of `editor`'s text); `None` while it is out of view.
 #[cfg(any(test, feature = "test-support"))]
 pub fn row_top(editor: &Entity<Editor>, row: u32, window: &mut Window, cx: &mut App) -> Option<Pixels> {

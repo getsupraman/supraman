@@ -40,7 +40,7 @@ impl GitView {
         let Some(row) = self.pages.read(cx).rows.get(ix).cloned() else { return };
         let anchor = SharedString::from(supraman_ui::table::row_hit(crate::git_view::TABLE, &ix.to_string()));
         if row.wip() {
-            return self.branch.update(cx, |b, cx| b.show_anchored("Work in progress".into(), wip_items(), Some(anchor), position, cx));
+            return self.branch.update(cx, |b, cx| b.show_anchored("Work in progress".into(), wip_items(), anchor, position, cx));
         }
         let refs = self.branch.read(cx).refs().clone();
         let groups: Vec<_> = row.row.refs.iter().filter_map(|g| group_subject(&refs, g, &row.sha).map(|s| (g.clone(), s))).filter(|(_, s)| matches!(s, Subject::Refs { .. })).collect();
@@ -49,7 +49,7 @@ impl GitView {
             _ => Vec::new(),
         };
         let (subjects, sha) = (groups.into_iter().map(|(_, s)| s).collect(), row.sha.to_string());
-        self.branch.update(cx, |b, cx| b.open_commit_menu(subjects, sha, graph, Some(anchor), position, cx));
+        self.branch.update(cx, |b, cx| b.open_commit_menu(subjects, sha, graph, anchor, position, cx));
     }
 
     /// A list's file or folder right-clicked: its menu, once whether it is in the work tree is read off the UI thread.
@@ -75,7 +75,7 @@ impl GitView {
                 let facts = FileFacts { click: &click, files, exists, under_way, busy: this.gate.read(cx).busy() };
                 let title = click.path.rsplit('/').next().unwrap_or(&click.path).to_string();
                 let menu = items(&facts);
-                this.branch.update(cx, |b, cx| b.show_anchored(title, menu, Some(click.anchor.clone()), click.position, cx));
+                this.branch.update(cx, |b, cx| b.show_anchored(title, menu, click.anchor.clone(), click.position, cx));
             })
             .ok();
         })

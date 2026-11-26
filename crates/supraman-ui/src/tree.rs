@@ -681,13 +681,14 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
         };
         self.state.table.select(selected);
         let column = [Column::new("name", "", Pixels::ZERO, Pixels::ZERO)];
-        let (keys, picked, clicked, arrows) = (self.state.clone(), self.state.clone(), self.state.clone(), self.state.clone());
+        let (keys, picked, clicked, arrows, names) = (self.state.clone(), self.state.clone(), self.state.clone(), self.state.clone(), self.state.clone());
         let (on_select, on_arrow) = (self.on_select.clone(), self.on_select.clone());
         let (toggled, arrow_toggled) = (self.on_toggle.clone(), self.on_toggle.clone());
         Table::new(self.id.clone(), &self.state.table, &self.hits, column, &[Pixels::ZERO], rows, self.cell())
             .headless()
             .row_height(self.row_height)
             .row_key(move |ix| keys.inner.borrow().node(ix).map_or_else(String::new, |n| n.path.to_string()))
+            .type_ahead(move |_, ix| names.inner.borrow().node(ix).map_or_else(String::new, |n| n.name.to_string()))
             .on_select(move |this, ix, window, cx| {
                 if let (Some(path), Some(f)) = (picked.select_row(ix), &on_select) {
                     f(this, &path, window, cx);

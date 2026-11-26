@@ -1,6 +1,6 @@
 //! A long list that lays out only the rows in view ([`gpui::list`]), each row known by a key and the tokens its hit
 //! keys contain: the row on top stays on top when rows come and go, and [`KeyedList::reveal`] scrolls to the row a
-//! hit key belongs to.
+//! hit key belongs to. Its selection is the list core's ([`crate::list::Selection`]), kept by row key.
 
 use gpui::{ListAlignment, ListOffset, ListState, Pixels, SharedString, px};
 
@@ -10,11 +10,14 @@ pub struct KeyedList {
     state: ListState,
     keys: Vec<SharedString>,
     tokens: Vec<Vec<String>>,
+    acts: Vec<bool>,
+    selection: crate::list::Selection,
+    selected: Option<SharedString>,
 }
 
 impl Default for KeyedList {
     fn default() -> Self {
-        Self { state: ListState::new(0, ListAlignment::Top, OVERDRAW), keys: Vec::new(), tokens: Vec::new() }
+        Self { state: ListState::new(0, ListAlignment::Top, OVERDRAW), keys: Vec::new(), tokens: Vec::new(), acts: Vec::new(), selection: Default::default(), selected: None }
     }
 }
 
@@ -43,6 +46,7 @@ impl KeyedList {
         if keys == self.keys {
             return;
         }
+        self.selection.select(self.selected.as_ref().and_then(|k| keys.iter().position(|x| x == k)));
         let top = self.state.logical_scroll_top();
         let anchor = self.keys.get(top.item_ix).cloned();
         self.state.reset(keys.len());
@@ -50,6 +54,48 @@ impl KeyedList {
             self.state.scroll_to(ListOffset { item_ix, offset_in_item: top.offset_in_item });
         }
         self.keys = keys;
+    }
+
+    /// Which rows a key can select, one per row; every row while unset.
+    pub fn set_selectable(&mut self, acts: Vec<bool>) {
+        self.acts = acts;
+    }
+
+    pub fn selected_key(&self) -> Option<&SharedString> {
+        self.selected.as_ref()
+    }
+
+    pub fn is_selected(&self, key: &str) -> bool {
+        self.selected.as_deref() == Some(key)
+    }
+
+    /// The row of `key`.
+    pub fn index_of(&self, key: &str) -> Option<usize> {
+        self.keys.iter().position(|k| k == key)
+    }
+
+    /// Selects the row `key` (none with `None`), kept by its key as rows come and go.
+    pub fn select_key(&mut self, key: Option<SharedString>) {
+        self.selection.select(key.as_ref().and_then(|k| self.keys.iter().position(|x| x == k)));
+        self.selected = key;
+    }
+
+    /// The rows a page holds, as the last frame showed them.
+    pub fn page(&self) -> usize {
+        let top = self.state.logical_scroll_top().item_ix;
+        let row = self.state.bounds_for_item(top).map_or(Pixels::ZERO, |b| b.size.height);
+        crate::list::page_of(self.state.viewport_bounds().size.height, row)
+    }
+
+    /// A list key: the selection moved and revealed, the key of the row it moved to; `text` a row's type-ahead text.
+    pub fn key(&mut self, key: &crate::list::Key, text: impl Fn(usize) -> String) -> Option<SharedString> {
+        let acts: Vec<bool> = (0..self.keys.len()).map(|i| self.acts.get(i).copied().unwrap_or(self.acts.is_empty())).collect();
+        let rows = crate::list::Rows::new(self.keys.len()).page(self.page()).acting(&acts);
+        let labels = || Some((0..self.keys.len()).map(|i| (text(i), acts[i])).collect());
+        let ix = self.selection.key(key, &rows, labels)?;
+        self.state.scroll_to_reveal_item(ix);
+        self.selected = self.keys.get(ix).cloned();
+        self.selected.clone()
     }
 
     /// The row whose longest token `hit` contains.

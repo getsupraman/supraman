@@ -28,8 +28,8 @@ pub struct Sidebar {
     /// The sidebar's pane in [`supraman_ui::focus`].
     pub(super) focus: gpui::FocusHandle,
     pub(super) subfolders: Entity<super::listed::SubfolderWatch>,
-    /// The group row last clicked: F2 renames it.
-    pub(super) selected_group: Option<String>,
+    /// The sidebar holds the keys, as the rows last painted: its selection is the active fill.
+    pub(super) keys_held: bool,
     pub(super) group_edit: Option<left::group_field::GroupEdit>,
 }
 
@@ -58,7 +58,7 @@ impl Sidebar {
             search_marks: HashMap::new(),
             focus: cx.focus_handle(),
             subfolders: super::listed::SubfolderWatch::new(cx),
-            selected_group: None,
+            keys_held: false,
             group_edit: None,
         }
     }

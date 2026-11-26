@@ -1,4 +1,4 @@
-//! Where a menu's keys move its highlight: over the items that act now, wrapping, and type-ahead.
+//! Where a list's keys move its selection over the rows that act: wrapping steps, the ends, and type-ahead.
 
 /// The next item that acts after `from` (before it when `back`), wrapping; the first (last) from none.
 pub fn step(acts: &[bool], from: Option<usize>, back: bool) -> Option<usize> {

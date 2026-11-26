@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use gpui::{AnyElement, ClickEvent, Context, SharedString, div, prelude::*, px};
-use theme::ActiveTheme as _;
 
 use super::{TOP_ROW, disclosure, grid, icon_slot, secondary, top_text, tree_label};
 use crate::fleet::{Tree, UNROWED};
@@ -62,10 +61,8 @@ impl FleetView {
 
     /// Other sessions' look: muted, no icon, no count; a click folds or opens it.
     fn render_other_schedules_row(&self, open: bool, cx: &mut Context<Self>) -> AnyElement {
-        let colors = cx.theme().colors().clone();
-        div()
-            .id(KEY)
-            .relative()
+        let keys = supraman_ui::button::RowKeys { id: KEY.into(), group: KEY.into(), hit: format!("{KEY}-row").into() };
+        self.sidebar_row(keys, Some(KEY), cx)
             .flex()
             .flex_none()
             .items_center()
@@ -75,13 +72,9 @@ impl FleetView {
             .pr_2()
             .map(top_text)
             .text_color(secondary(cx))
-            .cursor_pointer()
-            .hover(|s| s.bg(colors.ghost_element_hover))
-            .active(|s| s.bg(colors.ghost_element_active))
             .child(disclosure(Some(open), secondary(cx)))
             .child(icon_slot(&self.hits, KEY, None))
             .child(tree_label(&self.hits, KEY, div().flex_none().whitespace_nowrap().child(SharedString::from(TITLE))))
-            .child(hit_target(&self.hits, format!("{KEY}-row")))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle(KEY.to_string(), cx)))
             .into_any_element()
     }

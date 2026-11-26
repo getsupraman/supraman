@@ -439,7 +439,7 @@ impl GitView {
             RefEvent::Layout => self.keep_layout(cx),
             RefEvent::Shown(sha) => self.reveal_after = Some(sha.clone()),
             RefEvent::Stash(act, stash) => self.stash_act(*act, stash.clone(), cx),
-            RefEvent::Menu(path, anchor, position) => self.ref_menu(path, Some(anchor.clone()), *position, cx),
+            RefEvent::Menu(path, anchor, position) => self.ref_menu(path, anchor.clone(), *position, cx),
             RefEvent::Checkout(path) => self.ref_double_clicked(path, cx),
             RefEvent::RefreshWips => background::refresh_wips(cx.entity_id(), cx),
             RefEvent::AddRemote => {
