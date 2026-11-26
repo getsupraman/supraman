@@ -106,7 +106,7 @@ impl WorkView {
             }));
         let chrome = supraman_ui::list::Chrome::new().selected(selected).focused(focused);
         let mark = div().relative().child(dot(state.key.mark(cx))).child(hit_target(&self.hits, dot_key(&item.qualified_ref, state.key)));
-        let ref_ = Label::new(ref_).mark(LabelMark::Element(mark.into_any_element())).gap(tokens::space::L).size(tokens::text::CAPTION).color(colors.text_muted);
+        let ref_ = Label::new(ref_).mark(LabelMark::Element(mark.into_any_element())).gap(tokens::space::L).size(tokens::text::SMALL).color(colors.text_muted);
         supraman_ui::list::row(&self.hits, button::RowKeys::one(key.clone().into()), chrome, cx)
             .flex()
             .items_start()
