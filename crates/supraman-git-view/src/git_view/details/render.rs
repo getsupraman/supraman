@@ -14,7 +14,7 @@ use supraman_ui::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
 use super::files::{self, kind_word};
-use super::{CommitPanel, FileView, MESSAGE_HEIGHT, PanelEvent, Shown, State};
+use super::{CommitPanel, FileView, MESSAGE_HEIGHT, PanelEvent, Shown, State, reword};
 use crate::git_view::colours::{Palette, blend};
 use crate::git_view::commit::files::{FileClick, Listed};
 use crate::git_view::graph::avatar;
@@ -65,11 +65,8 @@ impl CommitPanel {
     }
 
     fn message(&self, shown: &Shown, box_bg: Hsla, cx: &mut Context<Self>) -> Div {
-        let field = self.field();
-        let boxed = match field {
-            Some(field) => self.field_box(field, box_bg, cx).into_any_element(),
-            None => self.read_only(shown, box_bg, cx).into_any_element(),
-        };
+        let editable = reword::offer(shown).is_some_and(|(_, target)| target.is_some());
+        let boxed = self.message_box(shown, editable, box_bg, cx);
         let bar = HeightBar { id: "commit-message-bar".into(), min: px(48.), max: px(640.), default: MESSAGE_HEIGHT };
         let bar = bar.render(boxed, self.message_height, &self.hits, |this: &mut CommitPanel, height, cx| {
             this.message_height = height;
@@ -77,11 +74,11 @@ impl CommitPanel {
         }, |_: &mut CommitPanel, cx| cx.emit(PanelEvent::Resized), cx)
         .flex_none()
         .px_2();
-        div().flex().flex_col().flex_none().gap_1().child(bar).children(field.map(|f| self.field_actions(f, cx)))
+        div().flex().flex_col().flex_none().gap_1().child(bar).children(self.actions_row(editable, cx))
     }
 
-    /// The message as it is, with Copy, and the muted line of what a click edits.
-    fn read_only(&self, shown: &Shown, box_bg: Hsla, cx: &mut Context<Self>) -> Div {
+    /// The message in one box, read only or edited in place, with Copy and the muted line of what a press edits.
+    fn message_box(&self, shown: &Shown, editable: bool, box_bg: Hsla, cx: &mut Context<Self>) -> Div {
         let colors = cx.theme().colors().clone();
         let text = format!("{}\n\n{}", shown.summary, shown.body).trim_end().to_string();
         let copy = button::Button::new(&self.hits, "commit-message-copy").icon(Icon::Copy.svg(13., colors.text_muted)).icon_only(px(22.))
@@ -90,18 +87,30 @@ impl CommitPanel {
                 cx.stop_propagation();
                 supraman_ui::clipboard::write_text(cx, text.clone());
             });
-        let content = supraman_ui::scroll::area("commit-message")
-            .track(&self.message_scroll)
-            .size_full()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .p_2()
-            .pr_6()
-            .child(div().text_base().font_weight(FontWeight::MEDIUM).text_color(colors.text).child(shown.summary.clone()))
-            .when(!shown.body.is_empty(), |d| d.child(div().text_xs().text_color(colors.text).child(shown.body.clone())));
-        let boxed = div().id("commit-message-box").relative().size_full().rounded_md().border_1().border_color(colors.border).bg(box_bg).child(content);
-        div().size_full().child(self.offer_line(shown, boxed, cx).child(div().absolute().top_1().right_1().child(copy)))
+        let content = supraman_ui::scroll::area("commit-message").track(&self.message_scroll).size_full().flex().flex_col().gap_2().p_2().pr_6();
+        let content = self.message_text(shown, editable, content, cx);
+        let content = match self.field() {
+            Some(field) => field.order(cx).on(content),
+            None => content,
+        };
+        let editing = self.field().is_some();
+        let hint = reword::offer(shown).filter(|_| !editing).map(|(words, _)| {
+            let line = div().absolute().bottom_1().left_2().text_xs().text_color(colors.text_muted).child(words);
+            if editable { line.invisible().group_hover(reword::EDIT_KEY, |s| s.visible()) } else { line }
+        });
+        let boxed = div().id("commit-message-box").group(reword::EDIT_KEY).relative().size_full().rounded_md().border_1().border_color(colors.border).bg(box_bg).child(content).children(hint);
+        let boxed = if editable && !editing { boxed.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_field(window, cx))) } else { boxed };
+        div().size_full().child(boxed.child(div().absolute().top_1().right_1().child(copy)))
+    }
+
+    /// The summary at its size and weight, wrapped, over the body: the panel's read-only inputs, editable in place.
+    fn message_text(&self, shown: &Shown, editable: bool, content: supraman_ui::scroll::ScrollArea, cx: &mut Context<Self>) -> supraman_ui::scroll::ScrollArea {
+        let Some(m) = self.message_inputs() else { return content };
+        let text = cx.theme().colors().text;
+        let summary = div().relative().text_base().font_weight(FontWeight::MEDIUM).text_color(text).child(m.summary.clone());
+        let summary = if editable { summary.child(supraman_ui::hit::hit_target(&self.hits, reword::EDIT_KEY.into())) } else { summary };
+        let body = shown.stash.is_none() && (editable || !shown.body.is_empty());
+        content.child(summary).when(body, |d| d.child(div().text_xs().text_color(text).child(m.description.clone())))
     }
 
     fn author(&self, shown: &Shown, palette: &Palette, cx: &mut Context<Self>) -> Div {
@@ -274,6 +283,7 @@ impl CommitPanel {
 impl Render for CommitPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _stall = stall::section("render: commit panel");
+        self.sync_message(window, cx);
         self.open_asked_field(window, cx);
         let colors = cx.theme().colors().clone();
         let bg = blend(colors.text.opacity(PANEL_STEP), colors.editor_background);

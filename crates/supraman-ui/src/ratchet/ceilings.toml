@@ -26,7 +26,7 @@
 "supraman-app/src/selftest_left.rs" = 4
 "supraman-app/src/selftest_manage.rs" = 8
 "supraman-app/src/selftest_overflow.rs" = 4
-"supraman-app/src/selftest_shots.rs" = 8
+"supraman-app/src/selftest_shots.rs" = 4
 "supraman-app/src/selftest_shots/gallery.rs" = 4
 "supraman-app/src/selftest_shots/git.rs" = 2
 "supraman-app/src/selftest_tabs.rs" = 1
@@ -116,7 +116,8 @@
 "supraman-ui/src/tabs/fit.rs" = 7
 "supraman-ui/src/tabs/list.rs" = 1
 "supraman-ui/src/term_element.rs" = 25
-"supraman-ui/src/text_input.rs" = 8
+"supraman-ui/src/text_input.rs" = 5
+"supraman-ui/src/text_input/element.rs" = 3
 "supraman-ui/src/tokens.rs" = 18
 "supraman-ui/src/tooltip.rs" = 1
 "supraman-ui/src/tree.rs" = 4

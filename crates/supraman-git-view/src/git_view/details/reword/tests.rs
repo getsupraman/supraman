@@ -262,3 +262,66 @@ fn a_detached_heads_older_commit_says_to_check_out_a_branch(cx: &mut TestAppCont
     assert_eq!(offer(&shown), Some((CHECK_OUT_TO_REWORD, None)));
     assert!(!painted(&view, EDIT_KEY, cx));
 }
+
+fn inputs(view: &Entity<GitView>, cx: &mut VisualTestContext) -> [Entity<supraman_ui::text_input::TextInput>; 2] {
+    panel(view, cx).read_with(cx, |p, _| {
+        let m = p.message_inputs().expect("the message's inputs");
+        [m.summary.clone(), m.description.clone()]
+    })
+}
+
+/// The message's inputs' boxes and rows, and where Copy and the file toolbar's tick box are painted.
+fn message_layout(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<String> {
+    let hits = test_support::repaint(view, cx);
+    let [summary, description] = inputs(view, cx);
+    let mut out: Vec<String> = [summary, description].iter().map(|i| format!("{:?}", i.read_with(cx, |i, _| i.painted_rows()))).collect();
+    out.extend(["commit-message-copy", "commit-all-files"].map(|k| format!("{k} {:?}", hits.borrow().get(k).map(|h| h.bounds))));
+    out
+}
+
+fn press_at(input: &Entity<supraman_ui::text_input::TextInput>, offset: usize, clicks: usize, view: &Entity<GitView>, cx: &mut VisualTestContext) {
+    let position = input.read_with(cx, |i, _| i.painted_at(offset)).expect("painted");
+    let (button, modifiers) = (gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_event(gpui::MouseDownEvent { position, button, modifiers, click_count: clicks, first_mouse: false });
+    cx.simulate_event(gpui::MouseUpEvent { position, button, modifiers, click_count: clicks });
+    cx.run_until_parked();
+    redraw(view, cx);
+}
+
+#[gpui::test]
+fn a_press_on_heads_message_puts_the_caret_where_it_lands_and_moves_nothing_and_esc_puts_the_text_back(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let (view, cx) = open(&f.dir, occupancy::Live::default(), cx);
+    select(&view, &head(&f), cx);
+    let [summary, _] = inputs(&view, cx);
+    assert!(summary.read_with(cx, |i, _| i.is_read_only()), "read only until pressed");
+    let before = message_layout(&view, cx);
+    press_at(&summary, 5, 1, &view, cx);
+    assert!(open_field(&view, cx), "the press opens the field");
+    assert_eq!(summary.read_with(cx, |i, _| (i.is_read_only(), i.line.selection())), (false, 5..5), "the caret at the pressed character");
+    assert!(summary.read_with(cx, |i, _| i.caret_painted.get()), "the caret lit");
+    assert_eq!(message_layout(&view, cx), before, "the box, the text's layout and what is below it stay where they were");
+    assert!(painted(&view, "commit-amend-counter", cx) && painted(&view, UPDATE_KEY, cx), "the actions in their row");
+
+    cx.simulate_input("X");
+    redraw(&view, cx);
+    assert_eq!(field(&view, cx).0, "AheadX of origin");
+    keys(&view, "escape", cx);
+    assert!(!open_field(&view, cx));
+    assert_eq!(summary.read_with(cx, |i, _| (i.text().to_string(), i.is_read_only())), ("Ahead of origin".to_string(), true), "Esc puts the message back, read only");
+}
+
+#[gpui::test]
+fn a_message_that_cannot_be_reworded_is_selected_and_copied_and_takes_no_caret(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let (view, cx) = open(&f.dir, occupancy::Live::default(), cx);
+    select(&view, f.sha("merge"), cx);
+    let [summary, _] = inputs(&view, cx);
+    press_at(&summary, 1, 2, &view, cx);
+    assert!(!open_field(&view, cx), "no field");
+    let (read_only, caret, selected) = summary.read_with(cx, |i, _| (i.is_read_only(), i.caret_painted.get(), i.text()[i.line.selection()].to_string()));
+    assert!(read_only && !caret, "read only, no caret");
+    assert!(!selected.is_empty(), "the double-click selected a word");
+    keys(&view, "ctrl-c", cx);
+    assert_eq!(cx.update(|_, cx| supraman_ui::clipboard::text(cx)), Some(selected), "Ctrl+C copies the selection");
+}

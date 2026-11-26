@@ -2,12 +2,13 @@
 
 use std::ops::Range;
 
-use gpui::{AnyElement, App, Context, Div, Focusable as _, Hsla, IntoElement, Rems, SharedString, Window, div, prelude::*, rems};
+use gpui::{AnyElement, App, Context, Div, Entity, Focusable as _, Hsla, IntoElement, Rems, SharedString, Window, div, prelude::*, rems};
 use theme::ActiveTheme as _;
 
 use super::{Gallery, Sample};
 use crate::button::{self, Button, ButtonSplit, Fill, Size, Tone};
 use crate::hit::hit_target;
+use crate::text_input::TextInput;
 use crate::icon::Icon;
 use crate::marks::{Activity, Mark};
 use crate::tokens;
@@ -394,15 +395,24 @@ pub fn marks(cx: &mut Context<Gallery>) -> AnyElement {
         .into_any_element()
 }
 
+pub const SELECTED: &str = "Read-only text selects with the mouse, Shift+arrows and Ctrl+A, and Ctrl+C copies the selection.";
+pub const SELECTION: Range<usize> = 15..43;
+pub const SUMMARY: &str = "fix(dolomiti): skipass error codes are camelCase on the wire and in the widget";
+
 pub fn text(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
     let hits = &g.hits;
     let colors = cx.theme().colors().clone();
     let muted = crate::themes::secondary(&colors);
     let boxed = |key: &str, w: f32, label: AnyElement| div().relative().w(width(w)).px(tokens::space::S).border(tokens::stroke::HAIRLINE).border_color(colors.border_variant).child(label).child(hit_target(hits, key.to_string()));
+    let summary = |input: &Entity<TextInput>| div().text_size(tokens::text::TITLE).font_weight(gpui::FontWeight::MEDIUM).p(tokens::space::L).child(input.clone()).into_any_element();
     div()
         .flex()
         .flex_col()
         .gap(tokens::space::XL)
+        .child(group("TextView: a selection, inactive here and active under the keys", cx).child(boxed("kit-text-view", 30., g.inputs.view.clone().into_any_element())))
+        .child(group("TextBox: read only, then editable, the same box", cx)
+            .child(boxed("kit-text-read", 22., summary(&g.inputs.pair[0])))
+            .child(boxed("kit-text-edit", 22., summary(&g.inputs.pair[1]))))
         .child(group("clipped: whole, cut at the end, cut in the middle", cx)
             .child(boxed("kit-clip-whole", 30., crate::clipped::clipped("kit-clip-whole-label", "A label that fits", false).into_any_element()))
             .child(boxed("kit-clip-end", 14., crate::clipped::clipped("kit-clip-end-label", LONG, false).into_any_element()))

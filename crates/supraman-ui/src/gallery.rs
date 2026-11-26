@@ -92,7 +92,7 @@ impl Section {
             Section::Prompts => "Prompts over a tab: a question, a danger question, a form, the upstream prompt; banners, notices, toast",
             Section::Cards => "Hover card, tooltip, details page, inbox card, placeholder",
             Section::Marks => "Marks: dots, rings, activity, squares, progress line",
-            Section::Text => "Clipped labels: cut with their tooltip, path labels, pairs, clamped",
+            Section::Text => "Text: a read-only text's selection, the read-only and editable box; clipped labels, path labels, pairs, clamped",
             Section::Scroll => "Scroll areas: a list, a box, a nested pair, a grid, and a box set to always",
         }
     }
@@ -168,7 +168,7 @@ impl Section {
             Section::Cards => vec![hover("hover-card", "kit-inbox-a")],
             Section::Marks => Vec::new(),
             Section::Scroll => vec![hover("hover-area", "kit-scroll-div"), hover("hover-thumb", "kit-scroll-div-bar-thumb"), press("scrolling", "kit-scroll-div-bar-track")],
-            Section::Text => vec![tip("tooltip-clipped", "kit-clip-end", sections::LONG), tip("tooltip-path", "kit-path-long", sections::PATH_FOLDER)],
+            Section::Text => vec![focus("focus-text-view"), focus("focus-text-edit"), tip("tooltip-clipped", "kit-clip-end", sections::LONG), tip("tooltip-path", "kit-path-long", sections::PATH_FOLDER)],
         }
     }
 }
@@ -207,6 +207,10 @@ pub(crate) struct Inputs {
     pub form_name: Entity<TextInput>,
     pub form_url: Entity<TextInput>,
     pub upstream: Entity<TextInput>,
+    /// A read-only text with a selection.
+    pub view: Entity<TextInput>,
+    /// The same message read only, then editable.
+    pub pair: [Entity<TextInput>; 2],
 }
 
 pub struct Gallery {
@@ -252,7 +256,16 @@ impl Gallery {
             form_name: input("Name", "sample", |i| i, window, cx),
             form_url: input("Address", "", |i| i, window, cx),
             upstream: input("Branch on the remote", "main", |i| i, window, cx),
+            view: input("", sections::SELECTED, |i| i.multi_line().plain().read_only(), window, cx),
+            pair: [
+                input("Commit summary", sections::SUMMARY, |i| i.wrapped().plain().read_only(), window, cx),
+                input("Commit summary", sections::SUMMARY, |i| i.wrapped().plain(), window, cx),
+            ],
         };
+        inputs.view.update(cx, |i, cx| {
+            i.line.select(sections::SELECTION, false);
+            cx.notify();
+        });
         inputs.invalid.update(cx, |i, cx| i.set_invalid(true, cx));
         let rows = [
             Sample { key: "alpha", text: "Alpha sample row", dimmed: None },
@@ -343,6 +356,8 @@ impl Gallery {
             "focus-inline" => Some(self.inputs.inline.focus_handle(cx)),
             "focus-invalid" => Some(self.inputs.invalid.focus_handle(cx)),
             "focus-multi" => Some(self.inputs.multi.focus_handle(cx)),
+            "focus-text-view" => Some(self.inputs.view.focus_handle(cx)),
+            "focus-text-edit" => Some(self.inputs.pair[1].focus_handle(cx)),
             "focus-table-a" => Some(self.tables[0].focus_handle().clone()),
             "focus-table-b" => Some(self.tables[1].focus_handle().clone()),
             "focus-tree-a" => Some(self.trees[0].focus_handle().clone()),

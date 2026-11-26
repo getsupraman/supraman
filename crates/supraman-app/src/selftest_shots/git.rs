@@ -9,7 +9,7 @@ use serde_json::json;
 use supraman_core::folders::Place;
 use supraman_gitman::{Git, fixture};
 
-use super::{GROUP, capture, home, mv, root, sleep};
+use super::{GROUP, capture, home, mv, mv_away, root, sleep};
 use crate::view::FleetView;
 
 const DANA: (&str, &str) = ("Dana Ortiz", "dana.ortiz@example.com");
@@ -225,4 +225,27 @@ async fn leave(view: &Entity<FleetView>, tab: u64, dir: &Path, cx: &mut AsyncWin
     cx.background_executor().spawn(async move { supraman_core::folders::edit(&home(), |e| e.remove_folder(pos)) }).await.context("removing the shop from the demo group")?;
     view.update(cx, |v, _| v.polls.poll_nudge.wake());
     crate::selftest::until(view, cx, Duration::from_secs(15), "the shop's row gone", |v| v.tree().folders().all(|(_, f)| f.path != shop()).then_some(())).await
+}
+
+/// HEAD's message in the commit panel, read only, then pressed: the pair matches but for the caret and the actions' row.
+pub(super) async fn message(view: &Entity<FleetView>, git: &Entity<crate::git_view::GitView>, head: &str, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let row = crate::selftest_git::until_probe(view, git, "HEAD's row", cx, |p, _| crate::selftest_git::row_key(p, head).ok()).await?;
+    crate::selftest_git::tap(view, &row, cx).await?;
+    crate::selftest_git::until_probe(view, git, "HEAD in the commit panel", cx, |p, v| {
+        (p.commit.as_ref().is_some_and(|(sha, _)| sha == head) && v.hits.borrow().contains_key("commit-message-edit")).then_some(())
+    })
+    .await?;
+    mv_away(cx)?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-git-message.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    view.read_with(cx, |v, _| v.hits.borrow_mut().remove("commit-amend-update"));
+    crate::selftest::click(view, "commit-message-edit", cx).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the message edited in place", |v| v.hits.borrow().contains_key("commit-amend-update").then_some(())).await?;
+    mv_away(cx)?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-git-message-editing.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    crate::selftest::click(view, "commit-amend-cancel", cx).await?;
+    crate::selftest::drawn(cx).await
 }

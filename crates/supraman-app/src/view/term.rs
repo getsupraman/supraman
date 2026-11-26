@@ -218,7 +218,7 @@ impl FleetView {
                 self.close_find(tab_id, &terminal, cx);
                 self.focus.focus(window, cx);
             }
-            InputEvent::Refused(_) | InputEvent::Submit => {}
+            InputEvent::Refused(_) | InputEvent::Submit | InputEvent::Pressed => {}
         }
         cx.notify();
     }

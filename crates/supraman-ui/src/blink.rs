@@ -32,19 +32,24 @@ impl Blink {
 
     /// `owner`'s blink: running while `focus` is focused and its window active, stopped otherwise; `owner` repaints with it.
     pub fn follow<V: 'static>(focus: &FocusHandle, window: &mut Window, cx: &mut Context<V>) -> (Entity<Blink>, [Subscription; 4]) {
+        Self::follow_while(focus, |_| true, window, cx)
+    }
+
+    /// [`Blink::follow`] that also stays stopped while `wanted` says `owner` shows no caret (read-only text).
+    pub fn follow_while<V: 'static>(focus: &FocusHandle, wanted: fn(&V) -> bool, window: &mut Window, cx: &mut Context<V>) -> (Entity<Blink>, [Subscription; 4]) {
         let blink = cx.new(Blink::new);
-        let run = |blink: &Entity<Blink>, focus: &FocusHandle, window: &Window, cx: &mut App| {
-            let on = focus.is_focused(window) && window.is_window_active();
+        let run = |blink: &Entity<Blink>, focus: &FocusHandle, wanted: bool, window: &Window, cx: &mut App| {
+            let on = wanted && focus.is_focused(window) && window.is_window_active();
             blink.update(cx, |b, cx| b.set_running(on, cx));
         };
         let (b, f) = (blink.clone(), focus.clone());
-        let focused = cx.on_focus(focus, window, move |_, window, cx| run(&b, &f, window, cx));
+        let focused = cx.on_focus(focus, window, move |v, window, cx| run(&b, &f, wanted(v), window, cx));
         let b = blink.clone();
         let blurred = cx.on_blur(focus, window, move |_, _, cx| b.update(cx, |b, cx| b.stop(cx)));
         let (b, f) = (blink.clone(), focus.clone());
-        let activation = cx.observe_window_activation(window, move |_, window, cx| run(&b, &f, window, cx));
+        let activation = cx.observe_window_activation(window, move |v, window, cx| run(&b, &f, wanted(v), window, cx));
         let repaint = cx.observe(&blink, |_, _, cx| cx.notify());
-        run(&blink, focus, window, cx);
+        run(&blink, focus, true, window, cx);
         (blink, [focused, blurred, activation, repaint])
     }
 

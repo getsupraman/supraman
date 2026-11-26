@@ -1,9 +1,10 @@
-//! The message box edited in place: HEAD's amended, an older commit's reworded by GitMan's rebase, or a stash's saved.
+//! The message box edited in place: HEAD's amended, an older commit's reworded by GitMan's rebase, or a stash's saved;
+//! the message is one pair of [`TextInput`]s, read only until a press on a message that can be edited.
 
 use supraman_core::text::count;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use gpui::{App, ClickEvent, Context, Div, Focusable, Hsla, Stateful, Subscription, Window, div, prelude::*};
+use gpui::{App, ClickEvent, Context, Div, Entity, Focusable, SharedString, Subscription, Window, div, prelude::*};
 use supraman_gitman::Amendable;
 use supraman_gitman::write::rebase::{self, Autostash, Rebased};
 use supraman_gitman::write::{LockSet, Session, WriteError, wip};
@@ -17,7 +18,7 @@ use theme::ActiveTheme as _;
 
 use super::{CommitPanel, PanelEvent, Shown};
 use crate::git_view::stash::StashRef;
-use crate::git_view::wip::compose::{failure_banner, message_fields, summary_row};
+use crate::git_view::wip::compose::{failure_banner, message_fields, summary_count};
 use crate::git_view::write_gate::{STILL_OPENING, Written};
 use supraman_core::text::capitalised;
 
@@ -45,14 +46,20 @@ pub(crate) enum Target {
 
 pub(crate) struct Field {
     pub(crate) target: Target,
-    pub(crate) summary: gpui::Entity<TextInput>,
-    pub(crate) description: gpui::Entity<TextInput>,
+    pub(crate) summary: Entity<TextInput>,
+    pub(crate) description: Entity<TextInput>,
+}
+
+/// The shown message's summary and description, read only while no field is open.
+pub(crate) struct Message {
+    pub(crate) summary: Entity<TextInput>,
+    pub(crate) description: Entity<TextInput>,
     _events: [Subscription; 2],
 }
 
 impl Field {
     /// The summary, then the description; a stash's message has only the summary.
-    fn order(&self, cx: &App) -> FocusOrder {
+    pub(super) fn order(&self, cx: &App) -> FocusOrder {
         let description = (!matches!(self.target, Target::Stash(_))).then(|| self.description.focus_handle(cx));
         FocusOrder::new(std::iter::once(self.summary.focus_handle(cx)).chain(description))
     }
@@ -61,6 +68,8 @@ impl Field {
 #[derive(Default)]
 pub(crate) struct Reword {
     pub(crate) field: Option<Field>,
+    /// Made on the panel's first render.
+    pub(crate) message: Option<Message>,
     /// The commit whose message field opens once the panel shows it.
     pub(crate) edit_next: Option<String>,
     asking: Option<Confirm<String>>,
@@ -145,26 +154,64 @@ impl CommitPanel {
         }
     }
 
-    /// The shown message in the field, the summary focused.
-    pub(crate) fn open_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(shown) = self.shown() else { return };
-        let Some((_, Some(target))) = offer(&shown) else { return };
-        let body = if matches!(target, Target::Stash(_)) { String::new() } else { shown.body.to_string() };
-        let (summary, description) = message_fields(window, cx);
-        summary.update(cx, |i, cx| i.set_text(&shown.summary, cx));
-        supraman_ui::focus::request(&summary.focus_handle(cx), window, cx);
-        description.update(cx, |i, cx| i.set_text(&body, cx));
-        let events = [
+    /// The message's inputs, made once with their events.
+    fn ensure_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.reword.message.is_some() {
+            return;
+        }
+        let (summary, description) = message_fields(true, window, cx);
+        let _events = [
             cx.subscribe_in(&summary, window, |this: &mut Self, _, e: &InputEvent, window, cx| this.field_event(e, true, window, cx)),
             cx.subscribe_in(&description, window, |this: &mut Self, _, e: &InputEvent, window, cx| this.field_event(e, false, window, cx)),
         ];
-        self.reword.field = Some(Field { target, summary, description, _events: events });
+        self.reword.message = Some(Message { summary, description, _events });
+    }
+
+    /// The shown message in the inputs, read only, while no field is open: what Esc and a new commit put back.
+    pub(super) fn sync_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.ensure_message(window, cx);
+        let (Some(m), None) = (&self.reword.message, &self.reword.field) else { return };
+        let (summary, body) = self.shown().map_or((SharedString::default(), SharedString::default()), |s| (s.summary.clone(), if s.stash.is_some() { SharedString::default() } else { s.body.clone() }));
+        for (input, text) in [(m.summary.clone(), summary), (m.description.clone(), body)] {
+            input.update(cx, |i, cx| {
+                if i.text() != text.as_ref() {
+                    i.set_text(&text, cx);
+                }
+                i.set_read_only(true, window, cx);
+            });
+        }
+    }
+
+    /// The shown message in the field, the summary focused with its caret at the end.
+    pub(crate) fn open_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(summary) = self.edit_in_place(window, cx) {
+            let text = summary.read(cx).text().to_string();
+            summary.update(cx, |i, cx| i.set_text(&text, cx));
+            supraman_ui::focus::request(&summary.focus_handle(cx), window, cx);
+        }
+    }
+
+    /// The read-only message made editable where it is, the selection and focus left as they are; the summary.
+    fn edit_in_place(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Entity<TextInput>> {
+        let shown = self.shown()?;
+        let Some((_, Some(target))) = offer(&shown) else { return None };
+        self.sync_message(window, cx);
+        let m = self.reword.message.as_ref()?;
+        let (summary, description) = (m.summary.clone(), m.description.clone());
+        for input in [&summary, &description] {
+            input.update(cx, |i, cx| i.set_read_only(false, window, cx));
+        }
+        self.reword.field = Some(Field { target, summary: summary.clone(), description });
         self.reword.failure = None;
         cx.notify();
+        Some(summary)
     }
 
     fn field_event(&mut self, e: &InputEvent, in_summary: bool, window: &mut Window, cx: &mut Context<Self>) {
         match e {
+            InputEvent::Pressed if self.reword.field.is_none() => {
+                self.edit_in_place(window, cx);
+            }
             InputEvent::Edited => cx.notify(),
             InputEvent::Confirm if in_summary => {
                 if let Some(field) = &self.reword.field {
@@ -293,6 +340,10 @@ impl CommitPanel {
         self.reword.failure.as_deref()
     }
 
+    pub(crate) fn message_inputs(&self) -> Option<&Message> {
+        self.reword.message.as_ref()
+    }
+
     pub(crate) fn field(&self) -> Option<&Field> {
         self.reword.field.as_ref()
     }
@@ -340,52 +391,20 @@ impl CommitPanel {
         cx.notify();
     }
 
-    /// The read-only box's muted line, and its click where it edits.
-    pub(super) fn offer_line(&self, shown: &Shown, boxed: Stateful<Div>, cx: &mut Context<Self>) -> Stateful<Div> {
-        let Some((words, target)) = offer(shown) else { return boxed };
-        let line = div().absolute().bottom_1().left_2().text_xs().text_color(cx.theme().colors().text_muted).child(words);
-        if target.is_none() {
-            return boxed.child(line);
-        }
-        boxed
-            .group(EDIT_KEY)
-            .cursor_pointer()
-            .child(line.invisible().group_hover(EDIT_KEY, |s| s.visible()))
-            .child(hit_target(&self.hits, EDIT_KEY.into()))
-            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_field(window, cx)))
-    }
-
-    /// The open field in the box's place: the summary with its count, and HEAD's description.
-    pub(super) fn field_box(&self, field: &Field, box_bg: Hsla, cx: &mut Context<Self>) -> supraman_ui::scroll::ScrollArea {
-        let colors = cx.theme().colors().clone();
-        field.order(cx).on(supraman_ui::scroll::area("commit-amend"))
-            .size_full()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .p_2()
-            .rounded_md()
-            .border_1()
-            .border_color(colors.border_focused)
-            .bg(box_bg)
-            .child(summary_row(&self.hits, &field.summary, "commit-amend-counter", cx))
-            .when(!matches!(field.target, Target::Stash(_)), |d| d.child(field.description.clone()))
-    }
-
     pub(crate) fn prompt(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         self.reword.asking.as_ref().map(|asked| self.reword.dialog.ask(&self.hits, ASK_KEY, asked, |this: &mut Self, answer, _, cx| this.answer_amend(answer == Answer::Yes, cx), cx))
     }
 
-    /// Under the open field: a failure, what a reword rebases, Cancel and Update Message (Reword).
-    pub(super) fn field_actions(&self, field: &Field, cx: &mut Context<Self>) -> Div {
+    /// The row kept under an editable message: while a field is open, the count, what a reword rebases, Cancel and Update; then a failure.
+    pub(super) fn actions_row(&self, editable: bool, cx: &mut Context<Self>) -> Option<Div> {
+        let row = div().flex().flex_none().items_center().gap_2().h(supraman_ui::tokens::control::SMALL.height).px_2().text_xs();
+        let Some(field) = self.reword.field.as_ref() else {
+            return editable.then(|| div().flex().flex_col().child(row));
+        };
         let (update_words, cancel_words) = match field.target {
             Target::Head { .. } => ("Update Message", "Cancel Amend"),
             Target::Older { .. } => ("Reword", "Cancel Reword"),
             Target::Stash(_) => ("Update Stash Message", "Cancel"),
-        };
-        let rebases = match field.target {
-            Target::Older { above, .. } => Some(rebases_words(above)),
-            _ => None,
         };
         let update = button::Button::new(&self.hits, UPDATE_KEY).label(update_words).tone(button::Tone::Success);
         let update = match self.update_why_not(cx) {
@@ -394,16 +413,13 @@ impl CommitPanel {
         };
         let cancel = button::Button::new(&self.hits, CANCEL_KEY).label(cancel_words).fill(button::Fill::Outline).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_amend(cx)));
         let muted = cx.theme().colors().text_muted;
-        let rebases = rebases.map(|words| div().relative().text_xs().text_color(muted).child(words).child(hit_target(&self.hits, REBASES_KEY.into())));
-        div()
-            .flex()
-            .flex_col()
-            .flex_none()
-            .gap_1()
-            .px_2()
-            .children(self.failure(cx))
-            .children(rebases)
-            .child(div().flex().gap_2().justify_end().child(cancel).child(update))
+        let rebases = match field.target {
+            Target::Older { above, .. } => Some(supraman_ui::clipped::clipped(REBASES_KEY, rebases_words(above), false).text_color(muted).child(hit_target(&self.hits, REBASES_KEY.into()))),
+            _ => None,
+        };
+        let count = summary_count(&self.hits, &field.summary, "commit-amend-counter", cx);
+        let row = row.child(count).child(div().flex_1().min_w_0().children(rebases)).child(cancel).child(update);
+        Some(div().flex().flex_col().gap_1().child(row).children(self.failure(cx).map(|f| f.mx_2())))
     }
 
     fn failure(&self, cx: &mut Context<Self>) -> Option<Div> {
