@@ -348,11 +348,10 @@ impl CommitPanel {
     }
 
     /// The open field in the box's place: the summary with its count, and HEAD's description.
-    pub(super) fn field_box(&self, field: &Field, box_bg: Hsla, cx: &mut Context<Self>) -> Stateful<Div> {
+    pub(super) fn field_box(&self, field: &Field, box_bg: Hsla, cx: &mut Context<Self>) -> supraman_ui::scroll::ScrollArea {
         let colors = cx.theme().colors().clone();
-        field.order(cx).on(div().id("commit-amend"))
+        field.order(cx).on(supraman_ui::scroll::area("commit-amend"))
             .size_full()
-            .overflow_y_scroll()
             .flex()
             .flex_col()
             .gap_1()

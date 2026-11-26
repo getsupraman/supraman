@@ -92,6 +92,7 @@ pub struct SettingsView {
 
 pub fn apply_theme(home: Option<&Path>, cx: &mut App) -> Option<String> {
     let settings = home.and_then(|h| Settings::load(h).ok()).unwrap_or_default();
+    supraman_ui::scroll::set_mode(settings.appearance.scrollbars(), cx);
     themes::apply_resolved(cx, saved_theme(&settings, home)).problem
 }
 
@@ -448,13 +449,11 @@ impl Render for SettingsView {
             None => ("", Vec::new()),
         };
         let nav = nav.child(supraman_ui::focus::Pane::new("settings-pages", &self.nav).paint(&self.hits));
-        let content = div()
-            .id("settings-page")
+        let content = supraman_ui::scroll::area("settings-page")
             .flex()
             .flex_col()
             .flex_1()
             .min_w_0()
-            .overflow_y_scroll()
             .px_6()
             .py_4()
             .child(div().text_lg().font_weight(FontWeight::BOLD).pb_2().child(title))

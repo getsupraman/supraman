@@ -5,6 +5,7 @@ use std::sync::{Arc, OnceLock};
 
 use gpui::{AnyElement, ClickEvent, Context, Pixels, SharedString, div, prelude::*, px};
 use supraman_core::shells::ShellSetting;
+use supraman_core::Scrollbars;
 use supraman_core::{DEFAULT_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, TabKeys};
 use supraman_ui::settings_page::row;
 use supraman_ui::themes::{self, TerminalColors};
@@ -117,6 +118,7 @@ impl SettingsView {
         vec![
             self.render_theme(&current, terminal, cx),
             self.render_terminal_colors(&current, terminal, cx),
+            self.render_scrollbars(cx),
             self.render_font_size(cx),
             self.render_font(&family, ligatures, &installed, cx),
             self.render_ligatures(ligatures, cx),
@@ -190,6 +192,30 @@ impl SettingsView {
             "The 16 ANSI colours in terminal tabs: the theme's, or Windows Terminal's Campbell. Background, \
              text and cursor stay the theme's; the selection stays white, as in Windows Terminal.",
             terminal_choices.into_any_element(),
+            None,
+            cx,
+        )
+    }
+
+    fn set_scrollbars(&mut self, mode: Scrollbars, cx: &mut Context<Self>) {
+        self.change(move |s| s.appearance.scrollbars = (mode != Scrollbars::Auto).then_some(mode), cx);
+        supraman_ui::scroll::set_mode(mode, cx);
+    }
+
+    fn render_scrollbars(&self, cx: &mut Context<Self>) -> AnyElement {
+        const VALUES: [(&str, Scrollbars); 2] = [("Auto", Scrollbars::Auto), ("Always", Scrollbars::Always)];
+        let current = self.settings.appearance.scrollbars();
+        let mut list = div().flex().gap_1();
+        for (ix, (label, value)) in VALUES.into_iter().enumerate() {
+            list = list.child(button::choice(("scrollbars", ix), label, current == value, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_scrollbars(value, cx))));
+        }
+        let focus = self.members.handle("settings-scrollbars", cx);
+        let chosen = VALUES.iter().position(|(_, v)| *v == current);
+        let list = button::choices(list, &focus, VALUES.len(), chosen, move |this: &mut Self, ix, _, cx| this.set_scrollbars(VALUES[ix].1, cx), cx);
+        row(
+            "Scrollbars",
+            "Auto shows a list's or a page's scrollbar while it scrolls and while the pointer is over it; Always shows it              whenever there is more to scroll to. Kept in settings.toml ([appearance] scrollbars).",
+            list.into_any_element(),
             None,
             cx,
         )

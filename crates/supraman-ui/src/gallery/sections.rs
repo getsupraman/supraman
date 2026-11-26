@@ -383,3 +383,43 @@ pub fn text(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
         .child(group("clamped: two lines, the last cut", cx).child(boxed("kit-clamped", 14., crate::clipped::clamped("kit-clamped-label", LONG, 2).into_any_element())))
         .into_any_element()
 }
+
+/// The scroll section's scrollers.
+#[derive(Default)]
+pub struct Scrolls {
+    list: crate::keyed_list::KeyedList,
+    grid: gpui::UniformListScrollHandle,
+}
+
+const SCROLL_ROWS: usize = 40;
+
+pub fn scroll(g: &mut Gallery, cx: &mut Context<Gallery>) -> AnyElement {
+    let colors = cx.theme().colors().clone();
+    g.scrolls.list.set_rows((0..SCROLL_ROWS).map(|i| (SharedString::from(format!("row-{i}")), Vec::new())).collect());
+    let line = |text: String| div().flex_none().px(tokens::space::L).py(tokens::space::XS).child(text);
+    let boxed = |caption_text: &str, key: &str, body: AnyElement, cx: &App| {
+        let frame = div().relative().h(width(20.)).w(width(13.)).border(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border).child(body).child(hit_target(&g.hits, key.to_string()));
+        group(caption_text, cx).child(frame)
+    };
+    let list = gpui::list(g.scrolls.list.state(), |ix, _, _| div().px(tokens::space::L).py(tokens::space::XS).child(format!("List row {}", ix + 1)).into_any_element()).size_full();
+    let list = div().relative().size_full().child(list).child(g.scrolls.list.scrollbar("kit-scroll-list-bar").hit(&g.hits, "kit-scroll-list-bar"));
+    let rows = |n: usize, word: &str| (0..n).map(|i| line(format!("{word} {}", i + 1))).collect::<Vec<_>>();
+    let long = crate::scroll::area("kit-scroll-div-area").hit(&g.hits, "kit-scroll-div-bar").size_full().flex().flex_col().children(rows(SCROLL_ROWS, "Box line"));
+    let inner = crate::scroll::area("kit-scroll-inner").hit(&g.hits, "kit-scroll-inner-bar").flex_none().h(width(8.)).mx(tokens::space::L).border(tokens::stroke::HAIRLINE).border_color(colors.border).flex().flex_col().children(rows(16, "Inner line"));
+    let nested = crate::scroll::area("kit-scroll-outer").hit(&g.hits, "kit-scroll-outer-bar").size_full().flex().flex_col().children(rows(3, "Outer line")).child(inner).children(rows(SCROLL_ROWS, "Outer line"));
+    let grid = gpui::uniform_list("kit-scroll-grid-rows", 200, |range, _, _| range.map(|i| div().px(tokens::space::L).child(format!("{i:>4}  0x{:08x}  ........", i * 0x1f3)).into_any_element()).collect())
+        .track_scroll(&g.scrolls.grid)
+        .size_full()
+        .font_family(crate::fonts::MONO)
+        .text_size(tokens::text::SMALL);
+    let grid = div().relative().size_full().child(grid).child(crate::scroll::Scrollbar::new("kit-scroll-grid-bar", &g.scrolls.grid).hit(&g.hits, "kit-scroll-grid-bar"));
+    let always = crate::scroll::area("kit-scroll-always").hit(&g.hits, "kit-scroll-always-bar").mode(crate::scroll::Scrollbars::Always).size_full().flex().flex_col().children(rows(SCROLL_ROWS, "Always line"));
+    row()
+        .items_start()
+        .child(boxed("gpui::list", "kit-scroll-list", list.into_any_element(), cx))
+        .child(boxed("scroll::area", "kit-scroll-div", long.into_any_element(), cx))
+        .child(boxed("nested areas", "kit-scroll-nested", nested.into_any_element(), cx))
+        .child(boxed("uniform_list grid", "kit-scroll-grid", grid.into_any_element(), cx))
+        .child(boxed("always", "kit-scroll-always-box", always.into_any_element(), cx))
+        .into_any_element()
+}

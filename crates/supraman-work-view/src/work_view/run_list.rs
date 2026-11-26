@@ -46,7 +46,7 @@ pub(crate) fn filter_labels(board: &Board) -> Vec<String> {
 impl WorkView {
     pub(super) fn render_run_page(&self, run: &str, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
-        let root = div().id("work-list").size_full().flex().flex_col().gap_2().px_5().pt_4().pb_6().overflow_y_scroll().track_scroll(&self.list_scroll);
+        let root = supraman_ui::scroll::area("work-list").track(&self.list_scroll).size_full().flex().flex_col().gap_2().px_5().pt_4().pb_6();
         let board = match self.boards.get(run) {
             Some(BoardState::Ready(board)) => board,
             Some(BoardState::Failed(message)) => return root.child(placeholder("Cannot show this run", [message.clone()], cx).size_full()).into_any_element(),

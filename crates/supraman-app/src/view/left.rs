@@ -265,8 +265,7 @@ impl FleetView {
             .children(self.render_inbox(cx))
             .when(!notices.is_empty(), |d| {
                 d.child(
-                    div()
-                        .id("notices")
+                    supraman_ui::scroll::area("notices")
                         .relative()
                         .child(hit_target(&self.hits, "notices-area".into()))
                         .flex()
@@ -276,7 +275,6 @@ impl FleetView {
                         .mb(px(SEAM_GAP))
                         .border_b_1()
                         .border_color(seam_color(cx))
-                        .overflow_y_scroll()
                         .children(notices),
                 )
             })
@@ -331,7 +329,7 @@ impl FleetView {
         notices
     }
 
-    fn left_body(&mut self, tree: &Rc<fleet::Tree>, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn left_body(&mut self, tree: &Rc<fleet::Tree>, cx: &mut Context<Self>) -> AnyElement {
         let query = self.search_query(cx);
         self.sidebar.search_marks.clear();
         if query.is_empty() {
@@ -340,20 +338,18 @@ impl FleetView {
                 let focused = this.sidebar.focus.contains_focused(window, cx);
                 div().w_full().child(this.render_left_row(ix, focused, cx)).into_any_element()
             })).size_full().pb_4();
-            let area = div().id("fleet").relative().child(hit_target(&self.hits, "tree-area".into())).flex().flex_col().flex_1().min_h(relative(TREE_MIN_SHARE)).child(list);
-            self.tree_room(area, cx)
+            let area = div().id("fleet").relative().child(hit_target(&self.hits, "tree-area".into())).flex().flex_col().flex_1().min_h(relative(TREE_MIN_SHARE)).child(list).child(self.sidebar.left_list.scrollbar("fleet-bar"));
+            self.tree_room(area, cx).into_any_element()
         } else {
-            let body = div()
-                .id("search-results")
+            let body = supraman_ui::scroll::area("search-results")
                 .relative()
                 .child(hit_target(&self.hits, "tree-area".into()))
                 .flex()
                 .flex_col()
                 .flex_1()
                 .min_h(relative(TREE_MIN_SHARE))
-                .overflow_y_scroll()
                 .pb_4();
-            self.render_results(body, &query, cx)
+            self.render_results(body, &query, cx).into_any_element()
         }
     }
 
@@ -545,17 +541,15 @@ impl FleetView {
         let total = total + scheduled.len();
         let colors = cx.theme().colors().clone();
         let (scroll, flashing) = { let w = self.work_inbox.read(cx); (w.scroll.clone(), w.flashing()) };
-        let mut inbox = div()
-            .id("inbox")
+        let mut inbox = supraman_ui::scroll::area("inbox")
+            .track(&scroll)
             .relative()
-            .track_scroll(&scroll)
             .when(flashing, |d| d.bg(colors.element_selected))
             .child(hit_target(&self.hits, if flashing { "inbox-area=flash".into() } else { "inbox-area".into() }))
             .flex()
             .flex_col()
             .min_h_0()
             .max_h(relative(INBOX_MAX_SHARE))
-            .overflow_y_scroll()
             .gap_1()
             .px_3()
             .py_2()

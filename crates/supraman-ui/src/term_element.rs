@@ -3,7 +3,7 @@
 // (GPL-3.0-or-later).
 
 use gpui::{
-    App, Bounds, ContentMask, CursorStyle, DispatchPhase, Entity, Font, FontFeatures, FontId, FontStyle,
+    App, Bounds, ContentMask, CursorStyle, DispatchPhase, ElementId, Entity, ParentElement as _, RenderOnce, div, Font, FontFeatures, FontId, FontStyle,
     FontWeight, Hitbox, HitboxBehavior, Hsla, IntoElement, Keystroke, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, Pixels, Point as GpuiPoint, SharedString, ShapedLine,
     StrikethroughStyle, Styled, TextRun, UnderlineStyle, Window, WindowTextSystem, canvas, fill,
@@ -400,21 +400,43 @@ pub fn drawn_by_fallback(text_system: &gpui::TextSystem, font_id: FontId, ch: ch
     text_system.advance(font_id, px(100.), ch).ok().is_none_or(|own| (own.width - shaped).abs() > px(0.01))
 }
 
-pub fn terminal_grid(terminal: Entity<Terminal>, font: TermFont) -> impl IntoElement {
-    let terminal_for_paint = terminal.clone();
-    canvas(
-        move |bounds, window, cx| prepaint(&terminal, &font, bounds, window, cx),
-        move |_bounds, state, window, cx| {
-            register_mouse_listeners(&terminal_for_paint, &state.hitbox, window);
-            paint(state, window, cx)
-        },
-    )
-    .size_full()
+mod scrollback;
+
+pub use scrollback::Scrollback;
+
+/// A terminal's grid with its scrollback's bar over the right edge.
+pub fn terminal_grid(terminal: Entity<Terminal>, font: TermFont) -> TerminalGrid {
+    TerminalGrid { terminal, font }
+}
+
+#[derive(IntoElement)]
+pub struct TerminalGrid {
+    terminal: Entity<Terminal>,
+    font: TermFont,
+}
+
+impl RenderOnce for TerminalGrid {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let id = self.terminal.entity_id().as_u64();
+        let scrollback = window.use_keyed_state(ElementId::NamedInteger("term-scrollback".into(), id), cx, |_, _| Scrollback::default()).read(cx).clone();
+        let bar = crate::scroll::Scrollbar::new(ElementId::NamedInteger("term-bar".into(), id), &scrollback);
+        let (terminal, font, terminal_for_paint) = (self.terminal.clone(), self.font, self.terminal);
+        let grid = canvas(
+            move |bounds, window, cx| prepaint(&terminal, &font, &scrollback, bounds, window, cx),
+            move |_bounds, state, window, cx| {
+                register_mouse_listeners(&terminal_for_paint, &state.hitbox, window);
+                paint(state, window, cx)
+            },
+        )
+        .size_full();
+        div().relative().size_full().child(grid).child(bar)
+    }
 }
 
 fn prepaint(
     terminal: &Entity<Terminal>,
     font: &TermFont,
+    scrollback: &Scrollback,
     bounds: Bounds<Pixels>,
     window: &mut Window,
     cx: &mut App,
@@ -430,8 +452,10 @@ fn prepaint(
     let dims = TerminalBounds::new(line_height, cell_width, grid_bounds);
 
     terminal.update(cx, |terminal, cx| {
+        scrollback.apply(terminal);
         terminal.set_size(dims);
         terminal.sync(window, cx);
+        scrollback.read(terminal, bounds, line_height);
     });
 
     let theme = cx.theme().clone();

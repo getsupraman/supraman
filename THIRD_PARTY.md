@@ -55,6 +55,13 @@ Supraman reads the file unchanged. It adjusts one key when it loads the file, so
 - Licence: Apache-2.0, © 2022-2024 Zed Industries, Inc. Full text: `crates/supraman-editor/queries/hcl/LICENSE`, in
   a release `licenses\hcl-highlights.LICENSE`
 
+### gpui-kit scrollbar
+
+- Source: https://github.com/longbridge/gpui-kit, `crates/base/src/scrollbar.rs` and `crates/base/src/scrollable_mask.rs` @ f807c1b
+- In Supraman: `crates/supraman-ui/src/scroll/bar.rs`, ported with changes (its header says which), compiled into `supraman.exe`
+- Licence: Apache-2.0, © 2024 - 2026 Longbridge. Full text: `crates/supraman-ui/src/scroll/gpui-kit.LICENSE`, in a release
+  `licenses\gpui-kit.LICENSE`
+
 ### The Rust standard library
 
 - Source: the Rust toolchain of `rust-toolchain.toml`, linked into every exe

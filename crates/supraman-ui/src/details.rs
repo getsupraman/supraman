@@ -133,7 +133,7 @@ pub fn render<V: 'static>(page: Page<V>, hits: &HitTargets, cx: &mut Context<V>)
         .pb(tokens::space::XL)
         .child(div().min_w_0().text_size(tokens::text::HEADING).font_weight(FontWeight::SEMIBOLD).text_color(colors.text).child(SharedString::from(page.title)))
         .children(pill);
-    let mut body = div().id(SharedString::from(format!("{}-body", page.key))).flex().flex_col().flex_1().min_h_0().overflow_y_scroll().track_scroll(page.scroll).px(tokens::space::PAGE).pb(tokens::space::XXL);
+    let mut body = crate::scroll::area(SharedString::from(format!("{}-body", page.key))).track(page.scroll).flex().flex_col().flex_1().min_h_0().px(tokens::space::PAGE).pb(tokens::space::XXL);
     if let Some(top) = page.top {
         body = body.child(top);
     }

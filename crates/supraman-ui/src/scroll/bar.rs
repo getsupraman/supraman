@@ -121,7 +121,8 @@ impl Scrollbar {
         self
     }
 
-    /// Records the thumb's track under `<key>-thumb` and, while it is painted, the thumb under `<key>-thumb-shown`.
+    /// Records the track under `<key>-track`, the thumb's part of it under `<key>-thumb` and, while it is painted, the thumb
+    /// under `<key>-thumb-shown`.
     pub fn hit(mut self, hits: &HitTargets, key: impl Into<String>) -> Self {
         self.hit = Some((hits.clone(), key.into()));
         self
@@ -181,8 +182,9 @@ impl Element for Scrollbar {
         self.settle(&state, offset, always, window, cx);
         if let Some((hits, key)) = &self.hit {
             let mut hits = hits.borrow_mut();
-            hits.remove(&format!("{key}-thumb"));
-            hits.remove(&format!("{key}-thumb-shown"));
+            for part in ["thumb", "thumb-shown", "track"] {
+                hits.remove(&format!("{key}-{part}"));
+            }
         }
         let Some(thumb) = Thumb::new(viewport.top() + INSET, viewport.size.height - INSET * 2., viewport.size.height, self.handle.content_size().height, offset) else {
             return Prepainted { state, shown: None };
@@ -193,7 +195,9 @@ impl Element for Scrollbar {
         if let Some((hits, key)) = &self.hit {
             let visible = window.content_mask().bounds;
             let bounds = Bounds::new(point(track_bounds.left(), thumb.top), size(TRACK, thumb.length));
-            hits.borrow_mut().insert(format!("{key}-thumb"), Hit { bounds, visible });
+            let mut hits = hits.borrow_mut();
+            hits.insert(format!("{key}-thumb"), Hit { bounds, visible });
+            hits.insert(format!("{key}-track"), Hit { bounds: track_bounds, visible });
         }
         Prepainted { state, shown: Some(Shown { viewport, thumb, area, track }) }
     }

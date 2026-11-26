@@ -58,13 +58,11 @@ impl WorkView {
             .on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(WorkEvent::ShowInbox)));
         let activity = self.nav_entry("work-nav-activity", Icon::Clock, "Activity", self.page == Page::Activity, None, cx)
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.show_page(Page::Activity, cx)));
-        let mut list = div()
-            .id("work-nav")
+        let mut list = supraman_ui::scroll::area("work-nav")
             .size_full()
             .flex()
             .flex_col()
             .gap(px(2.))
-            .overflow_y_scroll()
             .bg(colors.panel_background)
             .child(head)
             .child(overview)

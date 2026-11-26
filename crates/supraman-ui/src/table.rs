@@ -389,7 +389,7 @@ impl<V: 'static> Table<V> {
             .overflow_hidden()
             .child(width_probe(self.state.clone()))
             .children(header.map(|h| h.when(unfitted, |h| h.invisible())))
-            .child(self.body(widths, cx).when(unfitted, |b| b.invisible()))
+            .child(self.body_with_bar(widths, cx).when(unfitted, |b| b.invisible()))
     }
 
     /// A key's action moving the selection as `step` says, then [`Table::on_select`] when it moved.
@@ -500,6 +500,12 @@ impl<V: 'static> Table<V> {
         .child(hit_target(&self.hits, key))
     }
 
+    /// The rows with their bar over the right edge.
+    fn body_with_bar(self, widths: Rc<[Pixels]>, cx: &mut Context<V>) -> Div {
+        let bar = crate::scroll::Scrollbar::new(SharedString::from(format!("{}-bar", self.id)), &self.state.scroll);
+        div().relative().flex_1().min_h_0().w_full().child(self.body(widths, cx)).child(bar)
+    }
+
     fn body(self, widths: Rc<[Pixels]>, cx: &mut Context<V>) -> gpui::UniformList {
         let scroll = self.state.scroll.clone();
         let Self { id, state, hits, rows, row_height, inset, cell, band, on_select, near_end, on_click, row_key, .. } = self;
@@ -569,7 +575,7 @@ impl<V: 'static> Table<V> {
             }
             out
         });
-        uniform_list(list_id, rows, paint).track_scroll(&scroll).flex_1().w_full()
+        uniform_list(list_id, rows, paint).track_scroll(&scroll).size_full()
     }
 }
 

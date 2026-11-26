@@ -1,10 +1,11 @@
-//! Every scroller's one primitive (UI-KIT §4.4): [`area`], a vertical scroll box with its bar, and [`Scrollbar`], the bar
-//! over a list's or a custom viewport's [`ScrollbarHandle`].
+//! Every scroller's one primitive (UI-KIT §4.4): [`area`], a vertical scroll box with its bar (Page Up, Page Down, Home and
+//! End while the focus is inside it and nothing there takes them), and [`Scrollbar`], the bar over a list's or a custom
+//! viewport's [`ScrollbarHandle`].
 
 use std::time::Duration;
 
 use gpui::{
-    AnyElement, App, Div, ElementId, Global, InteractiveElement, Interactivity, IntoElement, KeyBinding, ListState, ParentElement, Pixels, Point, RenderOnce, ScrollHandle, StatefulInteractiveElement,
+    AnyElement, App, Div, ElementId, Global, InteractiveElement, Interactivity, IntoElement, KeyDownEvent, Keystroke, ListState, ParentElement, Pixels, Point, RenderOnce, ScrollHandle, StatefulInteractiveElement,
     StyleRefinement, Styled, UniformListScrollHandle, Window, div, point,
 };
 pub use supraman_core::Scrollbars;
@@ -16,21 +17,6 @@ mod bar;
 pub use bar::Scrollbar;
 #[cfg(test)]
 pub(crate) use bar::Thumb;
-
-/// The scroll areas' key context: Page Up, Page Down, Home and End while the focus is inside one that keeps no selection.
-pub const KEY_CONTEXT: &str = "ScrollArea";
-
-gpui::actions!(scroll, [PageUp, PageDown, Top, Bottom]);
-
-pub fn bind_keys(cx: &mut App) {
-    let c = Some(KEY_CONTEXT);
-    cx.bind_keys([
-        KeyBinding::new("pageup", PageUp, c),
-        KeyBinding::new("pagedown", PageDown, c),
-        KeyBinding::new("home", Top, c),
-        KeyBinding::new("end", Bottom, c),
-    ]);
-}
 
 /// A scroller the bar reads and moves; offsets are gpui's, `y` zero at the top and negative below it.
 pub trait ScrollbarHandle: 'static {
@@ -203,34 +189,36 @@ impl RenderOnce for ScrollArea {
         if let Some(mode) = self.mode {
             bar = bar.mode(mode);
         }
-        let paged = |by: fn(&ScrollHandle) -> Point<Pixels>| {
-            let handle = handle.clone();
-            move |window: &mut Window, cx: &mut App| {
-                bar::user_scrolled(cx);
-                handle.set_offset(by(&handle));
-                window.refresh();
-                cx.stop_propagation();
-            }
-        };
-        let (up, down, top, bottom) = (paged(|h| paged_by(h, 1.)), paged(|h| paged_by(h, -1.)), paged(|_| Point::default()), paged(|h| point(h.offset().x, -h.max_offset().y)));
+        let keys = handle.clone();
         self.content
             .id(self.id)
-            .key_context(KEY_CONTEXT)
             .overflow_y_scroll()
             .track_scroll(&handle)
-            .on_action(move |_: &PageUp, window, cx| up(window, cx))
-            .on_action(move |_: &PageDown, window, cx| down(window, cx))
-            .on_action(move |_: &Top, window, cx| top(window, cx))
-            .on_action(move |_: &Bottom, window, cx| bottom(window, cx))
+            .on_key_down(move |e: &KeyDownEvent, window, cx| {
+                let Some(y) = keyed(&keys, &e.keystroke) else { return };
+                bar::user_scrolled(cx);
+                keys.set_offset(point(keys.offset().x, y));
+                window.refresh();
+                cx.stop_propagation();
+            })
             .child(bar)
     }
 }
 
-/// The offset a page from `handle`'s: `pages` viewports toward the top (positive) or the end.
-fn paged_by(handle: &ScrollHandle, pages: f32) -> Point<Pixels> {
-    let offset = handle.offset();
-    let y = (offset.y + handle.bounds().size.height * pages).clamp(-handle.max_offset().y, Pixels::ZERO);
-    point(offset.x, y)
+/// The offset Page Up, Page Down, Home or End asks for; none for another key or one with a modifier.
+fn keyed(handle: &ScrollHandle, key: &Keystroke) -> Option<Pixels> {
+    if key.modifiers.modified() {
+        return None;
+    }
+    let (offset, page, max) = (handle.offset().y, handle.bounds().size.height, handle.max_offset().y);
+    let y = match key.key.as_str() {
+        "pageup" => offset + page,
+        "pagedown" => offset - page,
+        "home" => Pixels::ZERO,
+        "end" => -max,
+        _ => return None,
+    };
+    Some(y.clamp(-max, Pixels::ZERO))
 }
 
 #[cfg(test)]
