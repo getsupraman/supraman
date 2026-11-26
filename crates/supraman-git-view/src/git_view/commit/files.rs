@@ -1,6 +1,6 @@
 //! The file and folder menus of the WIP and commit panels' lists (docs/research/gitkraken-12.6.1.md §B items 8, 9 and 11).
 
-use gpui::{Pixels, Point};
+use gpui::{Pixels, Point, SharedString};
 use supraman_gitman::write::conflicts::Side;
 use supraman_gitman::write::files::{Ignore, ignorable};
 use supraman_gitman::{ChangeKind, FileChange};
@@ -24,6 +24,8 @@ pub(crate) struct FileClick {
     pub(crate) from: Listed,
     pub(crate) path: String,
     pub(crate) folder: bool,
+    /// The row's hit key, its menu's anchor.
+    pub(crate) anchor: SharedString,
     pub(crate) position: Point<Pixels>,
 }
 
@@ -132,11 +134,11 @@ fn wip_items(section: Section, f: &FileFacts) -> Vec<MenuItem<RefAct>> {
     let conflicted = section == Section::Conflicted;
     if ignorable(p) {
         let tracked: Vec<String> = files.iter().filter(|f| f.kind != ChangeKind::Untracked && !conflicted).map(|f| f.path.clone()).collect();
-        for (i, ignore) in Ignore::choices(p, c.folder).into_iter().enumerate() {
+        let choices = Ignore::choices(p, c.folder).into_iter().enumerate().map(|(i, ignore)| {
             let untrack = if c.folder && !tracked.is_empty() { vec![p.clone()] } else { tracked.clone() };
-            let it = file(format!("file-ignore-{i}-{p}"), ignore.words(), FileAct::Ignore { ignore, untrack });
-            out.push(if i == 0 { it.under("Ignore") } else { it });
-        }
+            file(format!("file-ignore-{i}-{p}"), ignore.words(), FileAct::Ignore { ignore, untrack })
+        });
+        out.extend(MenuItem::submenu(format!("file-ignore-{p}"), "Ignore", choices.collect()).map(MenuItem::rule));
     }
     if !conflicted && !f.under_way {
         let it = file(format!("file-stash-{p}"), format!("Stash {what}"), FileAct::Stash(files.clone()));
@@ -174,9 +176,13 @@ mod tests {
     }
 
     fn labels(from: Listed, path: &str, folder: bool, files: &[FileChange], exists: bool, under_way: bool) -> Vec<String> {
-        let click = FileClick { from, path: path.into(), folder, position: point(gpui::px(0.), gpui::px(0.)) };
+        let click = FileClick { from, path: path.into(), folder, anchor: "".into(), position: point(gpui::px(0.), gpui::px(0.)) };
         let facts = FileFacts { click: &click, files: covered(files, path, folder), exists, under_way, busy: None };
-        items(&facts).into_iter().map(|i| format!("{}{}", i.section.map_or(String::new(), |s| format!("| {s} ")), i.label)).collect()
+        let shown = |i: &MenuItem<RefAct>| format!("{}{}", i.section.as_ref().map_or(String::new(), |s| format!("| {s} ")), i.label);
+        items(&facts).iter().map(|i| match i.submenu.as_slice() {
+            [] => shown(i),
+            children => format!("{} ▸ {}", shown(i), children.iter().map(shown).collect::<Vec<_>>().join(", ")),
+        }).collect()
     }
 
     #[test]
@@ -184,14 +190,14 @@ mod tests {
         let all = [change(ChangeKind::Modified, "src/a.rs"), change(ChangeKind::Untracked, "src/new.txt"), change(ChangeKind::Unmerged, "c.txt")];
         assert_eq!(labels(Listed::Wip(Section::Unstaged), "src/a.rs", false, &all, true, false), [
             "Stage file", "Discard changes",
-            "| Ignore Ignore this file", "Ignore all *.rs files", "Ignore all in src/",
+            "|  Ignore ▸ Ignore this file, Ignore all *.rs files, Ignore all in src/",
             "|  Stash file",
             "|  Open with the default program", "Show in folder", "Copy path", "Delete file",
         ]);
         assert_eq!(labels(Listed::Wip(Section::Staged), "src", true, &all, true, false)[..2], ["Unstage folder", "Discard all in folder"]);
         assert_eq!(labels(Listed::Wip(Section::Staged), "src/a.rs", false, &all, true, true)[0], "Mark conflicted", "a resolved file during a merge");
         let conflicted = labels(Listed::Wip(Section::Conflicted), "c.txt", false, &all, true, true);
-        assert_eq!(conflicted[..4], ["Take current", "Take incoming", "Mark resolved", "| Ignore Ignore this file"]);
+        assert_eq!(conflicted[..4], ["Take current", "Take incoming", "Mark resolved", "|  Ignore ▸ Ignore this file, Ignore all *.txt files"]);
         assert!(!conflicted.iter().any(|l| l.contains("Stash")), "no stash of a conflicted file");
         assert_eq!(labels(Listed::Wip(Section::Unstaged), "src/a.rs", false, &all, false, false).last().map(String::as_str), Some("|  Copy path"), "a deleted file has nothing to open or delete");
     }
@@ -209,7 +215,7 @@ mod tests {
     #[test]
     fn a_stashs_apply_is_dimmed_with_the_gates_why_while_busy() {
         let all = [change(ChangeKind::Modified, "a.txt")];
-        let click = FileClick { from: Listed::Commit { sha: "i".into(), stash: Some("s".into()) }, path: "a.txt".into(), folder: false, position: point(gpui::px(0.), gpui::px(0.)) };
+        let click = FileClick { from: Listed::Commit { sha: "i".into(), stash: Some("s".into()) }, path: "a.txt".into(), folder: false, anchor: "".into(), position: point(gpui::px(0.), gpui::px(0.)) };
         let dimmed = |busy| items(&FileFacts { click: &click, files: all.to_vec(), exists: false, under_way: false, busy })[0].dimmed.clone();
         assert_eq!(dimmed(Some("Working…")).as_deref(), Some("Working…"));
         assert_eq!(dimmed(None), None);

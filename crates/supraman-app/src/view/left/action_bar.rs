@@ -57,6 +57,7 @@ impl FleetView {
     fn open_add_menu(&mut self, cx: &mut Context<Self>) {
         let position = self.hits.borrow().get("add-folder").map(|h| h.bounds.bottom_left()).unwrap_or_default();
         self.show_add_menu(position, cx);
+        self.dialogs.menu = self.dialogs.menu.take().map(|m| m.anchored("add-folder"));
     }
 
     /// Add Folder… and Add Group… at `position`: the add button's menu, and a right-click below the tree's rows.

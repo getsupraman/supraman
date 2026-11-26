@@ -222,10 +222,10 @@ impl CommitPanel {
 
     /// A file's or folder's right-click: the tab's file menu of the commit or stash shown.
     fn file_menu() -> files::OnMenu<CommitPanel> {
-        Rc::new(|this: &mut CommitPanel, path: &str, folder: bool, position, cx: &mut Context<CommitPanel>| {
+        Rc::new(|this: &mut CommitPanel, path: &str, folder: bool, anchor, position, cx: &mut Context<CommitPanel>| {
             let Some(shown) = this.shown() else { return };
             let from = Listed::Commit { sha: shown.sha.to_string(), stash: shown.stash.as_ref().map(|s| s.sha.clone()) };
-            cx.emit(PanelEvent::FileMenu(FileClick { from, path: path.to_string(), folder, position }));
+            cx.emit(PanelEvent::FileMenu(FileClick { from, path: path.to_string(), folder, anchor, position }));
         })
     }
 

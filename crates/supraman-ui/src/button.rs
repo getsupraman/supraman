@@ -40,12 +40,14 @@ pub fn row(hits: &HitTargets, key: impl Into<SharedString>, selected: Option<Hsl
 }
 
 /// A [`row`] whose element id, hover group and hit key differ (the sidebar's session row).
+/// It paints open while a popup anchored to its hit key is ([`crate::popup::open_fill`]).
 pub fn row_in(hits: &HitTargets, keys: RowKeys, selected: Option<Hsla>, cx: &App) -> Stateful<Div> {
     let colors = cx.theme().colors();
-    match selected {
-        Some(fill) => keyed(hits, keys, move |s| s.bg(fill), colors.ghost_element_active).bg(fill),
-        None => keyed(hits, keys, |s| s.bg(colors.ghost_element_hover), colors.ghost_element_active),
-    }
+    let state = crate::state::State { selected: selected.is_some(), ..Default::default() };
+    let look = crate::state::resolve(state, crate::state::Fills { hover: Some(colors.ghost_element_hover), pressed: Some(colors.ghost_element_active), selected, ..Default::default() });
+    let open = crate::popup::open_fill(keys.hit.clone());
+    let row = div().id(keys.id).group(keys.group).relative().cursor_pointer().child(hit_target(hits, keys.hit.to_string())).child(open);
+    look.paint_pressed(row, None)
 }
 
 /// A [`row_in`]'s element id, hover group and hit key.

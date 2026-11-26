@@ -1007,6 +1007,9 @@ async fn session_steps(view: &Entity<FleetView>, session: &Session, cx: &mut Asy
     let clipped = step("7c", crate::selftest_left::tree_clip(view, cx)).await?;
     let grid = step("7c", crate::selftest_left::tree_grid(view, &session.session_id, cx)).await?;
     println!("step 7c: {bar}; {clipped}; {grid}");
+
+    let open = step("7o", crate::selftest_open::row(view, &format!("session-row-{}", session.session_id), cx)).await?;
+    println!("step 7o: {open}");
     Ok(())
 }
 

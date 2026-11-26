@@ -107,6 +107,7 @@ impl WorkView {
             .id(SharedString::from(key.clone()))
             .group(SharedString::from(key.clone()))
             .relative()
+            .child(supraman_ui::popup::open_fill(key.clone()))
             .flex()
             .items_start()
             .gap_2()
@@ -124,8 +125,8 @@ impl WorkView {
             .when_some(criteria, |d, criteria| {
                 d.child(fonts::figures(div().flex_none().h(px(COPY_SIDE)).flex().items_center().text_xs().text_color(colors.text_muted)).child(SharedString::from(criteria)))
             })
-            .child(hit_target(&self.hits, key))
-            .on_mouse_down(gpui::MouseButton::Right, self.on_row_mouse_down(item, cx))
+            .child(hit_target(&self.hits, key.clone()))
+            .on_mouse_down(gpui::MouseButton::Right, self.on_row_mouse_down(item, key, cx))
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 window.focus(&this.panes.main, cx);
                 this.select(id.clone(), cx);

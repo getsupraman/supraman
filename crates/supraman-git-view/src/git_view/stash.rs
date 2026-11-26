@@ -240,8 +240,9 @@ impl StashActions {
         cx.notify();
     }
 
-    pub(crate) fn open_menu(&mut self, stash: StashRef, position: Point<Pixels>, cx: &mut Context<Self>) {
-        self.menu = Some(ContextMenu::new(stash.label.clone(), position, menu_items(&stash, |a, s| (a, s))));
+    /// `anchor`: the graph row's hit key.
+    pub(crate) fn open_menu(&mut self, stash: StashRef, anchor: String, position: Point<Pixels>, cx: &mut Context<Self>) {
+        self.menu = Some(ContextMenu::new(stash.label.clone(), position, menu_items(&stash, |a, s| (a, s))).anchored(anchor));
         cx.notify();
     }
 

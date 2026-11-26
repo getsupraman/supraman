@@ -113,7 +113,7 @@ pub mod motion {
 }
 
 /// The deferred layers, lowest first: each draws over every layer before it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Layer {
     /// A pill group's list.
     Float = 1,

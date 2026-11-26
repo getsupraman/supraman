@@ -20,6 +20,8 @@ pub struct Roles {
     pub info: Hsla,
     pub selection: Hsla,
     pub selection_inactive: Hsla,
+    /// An anchor's fill while its popup is open ([`themes::open`]).
+    pub open: Hsla,
     pub scrollbar_thumb: Hsla,
     pub scrollbar_thumb_hover: Hsla,
     pub scrollbar_thumb_active: Hsla,
@@ -43,6 +45,7 @@ impl Roles {
             info: status.info,
             selection: themes::selection(colors, true),
             selection_inactive: themes::selection(colors, false),
+            open: themes::open(colors),
             scrollbar_thumb: colors.scrollbar_thumb_background,
             scrollbar_thumb_hover: colors.scrollbar_thumb_hover_background,
             scrollbar_thumb_active: colors.scrollbar_thumb_active_background,

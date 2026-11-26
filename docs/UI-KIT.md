@@ -83,6 +83,10 @@ last; idea from gpui-kit `base/state_style.rs`). Hover is still gpui's `.hover()
 `open` overrides it, so a right-clicked row keeps its "this one" fill while the pointer travels into
 its menu.
 
+`state.rs` holds the vector the call sites set (`hovered` for a hover the kit tracks itself, a menu's highlight;
+`selected`, `open`, `focus_visible`, `disabled`); the pointer's hover and press stay gpui's paint, and `dragging` and
+`drop_over` join with §4.7.
+
 ### 4.2 Anchors and popups
 
 Every popup has an **anchor**: the key of the element it belongs to, and a position (pointer, or the
@@ -91,8 +95,9 @@ window's popup registry while it paints. One registry per window: one popup open
 outside click and Esc close it, focus returns to what held it (§4.3).
 
 Popups: context menu, dropdown menu, select, picker (palette in a popover), hover card, tooltip.
-Menus gain what they lack today: Up/Down/Home/End/Enter, icons, shortcuts, a submenu (Right/Left),
-scrolling when long, and type-ahead.
+Menus have Up/Down/Home/End/Enter, icons, shortcuts, a submenu (Right/Left, or the pointer resting on its item
+for `motion::NORMAL`), scrolling when long, and type-ahead. An anchor whose element is not a table row or a `Button`
+paints `popup::open_fill` as its first child; the `open` fill is `tokens::roles` `open`, apart from hover and selection.
 
 ### 4.3 Focus
 

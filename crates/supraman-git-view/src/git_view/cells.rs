@@ -87,7 +87,8 @@ pub(crate) fn pill_fill(colour: usize, hovered: bool, palette: &Palette) -> Hsla
     if hovered { palette.pill_hover(colour) } else { palette.pill(colour) }
 }
 
-/// Every ref pill: the row band's height in lane `colour`, its name cut under `key` and painted under `<key>-text`, each icon under `<key>-icon-<n>`.
+/// Every ref pill: the row band's height in lane `colour`, its name cut under `key` and painted under `<key>-text`, each icon under `<key>-icon-<n>`;
+/// its hover fill held while a menu anchored to `key` is open.
 pub(crate) fn pill(key: impl Into<String>, face: Face, colour: usize, palette: &Palette, hits: &HitTargets) -> Div {
     let key = key.into();
     let (text, hover) = (palette.text, pill_fill(colour, true, palette));
@@ -104,6 +105,7 @@ pub(crate) fn pill(key: impl Into<String>, face: Face, colour: usize, palette: &
         .rounded(px(4.))
         .bg(pill_fill(colour, false, palette))
         .hover(move |s| s.bg(hover))
+        .child(supraman_ui::popup::open_fill(key.clone()).radius(supraman_ui::tokens::radius::S).fill(hover))
         .text_color(text)
         .text_xs()
         .when(face.head, |d| d.child(div().flex_none().child(current_mark(text, PILL_ICON))))

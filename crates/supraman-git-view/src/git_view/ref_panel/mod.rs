@@ -87,7 +87,8 @@ pub(crate) enum RefEvent {
     /// A stash row's menu chose this.
     Stash(StashAct, StashRef),
     /// A ref's or a worktree's row was right-clicked: the row's path, where.
-    Menu(String, gpui::Point<Pixels>),
+    /// A row's path, its hit key (the menu's anchor) and where.
+    Menu(String, SharedString, gpui::Point<Pixels>),
     /// A ref's or a worktree's row was double-clicked: the row's path.
     Checkout(String),
     /// Refresh WIPs was clicked.

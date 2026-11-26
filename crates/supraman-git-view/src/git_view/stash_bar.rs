@@ -128,7 +128,7 @@ impl GitView {
             .on_mouse_down(MouseButton::Right, cx.listener(move |this, e: &MouseDownEvent, _, cx| {
                 cx.stop_propagation();
                 let stash = stash.clone();
-                this.stash.update(cx, |s, cx| s.open_menu(stash, e.position, cx));
+                this.stash.update(cx, |s, cx| s.open_menu(stash, supraman_ui::table::row_hit(super::TABLE, &ix.to_string()), e.position, cx));
             }))
             .child(cell)
             .into_any_element()

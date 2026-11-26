@@ -47,6 +47,8 @@ mod selftest_manage;
 #[cfg(feature = "selftest")]
 mod selftest_mark;
 #[cfg(feature = "selftest")]
+mod selftest_open;
+#[cfg(feature = "selftest")]
 mod selftest_notices;
 #[cfg(feature = "selftest")]
 mod selftest_overflow;

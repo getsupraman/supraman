@@ -97,11 +97,12 @@ impl RefPanel {
     pub(super) fn interactive(&self, list: &str, path: &SharedString, content: gpui::Div, cx: &mut Context<Self>) -> AnyElement {
         let whole = self.whole(list, path);
         let (menu, double) = (whole.clone(), whole);
+        let anchor = SharedString::from(supraman_ui::table::row_hit(list, path));
         content
             .id(SharedString::from(format!("{list}-ref-{path}")))
             .on_mouse_down(MouseButton::Right, cx.listener(move |this, e: &MouseDownEvent, _, cx| {
                 cx.stop_propagation();
-                this.open_menu(&menu, e.position, cx);
+                this.open_menu(&menu, anchor.clone(), e.position, cx);
             }))
             .on_click(cx.listener(move |this, e: &ClickEvent, _, cx| {
                 if e.click_count() == 2 {
@@ -149,16 +150,17 @@ impl RefPanel {
         items
     }
 
-    fn open_menu(&mut self, path: &str, position: Point<Pixels>, cx: &mut Context<Self>) {
+    /// `anchor`: the row's hit key.
+    fn open_menu(&mut self, path: &str, anchor: SharedString, position: Point<Pixels>, cx: &mut Context<Self>) {
         if matches!(self.entry(path), Some(Entry::Branch { .. } | Entry::Remote { .. } | Entry::Tag { .. } | Entry::Detached { .. } | Entry::Worktree { .. })) || super::remote_folder(path).is_some() {
-            return cx.emit(RefEvent::Menu(path.to_string(), position));
+            return cx.emit(RefEvent::Menu(path.to_string(), anchor, position));
         }
         let items = self.menu_items(path);
         if items.is_empty() {
             return;
         }
         let title = path.split_once('/').map_or(path, |(_, rest)| rest).to_string();
-        self.menu = Some(ContextMenu::new(title, position, items));
+        self.menu = Some(ContextMenu::new(title, position, items).anchored(anchor));
         cx.notify();
     }
 
@@ -202,7 +204,7 @@ impl RefPanel {
     pub(super) fn open_section_menu(&mut self, section: Section, position: Point<Pixels>, cx: &mut Context<Self>) {
         let items = self.section_items(section);
         if !items.is_empty() {
-            self.menu = Some(ContextMenu::new(section.title().to_string(), position, items));
+            self.menu = Some(ContextMenu::new(section.title().to_string(), position, items).anchored(format!("{}-row-{}", super::LIST, section.key())));
             cx.notify();
         }
     }
