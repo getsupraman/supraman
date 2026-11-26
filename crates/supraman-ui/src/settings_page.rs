@@ -6,6 +6,7 @@ use theme::ActiveTheme as _;
 
 use crate::button;
 use crate::hit::HitTargets;
+use crate::label::{Label, LabelMark};
 use crate::tokens;
 
 pub struct SettingsPage<V: 'static> {
@@ -63,21 +64,25 @@ impl<V: 'static> SettingsPages<V> {
                     .py(tokens::space::S)
                     .flex()
                     .items_center()
-                    .gap(tokens::space::L)
                     .rounded(tokens::radius::S)
                     .text_size(tokens::text::BODY)
                     .when(!on, |d| d.text_color(colors.text_muted))
-                    .child(match page.mark {
-                        Some(mark) => div().w_4().flex().items_center().child(mark(if on { colors.text } else { colors.text_muted })),
-                        None => div().w_4().font_family(crate::fonts::icons()).text_size(tokens::text::SMALL).child(page.icon),
+                    .child({
+                        let mark = match page.mark {
+                            Some(mark) => mark(if on { colors.text } else { colors.text_muted }).into_any_element(),
+                            None => div().font_family(crate::fonts::icons()).text_size(tokens::text::SMALL).child(page.icon).into_any_element(),
+                        };
+                        Label::new(page.title).mark(LabelMark::Element(mark)).slot(MARK_SLOT).gap(tokens::space::L)
                     })
-                    .child(page.title)
                     .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| select(view, id, cx)))
                     .into_any_element()
             })
             .collect()
     }
 }
+
+/// A page's mark's slot in the page list.
+const MARK_SLOT: gpui::Pixels = tokens::space::XXL;
 
 /// One setting: its title and description on the left with `below` under them, `control` on the right.
 pub fn row(title: &'static str, description: impl Into<SharedString>, control: AnyElement, below: Option<AnyElement>, cx: &App) -> AnyElement {

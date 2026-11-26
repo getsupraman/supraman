@@ -367,7 +367,7 @@ fn base_of(on: &On, rows: &[GraphRow], head: Option<&str>) -> Option<usize> {
 }
 
 /// A session's [`session::lead`] in a graph row, painted under `key`: its state's dot, its name, then its state's word under `state_key`.
-pub(super) fn session_lead(key: &str, state_key: &str, s: &LiveSession, palette: &Palette, hits: &HitTargets, cx: &App) -> gpui::Div {
+pub(super) fn session_lead(key: &str, state_key: &str, s: &LiveSession, palette: &Palette, hits: &HitTargets, cx: &App) -> supraman_ui::label::Label {
     let state = clipped(state_key.to_string(), s.activity.word(), false).flex_shrink(4.).text_color(palette.muted).child(hit_target(hits, state_key.to_string())).into_any_element();
     session::lead(key, Mark::Filled(s.activity.color(cx)), &s.name, Some(state)).relative().text_color(palette.text).child(hit_target(hits, key.to_string()))
 }

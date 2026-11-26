@@ -1,12 +1,12 @@
-//! The buttons ([`Button`], [`ButtonSplit`]) and the tick boxes, choices and pills. Each takes `key` as its element id, its hover group and its [`hit_target`] key.
+//! The buttons ([`Button`], [`ButtonSplit`]), the tick mark, choices and pills. Each takes `key` as its element id, its hover group and its [`hit_target`] key.
 
-use gpui::{App, Context, Div, ElementId, FocusHandle, Hsla, Pixels, SharedString, Stateful, StyleRefinement, Window, div, prelude::*, px};
+use gpui::{App, Context, Div, FocusHandle, Hsla, Pixels, SharedString, Stateful, StyleRefinement, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
-use crate::focus_order::{BUTTON_CONTEXT, Press};
+use crate::focus_order::Press;
 use crate::hit::{HitTargets, hit_target};
 use crate::icon::Icon;
-use crate::ink;
+use crate::label::Label;
 use crate::tokens::{self, Control, radius, space, stroke};
 
 mod build;
@@ -174,7 +174,7 @@ pub fn stepper<V: 'static>(
         Button::new(hits, key).label(words).size(Size::Medium).acting(&focus, move |this, window, cx| step(this, by, window, cx), cx)
     };
     let (dec, inc) = (one(-1, "dec", "−"), one(1, "inc", "+"));
-    let value = ink::text(div().relative().child(value.into()).child(hit_target(hits, format!("{key}-value"))));
+    let value = Label::element(div().relative().child(value.into()).child(hit_target(hits, format!("{key}-value")))).centred();
     let value = div().min_w(STEPPER_VALUE).flex().justify_center().text_size(Size::Medium.control().text.size).font_weight(gpui::FontWeight::BOLD).child(value);
     Button::line().child(dec).child(value).child(inc)
 }
@@ -186,7 +186,7 @@ const STEPPER_VALUE: Pixels = px(28.);
 pub fn pill(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<SharedString>, fg: Hsla, cx: &App) -> Stateful<Div> {
     let colors = cx.theme().colors();
     let key = key.into();
-    let label = ink::text(div().relative().child(label.into()).child(hit_target(hits, format!("{key}-label"))));
+    let label = Label::element(div().relative().child(label.into()).child(hit_target(hits, format!("{key}-label")))).centred();
     base(hits, key, |s| s.bg(colors.element_hover).border_color(colors.border).text_color(colors.text), colors.element_active)
         .flex()
         .flex_none()
@@ -199,28 +199,6 @@ pub fn pill(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<Sh
         .text_size(tokens::text::SMALL)
         .text_color(fg)
         .child(label)
-}
-
-/// A tick box: [`tick`] in the accent colour on the letters of the caller's label ([`ink::mark`]); the caller adds its click.
-pub fn checkbox(hits: &HitTargets, key: impl Into<SharedString>, on: bool, cx: &App) -> Stateful<Div> {
-    let key = key.into();
-    let colors = cx.theme().colors();
-    let square = tick(on, colors.text_accent, cx).relative().group_hover(key.clone(), |s| s.border_color(if on { colors.text_accent } else { colors.border_selected }));
-    div().id(key.clone()).group(key.clone()).flex_none().cursor_pointer().child(ink::mark(square.child(hit_target(hits, key.to_string()))))
-}
-
-/// [`checkbox`] taking the keyboard under `focus` (a form's [`crate::focus_order::FocusOrder`] member), Space toggling it by
-/// `press`; the caller puts [`crate::focus::ring`] on the row holding it and its label, so the ring takes in both.
-pub fn focusable_checkbox(hits: &HitTargets, key: impl Into<SharedString>, on: bool, focus: &FocusHandle, press: impl Fn(&Press, &mut Window, &mut App) + 'static, cx: &App) -> Stateful<Div> {
-    let key = key.into();
-    let colors = cx.theme().colors();
-    let square = tick(on, colors.text_accent, cx)
-        .relative()
-        .group_hover(key.clone(), |s| s.border_color(if on { colors.text_accent } else { colors.border_selected }))
-        .track_focus(focus)
-        .key_context(BUTTON_CONTEXT)
-        .on_action(press);
-    div().id(key.clone()).group(key.clone()).flex_none().cursor_pointer().child(ink::mark(square.child(hit_target(hits, key.to_string()))))
 }
 
 /// A [`TICK`] square, checked and filled with `fill` while `on`, the same size either way; a read-only mark on its own.
@@ -238,18 +216,20 @@ pub fn tick(on: bool, fill: Hsla, cx: &App) -> Div {
         .when(on, |d| d.bg(fill).child(Icon::Check.svg(tokens::icon::XS, gpui::white())))
 }
 
-/// One option of a choice; the selected one is drawn as a selected list row.
-pub fn choice(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: bool, cx: &App) -> Stateful<Div> {
+/// One option of a choice under `key`, its hit key too; the selected one is drawn as a selected list row.
+pub fn choice(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<SharedString>, selected: bool, cx: &App) -> Stateful<Div> {
+    let key = key.into();
     let colors = cx.theme().colors();
-    chosen(div().id(id), selected, cx)
-        .gap(space::L)
+    chosen(div().id(key.clone()), selected, cx)
+        .relative()
         .px(space::L)
         .py(space::XS)
         .rounded(radius::S)
         .border(stroke::HAIRLINE)
         .border_color(if selected { colors.border_focused } else { colors.border })
         .text_size(tokens::text::BODY)
-        .child(div().flex_1().child(label.into()))
+        .child(Label::new(label).centred().flex_1())
+        .child(hit_target(hits, key.to_string()))
 }
 
 /// `list`, a row or column of `count` [`choice`]s, one keyboard member under `focus`: one [`crate::focus::ring`] around
@@ -287,16 +267,16 @@ pub fn segment(hits: &HitTargets, key: impl Into<SharedString>, icon: Option<Ico
     let key = key.into();
     let colors = cx.theme().colors();
     let fg = if selected { colors.text } else { colors.text_muted };
+    let label = match label {
+        Some(words) => Label::new(words),
+        None => Label::none(),
+    };
     chosen(div().id(key.clone()), selected, cx)
         .relative()
         .flex_none()
-        .gap(space::S)
         .h_full()
         .px(space::L)
-        .text_size(tokens::text::SMALL)
-        .text_color(fg)
-        .children(icon.map(|i| i.svg(tokens::icon::S, fg)))
-        .children(label)
+        .child(label.mark_if(icon).size(tokens::text::SMALL).color(fg).gap(space::S).centred())
         .child(hit_target(hits, key.to_string()))
 }
 

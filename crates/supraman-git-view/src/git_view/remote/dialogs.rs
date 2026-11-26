@@ -2,21 +2,20 @@
 
 use std::rc::Rc;
 
-use gpui::{Focusable as _, AnyElement, AppContext as _, ClickEvent, Context, Entity, FocusHandle, SharedString, Subscription, Window, div, prelude::*};
+use gpui::{Focusable as _, AnyElement, AppContext as _, Context, Entity, FocusHandle, SharedString, Subscription, Window, div, prelude::*};
 use supraman_core::askpass::{Asked, Prompt, Reply};
 use supraman_gitman::write::remote::PullMode;
 use supraman_gitman::Remote;
 use supraman_ui::button;
 use supraman_ui::dialog::{Button as DialogButton, Panel};
-use supraman_ui::focus_order::Press;
 use supraman_ui::form;
 use supraman_ui::hit::hit_target;
 use supraman_ui::segmented::{Segment, segmented};
-use supraman_ui::tooltip::Tooltip;
 use supraman_ui::text_input::{InputEvent, TextInput};
 use theme::ActiveTheme as _;
 
 use super::RemoteActions;
+use supraman_ui::checkbox::Checkbox;
 
 /// What follows a chosen upstream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -230,10 +229,7 @@ impl RemoteActions {
         let ok = DialogButton::new("git-askpass-ok", if host { "Yes, trust it" } else { "OK" }, button::Tone::Neutral, |this: &mut Self, _, cx| this.answer_prompt(true, cx));
         let cancel = DialogButton::new("git-askpass-cancel", if host { "No" } else { "Cancel" }, button::Tone::Neutral, |this: &mut Self, _, cx| this.answer_prompt(false, cx));
         let remember = p.tick.as_ref().map(|tick| {
-            let square = button::focusable_checkbox(&self.hits, "git-askpass-remember", p.remember, tick, cx.listener(|this, _: &Press, _, cx| this.toggle_remember(cx)), cx);
-            let words = div().id("git-askpass-remember-words").child("Remember").tooltip(Tooltip::text("Keep it in Supraman's secret store"));
-            let ring = supraman_ui::focus::ring(tick, supraman_ui::tokens::radius::S);
-            div().id("git-askpass-remember-row").relative().flex().items_center().gap_2().cursor_pointer().child(square).child(words).child(ring).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_remember(cx)))
+            Checkbox::new(&self.hits, "git-askpass-remember", p.remember).label("Remember").tooltip("Keep it in Supraman's secret store").focus(tick).on_toggle(cx.listener(|this, _: &bool, _, cx| this.toggle_remember(cx)))
         });
         let message = if host { format!("ssh does not know this host. {}", p.words()) } else { p.words() };
         let text = div().relative().child(message).child(hit_target(&self.hits, "git-askpass-text".into()));

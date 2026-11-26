@@ -2,15 +2,16 @@
 
 use std::path::PathBuf;
 
-use gpui::{AnyElement, App, ClickEvent, Div, SharedString, Stateful, Window, div, prelude::*, px};
+use gpui::{AnyElement, App, ClickEvent, Div, SharedString, Stateful, Window, prelude::*, px};
 
 use crate::button::{Button, Fill, Tone};
-use crate::clipped::clipped;
 use crate::hit::HitTargets;
 use crate::icon::Icon;
-use crate::ink;
+use crate::label::Label;
 use crate::marks::{self, Activity, Mark};
 use crate::tokens;
+#[cfg(test)]
+use gpui::div;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveSession {
@@ -25,18 +26,8 @@ pub struct LiveSession {
 
 /// A session's lead in a row: `mark`'s dot, `name` cut under `<key>-name`, then `slot` (the owner's, such as `is working here`).
 /// A narrow row cuts the name; the slot shrinks as the owner styles it (`flex_none` keeps it whole).
-pub fn lead(key: &str, mark: Mark, name: &str, slot: Option<AnyElement>) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap(tokens::space::M)
-        .min_w(px(marks::DOT))
-        .flex_shrink(1.)
-        .overflow_hidden()
-        .whitespace_nowrap()
-        .child(div().flex_none().child(ink::mark(marks::dot(mark))))
-        .child(clipped(format!("{key}-name"), name.to_string(), false).flex_shrink(1.))
-        .children(slot)
+pub fn lead(key: &str, mark: Mark, name: &str, slot: Option<AnyElement>) -> Label {
+    Label::new(name.to_string()).clipped(format!("{key}-name"), false).mark(mark).gap(tokens::space::M).min_w(px(marks::DOT)).flex_shrink(1.).overflow_hidden().children(slot)
 }
 
 /// What a session's [`open`] does now: its icon, its words (the app's `fleet::Open::hint`) and whether a click runs it.

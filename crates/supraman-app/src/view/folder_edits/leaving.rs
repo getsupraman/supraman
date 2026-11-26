@@ -4,19 +4,19 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use gpui::{AnyElement, ClickEvent, Context, FocusHandle, SharedString, div, prelude::*};
+use gpui::{AnyElement, Context, FocusHandle, SharedString, div, prelude::*};
 use supraman_core::paths::{folder_name, path_key};
 use supraman_core::schedule::folder_key;
 use supraman_core::text;
 use supraman_ui::button;
 use supraman_ui::dialog::{Button as DialogButton, Dialog, Panel};
-use supraman_ui::focus_order::Press;
 use supraman_ui::hit::hit_target;
 use theme::ActiveTheme as _;
 
 use super::FolderEdit;
 use crate::fleet::Tree;
 use crate::view::FleetView;
+use supraman_ui::checkbox::Checkbox;
 
 /// The question's hit keys: `<KEY>-tick`, `-text`, `-note`, `-yes`, `-alt`, `-cancel` and the dialog's own.
 pub const KEY: &str = "remove-folder";
@@ -141,10 +141,6 @@ impl FleetView {
         cx.notify();
     }
 
-    fn clicked_remove_tick(&mut self, _: &ClickEvent, _: &mut gpui::Window, cx: &mut Context<Self>) {
-        self.toggle_remove_tick(cx);
-    }
-
     pub fn answer_remove(&mut self, answer: Option<usize>, cx: &mut Context<Self>) {
         if let Some((edit, leaving)) = self.dialogs.remove.take().zip(answer).and_then(|(q, i)| q.take(i)) {
             self.edit_folders_leaving(edit, leaving, cx);
@@ -156,8 +152,8 @@ impl FleetView {
     pub(in crate::view) fn render_remove_question(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let q = self.dialogs.remove.as_ref()?;
         let muted = supraman_ui::themes::secondary(cx.theme().colors());
-        let tick = button::focusable_checkbox(&self.hits, format!("{KEY}-tick"), q.delete, &q.tick, cx.listener(|this, _: &Press, _, cx| this.toggle_remove_tick(cx)), cx);
         let label = text::count(q.schedules.len(), "scheduled task", "scheduled tasks");
+        let tick = Checkbox::new(&self.hits, format!("{KEY}-tick"), q.delete).label(format!("Also delete {label}")).focus(&q.tick).on_toggle(cx.listener(|this, _: &bool, _, cx| this.toggle_remove_tick(cx)));
         let body = div()
             .flex()
             .flex_col()
@@ -168,7 +164,7 @@ impl FleetView {
                     .flex()
                     .flex_col()
                     .gap_0p5()
-                    .child(div().id(SharedString::from(format!("{KEY}-tick-row"))).relative().flex().items_center().gap_2().cursor_pointer().child(tick).child(format!("Also delete {label}")).child(supraman_ui::focus::ring(&q.tick, supraman_ui::tokens::radius::S)).on_click(cx.listener(Self::clicked_remove_tick)))
+                    .child(div().flex().child(tick))
                     .child(div().relative().pl_6().text_xs().text_color(muted).child(q.note()).child(hit_target(&self.hits, format!("{KEY}-note")))),
             );
         let mut buttons: Vec<_> = q

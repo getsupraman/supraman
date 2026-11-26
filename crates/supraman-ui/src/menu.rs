@@ -15,6 +15,7 @@ use theme::{ActiveTheme as _, ThemeColors};
 
 use crate::hit::{HitTargets, hit_target};
 use crate::icon::Icon;
+use crate::label::{Label, LabelMark};
 use crate::popup::Popup;
 use crate::state::{self, Fills, State};
 use crate::tokens::{self, Layer};
@@ -321,14 +322,13 @@ fn entry<V: 'static, A: Clone + 'static>(
 ) -> AnyElement {
     let key = format!("menu-{}", it.key);
     let look = state::resolve(State { hovered: highlighted, disabled: !it.acts(), ..State::default() }, Fills { hover: Some(colors.element_hover), ..Fills::default() });
-    let lead_slot = lead.then(|| {
-        let mark = match (it.ticked, it.icon) {
-            (Some(on), _) => Some(crate::button::tick(on, colors.text_accent, cx).into_any_element()),
-            (None, Some(icon)) => Some(icon.svg(tokens::icon::M, colors.text_muted).into_any_element()),
-            (None, None) => None,
-        };
-        crate::ink::mark(div().flex_none().w(crate::button::TICK).flex().justify_center().children(mark))
-    });
+    let mark = match (it.ticked, it.icon) {
+        (Some(on), _) => Some(LabelMark::Tick(on)),
+        (None, Some(icon)) => Some(LabelMark::Svg(icon.svg(tokens::icon::M, colors.text_muted))),
+        (None, None) => None,
+    };
+    let label = Label::new(SharedString::from(it.label.clone())).mark_if(mark).gap(tokens::space::L).flex_1().hit(hits, key.clone());
+    let label = if lead { label.slot(crate::button::TICK) } else { label };
     let shortcut = it.shortcut.clone().map(|s| div().flex_none().text_size(tokens::text::SMALL).text_color(colors.text_muted).child(s));
     let chevron = (!it.submenu.is_empty()).then(|| Icon::ChevronRight.svg(tokens::icon::S, colors.text_muted));
     let mut row = div()
@@ -344,8 +344,7 @@ fn entry<V: 'static, A: Clone + 'static>(
         .gap(tokens::space::L)
         .h(tokens::control::MEDIUM.height)
         .px(tokens::space::XL)
-        .children(lead_slot)
-        .child(div().flex_1().whitespace_nowrap().child(SharedString::from(it.label.clone())))
+        .child(label)
         .children(shortcut)
         .children(chevron)
         .child(hit_target(hits, key));

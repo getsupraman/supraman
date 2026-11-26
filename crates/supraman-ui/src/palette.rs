@@ -17,6 +17,7 @@ use crate::matcher::subsequence;
 use crate::text_input::{self, InputEvent, TextInput};
 use crate::tooltip::Tooltip;
 use crate::button;
+use crate::label::{Label, LabelMark};
 use crate::tokens;
 
 /// The most rows listed at once; a longer query narrows them.
@@ -368,7 +369,7 @@ impl<T: Entry> Palette<T> {
         let mode = self.mode.map(|ix| &self.modes[ix]);
         if mode.is_some_and(|m| m.loading) {
             let turning = crate::icon::turning(Icon::Refresh.svg(tokens::icon::M, colors.text_muted), SharedString::from(format!("{}-loading", self.id)));
-            return line().child(hit_target(&self.hits, format!("{}-loading", self.id))).child(turning).child("Reading…").into_any_element();
+            return line().child(hit_target(&self.hits, format!("{}-loading", self.id))).child(Label::new("Reading…").mark(LabelMark::Element(turning.into_any_element())).gap(tokens::space::L)).into_any_element();
         }
         if self.shown.is_empty() {
             let empty = mode.map_or_else(|| SharedString::from("Nothing matches."), |m| m.empty.clone());

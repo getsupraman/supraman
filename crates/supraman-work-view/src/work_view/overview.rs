@@ -16,6 +16,9 @@ use super::navigator::done_total;
 use super::projects::{active, closed_runs};
 use super::state::StateKey;
 use super::*;
+use supraman_ui::label::Label;
+use supraman_ui::banner;
+use supraman_ui::tokens;
 
 pub(crate) const NEEDS_SHOWN: usize = 5;
 /// Wide enough for the longest word of a tile's label, so a label wraps between words only.
@@ -160,14 +163,12 @@ impl WorkView {
                     .py(px(5.))
                     .border_t_1()
                     .border_color(colors.border_variant)
-                    .child(div().pt(px(6.)).child(dot(Mark::Filled(supraman_ui::inbox_card::kind_color(&c.kind, cx)))))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(div().text_sm().whitespace_normal().child(SharedString::from(c.title.clone())))
-                            .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(format!("{} · {}", c.badge, c.ref_)))),
-                    )
+                    .child({
+                        let text = div()
+                            .child(div().whitespace_normal().child(SharedString::from(c.title.clone())))
+                            .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(format!("{} · {}", c.badge, c.ref_))));
+                        banner::marked(dot(Mark::Filled(supraman_ui::inbox_card::kind_color(&c.kind, cx))), text).flex_1().min_w_0().text_sm()
+                    })
                     .children(c.since.and_then(|at| supraman_ui::inbox_card::when(format!("work-overview-needs-when-{}", c.ref_), at, now, cx)).map(|w| w.text_xs()))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.open_from_inbox(id.clone(), cx))),
             );
@@ -215,8 +216,8 @@ impl WorkView {
                     .py(px(5.))
                     .border_t_1()
                     .border_color(colors.border_variant)
-                    .child(div().pt(px(6.)).child(dot(mark)))
-                    .child(
+                    .child(banner::marked(
+                        dot(mark),
                         div()
                             .flex_1()
                             .min_w_0()
@@ -241,7 +242,7 @@ impl WorkView {
                                     .children(facts.iter().map(|t| SharedString::from(format!("· {t}"))))
                                     .child(hit_target(&self.hits, format!("work-working-facts-{qref}={}", facts.join(" · ")))),
                             ),
-                    ),
+                    ).flex_1().min_w_0().text_sm()),
             );
         }
         card.into_any_element()
@@ -347,7 +348,7 @@ impl WorkView {
         let colors = cx.theme().colors();
         let mut line = div().relative().flex().flex_wrap().gap_3().text_xs().text_color(colors.text_muted).child(hit_target(&self.hits, "work-legend".into()));
         for (key, label) in LEGEND {
-            line = line.child(div().flex().items_center().gap_1().child(dot(key.mark(cx))).child(label));
+            line = line.child(Label::new(label.to_string()).mark(key.mark(cx)).gap(tokens::space::S));
         }
         line.into_any_element()
     }

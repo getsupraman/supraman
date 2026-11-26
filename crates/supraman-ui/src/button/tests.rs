@@ -8,8 +8,7 @@ struct Row {
 
 impl Render for Row {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let label = div().relative().child("View all files").child(hit_target(&self.hits, "label".into()));
-        let row = div().flex().items_center().gap_1p5().text_xs().child(checkbox(&self.hits, "tick", true, cx)).child(label);
+        let row = div().flex().text_xs().child(crate::checkbox::Checkbox::new(&self.hits, "tick", true).label("View all files"));
         div().flex().flex_col().gap_2().p_2().child(row).child(div().flex().child(pill(&self.hits, "pill", "main", gpui::red(), cx)))
     }
 }
@@ -29,7 +28,7 @@ fn a_tick_box_sits_on_its_labels_letters_and_a_pills_letters_on_its_middle(cx: &
         crate::ink::offset(&style, window)
     });
     assert!(below > px(0.), "the letters' middle is below the line's");
-    assert!(crate::ink::level(centre(&row, "tick", cx), centre(&row, "label", cx) + below), "the square on the label's letters");
+    assert!(crate::ink::level(centre(&row, "tick-square", cx), centre(&row, "tick-label", cx) + below), "the square on the label's letters");
     assert!(crate::ink::level(centre(&row, "pill", cx), centre(&row, "pill-label", cx) + below), "the pill's letters on its middle");
 }
 
@@ -328,7 +327,7 @@ impl Render for Listed {
         let before = before.acting(&self.members.handle("before", cx), |_: &mut Listed, _, _| {}, cx);
         let mut list = div().flex().gap_1();
         for n in 0..3 {
-            list = list.child(choice(("pick", n), format!("Pick {n}"), n == self.chosen, cx));
+            list = list.child(choice(&self.hits, format!("pick-{n}"), format!("Pick {n}"), n == self.chosen, cx));
         }
         let focus = self.members.handle("list", cx);
         let list = choices(list, &focus, 3, Some(self.chosen), |this: &mut Listed, ix, _, cx| {
@@ -361,4 +360,21 @@ fn tab_reaches_a_choice_list_as_one_member_and_the_arrows_pick_its_neighbours_up
     cx.simulate_keystrokes("tab");
     assert!(cx.update(|window, _| before.is_focused(window)), "the list is one member: Tab leaves it");
     assert_eq!((neighbour(None, 3, false), neighbour(None, 3, true), neighbour(Some(0), 0, false)), (Some(0), Some(2), None));
+}
+
+#[gpui::test]
+fn a_buttons_icon_sits_on_its_letters_middle(cx: &mut TestAppContext) {
+    cx.update(|cx| crate::init_globals(cx, "test"));
+    let (view, cx) = cx.add_window_view(|_, _| Sizes { hits: HitTargets::default() });
+    cx.run_until_parked();
+    let hits = view.read_with(cx, |v, _| v.hits.clone());
+    for size in Size::ALL {
+        let below = cx.update(|window, _| {
+            let mut style = window.text_style();
+            style.font_size = size.table().2.into();
+            crate::ink::offset(&style, window)
+        });
+        let (icon, label) = (bounds(&hits, &format!("{size:?}-icon-icon")), bounds(&hits, &format!("{size:?}-icon-label")));
+        assert!(crate::ink::level(icon.center().y, label.center().y + below), "{size:?}: the icon on the letters' middle: {icon:?} {label:?} by {below:?}");
+    }
 }

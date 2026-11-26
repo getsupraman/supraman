@@ -11,7 +11,7 @@ use theme::ActiveTheme as _;
 use super::{Fill, Press, Size, Tone, base, icon_look, look};
 use crate::hit::{HitTargets, hit_target};
 use crate::icon::Icon;
-use crate::ink;
+use crate::label::Label;
 use crate::tokens::{self, radius, space, stroke};
 use crate::tooltip::Tooltip;
 
@@ -50,7 +50,7 @@ enum Kind {
 }
 
 /// Every clickable button. `key` is its element id, its hover group and its [`hit_target`] key; a label's letters paint under
-/// `<key>-label`, a turning icon under `<key>-turning`. Its own styles come first, so a caller's (`Styled`) win.
+/// `<key>-label`, its icon under `<key>-icon`, a turning icon under `<key>-turning`. Its own styles come first, so a caller's (`Styled`) win.
 #[derive(IntoElement)]
 pub struct Button {
     hits: HitTargets,
@@ -257,7 +257,7 @@ impl Button {
         let hover_border = if tone == Tone::Neutral { cx.theme().colors().border_selected } else { look.border };
         let key = self.key.clone();
         let label = self.label.take().unwrap_or_default();
-        let letters = ink::text(div().relative().child(label).child(hit_target(&self.hits, format!("{key}-label"))));
+        let letters = div().relative().child(label).child(hit_target(&self.hits, format!("{key}-label")));
         let control = self.size.control();
         let glyph = glyph.map(|g| svg_of(g, look.text, tokens::icon::S));
         let (glyph, turning_hit) = match glyph {
@@ -277,9 +277,7 @@ impl Button {
             .bg(if self.open { look.hover } else { look.fill })
             .text_color(look.text)
             .whitespace_nowrap()
-            .children(glyph)
-            .child(letters)
-            .children(self.after.take().map(|icon| icon.svg(tokens::icon::M, look.text)))
+            .child(Label::element(letters).mark_if(glyph.map(|g| div().relative().flex().flex_none().child(g).child(hit_target(&self.hits, format!("{key}-icon"))).into_any_element())).gap(space::S).centred().children(self.after.take().map(|icon| icon.svg(tokens::icon::M, look.text))))
             .children(turning_hit)
             .h(control.height)
             .px(control.padding)

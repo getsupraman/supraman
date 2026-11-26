@@ -7,7 +7,6 @@ use supraman_core::time::{near, rfc3339_local, rfc3339_ms};
 use supraman_ui::placeholder::placeholder;
 use supraman_ui::details::{self, Section};
 use supraman_ui::hit::hit_target;
-use supraman_ui::marks::dot;
 use supraman_ui::segmented::{Segment, segmented};
 use supraman_ui::{banner, fonts};
 use supraman_workman::{BriefFor, ItemPage, Report, Verification};
@@ -15,6 +14,7 @@ use supraman_workman::{BriefFor, ItemPage, Report, Verification};
 use super::item::holder_session;
 use super::state::{StateKey, independent};
 use super::*;
+use supraman_ui::label::Label;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum DetailTab {
@@ -225,7 +225,7 @@ impl WorkView {
             div()
                 .flex()
                 .flex_col()
-                .child(div().flex().items_center().gap_2().text_sm().font_weight(FontWeight::SEMIBOLD).child(dot(supraman_ui::marks::Mark::Filled(mark))).child(SharedString::from(title.to_string())))
+                .child(div().flex().text_sm().font_weight(FontWeight::SEMIBOLD).child(Label::new(title.to_string()).mark(supraman_ui::marks::Mark::Filled(mark)).gap(supraman_ui::tokens::space::L)))
                 .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(sub.to_string())))
         };
         let mut reported = div().flex_1().min_w_0().flex().flex_col().gap_2().child(head("What the agent reported", "From work_report. A claim, not proof.", status.warning));

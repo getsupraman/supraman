@@ -141,7 +141,7 @@ impl SettingsView {
                 Some(file) => file.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned()).into(),
             };
             list = list.child(
-                button::choice(("theme", ix), SharedString::from(entry.name.clone()), selected, cx)
+                button::choice(&self.hits, format!("theme-{ix}"), SharedString::from(entry.name.clone()), selected, cx)
                     .child(div().text_xs().text_color(colors.text_muted).child(from))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_theme(name.clone(), terminal, cx))),
             );
@@ -179,7 +179,7 @@ impl SettingsView {
         for (ix, (label, value)) in VALUES.into_iter().enumerate() {
             let name = current.to_string();
             terminal_choices = terminal_choices.child(
-                button::choice(("terminal-colors", ix), label, terminal == value, cx)
+                button::choice(&self.hits, format!("terminal-colors-{ix}"), label, terminal == value, cx)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_theme(name.clone(), value, cx))),
             );
         }
@@ -207,7 +207,7 @@ impl SettingsView {
         let current = self.settings.appearance.scrollbars();
         let mut list = div().flex().gap_1();
         for (ix, (label, value)) in VALUES.into_iter().enumerate() {
-            list = list.child(button::choice(("scrollbars", ix), label, current == value, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_scrollbars(value, cx))));
+            list = list.child(button::choice(&self.hits, format!("scrollbars-{ix}"), label, current == value, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_scrollbars(value, cx))));
         }
         let focus = self.members.handle("settings-scrollbars", cx);
         let chosen = VALUES.iter().position(|(_, v)| *v == current);
@@ -260,7 +260,7 @@ impl SettingsView {
                 for (ix, name) in mono.iter().enumerate() {
                     let pick = name.clone();
                     list = list.child(
-                        button::choice(("term-font", ix), SharedString::from(name.clone()), *name == *family, cx)
+                        button::choice(&self.hits, format!("term-font-{ix}"), SharedString::from(name.clone()), *name == *family, cx)
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_term_font(Some(&pick), ligatures, cx))),
                     );
                 }
@@ -300,7 +300,7 @@ impl SettingsView {
         for (ix, (label, on)) in VALUES.into_iter().enumerate() {
             let family = self.settings.terminal.font_family.clone();
             ligature_choices = ligature_choices.child(
-                button::choice(("ligatures", ix), label, ligatures == on, cx)
+                button::choice(&self.hits, format!("ligatures-{ix}"), label, ligatures == on, cx)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_term_font(family.as_deref(), on, cx))),
             );
         }
@@ -336,7 +336,7 @@ impl SettingsView {
         let mut choices = div().flex().gap_1();
         for (ix, (label, mode)) in MODES.into_iter().enumerate() {
             choices = choices.child(
-                button::choice(("tab-keys", ix), label, current == mode, cx)
+                button::choice(&self.hits, format!("tab-keys-{ix}"), label, current == mode, cx)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_tab_keys(mode, cx))),
             );
         }
@@ -381,7 +381,7 @@ impl SettingsView {
                 for (ix, (label, setting)) in options.iter().cloned().enumerate() {
                     let selected = setting == current;
                     list = list.child(
-                        button::choice(("term-shell", ix), SharedString::from(label), selected, cx)
+                        button::choice(&self.hits, format!("term-shell-{ix}"), SharedString::from(label), selected, cx)
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_shell(setting.clone(), cx))),
                     );
                 }

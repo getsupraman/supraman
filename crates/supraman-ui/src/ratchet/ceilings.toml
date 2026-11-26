@@ -39,7 +39,7 @@
 "supraman-app/src/settings_window/workman.rs" = 1
 "supraman-app/src/titlebar.rs" = 5
 "supraman-app/src/view.rs" = 3
-"supraman-app/src/view/left.rs" = 26
+"supraman-app/src/view/left.rs" = 25
 "supraman-app/src/view/left/action_bar.rs" = 11
 "supraman-app/src/view/left/drag.rs" = 2
 "supraman-app/src/view/left/excluded.rs" = 1
@@ -86,7 +86,7 @@
 "supraman-work-view/src/work_view/item.rs" = 2
 "supraman-work-view/src/work_view/layout.rs" = 8
 "supraman-work-view/src/work_view/navigator.rs" = 10
-"supraman-work-view/src/work_view/overview.rs" = 10
+"supraman-work-view/src/work_view/overview.rs" = 8
 "supraman-work-view/src/work_view/run_list.rs" = 7
 
 [kit_px]
@@ -121,3 +121,5 @@
 "supraman-ui/src/tokens.rs" = 18
 "supraman-ui/src/tooltip.rs" = 1
 "supraman-ui/src/tree.rs" = 4
+
+[ink]

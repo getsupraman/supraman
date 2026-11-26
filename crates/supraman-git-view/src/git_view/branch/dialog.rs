@@ -1,16 +1,16 @@
 //! The name of a new or renamed branch or tag, or an annotated tag's message: the tab's prompt, or a field in the row's cell.
 
-use gpui::{Focusable as _, AnyElement, AppContext as _, ClickEvent, Context, Entity, FocusHandle, SharedString, Subscription, Window, div, prelude::*};
+use gpui::{Focusable as _, AnyElement, AppContext as _, Context, Entity, FocusHandle, SharedString, Subscription, Window, div, prelude::*};
 use supraman_gitman::write::branch::name_problem;
 use supraman_ui::button;
 use supraman_ui::dialog::{Button as DialogButton, Panel};
-use supraman_ui::focus_order::Press;
 use supraman_ui::form;
 use supraman_ui::hit::hit_target;
 use supraman_ui::text_input::{InputEvent, TextInput};
 use theme::ActiveTheme as _;
 
 use super::BranchActions;
+use supraman_ui::checkbox::Checkbox;
 
 /// What a name is asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -168,9 +168,7 @@ impl BranchActions {
         let create = DialogButton::new("git-name-create", words, button::Tone::Neutral, |this: &mut Self, _, cx| this.submit_name(cx)).dimmed(problem);
         let cancel = DialogButton::new("git-name-cancel", "Cancel", button::Tone::Neutral, |this: &mut Self, _, cx| this.cancel_name(cx));
         let checkout = matches!(dialog.ask, NameAsk::Branch { .. }).then(|| {
-            let tick = button::focusable_checkbox(&self.hits, "git-name-checkout", dialog.checkout, &fields.tick, cx.listener(|this, _: &Press, _, cx| this.toggle_checkout(cx)), cx);
-            let ring = supraman_ui::focus::ring(&fields.tick, supraman_ui::tokens::radius::S);
-            div().id("git-name-checkout-row").relative().flex().items_center().gap_2().cursor_pointer().child(tick).child("Check out after creating").child(ring).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_checkout(cx)))
+            Checkbox::new(&self.hits, "git-name-checkout", dialog.checkout).label("Check out after creating").focus(&fields.tick).on_toggle(cx.listener(|this, _: &bool, _, cx| this.toggle_checkout(cx)))
         });
         let shown_problem = problem.filter(|_| !dialog.name(cx).is_empty() || !dialog.ask.has_name());
         let body = div()

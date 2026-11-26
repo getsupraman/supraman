@@ -7,6 +7,8 @@ use theme::ActiveTheme as _;
 
 use super::{Gallery, Sample};
 use crate::button::{self, Button, ButtonSplit, Fill, Size, Tone};
+use crate::checkbox::Checkbox;
+use crate::label::{Label, LabelMark};
 use crate::hit::hit_target;
 use crate::text_input::TextInput;
 use crate::icon::Icon;
@@ -93,15 +95,12 @@ pub fn buttons(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
 
 pub fn toggles(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
     let hits = &g.hits;
-    let labelled = |check: gpui::Stateful<Div>, words: &str| div().flex().items_center().gap(tokens::space::L).child(check).child(words.to_string());
     let checks = row()
-        .child(labelled(button::checkbox(hits, "kit-check-off", false, cx), "Off"))
-        .child(labelled(button::checkbox(hits, "kit-check-on", true, cx), "On"))
-        .child({
-            let focus = g.members.handle("kit-check-focus", cx);
-            labelled(button::focusable_checkbox(hits, "kit-check-focus", true, &focus, |_, _, _| {}, cx), "Focusable").relative().child(crate::focus::ring(&focus, tokens::radius::S))
-        })
-        .child(div().flex().items_center().gap(tokens::space::L).child(button::tick(false, cx.theme().colors().text_accent, cx)).child(button::tick(true, cx.theme().colors().text_accent, cx)).child("tick"));
+        .child(Checkbox::new(hits, "kit-check-off", false).label("Off"))
+        .child(Checkbox::new(hits, "kit-check-on", true).label("On"))
+        .child(Checkbox::new(hits, "kit-check-focus", true).label("Focusable").focus(&g.members.handle("kit-check-focus", cx)))
+        .child(Checkbox::new(hits, "kit-check-disabled", false).label("Disabled").disabled(Some("Why it cannot change now")))
+        .child(Label::new("tick, read only").mark(LabelMark::Tick(true)));
     let fg = cx.theme().colors().text_muted;
     let pills = row().child(button::pill(hits, "kit-pill", "pill", fg, cx)).child(button::pill(hits, "kit-pill-accent", "accent", cx.theme().colors().text_accent, cx));
     let segments = [
@@ -112,15 +111,14 @@ pub fn toggles(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
     let segmented = crate::segmented::segmented(hits, "kit-seg", &segments, 0, |_: &mut Gallery, _, _, _| {}, cx);
     let stepper = button::stepper(hits, "kit-stepper", "20", &g.members, |_: &mut Gallery, _, _, _| {}, cx);
     let list = div().flex().flex_col().gap(tokens::space::S).w(width(14.)).children((0..3).map(|i| {
-        let key = format!("kit-choice-{i}");
-        button::choice(SharedString::from(key.clone()), format!("Choice {}", i + 1), i == 0, cx).relative().child(hit_target(hits, key))
+        button::choice(hits, format!("kit-choice-{i}"), format!("Choice {}", i + 1), i == 0, cx)
     }));
     let choices = button::choices(list, &g.members.handle("kit-choices", cx), 3, Some(0), |_: &mut Gallery, _, _, _| {}, cx);
     div()
         .flex()
         .flex_col()
         .gap(tokens::space::XXL)
-        .child(group("checkbox (off, on), focusable_checkbox, tick", cx).child(checks))
+        .child(group("Checkbox (off, on, focusable, disabled), a tick as a Label's mark", cx).child(checks))
         .child(group("pill", cx).child(pills))
         .child(group("segmented, the first chosen", cx).child(row().child(segmented)))
         .child(group("stepper", cx).child(stepper))
@@ -370,10 +368,17 @@ pub fn cards(g: &Gallery, window: &mut Window, cx: &mut Context<Gallery>) -> Any
 pub fn marks(cx: &mut Context<Gallery>) -> AnyElement {
     let status = cx.theme().status().clone();
     let colors: [(&str, Hsla); 4] = [("success", status.success), ("warning", status.warning), ("error", status.error), ("info", status.info)];
-    let dots = row().children(colors.iter().map(|(n, c)| div().flex().items_center().gap(tokens::space::S).child(crate::marks::dot(Mark::Filled(*c))).child(crate::marks::dot(Mark::Ring(*c))).child(n.to_string())));
+    let pair = |a: Mark, b: Mark| LabelMark::Element(div().flex().gap(tokens::space::S).child(crate::marks::dot(a)).child(crate::marks::dot(b)).into_any_element());
+    let dots = row().children(colors.iter().map(|(n, c)| Label::new(n.to_string()).mark(pair(Mark::Filled(*c), Mark::Ring(*c)))));
     let muted = crate::themes::secondary(cx.theme().colors());
-    let activity = row().children([Activity::Working, Activity::Waiting, Activity::Idle].map(|a| div().flex().items_center().gap(tokens::space::S).child(crate::marks::dot(Mark::Filled(a.color(cx)))).child(a.word())));
-    let in_color = row().child(crate::marks::dot(Mark::Filled(status.success).in_color(muted))).child(crate::marks::dot(Mark::Ring(status.warning).in_color(muted))).child("in_color, muted");
+    let activity = row().children([Activity::Working, Activity::Waiting, Activity::Idle].map(|a| Label::new(a.word()).mark(Mark::Filled(a.color(cx)))));
+    let in_color = row().child(Label::new("in_color, muted").mark(pair(Mark::Filled(status.success).in_color(muted), Mark::Ring(status.warning).in_color(muted))));
+    let labels = row()
+        .child(Label::new("an icon").mark(Icon::Folder))
+        .child(Label::new("a dot").mark(Mark::Filled(status.success)))
+        .child(Label::new("a tick").mark(LabelMark::Tick(false)))
+        .child(Label::new("small, muted").mark(Icon::GitBranch).size(tokens::text::SMALL).muted())
+        .child(div().w(width(8.)).child(Label::new(LONG).mark(Icon::Star).clipped("kit-label-cut", false)));
     let few: Vec<Mark> = (0..12).map(|i| match i % 4 {
         0 => Mark::Filled(status.success),
         1 => Mark::Filled(status.warning),
@@ -387,6 +392,7 @@ pub fn marks(cx: &mut Context<Gallery>) -> AnyElement {
         .flex()
         .flex_col()
         .gap(tokens::space::XXL)
+        .child(group("Label: a mark on the letters' middle, sized and muted with its text, cut", cx).child(labels))
         .child(group("dot: filled and ring per status colour", cx).child(dots))
         .child(group("Activity", cx).child(activity))
         .child(group("Mark::in_color", cx).child(in_color))

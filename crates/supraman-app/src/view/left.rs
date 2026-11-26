@@ -20,6 +20,7 @@ use supraman_ui::clipped::clipped;
 use crate::settings_window::page;
 use crate::updates::Stage;
 use crate::fleet::{self, EntryNode, FolderNode, Open, SessionRow};
+use supraman_ui::label::{Label, LabelMark};
 
 mod action_bar;
 mod drag;
@@ -152,17 +153,10 @@ pub(super) fn disclosure(open: Option<bool>, color: Hsla) -> Div {
     }
 }
 
-/// A row's icon slot, painted under `tree-icon-<key>`.
-pub(super) fn icon_slot(hits: &HitTargets, key: &str, icon: Option<AnyElement>) -> Div {
-    div()
-        .relative()
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .size(px(grid::ICON))
-        .children(icon)
-        .child(hit_target(hits, format!("tree-icon-{key}")))
+/// A row's icon slot on its name's letters, painted under `tree-icon-<key>`.
+pub(super) fn icon_slot(hits: &HitTargets, key: &str, icon: Option<AnyElement>) -> Label {
+    let slot = div().relative().flex().flex_none().items_center().justify_center().size(px(grid::ICON)).children(icon).child(hit_target(hits, format!("tree-icon-{key}")));
+    Label::none().mark(LabelMark::Element(slot.into_any_element())).flex_none()
 }
 
 /// A row's label, painted under `tree-label-<key>`.
@@ -617,7 +611,7 @@ impl FleetView {
             .mx_3()
             .my_2()
             .child(banner::dismissable(
-                banner::marked(crate::brand::workman(rems(1.), color).mt(px(2.)), SharedString::from(problem)),
+                banner::marked(crate::brand::workman(rems(1.), color), SharedString::from(problem)),
                 dismiss,
             ))
             .children(self.workman.fix().map(|fix| div().text_xs().text_color(colors.text).child(SharedString::from(fix))))

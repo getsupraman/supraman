@@ -8,7 +8,7 @@ use supraman_ui::button;
 use supraman_ui::clipped::{clipped, path_label};
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
-use supraman_ui::ink;
+use supraman_ui::label::{Label, LabelMark};
 use supraman_ui::segmented::{Segment, segmented};
 use supraman_ui::table::{Column, Table, TableState};
 use supraman_ui::tooltip::Tooltip;
@@ -109,15 +109,9 @@ fn tree_row(list: &str, row: Row<'_, Mark, WipCounts>, hits: &HitTargets, cx: &A
 
 /// A Path row: the mark, the folder part muted and the file name bright.
 fn path_row(list: &str, path: &str, kind: ChangeKind, hits: &HitTargets, cx: &App) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap_1()
-        .w_full()
-        .min_w_0()
-        .whitespace_nowrap()
-        .child(ink::mark(div().flex().flex_none().justify_center().w(px(LEAD)).children(mark(&Some(kind), format!("{list}-mark-{path}"), hits, cx))))
-        .child(path_label(format!("{list}-dir-{path}"), path, secondary(cx.theme().colors()), cx.theme().colors().text).flex_1())
+    let mark = div().flex().flex_none().children(mark(&Some(kind), format!("{list}-mark-{path}"), hits, cx)).into_any_element();
+    let path = path_label(format!("{list}-dir-{path}"), path, secondary(cx.theme().colors()), cx.theme().colors().text).flex_1();
+    div().flex().items_center().w_full().min_w_0().child(Label::element(path).mark(LabelMark::Element(mark)).slot(px(LEAD)).gap(supraman_ui::tokens::space::S).flex_1())
 }
 
 fn with_tail<V: 'static>(this: &mut V, row: Div, tail: &Option<Tail<V>>, path: &str, kind: ChangeKind, group: &SharedString, cx: &mut Context<V>) -> AnyElement {
