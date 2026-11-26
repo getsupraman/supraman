@@ -2,7 +2,7 @@
 
 use std::{
     cell::Cell,
-    path::{Path, PathBuf},
+    path::Path,
     rc::Rc,
     sync::Mutex,
     thread::ThreadId,
@@ -217,22 +217,10 @@ pub(crate) async fn shot_window(name: &str, title: Option<&str>, cx: &mut AsyncW
         return;
     };
     sleep(cx, Duration::from_millis(300)).await;
-    match capture(dir.join(format!("{name}.png")), title, cx).await {
+    match crate::selftest_shots::capture(dir.join(format!("{name}.png")), title, cx).await {
         Ok(out) => println!("shot: {}", out.display()),
         Err(e) => println!("shot: {name} failed: {e:#}"),
     }
-}
-
-/// A PNG of this process's main window, or its window titled `title`, as the window paints itself.
-pub(crate) async fn capture(out: PathBuf, title: Option<&str>, cx: &mut AsyncWindowContext) -> anyhow::Result<PathBuf> {
-    let title = title.map(str::to_string);
-    cx.background_executor()
-        .spawn(async move {
-            let hwnd = crate::selftest::win::window(title.as_deref())?;
-            crate::selftest::win::print_window(hwnd, &out)?;
-            Ok(out)
-        })
-        .await
 }
 
 /// The action bar's add button, then `item` in its menu.

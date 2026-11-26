@@ -108,6 +108,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
 
 async fn check(view: &Entity<FleetView>, f: &Arc<Fixture>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let (git, opened) = open(view, f, cx).await?;
+    until_probe(view, &git, "the Git tab's writer open", cx, |p, _| p.writes.then_some(())).await?;
     let open_row = crate::selftest_open::row(view, "git-row-1", cx).await?;
     let media = crate::selftest_git_media::check(view, &git, f, cx).await?;
     let narrow = narrow(view, &git, f, cx).await?;

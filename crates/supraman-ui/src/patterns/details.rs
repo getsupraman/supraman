@@ -219,24 +219,18 @@ fn link_line<V: 'static>(label: &str, value: &str, target: &str, link_key: Strin
         .into_any_element()
 }
 
+/// A criterion's tick on its first line's letters (`banner::marked`), its note under it; the tick under `<key>-tick`, the text under `<key>-text`.
 fn check_line<V: 'static>(done: bool, text: &str, note: Option<&str>, key: String, hits: &HitTargets, cx: &mut Context<V>) -> AnyElement {
     let colors = cx.theme().colors().clone();
-    div()
-        .relative()
+    let tick = div().relative().child(button::tick(done, cx.theme().status().success, cx)).child(hit_target(hits, format!("{key}-tick")));
+    let text = div()
         .flex()
-        .items_start()
-        .gap(tokens::space::L)
+        .flex_col()
+        .child(div().relative().child(SharedString::from(text.to_string())).child(hit_target(hits, format!("{key}-text"))))
+        .children(note.map(|n| div().text_size(tokens::text::SMALL).text_color(colors.text_muted).child(SharedString::from(n.to_string()))));
+    banner::marked(tick, text)
+        .relative()
         .text_size(tokens::text::BODY)
-        .child(div().flex_none().h(tokens::control::SMALL.height).flex().items_center().child(button::tick(done, cx.theme().status().success, cx)))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .child(SharedString::from(text.to_string()))
-                .children(note.map(|n| div().text_size(tokens::text::SMALL).text_color(colors.text_muted).child(SharedString::from(n.to_string())))),
-        )
         .child(hit_target(hits, format!("{key}={}", if done { "done" } else { "open" })))
         .into_any_element()
 }
@@ -259,7 +253,35 @@ fn long_line<V: 'static>(text: &str, key: String, copy_key: String, hits: &HitTa
 
 #[cfg(test)]
 mod tests {
+    use gpui::{Render, TestAppContext};
+
     use super::*;
+
+    struct Checks(HitTargets);
+
+    impl Render for Checks {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div().w(px(240.)).child(check_line(true, "Builds", None, "c".into(), &self.0, cx)).child(check_line(false, "Says why in a long line that wraps past the width", Some("A note"), "w".into(), &self.0, cx))
+        }
+    }
+
+    #[gpui::test]
+    fn a_criterions_tick_sits_on_its_first_lines_letters(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::init_globals(cx, "test"));
+        let (view, cx) = cx.add_window_view(|_, _| Checks(HitTargets::default()));
+        cx.run_until_parked();
+        let below = cx.update(|window, _| {
+            let mut style = window.text_style();
+            style.font_size = tokens::text::BODY.size.into();
+            crate::ink::offset(&style, window)
+        });
+        let at = |key: &str| view.read_with(cx, |v, _| v.0.borrow().get(key).map(|h| h.bounds).unwrap_or_else(|| panic!("{key} paints")));
+        let (tick, text) = (at("c-tick"), at("c-text"));
+        assert!(crate::ink::level(tick.center().y, text.center().y + below), "the tick on the letters: {tick:?} beside {text:?}");
+        let (tick, text) = (at("w-tick"), at("w-text"));
+        assert!(text.size.height > tick.size.height * 2., "the long text wraps: {text:?}");
+        assert!(tick.center().y < text.center().y, "a wrapped criterion's tick stays on its first line: {tick:?} beside {text:?}");
+    }
 
     #[test]
     fn the_text_reads_each_section_under_its_caption() {

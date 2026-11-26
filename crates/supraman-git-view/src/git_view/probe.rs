@@ -27,6 +27,8 @@ pub struct Probe {
     pub panel_width: Pixels,
     /// The ref panel's hidden refs.
     pub hidden: Vec<String>,
+    /// The tab's writer is open: a row's menu opens, where before it a toast says why not.
+    pub writes: bool,
 }
 
 impl Probe {
@@ -47,6 +49,6 @@ impl GitView {
             ProbeDiff { path: d.target.path.clone(), shown: d.shown() }
         });
         let hidden = self.ref_panel().read(cx).walk().hidden.iter().cloned().collect();
-        Probe { rows, selected: self.selected(cx), commit, diff, panel_width: self.panel_width, hidden }
+        Probe { rows, selected: self.selected(cx), commit, diff, panel_width: self.panel_width, hidden, writes: self.gate.read(cx).writer().is_some() }
     }
 }

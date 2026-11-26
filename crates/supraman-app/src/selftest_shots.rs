@@ -14,12 +14,14 @@ use serde_json::{Value, json};
 
 use crate::{
     selftest::{home, remove_dir_retrying, sleep},
-    selftest_manage::capture,
     view::{FleetView, MenuTarget, TabKind},
 };
 
+mod capture;
 mod gallery;
 mod git;
+
+pub(crate) use capture::capture;
 
 pub const GROUP: &str = "demo";
 /// On the selftest home's drive, so the shots show a short path and none of this machine's folders.

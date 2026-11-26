@@ -201,3 +201,24 @@ fn a_question_closed_before_a_frame_showed_its_focus_gives_the_keys_back(cx: &mu
     cx.simulate_keystrokes("x");
     assert_eq!(taken(&view, cx).1, ["x"], "a key reaches the pane");
 }
+
+#[gpui::test]
+fn a_tabs_prompt_holds_the_keys_as_f6s_pane_but_wears_no_pane_mark(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    let marks = |view: &Entity<Asking>, cx: &mut VisualTestContext| {
+        view.update(cx, |v, cx| {
+            v.hits.borrow_mut().clear();
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let mut keys: Vec<String> = view.read_with(cx, |v, _| v.hits.borrow().keys().filter(|k| k.starts_with("focus-mark-")).cloned().collect());
+        keys.sort();
+        keys
+    };
+    assert_eq!(marks(&view, cx), [focus::mark_key("pane")], "an ordinary pane holding the keys wears the mark");
+    view.update(cx, |v, _| v.dialog = Dialog::in_tab(v.pane.clone()));
+    ask(&view, three(), cx);
+    assert_eq!(holding(&view, cx).as_deref(), Some("yes"), "the prompt holds the keys");
+    assert_eq!(cx.update(|window, cx| focus::focused(window, cx).map(|k| k.to_string())).as_deref(), Some(PANE), "F6's pane is the prompt");
+    assert!(marks(&view, cx).is_empty(), "neither the prompt nor the pane it covers is marked: its scrim says where the keys are");
+}

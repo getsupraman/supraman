@@ -22,9 +22,11 @@ pub struct Roles {
     pub selection_inactive: Hsla,
     /// An anchor's fill while its popup is open ([`themes::open`]).
     pub open: Hsla,
-    /// A drop target's fill and border while a payload it takes hovers it, and a reorder's insertion line.
+    /// A drop target's fill and border while a payload it takes hovers it ([`themes::drop_over`], [`themes::drop_border`]).
     pub drop_over: Hsla,
     pub drop_border: Hsla,
+    /// A reorder's insertion line ([`themes::drop_line`]).
+    pub drop_line: Hsla,
     pub scrollbar_thumb: Hsla,
     pub scrollbar_thumb_hover: Hsla,
     pub scrollbar_thumb_active: Hsla,
@@ -49,8 +51,9 @@ impl Roles {
             selection: themes::selection(colors, true),
             selection_inactive: themes::selection(colors, false),
             open: themes::open(colors),
-            drop_over: colors.drop_target_background,
-            drop_border: colors.drop_target_border,
+            drop_over: themes::drop_over(colors),
+            drop_border: themes::drop_border(colors),
+            drop_line: themes::drop_line(colors),
             scrollbar_thumb: colors.scrollbar_thumb_background,
             scrollbar_thumb_hover: colors.scrollbar_thumb_hover_background,
             scrollbar_thumb_active: colors.scrollbar_thumb_active_background,
