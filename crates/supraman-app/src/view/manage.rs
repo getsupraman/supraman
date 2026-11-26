@@ -20,8 +20,15 @@ impl FleetView {
         self.toast.show(text, |this: &mut Self| &mut this.toast, cx);
     }
 
-    pub fn open_menu(&mut self, target: MenuTarget, position: Point<Pixels>, cx: &mut Context<Self>) {
-        self.dialogs.menu = self.menu_for(&target, None, cx).map(|(title, items)| ContextMenu::new(title, position, items));
+    /// `anchor`: the hit key of the row it belongs to, which paints open while it is shown.
+    pub fn open_menu(&mut self, target: MenuTarget, anchor: Option<String>, position: Point<Pixels>, cx: &mut Context<Self>) {
+        self.dialogs.menu = self.menu_for(&target, None, cx).map(|(title, items)| {
+            let menu = ContextMenu::new(title, position, items);
+            match anchor {
+                Some(anchor) => menu.anchored(anchor),
+                None => menu,
+            }
+        });
         cx.notify();
         let session_id = match &target {
             MenuTarget::Session { session_id, .. } => Some(session_id.clone()),

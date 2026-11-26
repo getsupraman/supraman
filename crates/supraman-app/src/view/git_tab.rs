@@ -66,7 +66,7 @@ impl FleetView {
     /// A Git tab's agent or worktree row's right-click: the sidebar's menu of the session.
     fn agent_menu(&mut self, session: &LiveSession, position: Point<Pixels>, cx: &mut Context<Self>) {
         let Some((entry, place, row)) = self.live_row(session) else { return };
-        self.open_menu(MenuTarget::Session { entry, place, session_id: row.session.session_id }, position, cx);
+        self.open_menu(MenuTarget::Session { entry, place, session_id: row.session.session_id }, None, position, cx);
     }
 
     /// The agent row's panel: the session's one page but its transcript, which a disk read off the UI thread finds.

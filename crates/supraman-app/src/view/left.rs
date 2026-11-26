@@ -739,6 +739,7 @@ impl FleetView {
             .pr_2()
             .map(top_text)
             .when(selected, |d| d.bg(supraman_ui::themes::selection(&colors, focused)))
+            .child(supraman_ui::popup::open_fill(format!("group-row-{name}")))
             .child(line)
             .child(hit_target(&self.hits, format!("group-row-{name}")));
         if editing_now {
@@ -750,7 +751,7 @@ impl FleetView {
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
                     this.sidebar.selected_group = Some(name.clone());
-                    this.open_menu(MenuTarget::Group(name.clone()), e.position, cx);
+                    this.open_menu(MenuTarget::Group(name.clone()), Some(format!("group-row-{name}")), e.position, cx);
                 })
             })
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -831,6 +832,7 @@ impl FleetView {
             .id(SharedString::from(rkey.clone()))
             .group(group)
             .relative()
+            .child(supraman_ui::popup::open_fill(format!("repo-row-{key}")))
             .flex()
             .flex_none()
             .items_center()
@@ -855,7 +857,7 @@ impl FleetView {
                 let key = key.clone();
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
-                    this.open_menu(MenuTarget::Folder(key.clone()), e.position, cx);
+                    this.open_menu(MenuTarget::Folder(key.clone()), Some(format!("repo-row-{key}")), e.position, cx);
                 })
             })
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(rkey.clone(), cx)))
@@ -893,6 +895,7 @@ impl FleetView {
         let (title, clicked) = (place.replace('/', " · "), row.clone());
         let target = MenuTarget::Session { entry: entry.to_string(), place: place.to_string(), session_id: s.session_id.clone() };
         let tint = status.warning.opacity(0.12);
+        let anchor = format!("session-row-{}{at}", s.session_id);
         let keys = button::RowKeys {
             id: format!("session-{}{at}", s.id).into(),
             group,
@@ -934,7 +937,7 @@ impl FleetView {
                 MouseButton::Right,
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
-                    this.open_menu(target.clone(), e.position, cx);
+                    this.open_menu(target.clone(), Some(anchor.clone()), e.position, cx);
                 }),
             )
             .into_any_element()

@@ -125,7 +125,7 @@ impl FleetView {
         let work = if holding.is_some() { Work::Reading } else { Work::NotListed };
         let title = tab.label();
         let items = with_workman(self.tab_menu_items(id, folder.as_deref(), &repo, cx), folder.as_deref(), &work);
-        self.dialogs.menu = Some(ContextMenu::new(title, position, items));
+        self.dialogs.menu = Some(ContextMenu::new(title, position, items).anchored(format!("tab-{id}")));
         cx.notify();
         let Some(folder) = folder else { return };
         if repo == Repo::Reading {

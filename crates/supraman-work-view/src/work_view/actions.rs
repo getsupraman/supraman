@@ -59,14 +59,15 @@ impl WorkView {
         cx.notify();
     }
 
-    pub(crate) fn show_row_menu(&mut self, target: &ItemRef, position: Point<Pixels>, cx: &mut Context<Self>) {
+    /// `anchor`: the row's hit key, which paints open while the menu is shown.
+    pub(crate) fn show_row_menu(&mut self, target: &ItemRef, anchor: String, position: Point<Pixels>, cx: &mut Context<Self>) {
         let items = vec![
             item("work-web", "Open in Workman web", RowAction::OpenWeb(target.clone())),
             item("work-copy-ref", "Copy ref", RowAction::CopyRef(target.clone())),
             item("work-copy-link", "Copy link", RowAction::CopyLink(target.clone())),
             item("work-copy-title", "Copy title", RowAction::CopyTitle(target.clone())),
         ];
-        self.menu = Some(ContextMenu::new(target.qualified_ref.clone(), position, items));
+        self.menu = Some(ContextMenu::new(target.qualified_ref.clone(), position, items).anchored(anchor));
         cx.notify();
     }
 
@@ -90,11 +91,11 @@ impl WorkView {
             )
     }
 
-    pub(super) fn on_row_mouse_down(&self, item: &ItemRef, cx: &mut Context<Self>) -> impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static {
+    pub(super) fn on_row_mouse_down(&self, item: &ItemRef, anchor: String, cx: &mut Context<Self>) -> impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static {
         let item = item.clone();
         cx.listener(move |this, e: &MouseDownEvent, _, cx| {
             if e.button == MouseButton::Right {
-                this.show_row_menu(&item, e.position, cx);
+                this.show_row_menu(&item, anchor.clone(), e.position, cx);
                 cx.stop_propagation();
             }
         })

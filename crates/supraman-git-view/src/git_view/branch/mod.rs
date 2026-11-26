@@ -11,7 +11,7 @@ mod tests;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use gpui::{AppContext as _, Context, Entity, EventEmitter, Pixels, Point, Render, Window, div, prelude::*};
+use gpui::{AppContext as _, Context, Entity, EventEmitter, Pixels, Point, Render, SharedString, Window, div, prelude::*};
 use supraman_gitman::write::branch::{self, CheckedOut, Merged, Plan, Target, relation};
 use supraman_gitman::write::rebase::{self, Autostash, Rebased};
 use supraman_gitman::write::{LockSet, Session, WriteError};
@@ -207,6 +207,13 @@ impl BranchActions {
     #[cfg(test)]
     pub(crate) fn menu_labels(&self) -> Vec<String> {
         self.menu.as_ref().map(|m| m.items.iter().map(|i| i.label.clone()).collect()).unwrap_or_default()
+    }
+
+    /// The open submenu's labels.
+    #[cfg(test)]
+    pub(crate) fn submenu_labels(&self) -> Vec<String> {
+        let open = self.menu.as_ref().and_then(|m| m.submenu_open().and_then(|ix| m.items.get(ix)));
+        open.map(|i| i.submenu.iter().map(|c| c.label.clone()).collect()).unwrap_or_default()
     }
 
     fn request(&mut self, doing: Doing, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) {
@@ -438,7 +445,7 @@ impl BranchActions {
     }
 
     /// The menu of `subject` at `position` once its relation to HEAD is read; `graph` the ref panel's own items.
-    pub(crate) fn open_menu(&mut self, subject: Subject, graph: Vec<MenuItem<RefAct>>, position: Point<Pixels>, cx: &mut Context<Self>) {
+    pub(crate) fn open_menu(&mut self, subject: Subject, graph: Vec<MenuItem<RefAct>>, anchor: Option<SharedString>, position: Point<Pixels>, cx: &mut Context<Self>) {
         let Some(writer) = self.writes.writer(cx) else { return cx.emit(BranchEvent::Why(STILL_OPENING.into())) };
         let head = self.refs.head.sha().map(str::to_string);
         let pair = subject.sha().map(str::to_string).zip(head);
@@ -451,7 +458,7 @@ impl BranchActions {
                 let facts = Facts { refs: &refs, top: &top, relation, under_way: this.under_way, graph };
                 let mut built = menu::build(&subject, &facts);
                 remote_menu::add(&mut built, &subject, &this.remote);
-                this.show_menu(subject.title(), built.items(), position, cx);
+                this.show_anchored(subject.title(), built.items(), anchor, position, cx);
             })
             .ok();
         })
@@ -459,7 +466,7 @@ impl BranchActions {
     }
 
     /// The graph's menu of the commit `sha` with its branch groups `subjects`; `graph` the ref panel's items.
-    pub(crate) fn open_commit_menu(&mut self, subjects: Vec<Subject>, sha: String, graph: Vec<MenuItem<RefAct>>, position: Point<Pixels>, cx: &mut Context<Self>) {
+    pub(crate) fn open_commit_menu(&mut self, subjects: Vec<Subject>, sha: String, graph: Vec<MenuItem<RefAct>>, anchor: Option<SharedString>, position: Point<Pixels>, cx: &mut Context<Self>) {
         let Some(writer) = self.writes.writer(cx) else { return cx.emit(BranchEvent::Why(STILL_OPENING.into())) };
         let head = self.refs.head.sha().map(str::to_string);
         let at = sha.clone();
@@ -479,7 +486,7 @@ impl BranchActions {
                     [one] => one.title(),
                     _ => short_sha(&sha).to_string(),
                 };
-                this.show_menu(title, items, position, cx);
+                this.show_anchored(title, items, anchor, position, cx);
             })
             .ok();
         })
@@ -508,7 +515,18 @@ impl BranchActions {
     }
 
     pub(crate) fn show_menu(&mut self, title: String, items: Vec<MenuItem<RefAct>>, position: Point<Pixels>, cx: &mut Context<Self>) {
-        self.menu = (!items.is_empty()).then(|| ContextMenu::new(title, position, items));
+        self.show_anchored(title, items, None, position, cx);
+    }
+
+    /// The menu belonging to the element painted under `anchor`, which paints open while it is shown.
+    pub(crate) fn show_anchored(&mut self, title: String, items: Vec<MenuItem<RefAct>>, anchor: Option<SharedString>, position: Point<Pixels>, cx: &mut Context<Self>) {
+        self.menu = (!items.is_empty()).then(|| {
+            let menu = ContextMenu::new(title, position, items);
+            match anchor {
+                Some(anchor) => menu.anchored(anchor),
+                None => menu,
+            }
+        });
         cx.notify();
     }
 }

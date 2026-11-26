@@ -29,13 +29,13 @@ const NAME_GAP: f32 = 12.;
 /// A file row's buttons at its right end, shown while its row (hover group `group`) is hovered: the owner's for `path`.
 pub(crate) type Tail<V> = Rc<dyn Fn(&mut V, &str, ChangeKind, SharedString, &mut Context<V>) -> AnyElement>;
 
-/// A row right-clicked: its path, whether it is a folder, and where.
-pub(crate) type OnMenu<V> = Rc<dyn Fn(&mut V, &str, bool, Point<Pixels>, &mut Context<V>)>;
+/// A row right-clicked: its path, whether it is a folder, its hit key (the menu's anchor), and where.
+pub(crate) type OnMenu<V> = Rc<dyn Fn(&mut V, &str, bool, SharedString, Point<Pixels>, &mut Context<V>)>;
 
 /// `row` taking a right-click for `menu`.
-fn menu_row<V: 'static>(row: AnyElement, menu: &Option<OnMenu<V>>, path: &str, folder: bool, cx: &mut Context<V>) -> AnyElement {
+fn menu_row<V: 'static>(row: AnyElement, menu: &Option<OnMenu<V>>, list: &str, path: &str, folder: bool, cx: &mut Context<V>) -> AnyElement {
     let Some(menu) = menu.clone() else { return row };
-    let path = path.to_string();
+    let (path, anchor) = (path.to_string(), SharedString::from(supraman_ui::table::row_hit(list, path)));
     div()
         .size_full()
         .flex()
@@ -43,7 +43,7 @@ fn menu_row<V: 'static>(row: AnyElement, menu: &Option<OnMenu<V>>, path: &str, f
         .min_w_0()
         .on_mouse_down(MouseButton::Right, cx.listener(move |this: &mut V, e: &MouseDownEvent, _, cx| {
             cx.stop_propagation();
-            menu(this, &path, folder, e.position, cx);
+            menu(this, &path, folder, anchor.clone(), e.position, cx);
         }))
         .child(row)
         .into_any_element()
@@ -141,6 +141,7 @@ pub(crate) fn tree_list<V: 'static>(
     let (painter, marker) = (hits.clone(), hits.clone());
     let id = format!("{list}-tree");
     let group = supraman_ui::table::row_group(&id);
+    let menu_list = id.clone();
     TreeList::new(id, tree, hits, move |this: &mut V, row, _, cx| {
         let kind = match row.item {
             Item::File(Some(kind)) => Some(*kind),
@@ -155,7 +156,7 @@ pub(crate) fn tree_list<V: 'static>(
         }
         _ => tree_row(list, row, &painter, cx),
         };
-        menu_row(painted, &menu, &path, folder, cx)
+        menu_row(painted, &menu, &menu_list, &path, folder, cx)
     })
         .row_height(px(ROW))
         .lead(move |_: &mut V, row, _, cx| match row.item {
@@ -184,10 +185,11 @@ pub(crate) fn path_list<V: 'static>(
     let column = [Column::new("path", "", px(0.), px(0.))];
     let id = format!("{list}-files");
     let group = supraman_ui::table::row_group(&id);
+    let menu_list = id.clone();
     Table::new(id, state, hits, column, &[px(0.)], len, move |this: &mut V, ix, _, _, cx| {
         paint(ix).map_or_else(|| div().into_any_element(), |(path, kind)| {
             let row = with_tail(this, path_row(list, &path, kind, &painter, cx), &tail, &path, kind, &group, cx);
-            menu_row(row, &menu, &path, false, cx)
+            menu_row(row, &menu, &menu_list, &path, false, cx)
         })
     })
     .headless()

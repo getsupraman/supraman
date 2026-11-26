@@ -201,6 +201,7 @@ impl RefPanel {
         let chevron = if open { Icon::ChevronDown } else { Icon::ChevronRight };
         let key = section.key();
         button::ghost(&self.hits, format!("{LIST}-row-{key}"), cx)
+            .child(supraman_ui::popup::open_fill(format!("{LIST}-row-{key}")))
             .flex()
             .items_center()
             .h(px(ROW))

@@ -1,6 +1,6 @@
 //! The tab's side of the commit, WIP row and file menus: right-clicks turned into menus, each item sent to its write's owner.
 
-use gpui::{AnyElement, AppContext as _, Context, Entity, MouseButton, MouseDownEvent, Pixels, Point, div, prelude::*};
+use gpui::{AnyElement, AppContext as _, Context, Entity, MouseButton, MouseDownEvent, Pixels, Point, SharedString, div, prelude::*};
 use supraman_ui::menu::item;
 
 use super::files::{FileAct, FileClick, FileFacts, Listed, covered, items};
@@ -38,8 +38,9 @@ impl GitView {
     /// Row `ix`'s menu at `position`: the WIP row's, else its commit's with its branch groups.
     pub(crate) fn row_menu(&mut self, ix: usize, position: Point<Pixels>, cx: &mut Context<Self>) {
         let Some(row) = self.pages.read(cx).rows.get(ix).cloned() else { return };
+        let anchor = SharedString::from(supraman_ui::table::row_hit(crate::git_view::TABLE, &ix.to_string()));
         if row.wip() {
-            return self.branch.update(cx, |b, cx| b.show_menu("Work in progress".into(), wip_items(), position, cx));
+            return self.branch.update(cx, |b, cx| b.show_anchored("Work in progress".into(), wip_items(), Some(anchor), position, cx));
         }
         let refs = self.branch.read(cx).refs().clone();
         let groups: Vec<_> = row.row.refs.iter().filter_map(|g| group_subject(&refs, g, &row.sha).map(|s| (g.clone(), s))).filter(|(_, s)| matches!(s, Subject::Refs { .. })).collect();
@@ -48,7 +49,7 @@ impl GitView {
             _ => Vec::new(),
         };
         let (subjects, sha) = (groups.into_iter().map(|(_, s)| s).collect(), row.sha.to_string());
-        self.branch.update(cx, |b, cx| b.open_commit_menu(subjects, sha, graph, position, cx));
+        self.branch.update(cx, |b, cx| b.open_commit_menu(subjects, sha, graph, Some(anchor), position, cx));
     }
 
     /// A list's file or folder right-clicked: its menu, once whether it is in the work tree is read off the UI thread.
@@ -74,7 +75,7 @@ impl GitView {
                 let facts = FileFacts { click: &click, files, exists, under_way, busy: this.gate.read(cx).busy() };
                 let title = click.path.rsplit('/').next().unwrap_or(&click.path).to_string();
                 let menu = items(&facts);
-                this.branch.update(cx, |b, cx| b.show_menu(title, menu, click.position, cx));
+                this.branch.update(cx, |b, cx| b.show_anchored(title, menu, Some(click.anchor.clone()), click.position, cx));
             })
             .ok();
         })

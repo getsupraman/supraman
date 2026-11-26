@@ -91,8 +91,8 @@ impl WipPanel {
 
     /// A row's right-click: the tab's file menu of `section`'s file or folder.
     fn row_menu(section: Section) -> files::OnMenu<WipPanel> {
-        Rc::new(move |_: &mut WipPanel, path: &str, folder: bool, position, cx: &mut Context<WipPanel>| {
-            cx.emit(PanelEvent::FileMenu(FileClick { from: Listed::Wip(section), path: path.to_string(), folder, position }));
+        Rc::new(move |_: &mut WipPanel, path: &str, folder: bool, anchor, position, cx: &mut Context<WipPanel>| {
+            cx.emit(PanelEvent::FileMenu(FileClick { from: Listed::Wip(section), path: path.to_string(), folder, anchor, position }));
         })
     }
 

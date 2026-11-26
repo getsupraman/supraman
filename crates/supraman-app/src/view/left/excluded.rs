@@ -22,6 +22,7 @@ impl FleetView {
         div()
             .id(SharedString::from(format!("excluded:{key}")))
             .relative()
+            .child(supraman_ui::popup::open_fill(format!("excluded-row-{key}")))
             .flex()
             .flex_none()
             .items_center()
@@ -45,11 +46,11 @@ impl FleetView {
             )
             .child(hit_target(&self.hits, format!("excluded-row-{key}")))
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                this.open_menu(MenuTarget::Folder(menu_key.clone()), window.mouse_position(), cx);
+                this.open_menu(MenuTarget::Folder(menu_key.clone()), Some(format!("excluded-row-{menu_key}")), window.mouse_position(), cx);
             }))
             .on_mouse_down(MouseButton::Right, cx.listener(move |this, e: &MouseDownEvent, _, cx| {
                 cx.stop_propagation();
-                this.open_menu(MenuTarget::Folder(key.clone()), e.position, cx);
+                this.open_menu(MenuTarget::Folder(key.clone()), Some(format!("excluded-row-{key}")), e.position, cx);
             }))
             .into_any_element()
     }

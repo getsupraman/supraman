@@ -134,7 +134,8 @@ impl GitView {
     }
 
     /// A ref panel row's menu: its writes, with the panel's own Solo and Hide in their group.
-    pub(crate) fn ref_menu(&mut self, path: &str, position: Point<Pixels>, cx: &mut Context<Self>) {
+    /// `anchor`: the row's hit key.
+    pub(crate) fn ref_menu(&mut self, path: &str, anchor: Option<SharedString>, position: Point<Pixels>, cx: &mut Context<Self>) {
         let panel = self.ref_panel.read(cx);
         let graph = panel.menu_items(path).into_iter().map(|i| item(i.key, i.label, RefAct::Panel(i.action))).collect();
         let subject = match panel.entry(path).cloned() {
@@ -146,7 +147,7 @@ impl GitView {
             None => crate::git_view::ref_panel::remote_folder(path).map(|name| Subject::Remote { name: name.to_string() }),
         };
         let Some(subject) = subject else { return };
-        self.branch.update(cx, |b, cx| b.open_menu(subject, graph, position, cx));
+        self.branch.update(cx, |b, cx| b.open_menu(subject, graph, anchor, position, cx));
     }
 
     /// A ref panel row double-clicked: a branch or a remote branch checked out, a worktree's tab opened.
@@ -167,14 +168,16 @@ impl GitView {
     }
 
     /// The graph pill of row `ix`'s group `group` right-clicked.
+    /// Anchored to the pill the row shows for that group: its first group's pill, another's in the row's list.
     pub(crate) fn pill_menu(&mut self, ix: usize, group: usize, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let anchor = SharedString::from(if group == 0 { format!("git-ref-{ix}") } else { format!("git-reflist-{ix}-{group}-name") });
         let Some(row) = self.pages.read(cx).rows.get(ix).cloned() else { return };
         let Some(g) = row.row.refs.get(group).cloned() else { return };
         let refs = self.branch.read(cx).refs().clone();
         let sha = self.pill_sha(&row, cx).to_string();
         let Some(subject) = group_subject(&refs, &g, &sha) else { return };
         let graph = pill_graph_items(&self.ref_panel, &g, cx);
-        self.branch.update(cx, |b, cx| b.open_commit_menu(vec![subject], sha, graph, position, cx));
+        self.branch.update(cx, |b, cx| b.open_commit_menu(vec![subject], sha, graph, Some(anchor), position, cx));
     }
 
     /// The graph pill of row `ix`'s group `group` double-clicked: its local branch, else its one remote one, else a menu; a worktree row's cell opens it instead.

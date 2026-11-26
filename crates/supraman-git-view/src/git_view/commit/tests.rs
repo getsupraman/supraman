@@ -6,7 +6,7 @@ use supraman_gitman::fixture::{Fixture, run_git};
 
 use crate::git_view::GitView;
 use crate::git_view::test_support::{Opts, open, redraw};
-use crate::git_view::test_support::{click, menu, repaint, right_click, row_of, select_wip, toast};
+use crate::git_view::test_support::{click, keys, menu, repaint, right_click, row_of, select_wip, toast};
 
 /// The menu of `sha`'s row, opened by a right-click on the row.
 fn row_menu(view: &Entity<GitView>, sha: &str, cx: &mut VisualTestContext) -> Vec<String> {
@@ -110,7 +110,9 @@ fn a_wip_files_menu_ignores_untracks_and_deletes(cx: &mut gpui::TestAppContext) 
     let (view, cx) = open(&f.dir, Opts::default(), cx);
     select_wip(&view, cx);
     right_click(&view, "wip-unstaged-files-row-u.txt", cx);
-    assert_eq!(menu(&view, cx), ["Stage file", "Discard changes", "Ignore this file", "Ignore all *.txt files", "Stash file", "Open with the default program", "Show in folder", "Copy path", "Delete file"]);
+    assert_eq!(menu(&view, cx), ["Stage file", "Discard changes", "Ignore", "Stash file", "Open with the default program", "Show in folder", "Copy path", "Delete file"]);
+    keys(&view, "i right", cx);
+    assert_eq!(view.read_with(cx, |v, cx| v.branch.read(cx).submenu_labels()), ["Ignore this file", "Ignore all *.txt files"], "Ignore ▸ opened by Right");
     click(&view, "menu-file-ignore-0-u.txt", cx);
     assert_eq!(asking(&view, cx).as_deref(), Some("Add /u.txt to .gitignore?"));
     assert!(!repaint(&view, cx).borrow().contains_key("git-commit-ask-alt"), "an untracked file has nothing to stop tracking");
@@ -118,6 +120,7 @@ fn a_wip_files_menu_ignores_untracks_and_deletes(cx: &mut gpui::TestAppContext) 
     assert_eq!(std::fs::read_to_string(f.dir.join(".gitignore")).unwrap(), "/u.txt\n");
 
     right_click(&view, "wip-unstaged-files-row-a.txt", cx);
+    keys(&view, "i right", cx);
     click(&view, "menu-file-ignore-0-a.txt", cx);
     click(&view, "git-commit-ask-alt", cx);
     assert_eq!(f.at(&f.dir, &["ls-files", "a.txt"]), "", "Ignore and stop tracking");

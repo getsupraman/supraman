@@ -764,6 +764,7 @@ impl FleetView {
         div()
             .id(SharedString::from(gkey.clone()))
             .relative()
+            .child(supraman_ui::popup::open_fill(format!("schedules-row-{folder_key}")))
             .flex()
             .flex_none()
             .items_center()
@@ -783,7 +784,7 @@ impl FleetView {
                 let target = MenuTarget::Schedules { entry: entry.to_string(), folder: folder.path.clone() };
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
-                    this.open_menu(target.clone(), e.position, cx);
+                    this.open_menu(target.clone(), Some(format!("schedules-row-{folder_key}")), e.position, cx);
                 })
             })
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(gkey.clone(), cx)))
@@ -865,6 +866,7 @@ impl FleetView {
         div()
             .id(SharedString::from(format!("other-row-{path}")))
             .relative()
+            .child(supraman_ui::popup::open_fill(format!("other-row-{path}")))
             .flex()
             .flex_none()
             .items_center()
@@ -889,7 +891,7 @@ impl FleetView {
                 MouseButton::Right,
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
-                    this.open_menu(target.clone(), e.position, cx);
+                    this.open_menu(target.clone(), Some(format!("other-row-{path}")), e.position, cx);
                 }),
             )
             .into_any_element()
@@ -989,6 +991,7 @@ impl FleetView {
             .id(SharedString::from(format!("sched-row-{k}")))
             .group(group)
             .relative()
+            .child(supraman_ui::popup::open_fill(format!("sched-row-{k}")))
             .flex()
             .flex_none()
             .flex_col()
@@ -1013,7 +1016,7 @@ impl FleetView {
                 MouseButton::Right,
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
-                    this.open_menu(target.clone(), e.position, cx);
+                    this.open_menu(target.clone(), Some(format!("sched-row-{k}")), e.position, cx);
                 }),
             )
             .into_any_element()
