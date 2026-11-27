@@ -57,6 +57,15 @@ impl Marker {
             None => Ok(pop(s, self.autostash.as_ref())),
         }
     }
+
+    /// [`Self::finish`] for a rebase that did not happen, its checkouts elsewhere out of Undo's walk.
+    fn give_up(&self, s: &Session) -> Result<Autostash, WriteError> {
+        let autostash = self.finish(s)?;
+        if let Some(Elsewhere { branch, onto, .. }) = &self.elsewhere {
+            journal::record(s, Action::Aborted { what: format!("rebase \"{branch}\" onto \"{onto}\"") }, None)?;
+        }
+        Ok(autostash)
+    }
 }
 
 /// The work in progress a write stashed as `name` to put back after it.
@@ -179,7 +188,7 @@ pub fn skip(s: &Session) -> Result<Rebased, WriteError> {
 pub fn abort(s: &Session) -> Result<Rebased, WriteError> {
     let marker = read_marker(s);
     s.output(&Call::new(&["rebase", "--abort"]))?;
-    let autostash = marker.map_or(Ok(Autostash::None), |m| m.finish(s))?;
+    let autostash = marker.map_or(Ok(Autostash::None), |m| m.give_up(s))?;
     Ok(Rebased::Done { head: s.rev("HEAD")?, autostash })
 }
 

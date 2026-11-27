@@ -12,7 +12,7 @@ use crate::parse::text;
 pub use restore::{delete_branch, discard, discard_from_index};
 pub(crate) use restore::drop_noop_reset;
 pub use walk::Kind;
-use walk::{ELSEWHERE, Entry, Item, Line, Next, REST, UNDO};
+use walk::{ABORTED, ELSEWHERE, Entry, Item, Line, Next, REST, UNDO};
 
 pub const JOURNAL: &str = "refs/worktree/supraman/undo";
 
@@ -39,6 +39,8 @@ pub enum Action {
     DeleteBranch { name: String, sha: String, remote: Option<String>, merge: Option<String> },
     /// A merge into or rebase of `branch` while another checkout was HEAD's, checked out and back for it; `what` its words.
     Elsewhere { what: String, branch: String, from: String, to: String },
+    /// A write elsewhere given up back where it started: nothing to undo, its checkouts out of Undo's walk.
+    Aborted { what: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -70,7 +72,7 @@ pub struct Preview {
     pub state: OperationState,
 }
 
-pub const SUPPORTED: &str = "only commits, checkouts, resets, discards, branch deletes and GitMan's rebases can be undone";
+pub const SUPPORTED: &str = "only commits, checkouts, resets, discards, branch deletes, GitMan's rebases and merges into or rebases of another branch can be undone";
 
 /// The operation under way in the words "Cannot undo during …" ends with.
 fn under_way(state: OperationState) -> Option<&'static str> {
@@ -227,6 +229,7 @@ fn label(s: &Session, action: &Action) -> Result<String, WriteError> {
         Action::Discard { paths, .. } => return Ok(discard_label(paths)),
         Action::DeleteBranch { name, .. } => return Ok(format!("delete branch: {name}")),
         Action::Elsewhere { what, .. } => return Ok(format!("{ELSEWHERE}{what}")),
+        Action::Aborted { what } => return Ok(format!("{ABORTED}{what}")),
         Action::Commit => Kind::Commit,
         Action::Amend => Kind::Amend,
         Action::Checkout => Kind::Checkout,

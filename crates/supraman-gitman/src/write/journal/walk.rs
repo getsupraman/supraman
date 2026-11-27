@@ -6,6 +6,7 @@ use std::collections::HashMap;
 pub(super) const REST: &str = "rest";
 pub(super) const UNDO: &str = "undo: ";
 pub(super) const ELSEWHERE: &str = "elsewhere: ";
+pub(super) const ABORTED: &str = "aborted: ";
 
 /// One reflog line.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -177,8 +178,11 @@ pub fn items(head: &[Line], journal: &[Entry]) -> Vec<Item> {
                     }
                 }
                 kind => {
-                    away |= !undo && kind == Some(Kind::Elsewhere) && line.message.starts_with("checkout: moving from ");
-                    items.push(Item::of_entry(entry));
+                    let aborted = label.starts_with(ABORTED);
+                    away |= !undo && (aborted || kind == Some(Kind::Elsewhere)) && line.message.starts_with("checkout: moving from ");
+                    if !aborted {
+                        items.push(Item::of_entry(entry));
+                    }
                 }
             }
         }
@@ -206,7 +210,7 @@ pub fn items(head: &[Line], journal: &[Entry]) -> Vec<Item> {
 
 /// The HEAD lines of an [`Kind::Elsewhere`] write ending at `back` (its checkout back): down to the line that left where it went back to.
 fn swallow_away<'a>(back: &Line, lines: &mut std::iter::Peekable<impl Iterator<Item = &'a Line>>) {
-    const MADE: [&str; 4] = ["checkout: moving from ", "merge ", "rebase", "reset: moving to HEAD"];
+    const MADE: [&str; 5] = ["checkout: moving from ", "merge ", "commit (merge): ", "rebase", "reset: moving to HEAD"];
     let left = |l: &Line| l.old == back.new && (l.message.starts_with("checkout: moving from ") || l.message.starts_with("rebase (start)"));
     while lines.peek().is_some_and(|l| MADE.iter().any(|m| l.message.starts_with(m))) {
         if left(lines.next().expect("peeked")) {
@@ -350,6 +354,20 @@ mod tests {
         let w = walk(&items(&head, &undone));
         assert!(matches!(w.undo, Some(Next::Undo(ref i, Kind::Commit)) if i.label == "commit: Side"), "not the checkouts");
         assert_eq!(w.redo.map(|a| a.kind), Some(Kind::Elsewhere));
+    }
+
+    #[test]
+    fn a_write_elsewhere_given_up_takes_its_lines_and_leaves_no_item() {
+        let head = [
+            line("a", "s", 1, "commit: Side"),
+            line("s", "s", 2, "reset: moving to HEAD"),
+            line("s", "t", 3, "checkout: moving from side to stale"),
+            line("t", "t", 4, "reset: moving to HEAD"),
+            line("t", "s", 5, "checkout: moving from stale to side"),
+        ];
+        let all = items(&head, &[entry("aborted: merge \"feature\" into \"stale\"", &head[4])]);
+        assert_eq!(all.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(), ["commit: Side"]);
+        assert!(matches!(walk(&all).undo, Some(Next::Undo(ref i, Kind::Commit)) if i.label == "commit: Side"));
     }
 
     #[test]

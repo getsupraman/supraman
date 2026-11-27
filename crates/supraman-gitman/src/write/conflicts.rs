@@ -135,15 +135,29 @@ fn blobs(s: &Session, rev: &str, paths: &[String]) -> Result<BTreeMap<String, (S
         .collect())
 }
 
-/// Puts each of `paths` back in conflict in the index (stages 1 to 3 from the operation under way); the work tree is untouched.
+/// Puts each of `paths` back in conflict in the index: the stages git wrote where the index's resolve-undo holds them, else stages 1 to 3 from the operation's commits; the work tree is untouched.
 pub fn mark_conflicted(s: &Session, paths: &[String]) -> Result<(), WriteError> {
     if paths.is_empty() {
         return Ok(());
     }
     let sides = sides(s)?;
+    let held = crate::status::resolve_undo(&s.output(&Call::new(&["ls-files", "--resolve-undo", "-z"]))?);
+    let (undone, rebuilt): (Vec<String>, Vec<String>) = paths.iter().cloned().partition(|p| held.contains(p));
+    if !undone.is_empty() {
+        let args: Vec<String> = ["update-index".to_string(), "--unresolve".into()].into_iter().chain(undone.iter().map(|p| if p.starts_with('-') { format!("./{p}") } else { p.clone() })).collect();
+        s.output(&Call::new(&args.iter().map(String::as_str).collect::<Vec<_>>()))?;
+    }
+    rebuild_stages(s, &sides, &rebuilt)
+}
+
+/// Stages 1 to 3 of `paths` from `sides`' trees by `update-index --index-info`.
+fn rebuild_stages(s: &Session, sides: &[Option<String>; 3], paths: &[String]) -> Result<(), WriteError> {
+    if paths.is_empty() {
+        return Ok(());
+    }
     let mut info = Vec::new();
     let mut lines = Vec::new();
-    for (stage, rev) in (1u8..).zip(&sides) {
+    for (stage, rev) in (1u8..).zip(sides) {
         let Some(rev) = rev else { continue };
         for (path, (mode, sha)) in blobs(s, rev, paths)? {
             lines.push(format!("{mode} {sha} {stage}\t{path}"));
