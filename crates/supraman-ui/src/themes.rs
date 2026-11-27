@@ -108,13 +108,18 @@ pub fn drop_border(colors: &ThemeColors) -> Hsla {
     nearest_holding(border, |c| contrast(c, panel) >= DROP_LINE_FLOOR).unwrap_or_else(|| drop_line(colors))
 }
 
-/// A drop target's fill while a payload it takes hovers it: the theme's on the panel, moved to the nearest lightness where it
-/// shows ([`INACTIVE_SELECTION_SHOWS`]) and its text holds [`NAME_FLOOR`].
+/// A drop target's fill while a payload it takes hovers it: the theme's, translucent (its own alpha, else [`DROP_ALPHA`]) so
+/// what it covers shows through, moved to the nearest lightness where it shows on the panel ([`INACTIVE_SELECTION_SHOWS`])
+/// and text on it holds [`NAME_FLOOR`].
 pub fn drop_over(colors: &ThemeColors) -> Hsla {
     let panel = colors.panel_background;
-    let fill: Hsla = over(colors.drop_target_background, panel).into();
-    nearest_holding(fill, |c| contrast(c, panel) >= INACTIVE_SELECTION_SHOWS && contrast(colors.text, c) >= NAME_FLOOR).unwrap_or(fill)
+    let theirs = colors.drop_target_background;
+    let fill = if theirs.a < 1. { theirs } else { Hsla { a: DROP_ALPHA, ..theirs } };
+    nearest_holding(fill, |c| contrast(c, panel) >= INACTIVE_SELECTION_SHOWS && contrast(colors.text, over(c, panel).into()) >= NAME_FLOOR).unwrap_or(fill)
 }
+
+/// A drop fill's alpha where the theme's is opaque (VS Code Dark Modern's own is `80`).
+pub const DROP_ALPHA: f32 = 0.5;
 
 /// The distance of two fills' colours over `bg`.
 pub fn apart(a: Hsla, b: Hsla, bg: Hsla) -> f32 {
@@ -1078,7 +1083,8 @@ mod tests {
             assert!(contrast(drop_line(c), panel) >= DROP_LINE_FLOOR, "{}: the insertion line {} on the panel", theme.name, hex(drop_line(c)));
             assert!(contrast(drop_border(c), panel) >= DROP_LINE_FLOOR, "{}: the drop border {} on the panel", theme.name, hex(drop_border(c)));
             assert!(contrast(drop_over(c), panel) >= INACTIVE_SELECTION_SHOWS, "{}: the drop fill {} on the panel", theme.name, hex(drop_over(c)));
-            assert!(contrast(c.text, drop_over(c)) >= NAME_FLOOR, "{}: text on the drop fill {}", theme.name, hex(drop_over(c)));
+            assert!(contrast(c.text, over(drop_over(c), panel).into()) >= NAME_FLOOR, "{}: text on the drop fill {}", theme.name, hex(drop_over(c)));
+            assert!(drop_over(c).a < 1., "{}: the drop fill lets what it covers show through", theme.name);
         }
     }
 
