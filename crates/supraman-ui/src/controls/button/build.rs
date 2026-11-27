@@ -237,7 +237,8 @@ impl Button {
             el = el.opacity(tokens::DIMMED).cursor_default();
         }
         if let Some((group, false)) = self.reveal.take() {
-            el = el.opacity(0.).group_hover(group, |s| s.opacity(1.));
+            let shown = if self.dimmed { tokens::DIMMED } else { 1. };
+            el = el.opacity(0.).group_hover(group, move |s| s.opacity(shown));
         }
         match (self.why.take(), self.tooltip.take()) {
             (Some(why), _) => el = el.tooltip(Tooltip::text(why)),

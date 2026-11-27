@@ -85,6 +85,23 @@ fn live_refresh_shows_a_new_commit_and_its_refs_and_an_edit(cx: &mut TestAppCont
 }
 
 #[gpui::test]
+fn live_refresh_follows_a_commit_made_outside_in_a_reftable_repo(cx: &mut TestAppContext) {
+    let f = match Fixture::reftable() {
+        Ok(f) => f,
+        Err(why) => return eprintln!("skipped: {why}"),
+    };
+    assert!(supraman_gitman::dirs(&f.repo()).is_ok_and(|d| d.reftable()), "the fixture keeps its refs in reftable");
+    follow(cx);
+    let (view, cx) = open(&f.dir, Opts::default(), cx);
+    following(&view, cx);
+    f.git(&["commit", "-q", "--no-verify", "--allow-empty", "-m", "Made outside in reftable"]);
+    let head = f.git(&["rev-parse", "HEAD"]);
+    let took = until("the outside commit", DEADLINE, cx, |cx| view.read_with(cx, |v, cx| v.pages.read(cx).rows.iter().any(|r| r.sha.as_ref() == head)));
+    eprintln!("the reftable commit after {took:?}");
+    close(view, cx);
+}
+
+#[gpui::test]
 fn live_refresh_keeps_the_open_diff_and_reloads_it_when_its_file_changes(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     follow(cx);
@@ -128,6 +145,10 @@ fn live_refresh_classifies_each_change_in_the_git_dirs() {
         ("index", wip.clone(), None),
         ("MERGE_HEAD", wip.clone(), None),
         ("worktrees/wt/HEAD", Some(Refresh::Graph), Some(Refresh::Graph)),
+        ("reftable/tables.list", Some(Refresh::Graph), Some(Refresh::Graph)),
+        ("reftable/0x000000000002-0x000000000002-1a2b3c4d.ref", Some(Refresh::Graph), Some(Refresh::Graph)),
+        ("reftable/tables.list.lock", None, None),
+        ("worktrees/wt/reftable/tables.list", Some(Refresh::Graph), Some(Refresh::Graph)),
         ("worktrees/wt/index", None, wip.clone()),
         ("worktrees/wt/rebase-merge/done", None, wip.clone()),
         ("refs/heads/main.lock", None, None),

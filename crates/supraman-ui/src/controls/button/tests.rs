@@ -379,3 +379,40 @@ fn a_buttons_icon_sits_on_its_letters_middle(cx: &mut TestAppContext) {
         assert!(crate::ink::level(icon.center().y, label.center().y + below), "{size:?}: the icon on the letters' middle: {icon:?} {label:?} by {below:?}");
     }
 }
+
+struct Revealed {
+    hits: HitTargets,
+}
+
+impl Render for Revealed {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let button = |key: &str, dimmed: bool| Button::new(&self.hits, key.to_string()).label("Stage").reveal("revealed-row", false).dimmed_if(dimmed).build(cx);
+        div().id("revealed-row").group("revealed-row").w(px(300.)).h(px(40.)).flex().gap_2().p_2().child(button("live", false)).child(button("dimmed", true))
+    }
+}
+
+fn fill_alpha(view: &gpui::Entity<Revealed>, key: &str, cx: &mut VisualTestContext) -> f32 {
+    let bounds = view.read_with(cx, |v, _| v.hits.borrow().get(key).map(|h| h.bounds)).unwrap_or_else(|| panic!("{key} paints"));
+    cx.update(|window, _| {
+        let middle = bounds.center().scale(window.scale_factor());
+        let alphas = window.painted_quads().into_iter().filter(|q| q.bounds.contains(&middle)).filter_map(|q| q.background.as_solid().map(|c| c.a));
+        alphas.fold(0., f32::max)
+    })
+}
+
+#[gpui::test]
+fn a_revealed_dimmed_button_shows_dimmed_on_its_groups_hover(cx: &mut TestAppContext) {
+    cx.update(|cx| crate::init_globals(cx, "test"));
+    let (view, cx) = cx.add_window_view(|_, _| Revealed { hits: HitTargets::default() });
+    let point_at = |x: f32, y: f32, cx: &mut VisualTestContext| {
+        cx.simulate_mouse_move(gpui::point(px(x), px(y)), None, gpui::Modifiers::none());
+        view.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+    };
+    point_at(10., 200., cx);
+    assert_eq!((fill_alpha(&view, "live", cx), fill_alpha(&view, "dimmed", cx)), (0., 0.), "both hidden while the pointer is off the group");
+    point_at(290., 20., cx);
+    let (live, dimmed) = (fill_alpha(&view, "live", cx), fill_alpha(&view, "dimmed", cx));
+    assert!(live > 0., "the live one shows on the group's hover");
+    assert!((dimmed - live * tokens::DIMMED).abs() < 0.01, "the dimmed one at DIMMED: {dimmed} of {live}");
+}

@@ -69,6 +69,14 @@ fn file(key: String, label: impl Into<String>, act: FileAct) -> MenuItem<RefAct>
     item(key, label, RefAct::Commit(CommitAct::File(act)))
 }
 
+/// A write item, dimmed with the gate's why while the tab's gate is busy.
+fn write(f: &FileFacts, it: MenuItem<RefAct>) -> MenuItem<RefAct> {
+    match f.busy {
+        Some(why) => it.dimmed(why),
+        None => it,
+    }
+}
+
 fn paths(files: &[FileChange]) -> Vec<String> {
     files.iter().map(|f| f.path.clone()).collect()
 }
@@ -94,7 +102,7 @@ pub(crate) fn items(f: &FileFacts) -> Vec<MenuItem<RefAct>> {
     }
     place.push(file(format!("file-copy-{}", c.path), "Copy path", FileAct::CopyPath(c.path.clone())));
     if f.exists && !c.folder {
-        place.push(file(format!("file-delete-{}", c.path), "Delete file", FileAct::Delete(c.path.clone())));
+        place.push(write(f, file(format!("file-delete-{}", c.path), "Delete file", FileAct::Delete(c.path.clone()))));
     }
     for (i, it) in place.into_iter().enumerate() {
         out.push(if i == 0 && !out.is_empty() { it.rule() } else { it });
@@ -144,7 +152,7 @@ fn wip_items(section: Section, f: &FileFacts) -> Vec<MenuItem<RefAct>> {
         let it = file(format!("file-stash-{p}"), format!("Stash {what}"), FileAct::Stash(files.clone()));
         out.push(if ignorable(p) { it.rule() } else { it });
     }
-    out
+    out.into_iter().map(|it| write(f, it)).collect()
 }
 
 fn commit_items(sha: &str, stash: Option<&str>, f: &FileFacts) -> Vec<MenuItem<RefAct>> {
@@ -156,12 +164,9 @@ fn commit_items(sha: &str, stash: Option<&str>, f: &FileFacts) -> Vec<MenuItem<R
     match stash {
         Some(stash) => {
             let apply = file(format!("file-apply-{}", c.path), format!("Apply stashed {what}"), FileAct::ApplyStashed { sha: stash.to_string(), files: f.files.clone() });
-            vec![match f.busy {
-                Some(why) => apply.dimmed(why),
-                None => apply,
-            }]
+            vec![write(f, apply)]
         }
-        None => vec![file(format!("file-restore-{}", c.path), format!("Restore {what} from this commit"), FileAct::Restore { sha: sha.to_string(), paths: paths(&f.files) })],
+        None => vec![write(f, file(format!("file-restore-{}", c.path), format!("Restore {what} from this commit"), FileAct::Restore { sha: sha.to_string(), paths: paths(&f.files) }))],
     }
 }
 
@@ -219,5 +224,22 @@ mod tests {
         let dimmed = |busy| items(&FileFacts { click: &click, files: all.to_vec(), exists: false, under_way: false, busy })[0].dimmed.clone();
         assert_eq!(dimmed(Some("Working…")).as_deref(), Some("Working…"));
         assert_eq!(dimmed(None), None);
+    }
+
+    #[test]
+    fn every_write_item_is_dimmed_with_the_gates_why_while_busy_and_the_rest_stay_live() {
+        let all = [change(ChangeKind::Modified, "src/a.rs"), change(ChangeKind::Unmerged, "c.txt")];
+        let commit = Listed::Commit { sha: "c".into(), stash: None };
+        let cases = [(Listed::Wip(Section::Unstaged), "src/a.rs", false), (Listed::Wip(Section::Staged), "src", true), (Listed::Wip(Section::Conflicted), "c.txt", false), (commit, "src/a.rs", false)];
+        let live = ["Open with the default program", "Open folder", "Show in folder", "Copy path"];
+        for (from, path, folder) in cases {
+            let click = FileClick { from, path: path.into(), folder, anchor: "".into(), position: point(gpui::px(0.), gpui::px(0.)) };
+            let shown = |busy| items(&FileFacts { click: &click, files: covered(&all, path, folder), exists: true, under_way: false, busy });
+            assert!(shown(None).iter().all(|i| i.dimmed.is_none()), "{path}: nothing is dimmed while idle");
+            for i in shown(Some("Working…")) {
+                let want = (!live.contains(&i.label.as_str())).then_some("Working…");
+                assert_eq!(i.dimmed.as_deref(), want, "{path}: {}", i.label);
+            }
+        }
     }
 }
