@@ -1,6 +1,7 @@
 //! The dock's layout: a split tree of depth ≤ 2 with alternating axes over panel ids, and its placement rules as
 //! pure functions. A refused placement is `None`.
 
+pub use crate::dnd::Zone;
 pub use crate::split::Axis;
 
 /// A new split's first share.
@@ -19,28 +20,14 @@ pub enum Layout<P> {
     Split { axis: Axis, ratio: f32, first: Box<Layout<P>>, second: Box<Layout<P>> },
 }
 
-/// Where over a panel a drop lands: an edge splits its slot there, the centre is the owner's.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Zone {
-    Left,
-    Right,
-    Top,
-    Bottom,
-    Centre,
-}
-
-impl Zone {
-    pub const ALL: [Zone; 5] = [Zone::Left, Zone::Right, Zone::Top, Zone::Bottom, Zone::Centre];
-
-    /// The axis an edge splits along and whether the dropped panel comes first; the centre has none.
-    fn edge(self) -> Option<(Axis, bool)> {
-        match self {
-            Zone::Left => Some((Axis::Columns, true)),
-            Zone::Right => Some((Axis::Columns, false)),
-            Zone::Top => Some((Axis::Rows, true)),
-            Zone::Bottom => Some((Axis::Rows, false)),
-            Zone::Centre => None,
-        }
+/// The axis an edge splits along and whether the dropped panel comes first; the centre has none.
+fn edge(zone: Zone) -> Option<(Axis, bool)> {
+    match zone {
+        Zone::Left => Some((Axis::Columns, true)),
+        Zone::Right => Some((Axis::Columns, false)),
+        Zone::Top => Some((Axis::Rows, true)),
+        Zone::Bottom => Some((Axis::Rows, false)),
+        Zone::Centre => None,
     }
 }
 
@@ -161,7 +148,7 @@ impl<P: Copy + Eq> Layout<P> {
         if !self.contains(target) {
             return None;
         }
-        let Some((axis, before)) = zone.edge() else { return Some(Dropped::Owner) };
+        let Some((axis, before)) = edge(zone) else { return Some(Dropped::Owner) };
         if self.contains(p) || self.len() >= MAX {
             return None;
         }
@@ -226,6 +213,18 @@ impl<P: Copy + Eq> Layout<P> {
                 a == b && af.same_places(bf) && asd.same_places(bs)
             }
             _ => false,
+        }
+    }
+
+    /// The split at `path` (each step a split's side, 0 its first) given `ratio`; `None` for no split there or a ratio
+    /// outside (0, 1).
+    pub fn with_ratio(&self, path: &[usize], ratio: f32) -> Option<Self> {
+        let Layout::Split { axis, ratio: own, first, second } = self else { return None };
+        match path.split_first() {
+            None => (ratio > 0.0 && ratio < 1.0).then(|| Layout::Split { axis: *axis, ratio, first: first.clone(), second: second.clone() }),
+            Some((0, rest)) => Some(Layout::Split { axis: *axis, ratio: *own, first: Box::new(first.with_ratio(rest, ratio)?), second: second.clone() }),
+            Some((1, rest)) => Some(Layout::Split { axis: *axis, ratio: *own, first: first.clone(), second: Box::new(second.with_ratio(rest, ratio)?) }),
+            Some(_) => None,
         }
     }
 
