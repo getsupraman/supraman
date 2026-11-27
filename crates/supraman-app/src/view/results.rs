@@ -98,6 +98,8 @@ impl FleetView {
     }
 
     fn step_result(&mut self, by: isize, cx: &mut Context<Self>) {
+        // the arrow reached the box, so it holds the keys even where no focus-in event came (an inactive window)
+        self.sidebar.results.held = true;
         if self.sidebar.results.shown && self.sidebar.results.step(by) {
             cx.notify();
         }
