@@ -222,10 +222,23 @@ A tab's dock holds up to four panels; `dock::layout` is its model, pure and tota
   depth and the alternating axes allow; `Centre` is `Dropped::Owner` and never changes the layout.
 - `remove(p)`: the sibling takes the split's whole room and keeps its own ratio; the removed split's
   ratio goes with it. `moved(p, target, zone)`: remove then drop, `None` when nothing moves.
-- `rects(width, height)`: each slot's `Rect`; `panels()` in the tree's order.
+- `rects(width, height)`: each slot's `Rect`; `panels()` in the tree's order; `with_ratio(path, r)` one
+  split's share, the path its sides from the root.
 
-Every refusal (depth, capacity, an id already there, a missing target) is `None`. The view over
-`split::SplitPane` comes next.
+Every refusal (depth, capacity, an id already there, a missing target) is `None`.
+
+`dock::view::Dock` paints the owner's `Layout` as nested `SplitPane::render_fraction`s, each split's id
+its path (`<id>-split`, `<id>-split-1`), a divider's drag the owner's new layout (`on_layout`).
+With two or more panels each slot wears a `bar::HEADER` title bar of the owner's icon and words
+(`Label`, clipped; the focused panel's in the text colour, the rest muted) and a × (`on_close`), a
+`dnd::source` of the panel's payload; a dock of one is its element alone. Panels and title bars paint
+no border or rule: a divider is the one line between two slices.
+While a payload is dragged, each current slot is a `dnd::DropZone::zoned` target (`<id>-aim-<n>`), whose
+`Zone` is the pointer's edge band a quarter of the slot deep (`dnd::zone_in`), else its centre.
+Over a zone `drop` or `moved` accepts, the dock paints that resulting layout with the dragged panel's
+slot as the ghost (`<id>-ghost`, `dnd::look`), a release hands the owner that layout once, a refused
+zone or Esc paints the current one, and `Centre` is the owner's `on_centre`. Hit keys `<id>-slot-<n>`,
+`<id>-title-<n>`, `<id>-close-<n>`, `n` the panel's place in the painted layout's `panels()`.
 
 ## 5. Surfaces: where a question or a small form appears
 
