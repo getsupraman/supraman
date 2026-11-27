@@ -176,3 +176,17 @@ fn a_drop_zone_lights_only_for_a_payload_it_takes_and_calls_its_owner_once(cx: &
     release(cx, ZONE);
     assert_eq!(view.read_with(cx, |v, _| v.zone_drops.clone()), [0], "one drop, one call");
 }
+
+#[test]
+fn zone_in_is_the_nearest_edge_band_a_quarter_deep_else_the_centre() {
+    use super::{Zone, zone_in};
+    let b = gpui::Bounds::new(at(100., 100.), gpui::size(px(400.), px(200.)));
+    assert_eq!(zone_in(b, at(120., 200.)), Zone::Left);
+    assert_eq!(zone_in(b, at(480., 200.)), Zone::Right);
+    assert_eq!(zone_in(b, at(300., 110.)), Zone::Top);
+    assert_eq!(zone_in(b, at(300., 290.)), Zone::Bottom);
+    assert_eq!(zone_in(b, at(300., 200.)), Zone::Centre);
+    assert_eq!(zone_in(b, at(199., 200.)), Zone::Left, "just inside the band");
+    assert_eq!(zone_in(b, at(201., 200.)), Zone::Centre, "just past it");
+    assert_eq!(zone_in(b, at(110., 140.)), Zone::Left, "a corner goes to the nearer edge by share");
+}

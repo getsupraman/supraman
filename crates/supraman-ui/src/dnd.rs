@@ -1,14 +1,14 @@
 //! Drag and drop (UI-KIT §4.7): a dragged [`Payload`] under its [`chip`], its source dimmed while it is dragged, Esc
 //! cancelling it, [`Sortable`] (a reorder: its insertion line, edge auto-scroll) and [`DropZone`] (a typed target in
-//! the `drop_over` look). A resize is `split`'s divider.
+//! the `drop_over` look, or [`DropZone::zoned`] by the pointer's [`Zone`] in it). A resize is `split`'s divider.
 
-use std::any::TypeId;
+use std::any::{Any, TypeId};
 use std::marker::PhantomData;
 use std::rc::Rc;
 
 use gpui::{
-    AnyWeakEntity, App, AppContext as _, Axis, Context, Div, DragMoveEvent, Global, InteractiveElement, IntoElement, ParentElement, Pixels, Point, Render, SharedString,
-    StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Window, div, point, prelude::FluentBuilder, px,
+    AnyWeakEntity, App, AppContext as _, Axis, Bounds, Context, Div, DragMoveEvent, Global, InteractiveElement, IntoElement, ParentElement, Pixels, Point, Render, SharedString,
+    StatefulInteractiveElement, Styled, Subscription, Window, div, point, prelude::FluentBuilder, px,
 };
 use theme::ActiveTheme as _;
 
@@ -37,6 +37,32 @@ pub fn edge_scroll(at: Pixels, viewport: Pixels) -> Pixels {
     } else {
         Pixels::ZERO
     }
+}
+
+/// Where over a target the pointer is: an edge band [`ZONE_BAND`] of its size deep on each side, the rest its centre.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Zone {
+    Left,
+    Right,
+    Top,
+    Bottom,
+    Centre,
+}
+
+impl Zone {
+    pub const ALL: [Zone; 5] = [Zone::Left, Zone::Right, Zone::Top, Zone::Bottom, Zone::Centre];
+}
+
+/// How deep an edge band is, as a share of the target's size across it.
+pub const ZONE_BAND: f32 = 0.25;
+
+/// The zone of `bounds` that `at` lies in: the nearest edge's band by share of the size, else the centre.
+pub fn zone_in(bounds: Bounds<Pixels>, at: Point<Pixels>) -> Zone {
+    let share = |into: Pixels, of: Pixels| if of > Pixels::ZERO { into / of } else { 0.5 };
+    let (x, y) = (share(at.x - bounds.left(), bounds.size.width), share(at.y - bounds.top(), bounds.size.height));
+    let edges = [(Zone::Left, x), (Zone::Right, 1. - x), (Zone::Top, y), (Zone::Bottom, 1. - y)];
+    let (zone, depth) = edges.into_iter().fold((Zone::Centre, f32::INFINITY), |best, e| if e.1 < best.1 { e } else { best });
+    if depth < ZONE_BAND { zone } else { Zone::Centre }
 }
 
 /// Where an item's insertion line is drawn: its leading or trailing edge along the list.
@@ -96,6 +122,8 @@ struct Drag {
     over: Option<(SharedString, SharedString, Option<Edge>)>,
     /// The drop zones painted `drop_over` since the pointer last moved.
     lit: Vec<SharedString>,
+    /// The zoned target the pointer is over, the zone it accepts there and the payload.
+    zone: Option<(SharedString, Zone, Rc<dyn Any>)>,
     scroll: Option<Scroll>,
     _esc: Option<Subscription>,
 }
@@ -118,6 +146,7 @@ pub fn cancel(window: &mut Window, cx: &mut App) {
     if cx.has_global::<Drag>() {
         let drag = cx.global_mut::<Drag>();
         drag.over = None;
+        drag.zone = None;
         drag.scroll = None;
     }
     cx.stop_active_drag(window);
@@ -152,13 +181,14 @@ where
         drag.source = Some((key.clone(), TypeId::of::<P>(), chip.downgrade().into()));
         drag.over = None;
         drag.lit.clear();
+        drag.zone = None;
         drag.scroll = None;
         chip
     })
 }
 
 /// The `drop_over` look: [`tokens::Roles`]' `drop_over` fill inside its `drop_border`.
-fn over_look(style: StyleRefinement, cx: &App) -> StyleRefinement {
+pub fn look<S: Styled>(style: S, cx: &App) -> S {
     let roles = tokens::roles(cx);
     let look = resolve(State { drop_over: true, ..State::default() }, Fills { drop_over: Some(roles.drop_over), ..Fills::default() });
     let style = match look.fill {
@@ -173,6 +203,16 @@ fn over_look(style: StyleRefinement, cx: &App) -> StyleRefinement {
 pub struct DropZone<E> {
     el: E,
     key: Option<SharedString>,
+}
+
+/// The zone of the zoned target under `key` that a payload of `P` hovers and the target accepts, with that payload.
+pub fn zone_over<P: Clone + 'static>(key: &str, cx: &App) -> Option<(Zone, P)> {
+    under_way(cx)?;
+    let (k, zone, payload) = cx.try_global::<Drag>()?.zone.as_ref()?;
+    if k != key {
+        return None;
+    }
+    payload.downcast_ref::<P>().map(|p| (*zone, p.clone()))
 }
 
 /// Whether the drop zone under `key` painted `drop_over` for the drag under way since the pointer last moved.
@@ -205,7 +245,7 @@ impl<E: InteractiveElement + Styled> DropZone<E> {
                         if !drag.lit.contains(&shown) {
                             drag.lit.push(shown.clone());
                         }
-                        over_look(s, cx)
+                        look(s, cx)
                     })
             }
             None => self.el,
@@ -215,6 +255,35 @@ impl<E: InteractiveElement + Styled> DropZone<E> {
                 on_drop(p, window, cx);
             }
         });
+        Self { el, key: self.key }
+    }
+
+    /// A target by the pointer's [`Zone`] in it, with no look of its own: `accepts` says which zones take a payload, read
+    /// with [`zone_over`] while it hovers one; let go there, `on_drop` gets the zone, once.
+    pub fn zoned<P: Clone + 'static>(self, accepts: impl Fn(&P, Zone, &Window, &App) -> bool + 'static, on_drop: impl Fn(&P, Zone, &mut Window, &mut App) + 'static) -> Self {
+        let Some(key) = self.key.clone() else { return self };
+        let accepts = Rc::new(accepts);
+        let (moved, dropped, takes) = (key.clone(), key, accepts.clone());
+        let el = self
+            .el
+            .on_drag_move::<P>(move |e: &DragMoveEvent<P>, window, cx| {
+                let at = e.event.position;
+                let zone = e.bounds.contains(&at).then(|| zone_in(e.bounds, at)).filter(|z| accepts(e.drag(cx), *z, window, cx));
+                let payload = zone.map(|_| Rc::new(e.drag(cx).clone()) as Rc<dyn Any>);
+                let drag = cx.default_global::<Drag>();
+                let was = drag.zone.as_ref().filter(|(k, ..)| *k == moved).map(|(_, z, _)| *z);
+                if was != zone {
+                    drag.zone = zone.zip(payload).map(|(z, p)| (moved.clone(), z, p));
+                    window.refresh();
+                }
+            })
+            .on_drop::<P>(move |p, window, cx| {
+                let drag = cx.default_global::<Drag>();
+                let Some(zone) = drag.zone.take_if(|(k, ..)| *k == dropped).map(|(_, z, _)| z) else { return };
+                if takes(p, zone, window, cx) {
+                    on_drop(p, zone, window, cx);
+                }
+            });
         Self { el, key: self.key }
     }
 

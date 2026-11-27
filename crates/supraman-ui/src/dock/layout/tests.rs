@@ -304,3 +304,15 @@ fn dock_layout_rects_and_panels_follow_the_splits() {
     assert!(!cols(leaf(1), leaf(1)).is_valid(), "an id once");
     assert!(!cols(leaf(1), rows(leaf(2), cols(leaf(3), leaf(4)))).is_valid(), "depth");
 }
+
+#[test]
+fn dock_layout_with_ratio_sets_the_split_at_its_path_only() {
+    let quarters = cols(rows(leaf(1), leaf(2)), rows(leaf(3), leaf(4)));
+    assert_eq!(quarters.with_ratio(&[], 0.3), Some(split(Axis::Columns, 0.3, rows(leaf(1), leaf(2)), rows(leaf(3), leaf(4)))));
+    assert_eq!(quarters.with_ratio(&[1], 0.7), Some(cols(rows(leaf(1), leaf(2)), split(Axis::Rows, 0.7, leaf(3), leaf(4)))));
+    assert_eq!(quarters.with_ratio(&[0, 0], 0.5), None, "a leaf has no ratio");
+    assert_eq!(quarters.with_ratio(&[2], 0.5), None, "a split has two sides");
+    assert_eq!(quarters.with_ratio(&[], 0.0), None);
+    assert_eq!(quarters.with_ratio(&[], 1.0), None);
+    assert_eq!(leaf(1).with_ratio(&[], 0.5), None);
+}

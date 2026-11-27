@@ -1,3 +1,4 @@
-//! A tab's dock of up to four panels (UI-KIT §4.9): `layout` is the model and its placement rules.
+//! A tab's dock of up to four panels (UI-KIT §4.9): `layout` is the model and its placement rules, `view` paints it.
 
 pub mod layout;
+pub mod view;

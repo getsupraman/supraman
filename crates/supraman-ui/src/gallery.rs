@@ -18,6 +18,7 @@ use crate::list::tree::TreeState;
 use crate::tokens;
 
 mod dnd;
+mod dock;
 mod sections;
 
 /// The window title the shots step captures by.
@@ -40,10 +41,11 @@ pub enum Section {
     Text,
     Scroll,
     Dnd,
+    Dock,
 }
 
 impl Section {
-    pub const ALL: [Section; 15] = [
+    pub const ALL: [Section; 16] = [
         Section::Buttons,
         Section::Toggles,
         Section::Inputs,
@@ -59,6 +61,7 @@ impl Section {
         Section::Text,
         Section::Scroll,
         Section::Dnd,
+        Section::Dock,
     ];
 
     /// Its part of the shot's name, `kit-<key>-dark.png`.
@@ -79,6 +82,7 @@ impl Section {
             Section::Text => "text",
             Section::Scroll => "scroll",
             Section::Dnd => "dnd",
+            Section::Dock => "dock",
         }
     }
 
@@ -99,6 +103,7 @@ impl Section {
             Section::Text => "Text: a read-only text's selection, the read-only and editable box; clipped labels, path labels, pairs, clamped",
             Section::Scroll => "Scroll areas: a list, a box, a nested pair, a grid, and a box set to always",
             Section::Dnd => "Drag and drop: a reorder's insertion line, a drop zone under a payload it takes, the dimmed source, the chip",
+            Section::Dock => "Dock: two and three panels under their title bars, one mid-drag with its ghost",
         }
     }
 }
@@ -180,6 +185,7 @@ impl Section {
             Section::Marks => Vec::new(),
             Section::Scroll => vec![hover("hover-area", "kit-scroll-div"), hover("hover-thumb", "kit-scroll-div-bar-thumb"), press("scrolling", "kit-scroll-div-bar-track")],
             Section::Dnd => vec![drag("drag-reorder", "kit-dnd-0", "kit-dnd-2"), drag("drag-over", "kit-dnd-0", "kit-dnd-zone")],
+            Section::Dock => vec![hover("hover-close", "kit-dock-a-close-1"), drag("drag-ghost", "kit-dock-c-title-1", dock::AIM)],
             Section::Text => vec![focus("focus-text-view"), focus("focus-text-edit"), tip("tooltip-clipped", "kit-clip-end", sections::LONG), tip("tooltip-path", "kit-path-long", sections::PATH_FOLDER)],
         }
     }
@@ -250,6 +256,8 @@ pub struct Gallery {
     pub(crate) bar: gpui::Pixels,
     /// The drag and drop section's cards in their order.
     pub(crate) cards: Vec<usize>,
+    /// The dock section's layouts.
+    pub(crate) docks: [crate::dock::layout::Layout<u8>; 3],
     _subscriptions: Vec<Subscription>,
 }
 
@@ -326,6 +334,7 @@ impl Gallery {
             nested: [0.5; 2],
             bar: gpui::px(80.),
             cards: (0..dnd::CARDS).collect(),
+            docks: dock::layouts(),
             _subscriptions: Vec::new(),
         }
     }
@@ -461,6 +470,7 @@ impl Render for Gallery {
             Section::Text => sections::text(self, cx),
             Section::Scroll => sections::scroll(self, cx),
             Section::Dnd => dnd::section(self, cx),
+            Section::Dock => dock::section(self, cx),
         };
         let title = div().flex_none().px(tokens::space::XXL).py(tokens::space::L).border_b(tokens::stroke::HAIRLINE).border_color(colors.border).text_size(tokens::text::BODY).text_color(crate::themes::secondary(&colors)).child(self.section.title());
         div()
