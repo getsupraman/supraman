@@ -277,7 +277,7 @@ impl FleetView {
     }
 
     /// The OSC 8 URI under the mouse, over the terminal's bottom left corner.
-    pub(super) fn link_hint(&self, tab_id: u64, terminal: &Entity<Terminal>, cx: &App) -> Option<AnyElement> {
+    pub(super) fn link_hint(&self, tab_id: u64, terminal: &Entity<Terminal>, hits: &supraman_ui::hit::HitTargets, cx: &App) -> Option<AnyElement> {
         let link = terminal.read(cx).hovered_link()?.to_owned();
         let colors = cx.theme().colors();
         let key = format!("terminal-link-{tab_id}");
@@ -294,12 +294,12 @@ impl FleetView {
                 .whitespace_nowrap()
                 .text_ellipsis()
                 .child(SharedString::from(link))
-                .child(hit_target(&self.hits, key))
+                .child(hit_target(hits, key))
                 .into_any_element(),
         )
     }
 
-    pub(super) fn find_bar(&self, tab_id: u64, find: &Find, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn find_bar(&self, tab_id: u64, find: &Find, hits: &supraman_ui::hit::HitTargets, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors();
         let status = match (find.at, find.count) {
             (_, 0) if find.input.read(cx).text().is_empty() => String::new(),
@@ -324,7 +324,7 @@ impl FleetView {
             .child(div().flex_1().min_w_0().child(find.input.clone()))
             .child(div().text_color(colors.text_muted).child(SharedString::from(status)))
             .child(div().text_color(colors.text_muted).child("Enter ↑  Shift+Enter ↓  Esc"))
-            .child(hit_target(&self.hits, "find-bar".into()))
+            .child(hit_target(hits, "find-bar".into()))
             // a click on the bar beside the input gives it the keys, not the window
             .on_mouse_down(
                 MouseButton::Left,

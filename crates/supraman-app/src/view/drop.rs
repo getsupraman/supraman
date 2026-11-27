@@ -43,10 +43,10 @@ impl FleetView {
     }
 
     /// Over the terminal of `tab_id`, in the `drop_over` look while a payload it takes hovers it.
-    pub(super) fn terminal_drop(&self, tab_id: u64, cx: &mut Context<Self>) -> Div {
+    pub(super) fn terminal_drop(&self, tab_id: u64, hits: &supraman_ui::hit::HitTargets, cx: &mut Context<Self>) -> Div {
         let own = self.tab(tab_id).and_then(|t| self.tab_session_id(t));
         let overlay = div().absolute().top_0().right_0().bottom_0().left_0();
-        DropZone::new(format!("terminal-drop-{tab_id}"), overlay)
+        DropZone::new(hits.key(&format!("terminal-drop-{tab_id}")), overlay)
             .take::<DraggedTab>(
                 move |tab, _, _| tab.id != tab_id,
                 cx.listener(move |this, dragged: &DraggedTab, _, cx| {

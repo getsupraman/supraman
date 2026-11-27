@@ -214,7 +214,7 @@ impl FleetView {
         }
     }
 
-    pub(super) fn render_schedule_ask(&self, tab: u64, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(super) fn render_schedule_ask(&self, tab: u64, hits: &supraman_ui::hit::HitTargets, cx: &mut Context<Self>) -> Option<AnyElement> {
         let ask = self.tab(tab)?.asks_schedule.as_ref()?;
         let (id, name) = ask.found.clone()?;
         let status = cx.theme().status().clone();
@@ -226,7 +226,7 @@ impl FleetView {
                 .gap_2()
                 .m_2()
                 .child(div().flex_1().min_w_0().child(SharedString::from(format!("Schedule {name} waits for your approval"))))
-                .child(button::Button::new(&self.hits, format!("start-schedule-open-{tab}")).label("Open").on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                .child(button::Button::new(hits, format!("start-schedule-open-{tab}")).label("Open").on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     this.open_schedule(&folder_key, &id, At::Top, cx);
                 })))
@@ -269,7 +269,7 @@ impl FleetView {
         }
     }
 
-    pub(super) fn render_start_page(&self, tab: u64, page: &StartPage, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(super) fn render_start_page(&self, tab: u64, page: &StartPage, hits: &supraman_ui::hit::HitTargets, cx: &mut Context<Self>) -> Option<AnyElement> {
         let tree = self.tree();
         let ws = tree.entry(&page.entry)?;
         let colors = cx.theme().colors().clone();
@@ -280,14 +280,14 @@ impl FleetView {
         for (i, (name, path)) in folders(ws, Some(&page.folder)).into_iter().enumerate() {
             let key = format!("start-folder-{i}");
             let selected = path_key(&path) == path_key(&page.folder);
-            folder_line = folder_line.child(button::choice(&self.hits, key, SharedString::from(name), selected, cx).on_click(cx.listener(
+            folder_line = folder_line.child(button::choice(hits, key, SharedString::from(name), selected, cx).on_click(cx.listener(
                 move |this, _: &ClickEvent, window, cx| this.set_start_choice(tab, Some(path.clone()), None, window, cx),
             )));
         }
         let mut mode_line = line("Mode");
         for mode in MODES {
             let key = format!("start-mode-{mode}");
-            mode_line = mode_line.child(button::choice(&self.hits, key, mode, page.mode == mode, cx).on_click(cx.listener(
+            mode_line = mode_line.child(button::choice(hits, key, mode, page.mode == mode, cx).on_click(cx.listener(
                 move |this, _: &ClickEvent, window, cx| this.set_start_choice(tab, None, Some(mode), window, cx),
             )));
         }
@@ -301,23 +301,23 @@ impl FleetView {
                     .id("start-prompt")
                     .relative()
                     .child(page.input.clone())
-                    .child(hit_target(&self.hits, "start-prompt".into())),
+                    .child(hit_target(hits, "start-prompt".into())),
             )
             .when(page.scheduled, |d| {
                 d.child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(format!("Sent after the line: {SCHEDULE_ASK}"))))
             })
             .child(folder_line)
             .child(mode_line)
-            .children(page.error.clone().map(|e| banner::tinted(status.error).relative().child(SharedString::from(e)).child(hit_target(&self.hits, "start-error".into()))));
+            .children(page.error.clone().map(|e| banner::tinted(status.error).relative().child(SharedString::from(e)).child(hit_target(hits, "start-error".into()))));
         let actions = vec![
-            button::Button::new(&self.hits, "start-send").label("Send")
+            button::Button::new(hits, "start-send").label("Send")
                 .font_weight(FontWeight::SEMIBOLD)
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     this.send_start(tab, cx);
                 }))
                 .into_any_element(),
-            button::Button::new(&self.hits, "start-cancel").label("Cancel").fill(button::Fill::Outline)
+            button::Button::new(hits, "start-cancel").label("Cancel").fill(button::Fill::Outline)
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     this.close_tab(tab, cx);
@@ -329,7 +329,7 @@ impl FleetView {
         let title = if page.scheduled { format!("New scheduled task in {}", page.entry) } else { format!("New task in {}", page.entry) };
         let key = format!("start-{tab}");
         let page = details::Page { key: &key, title, pill: None, sections: &sections, actions, scroll: &page.scroll, on_link: Some(on_link), top: Some(form.into_any_element()), over: None, bar: None };
-        Some(details::render(page, &self.hits, cx))
+        Some(details::render(page, hits, cx))
     }
 }
 
