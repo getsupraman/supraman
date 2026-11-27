@@ -5,6 +5,7 @@ pub mod clipboard;
 pub mod clipped;
 pub mod controls;
 pub mod dnd;
+pub mod dock;
 pub mod focus;
 pub mod focus_order;
 #[cfg(any(test, feature = "gallery"))]
