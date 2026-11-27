@@ -522,3 +522,68 @@ fn tab_walks_add_remotes_fields_and_its_button_and_wraps(cx: &mut TestAppContext
     keys(&view, "escape", cx);
     assert_eq!(adding(&view, cx), None, "Esc on the focused button closes the form");
 }
+
+const MISMATCH: &str = "x tracks origin/dev, a branch of another name.";
+
+/// A clone on `x`, a commit ahead, tracking `origin/dev`.
+fn tracking_dev(f: &Fixture) -> (PathBuf, String) {
+    let mine = clone(f, "mine");
+    f.at(&mine, &["push", "-q", "origin", "HEAD:refs/heads/dev"]);
+    f.at(&mine, &["fetch", "-q"]);
+    f.at(&mine, &["checkout", "-q", "-b", "x"]);
+    f.at(&mine, &["config", "branch.x.remote", "origin"]);
+    f.at(&mine, &["config", "branch.x.merge", "refs/heads/dev"]);
+    let sha = commit(f, &mine, "x.txt", "On x");
+    (mine, sha)
+}
+
+#[gpui::test]
+fn the_toolbars_push_on_an_upstream_of_another_name_asks_and_enter_publishes_to_the_same_name(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let home = tempfile::tempdir().unwrap();
+    let origin = f.temp.path().join("origin.git");
+    let (mine, sha) = tracking_dev(&f);
+    let dev = f.at(&origin, &["rev-parse", "dev"]);
+    let (view, cx) = open(&mine, home.path(), cx);
+
+    click(&view, PUSH_KEY, cx);
+    let three = (owned(&[("Push to origin/x", false), ("Push to origin/dev", false), ("Cancel", false)]), Answer::Yes);
+    assert_eq!((asking(&view, cx).as_deref(), answers(&view, cx)), (Some(MISMATCH), Some(three)));
+    prompted(&view, "git-remote-ask", &["git-remote-ask-yes", "git-remote-ask-alt", "git-remote-ask-cancel"], cx);
+    assert_eq!(f.at(&origin, &["rev-parse", "dev"]), dev, "asking pushes nothing");
+
+    click(&view, "git-remote-ask-cancel", cx);
+    assert_eq!(asking(&view, cx), None);
+    assert_eq!(f.at(&origin, &["rev-parse", "dev"]), dev, "Cancel pushes nothing");
+    assert!(!supraman_gitman::fixture::run_git(&f.git, &origin, &["rev-parse", "-q", "--verify", "refs/heads/x"], &[], None).success());
+
+    click(&view, PUSH_KEY, cx);
+    key(&view, "enter", cx);
+    assert_eq!(f.at(&origin, &["rev-parse", "x"]), sha, "Enter publishes to the same name");
+    assert_eq!(f.at(&origin, &["rev-parse", "dev"]), dev, "and leaves dev alone");
+    assert_eq!(f.at(&mine, &["rev-parse", "--abbrev-ref", "x@{upstream}"]), "origin/x");
+    assert_eq!(toast(&view, cx).as_deref(), Some("Pushed x to origin/x"));
+}
+
+#[gpui::test]
+fn the_second_answer_pushes_to_the_upstream_and_the_branch_menus_and_palettes_push_ask_the_same(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let home = tempfile::tempdir().unwrap();
+    let origin = f.temp.path().join("origin.git");
+    let (mine, sha) = tracking_dev(&f);
+    let dev = f.at(&origin, &["rev-parse", "dev"]);
+    let (view, cx) = open(&mine, home.path(), cx);
+
+    test_support::right_click(&view, "refpanel-row-local/x", cx);
+    click(&view, "menu-remote-push", cx);
+    assert_eq!(asking(&view, cx).as_deref(), Some(MISMATCH), "the branch menu's Push asks");
+    click(&view, "git-remote-ask-cancel", cx);
+
+    pick(&view, "cmd:push", cx);
+    assert_eq!(asking(&view, cx).as_deref(), Some(MISMATCH), "the palette's Push asks");
+    assert_eq!(f.at(&origin, &["rev-parse", "dev"]), dev);
+    click(&view, "git-remote-ask-alt", cx);
+    assert_eq!(f.at(&origin, &["rev-parse", "dev"]), sha, "the second answer pushes to dev");
+    assert_eq!(f.at(&mine, &["rev-parse", "--abbrev-ref", "x@{upstream}"]), "origin/dev", "its upstream kept");
+    assert_eq!(toast(&view, cx).as_deref(), Some("Pushed x to origin/dev"));
+}

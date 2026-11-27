@@ -18,7 +18,7 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui::{AppContext as _, Context, Entity, EventEmitter, Pixels, Point, Render, Window, div, prelude::*};
 use supraman_core::askpass::{Asked, Bridge};
 use supraman_core::secret::SecretStore;
-use supraman_gitman::write::remote::{self, Force, Progress, PullChoice, PullMode, Pulled, Pushed, Transfer};
+use supraman_gitman::write::remote::{self, Force, Progress, PullChoice, PullMode, Pulled, PushTarget, Pushed, Transfer};
 use supraman_gitman::write::rebase::Rebased;
 use supraman_gitman::write::{LockSet, Session, WriteError};
 use supraman_core::Settings;
@@ -44,7 +44,7 @@ pub(crate) enum RemoteAct {
     Fetch(String),
     /// HEAD's branch pulled.
     Pull(PullMode),
-    /// `local` pushed to its upstream, or the upstream dialog first.
+    /// `local` pushed where [`remote::push_target`] says, asked first on a mismatch, or the upstream dialog first.
     Push(String),
     SetUpstream(String),
     /// `local` pushed to `branch` on `remote` (a pill dropped on a remote branch).
@@ -88,6 +88,9 @@ enum Ask {
     Force { local: String, remote: String, branch: String, force: Force },
     Delete { remote: String, refname: String },
     RemoveRemote(String),
+    /// `local` tracks `upstream`, another name on `remote`: publish to `remote/local` (yes) or push to the upstream (alt).
+    Mismatch { local: String, remote: String, upstream: String },
+    PushTo { local: String, remote: String, branch: String },
 }
 
 fn short(refname: &str) -> &str {
@@ -107,6 +110,9 @@ impl Ask {
             Ask::Force { .. } => ask("Force push is destructive and rewrites history.".into(), FORCE_PUSH).danger(),
             Ask::Delete { remote, refname } => ask(format!("Delete {} from {remote}? It cannot be undone.", short(refname)), "Delete").danger(),
             Ask::RemoveRemote(name) => ask(format!("Remove the remote {name} and its remote-tracking branches? It cannot be undone."), "Remove").danger(),
+            Ask::Mismatch { local, remote, upstream } => ask(format!("{local} tracks {remote}/{upstream}, a branch of another name."), &format!("Push to {remote}/{local}"))
+                .or(format!("Push to {remote}/{upstream}"), Ask::PushTo { local: local.clone(), remote: remote.clone(), branch: upstream.clone() }),
+            Ask::PushTo { local, remote, branch } => ask(format!("Push {local} to {remote}/{branch}?"), "Push"),
         }
     }
 }
@@ -118,6 +124,8 @@ enum Doing {
     Fetch(String),
     Pull(PullMode),
     Push { local: String, remote: String, branch: String },
+    /// A branch pushed to the target its job resolves.
+    PushBranch(String),
     AddRemote(String),
     /// Edit Remote's save, with what the toast says.
     EditRemote(String),
@@ -133,6 +141,7 @@ impl Doing {
             Doing::Fetch(r) => format!("Fetching {r}"),
             Doing::Pull(_) => "Pulling".into(),
             Doing::Push { remote, branch, .. } => format!("Pushing to {remote}/{branch}"),
+            Doing::PushBranch(local) => format!("Pushing {local}"),
             Doing::AddRemote(r) => format!("Adding the remote {r}"),
             Doing::EditRemote(_) => "Saving the remote".into(),
             Doing::Plain { running, .. } => running.clone(),
@@ -146,6 +155,8 @@ enum Done {
     Nothing,
     Pulled(Pulled),
     Pushed(Pushed),
+    /// A branch's push target, pushed to when `pushed` holds its outcome.
+    Target(PushTarget, Option<Pushed>),
     /// A remote added; why its first fetch failed.
     Added(Option<String>),
 }
@@ -409,11 +420,13 @@ impl RemoteActions {
                 Pulled::NoUpstream { branch } => return self.ask_upstream(branch, dialogs::Then::Pull(mode), cx),
                 Pulled::Gone { upstream } => return cx.emit(RemoteEvent::Why(format!("{upstream} is gone from its remote: set another upstream"))),
             },
-            (Doing::Push { local, remote, branch }, Done::Pushed(pushed)) => match pushed {
+            (Doing::Push { local, remote, branch }, Done::Pushed(pushed)) | (Doing::PushBranch(local), Done::Target(PushTarget::To { remote, branch }, Some(pushed))) => match pushed {
                 Pushed::Done => format!("Pushed {local} to {remote}/{branch}"),
                 Pushed::Behind => return self.ask(Ask::Behind { local, remote, branch }, cx),
                 Pushed::StaleLease => return self.ask(Ask::Stale { local, remote, branch }, cx),
             },
+            (Doing::PushBranch(local), Done::Target(PushTarget::NoUpstream, _)) => return self.ask_upstream(local, dialogs::Then::Push, cx),
+            (Doing::PushBranch(local), Done::Target(PushTarget::Mismatch { remote, upstream, .. }, _)) => return self.ask(Ask::Mismatch { local, remote, upstream }, cx),
             (Doing::Plain { done, .. }, _) => done,
             (Doing::EditRemote(words), _) => {
                 self.adding = None;
@@ -441,6 +454,11 @@ impl RemoteActions {
                 let doing = Doing::Plain { running: format!("Deleting {what}"), done: format!("Deleted {what}") };
                 self.request(doing, LockSet::push(), move |s, t| remote::delete_remote_ref(s, &remote, &refname, t).map(|_| Done::Nothing), cx);
             }
+            Some(Ask::Mismatch { local, remote, .. }) => {
+                let doing = Doing::Push { local: local.clone(), remote: remote.clone(), branch: local.clone() };
+                self.request(doing, LockSet::push(), move |s, t| remote::publish(s, &local, &remote, &local, t).map(Done::Pushed), cx);
+            }
+            Some(Ask::PushTo { local, remote, branch }) => self.push(local, remote, branch, Force::No, cx),
             Some(Ask::RemoveRemote(name)) => {
                 let doing = Doing::Plain { running: format!("Removing the remote {name}"), done: format!("Removed the remote {name}") };
                 self.request(doing, LockSet::remote_config(), move |s, _| remote::remove_remote(s, &name).map(|_| Done::Nothing), cx);
@@ -470,6 +488,17 @@ impl RemoteActions {
         self.request(doing, LockSet::push(), move |s, t| remote::push(s, &local, &remote, &branch, force, t).map(Done::Pushed), cx);
     }
 
+    /// `local` pushed to its [`remote::push_target`] in one job; a mismatch or no upstream comes back to ask.
+    fn push_branch(&mut self, local: String, cx: &mut Context<Self>) {
+        self.request(Doing::PushBranch(local.clone()), LockSet::push(), move |s, t| match remote::push_target(s, &local)? {
+            PushTarget::To { remote, branch } => {
+                let pushed = remote::push(s, &local, &remote, &branch, Force::No, t)?;
+                Ok(Done::Target(PushTarget::To { remote, branch }, Some(pushed)))
+            }
+            target => Ok(Done::Target(target, None)),
+        }, cx);
+    }
+
     /// What an item, a key or the toolbar asks for.
     pub(crate) fn act(&mut self, act: RemoteAct, cx: &mut Context<Self>) {
         self.menu = None;
@@ -486,11 +515,8 @@ impl RemoteActions {
                 Some(why) => cx.emit(RemoteEvent::Why(why.into())),
                 None => self.request(Doing::Pull(mode), LockSet::pull(), move |s, t| remote::pull(s, mode, prune, t).map(Done::Pulled), cx),
             },
-            RemoteAct::Push(local) => match self.upstream(&local) {
-                Some((remote, branch)) => self.push(local, remote, branch, Force::No, cx),
-                None if self.remotes.is_empty() => cx.emit(RemoteEvent::Why(NO_REMOTE.into())),
-                None => self.ask_upstream(local, dialogs::Then::Push, cx),
-            },
+            RemoteAct::Push(_) if self.remotes.is_empty() => cx.emit(RemoteEvent::Why(NO_REMOTE.into())),
+            RemoteAct::Push(local) => self.push_branch(local, cx),
             RemoteAct::SetUpstream(local) => self.ask_upstream(local, dialogs::Then::Set, cx),
             RemoteAct::PushTo { local, remote, branch } => self.push(local, remote, branch, Force::No, cx),
             RemoteAct::PushTag { tag, remotes } => {

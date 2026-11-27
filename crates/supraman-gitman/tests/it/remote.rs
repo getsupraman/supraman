@@ -270,3 +270,87 @@ fn a_remote_call_leaves_the_credential_helper_alone_and_asks_only_through_sshs_a
     write(&f, &f.dir, LockSet::fetch(), |s| remote::fetch(s, "origin", true, &Transfer::default())).unwrap();
     assert_eq!(f.git(&["config", "--get-all", "credential.helper"]), "!echo kept");
 }
+
+fn target(f: &Fixture, dir: &Path, local: &str) -> Result<remote::PushTarget, WriteError> {
+    write(f, dir, LockSet::push(), |s| remote::push_target(s, local))
+}
+
+fn to(remote: &str, branch: &str) -> remote::PushTarget {
+    remote::PushTarget::To { remote: remote.into(), branch: branch.into() }
+}
+
+/// A clone whose branch `x` tracks `origin/dev`, a branch of another name, and a second bare remote `mirror`.
+fn tracking_dev(f: &Fixture) -> PathBuf {
+    let mine = clone(f, "mine");
+    f.at(&mine, &["push", "-q", "origin", "HEAD:refs/heads/dev"]);
+    f.at(&mine, &["fetch", "-q"]);
+    f.at(&mine, &["checkout", "-q", "-b", "x"]);
+    f.at(&mine, &["config", "branch.x.remote", "origin"]);
+    f.at(&mine, &["config", "branch.x.merge", "refs/heads/dev"]);
+    git_in(&f.git, f.temp.path(), &["init", "-q", "--bare", "mirror.git"], &[], None);
+    f.at(&mine, &["remote", "add", "mirror", &f.temp.path().join("mirror.git").to_string_lossy()]);
+    mine
+}
+
+#[test]
+fn push_target_is_a_mismatch_for_an_upstream_of_another_name_and_a_same_name_upstream_pushes_as_before() {
+    let f = Fixture::copy();
+    let mine = tracking_dev(&f);
+    let mismatch = remote::PushTarget::Mismatch { remote: "origin".into(), branch: "x".into(), upstream: "dev".into() };
+    assert_eq!(target(&f, &mine, "x").unwrap(), mismatch, "push.default unset is simple");
+    f.at(&mine, &["config", "push.default", "matching"]);
+    assert_eq!(target(&f, &mine, "x").unwrap(), mismatch, "matching is simple for one branch");
+    f.at(&mine, &["config", "--unset", "push.default"]);
+
+    assert_eq!(target(&f, &mine, "main").unwrap(), to("origin", "main"));
+    f.at(&mine, &["checkout", "-q", "main"]);
+    let pushed = commit(&f, &mine, "m.txt", "Mine");
+    assert_eq!(push(&f, &mine, Force::No).unwrap(), Pushed::Done);
+    assert_eq!(on_remote(&f, "main"), pushed, "a same-name upstream pushes as today");
+
+    f.at(&mine, &["checkout", "-q", "-b", "lone"]);
+    assert_eq!(target(&f, &mine, "lone").unwrap(), remote::PushTarget::NoUpstream);
+}
+
+#[test]
+fn push_target_follows_push_default_push_default_remote_and_push_remote() {
+    let f = Fixture::copy();
+    let mine = tracking_dev(&f);
+    let at = |value: &str| {
+        f.at(&mine, &["config", "push.default", value]);
+        target(&f, &mine, "x")
+    };
+    assert_eq!(at("current").unwrap(), to("origin", "x"));
+    assert_eq!(at("upstream").unwrap(), to("origin", "dev"));
+    assert_eq!(at("tracking").unwrap(), to("origin", "dev"));
+    assert!(matches!(at("nothing"), Err(WriteError::Refused(remote::PUSH_NOTHING))));
+    f.at(&mine, &["config", "--unset", "push.default"]);
+
+    f.at(&mine, &["config", "remote.pushDefault", "mirror"]);
+    assert_eq!(target(&f, &mine, "x").unwrap(), to("mirror", "x"), "simple to another remote than the upstream's pushes the same name");
+    f.at(&mine, &["config", "push.default", "upstream"]);
+    assert!(matches!(target(&f, &mine, "x"), Err(WriteError::Remote(why)) if why.contains("not the upstream")), "upstream to another remote is git's refusal");
+    f.at(&mine, &["config", "--unset", "push.default"]);
+
+    f.at(&mine, &["config", "branch.x.pushRemote", "origin"]);
+    assert_eq!(target(&f, &mine, "x").unwrap(), remote::PushTarget::Mismatch { remote: "origin".into(), branch: "x".into(), upstream: "dev".into() }, "pushRemote over pushDefault");
+    f.at(&mine, &["config", "branch.x.pushRemote", "mirror"]);
+    f.at(&mine, &["config", "--unset", "remote.pushDefault"]);
+    assert_eq!(target(&f, &mine, "x").unwrap(), to("mirror", "x"));
+}
+
+#[test]
+fn a_worktrees_new_branch_tracks_only_a_remote_branch_of_its_name() {
+    let f = Fixture::copy();
+    let mine = tracking_dev(&f);
+    let repo = Repo::new(f.git.clone(), &mine);
+    let add = |name: &str| {
+        let folder = f.temp.path().join("mine.worktrees").join(name);
+        Fixture::write_job(&repo, LockSet::branch(), |s| supraman_gitman::write::branch::add_worktree(s, &folder, "origin/dev", Some(name))).unwrap();
+    };
+    let merge = |name: &str| run_git(&f.git, &mine, &["config", "--get", &format!("branch.{name}.merge")], &[], None);
+    add("feat");
+    assert!(!merge("feat").success(), "a new branch of another name has no upstream");
+    add("dev");
+    assert_eq!(f.at(&mine, &["config", "--get", "branch.dev.merge"]), "refs/heads/dev", "origin/dev checked out as dev tracks it");
+}
