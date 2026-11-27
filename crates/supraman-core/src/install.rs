@@ -472,7 +472,7 @@ pub fn cleanup(install: &Path) {
     }
     if kept.is_empty() {
         let _ = fs::remove_file(&list);
-    } else {
+    } else if kept.iter().map(String::as_str).ne(text.lines().map(str::trim).filter(|l| !l.is_empty())) {
         let _ = crate::fs::write_atomic(&list, kept.iter().map(|l| format!("{l}\n")).collect::<String>());
     }
 }
@@ -537,6 +537,28 @@ mod tests {
         assert_eq!(install_dir(&root.join(r"plugins\supraman\bin")), root);
         assert_eq!(install_dir(root), root);
         assert_eq!(install_dir(&root.join("bin")), root.join("bin"));
+    }
+
+    /// Every `sm` start runs a cleanup while the hooks copy it runs from is still listed: it must not rewrite that list.
+    #[cfg(windows)]
+    #[test]
+    fn a_cleanup_that_removes_nothing_leaves_the_list_unwritten() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        let tmp = tempfile::tempdir().unwrap();
+        let (held, gone) = ("sm.exe.old-1", "sm.exe.old-2");
+        fs::write(tmp.path().join(held), "old sm").unwrap();
+        let list = tmp.path().join(LEFTOVERS);
+        fs::write(&list, format!("link {held}\n")).unwrap();
+        const FILE_SHARE_READ: u32 = 1;
+        let _running = fs::OpenOptions::new().read(true).share_mode(FILE_SHARE_READ).open(tmp.path().join(held)).unwrap();
+        let written = fs::metadata(&list).unwrap().modified().unwrap();
+        cleanup(tmp.path());
+        assert_eq!(fs::read_to_string(&list).unwrap(), format!("link {held}\n"));
+        assert_eq!(fs::metadata(&list).unwrap().modified().unwrap(), written, "the list was rewritten");
+
+        fs::write(&list, format!("link {held}\nlink {gone}\n")).unwrap();
+        cleanup(tmp.path());
+        assert_eq!(fs::read_to_string(&list).unwrap(), format!("link {held}\n"), "a line that went is dropped");
     }
 
     #[test]
