@@ -31,6 +31,7 @@ pub struct Sidebar {
     /// The sidebar holds the keys, as the rows last painted: its selection is the active fill.
     pub(super) keys_held: bool,
     pub(super) group_edit: Option<left::group_field::GroupEdit>,
+    pub(super) results: super::results::Picks,
 }
 
 pub(super) struct CachedTree {
@@ -60,6 +61,7 @@ impl Sidebar {
             subfolders: super::listed::SubfolderWatch::new(cx),
             keys_held: false,
             group_edit: None,
+            results: Default::default(),
         }
     }
 }

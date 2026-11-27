@@ -280,7 +280,7 @@ impl FleetView {
                         .children(notices),
                 )
             })
-            .child(self.render_search_box())
+            .child(self.render_search_box(cx))
             .child(body)
             .children(toast)
             .track_focus(&self.sidebar.focus)
@@ -335,6 +335,7 @@ impl FleetView {
     fn left_body(&mut self, tree: &Rc<fleet::Tree>, cx: &mut Context<Self>) -> AnyElement {
         let query = self.search_query(cx);
         self.sidebar.search_marks.clear();
+        self.sidebar.results.shown = !query.is_empty();
         if query.is_empty() {
             self.set_left_rows(tree, cx);
             let list = gpui::list(self.sidebar.left_list.state(), cx.processor(|this: &mut Self, ix: usize, window, cx| {

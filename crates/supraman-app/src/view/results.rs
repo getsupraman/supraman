@@ -4,7 +4,9 @@ use supraman_claude::now_ms;
 use supraman_ui::tokens;
 use supraman_ui::controls::badge::count;
 use supraman_ui::matcher::highlighted;
-use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, SharedString, Stateful, div, prelude::*, px};
+use gpui::{AnyElement, ClickEvent, Context, Div, Entity, Focusable as _, FontWeight, SharedString, Stateful, Window, div, prelude::*, px};
+use supraman_ui::list::{Rows, Selection, Step};
+use supraman_ui::text::input::{self, InputEvent, TextInput};
 
 use supraman_ui::icon::Icon;
 use supraman_ui::scroll::ScrollArea;
@@ -13,7 +15,104 @@ use super::{FleetView, hit_target};
 use crate::fleet::{Open, Tree, TreeInputs};
 use crate::search::{self, EntryHit, FolderHit, SessionHit};
 
+/// The search results' keyboard selection: the rows the last frame showed, in order, and the one selected, by key.
+#[derive(Default)]
+pub(super) struct Picks {
+    rows: Vec<(SharedString, Pick)>,
+    selected: Option<SharedString>,
+    /// The results show in the tree's place.
+    pub shown: bool,
+    /// The search box holds the keys: the selection is the active fill.
+    pub held: bool,
+}
+
+/// What a result row does when picked.
+#[derive(Clone)]
+enum Pick {
+    Group(String),
+    Folder(Option<String>, String),
+    Session(String, SessionHit),
+}
+
+impl Picks {
+    pub fn is_selected(&self, key: &str) -> bool {
+        self.selected.as_deref() == Some(key)
+    }
+
+    pub fn select(&mut self, key: SharedString) {
+        self.selected = Some(key);
+    }
+
+    fn add(&mut self, key: &str, pick: Pick) {
+        self.rows.push((key.to_string().into(), pick));
+    }
+
+    /// The selection moved `by` rows, from none the first; whether it moved.
+    fn step(&mut self, by: isize) -> bool {
+        let mut selection = Selection::default();
+        selection.select(self.selected.as_ref().and_then(|k| self.rows.iter().position(|(key, _)| key == k)));
+        let Some(to) = selection.go(Step::By(by), &Rows::new(self.rows.len())) else { return false };
+        self.selected = Some(self.rows[to].0.clone());
+        true
+    }
+
+    fn picked(&self) -> Option<Pick> {
+        let key = self.selected.as_ref()?;
+        self.rows.iter().find(|(k, _)| k == key).map(|(_, pick)| pick.clone())
+    }
+}
+
 impl FleetView {
+    /// The search box's events, and whether it holds the keys.
+    pub(super) fn watch_search(search: &Entity<TextInput>, window: &mut Window, cx: &mut Context<Self>) {
+        cx.subscribe_in(search, window, Self::on_search_event).detach();
+        let focus = search.read(cx).focus_handle(cx);
+        cx.on_focus_in(&focus, window, |this, _, cx| this.search_holds(true, cx)).detach();
+        cx.on_focus_out(&focus, window, |this, _, _, cx| this.search_holds(false, cx)).detach();
+    }
+
+    fn search_holds(&mut self, held: bool, cx: &mut Context<Self>) {
+        self.sidebar.results.held = held;
+        cx.notify();
+    }
+
+    pub fn search_query(&self, cx: &gpui::App) -> String {
+        self.search.read(cx).text().trim().to_string()
+    }
+
+    fn on_search_event(&mut self, _: &Entity<TextInput>, event: &InputEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match event {
+            InputEvent::Edited => cx.notify(),
+            InputEvent::Confirm => self.open_picked(cx),
+            InputEvent::Cancel if self.dismiss_popup() => cx.notify(),
+            InputEvent::Cancel if !self.search.read(cx).text().is_empty() => self.clear_search(cx),
+            InputEvent::Cancel => self.focus.focus(window, cx),
+            InputEvent::ConfirmBack | InputEvent::Refused(_) | InputEvent::Submit | InputEvent::Pressed => {}
+        }
+    }
+
+    pub fn clear_search(&mut self, cx: &mut Context<Self>) {
+        self.search.update(cx, |s, cx| s.set_text("", cx));
+        self.sidebar.results.selected = None;
+        cx.notify();
+    }
+
+    fn step_result(&mut self, by: isize, cx: &mut Context<Self>) {
+        if self.sidebar.results.shown && self.sidebar.results.step(by) {
+            cx.notify();
+        }
+    }
+
+    /// Enter in the search box: the selected result as a click on it.
+    fn open_picked(&mut self, cx: &mut Context<Self>) {
+        match self.sidebar.results.picked() {
+            Some(Pick::Group(name)) => self.reveal(Some(&name), None, cx),
+            Some(Pick::Folder(group, key)) => self.reveal(group.as_deref(), Some(&key), cx),
+            Some(Pick::Session(place, hit)) => self.open_result(&place, &hit, cx),
+            None => {}
+        }
+    }
+
     /// The tree with every closed session and stopped row: what a search looks through.
     pub fn search_tree(&self) -> Tree {
         let all: HashSet<String> = self.tree().folders().map(|(_, f)| f.key.clone()).collect();
@@ -32,9 +131,11 @@ impl FleetView {
         crate::fleet::build(&self.listed.entries, &self.sessions, now_ms(), true, &sup)
     }
 
-    pub(super) fn render_search_box(&self) -> AnyElement {
+    pub(super) fn render_search_box(&self, cx: &mut Context<Self>) -> AnyElement {
         div()
             .id("search-box")
+            .on_action(cx.listener(|this, _: &input::Up, _, cx| this.step_result(-1, cx)))
+            .on_action(cx.listener(|this, _: &input::Down, _, cx| this.step_result(1, cx)))
             .relative()
             .flex_none()
             .px_2()
@@ -64,6 +165,7 @@ impl FleetView {
 
     pub(super) fn render_results(&mut self, mut body: ScrollArea, query: &str, cx: &mut Context<Self>) -> ScrollArea {
         let results = search::search(&self.search_tree(), query);
+        self.sidebar.results.rows.clear();
         self.sidebar.search_marks = results
             .entries
             .iter()
@@ -86,11 +188,15 @@ impl FleetView {
         for entry in &results.entries {
             body = self.render_result_entry(body, entry, cx);
         }
+        let picks = &mut self.sidebar.results;
+        if picks.selected.as_ref().is_some_and(|k| !picks.rows.iter().any(|(key, _)| key == k)) {
+            picks.selected = None;
+        }
         body
     }
 
     fn result_row(&self, key: String, level: usize, h: f32, cx: &mut Context<Self>) -> Stateful<Div> {
-        self.sidebar_row(supraman_ui::controls::button::RowKeys::one(key.into()), None, cx)
+        self.sidebar_row(supraman_ui::controls::button::RowKeys::one(key.clone().into()), Some(&key), cx)
             .flex()
             .flex_none()
             .items_center()
@@ -100,10 +206,11 @@ impl FleetView {
             .pr_2()
     }
 
-    fn render_result_entry(&self, mut body: ScrollArea, w: &EntryHit, cx: &mut Context<Self>) -> ScrollArea {
+    fn render_result_entry(&mut self, mut body: ScrollArea, w: &EntryHit, cx: &mut Context<Self>) -> ScrollArea {
         let group = w.group.then(|| w.name.clone());
         if w.group {
             let (name, key) = (w.name.clone(), format!("result-group-{}", w.name));
+            self.sidebar.results.add(&key, Pick::Group(name.clone()));
             body = body.child(
                 self.result_row(key.clone(), 0, 28., cx)
                     .mt_1()
@@ -126,8 +233,9 @@ impl FleetView {
         body
     }
 
-    fn render_result_folder(&self, group: Option<String>, r: &FolderHit, level: usize, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn render_result_folder(&mut self, group: Option<String>, r: &FolderHit, level: usize, cx: &mut Context<Self>) -> Stateful<Div> {
         let key = format!("result-repo-{}", r.key);
+        self.sidebar.results.add(&key, Pick::Folder(group.clone(), r.key.clone()));
         let icon = match r.kind {
             _ if r.key == crate::fleet::UNLISTED => None,
             supraman_core::FolderKind::Git => Some(Icon::GitFolder),
@@ -144,13 +252,15 @@ impl FleetView {
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.reveal(group.as_deref(), Some(&folder), cx)))
     }
 
-    fn render_result_session(&self, entry: &str, place: &str, hit: &SessionHit, level: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn render_result_session(&mut self, entry: &str, place: &str, hit: &SessionHit, level: usize, cx: &mut Context<Self>) -> AnyElement {
         let (p, h) = (place.to_string(), hit.clone());
+        let key = format!("result-session-{}{}", hit.row.session.session_id, hit.row.scope);
+        self.sidebar.results.add(&key, Pick::Session(p.clone(), h.clone()));
         div()
-            .id(SharedString::from(format!("result-session-{}{}", hit.row.session.session_id, hit.row.scope)))
+            .id(SharedString::from(key.clone()))
             .flex_none()
             .cursor_pointer()
-            .child(self.render_session(entry, place, &hit.row, None, grid::indent(level), cx))
+            .child(self.render_session(entry, place, &hit.row, Some(&key), grid::indent(level), cx))
             .on_click(cx.listener(move |this, e: &ClickEvent, _, cx| {
                 if e.click_count() == 1 {
                     this.open_result(&p, &h, cx);
@@ -160,3 +270,15 @@ impl FleetView {
     }
 }
 
+
+#[cfg(feature = "selftest")]
+impl FleetView {
+    /// The result rows in order and the selected one, and whether the search box holds the keys.
+    pub fn result_picks(&self) -> (Vec<String>, Option<String>, bool) {
+        let picks = &self.sidebar.results;
+        (picks.rows.iter().map(|(k, _)| k.to_string()).collect(), picks.selected.as_ref().map(|k| k.to_string()), picks.held)
+    }
+}
+
+#[cfg(test)]
+mod tests;

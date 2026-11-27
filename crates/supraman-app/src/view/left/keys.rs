@@ -18,11 +18,18 @@ impl FleetView {
 
     /// [`FleetView::sidebar_row`] over `chrome`'s band and hover.
     pub(in crate::view) fn sidebar_row_with(&self, keys: RowKeys, row: Option<&str>, chrome: Chrome, cx: &mut Context<Self>) -> Stateful<Div> {
-        let selected = row.is_some_and(|r| self.sidebar.left_list.is_selected(r));
-        let el = list::row(&self.hits, keys, sidebar_chrome(chrome, selected, self.sidebar.keys_held), cx);
+        let picks = &self.sidebar.results;
+        let (selected, held) = match picks.shown {
+            true => (row.is_some_and(|r| picks.is_selected(r)), picks.held),
+            false => (row.is_some_and(|r| self.sidebar.left_list.is_selected(r)), self.sidebar.keys_held),
+        };
+        let el = list::row(&self.hits, keys, sidebar_chrome(chrome, selected, held), cx);
         let Some(row) = row.map(|r| SharedString::from(r.to_string())) else { return el };
         el.on_mouse_down(MouseButton::Left, cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-            this.sidebar.left_list.select_key(Some(row.clone()));
+            match this.sidebar.results.shown {
+                true => this.sidebar.results.select(row.clone()),
+                false => this.sidebar.left_list.select_key(Some(row.clone())),
+            }
             cx.notify();
         }))
     }

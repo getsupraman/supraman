@@ -100,13 +100,15 @@ pub(crate) fn clear_key_state() -> anyhow::Result<()> {
 #[cfg(windows)]
 pub(crate) fn key_messages(key: &str) -> [(u32, usize, isize); 2] {
     use windows::Win32::UI::{
-        Input::KeyboardAndMouse::{MAPVK_VK_TO_VSC, MapVirtualKeyW, VK_BACK, VK_END, VK_ESCAPE, VK_LEFT, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VkKeyScanW},
+        Input::KeyboardAndMouse::{MAPVK_VK_TO_VSC, MapVirtualKeyW, VK_BACK, VK_DOWN, VK_END, VK_ESCAPE, VK_LEFT, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_UP, VkKeyScanW},
         WindowsAndMessaging::{WM_KEYDOWN, WM_KEYUP},
     };
     let vk = match key {
         "end" => VK_END.0 as u32,
         "left" => VK_LEFT.0 as u32,
         "right" => VK_RIGHT.0 as u32,
+        "up" => VK_UP.0 as u32,
+        "down" => VK_DOWN.0 as u32,
         "pageup" => VK_PRIOR.0 as u32,
         "pagedown" => VK_NEXT.0 as u32,
         "backspace" => VK_BACK.0 as u32,
