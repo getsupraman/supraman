@@ -885,7 +885,7 @@ impl GitView {
         let table = div().relative().flex_1().min_w_0().h_full().child(first).child(hit_target(&self.hits, GRAPH_PANE.into())).child(pane.paint()).children(toast);
         let panel = div().relative().flex_shrink(1.).min_w_0().flex().flex_col().w(self.panel_width).h_full().track_focus(&self.panel_focus).child(self.render_panel(cx)).child(hit_target(&self.hits, PANEL_PANE.into()));
         let panel = panel.child(focus::Pane::new(self.hits.key(FOCUS_PANEL), &self.panel_focus).paint());
-        let split = SplitPane { id: self.hits.key("git-split").into(), min_first: px(GRAPH_MIN), min_second: px(PANEL_MIN), default: PANEL_WIDTH }
+        let split = SplitPane { id: "git-split".into(), min_first: px(GRAPH_MIN), min_second: px(PANEL_MIN), default: PANEL_WIDTH, hits: self.hits.clone(), ..Default::default() }
             .render_second(table, panel, |this: &mut GitView, width, cx| {
                 this.panel_width = width;
                 cx.notify();
@@ -907,7 +907,7 @@ impl GitView {
         let rest_min = px(GRAPH_MIN + PANEL_MIN + 1.);
         let left = div().relative().flex_shrink(REFS_SHRINK).min_w_0().overflow_hidden().w(width).h_full().child(panel).child(hit_target(&self.hits, REFS_PANE.into()));
         let rest = div().flex_grow(1.).flex_basis(rest_min).min_w_0().h_full().child(rest);
-        SplitPane { id: self.hits.key("refpanel-split").into(), min_first: ref_panel::MIN_WIDTH, min_second: rest_min, default: ref_panel::DEFAULT_WIDTH }
+        SplitPane { id: "refpanel-split".into(), min_first: ref_panel::MIN_WIDTH, min_second: rest_min, default: ref_panel::DEFAULT_WIDTH, hits: self.hits.clone(), ..Default::default() }
             .render(left, rest, |this: &mut GitView, width, cx| this.ref_panel.update(cx, |p, cx| p.set_width(width, cx)), |this: &mut GitView, cx| this.keep_layout(cx), cx)
             .size_full()
             .into_any_element()

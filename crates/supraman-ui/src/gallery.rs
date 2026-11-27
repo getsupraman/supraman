@@ -245,6 +245,8 @@ pub struct Gallery {
     pub(crate) scroll: ScrollHandle,
     pub(crate) scrolls: sections::Scrolls,
     pub(crate) split: gpui::Pixels,
+    /// The nested splits' shares: the columns', then the rows' inside it.
+    pub(crate) nested: [f32; 2],
     pub(crate) bar: gpui::Pixels,
     /// The drag and drop section's cards in their order.
     pub(crate) cards: Vec<usize>,
@@ -321,6 +323,7 @@ impl Gallery {
             scroll: ScrollHandle::new(),
             scrolls: sections::Scrolls::default(),
             split: gpui::px(256.),
+            nested: [0.5; 2],
             bar: gpui::px(80.),
             cards: (0..dnd::CARDS).collect(),
             _subscriptions: Vec::new(),
