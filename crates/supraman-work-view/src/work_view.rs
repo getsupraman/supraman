@@ -703,11 +703,11 @@ impl WorkView {
                 cx.notify();
                 true
             }
-            "enter" | "right" if self.selected.is_some() && !detail => focus::to_pane(FOCUS_DETAIL, window, cx),
-            "left" if detail => focus::to_pane(FOCUS_MAIN, window, cx),
+            "enter" | "right" if self.selected.is_some() && !detail => focus::to_pane(&self.hits.key(FOCUS_DETAIL), window, cx),
+            "left" if detail => focus::to_pane(&self.hits.key(FOCUS_MAIN), window, cx),
             "escape" if detail => {
                 if !self.close_popups(cx) {
-                    focus::to_pane(FOCUS_MAIN, window, cx);
+                    focus::to_pane(&self.hits.key(FOCUS_MAIN), window, cx);
                 }
                 true
             }
@@ -796,14 +796,14 @@ impl WorkView {
     fn render_main(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let Page::Run(run) = self.page.clone() else {
             let page = if self.page == Page::Activity { self.render_activity_page(cx) } else { self.render_overview(cx) };
-            let pane = focus::Pane::new(FOCUS_MAIN, &self.panes.main).paint();
+            let pane = focus::Pane::new(self.hits.key(FOCUS_MAIN), &self.panes.main).paint();
             return div().relative().size_full().track_focus(&self.panes.main).child(page).child(hit_target(&self.hits, "work-page".into())).child(pane).into_any_element();
         };
         let list = div().relative().flex_grow(1.).flex_basis(px(layout::LIST_MIN)).min_w_0().h_full().track_focus(&self.panes.main).child(self.render_run_page(&run, self.keys_in.1, cx));
-        let list = list.child(focus::Pane::new(FOCUS_MAIN, &self.panes.main).paint());
+        let list = list.child(focus::Pane::new(self.hits.key(FOCUS_MAIN), &self.panes.main).paint());
         let detail = div().flex_shrink(1.).min_w_0().w(self.layout.detail()).h_full().relative().border_l(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border).track_focus(&self.panes.detail).child(self.render_detail(cx));
-        let detail = detail.child(hit_target(&self.hits, "work-detail-column".into())).child(focus::Pane::new(FOCUS_DETAIL, &self.panes.detail).paint());
-        layout::detail_split()
+        let detail = detail.child(hit_target(&self.hits, "work-detail-column".into())).child(focus::Pane::new(self.hits.key(FOCUS_DETAIL), &self.panes.detail).paint());
+        layout::detail_split(&self.hits)
             .render_second(list, detail, |this: &mut WorkView, width, cx| {
                 this.layout.set_detail(width);
                 cx.notify();
@@ -819,9 +819,9 @@ impl WorkView {
             return div().flex().size_full().child(strip).child(div().flex_1().min_w_0().h_full().child(main)).into_any_element();
         }
         let nav = div().relative().flex_shrink(0.5).min_w_0().overflow_hidden().w(self.layout.nav()).h_full().track_focus(&self.panes.nav).child(self.render_navigator(cx));
-        let nav = nav.child(focus::Pane::new(FOCUS_NAV, &self.panes.nav).paint());
+        let nav = nav.child(focus::Pane::new(self.hits.key(FOCUS_NAV), &self.panes.nav).paint());
         let rest = div().flex_grow(1.).flex_basis(px(layout::LIST_MIN + layout::DETAIL_MIN + 1.)).min_w_0().h_full().child(main);
-        layout::nav_split()
+        layout::nav_split(&self.hits)
             .render(nav, rest, |this: &mut WorkView, width, cx| {
                 this.layout.set_nav(width);
                 cx.notify();

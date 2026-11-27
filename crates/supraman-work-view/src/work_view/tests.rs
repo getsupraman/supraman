@@ -10,6 +10,8 @@ use supraman_workman::fake::{Answer, FakeWorkman};
 use super::state::StateKey;
 use super::*;
 
+mod two_views;
+
 const PA: &str = "aaaa0000-0000-4000-8000-00000000aa01";
 const PB: &str = "bbbb0000-0000-4000-8000-000000000001";
 const PC: &str = "cccc0000-0000-4000-8000-000000000001";
@@ -205,47 +207,63 @@ fn folders() -> Vec<std::path::PathBuf> {
 
 /// The tab of group `w` (folders alpha and beta bound to pa and pb), with its Inbox and one live Supraman session.
 fn open(cx: &mut TestAppContext) -> Opened<'_> {
-    cx.update(|cx| {
-        supraman_ui::init_globals(cx, "test");
-        supraman_ui::text::input::bind_keys(cx);
-    });
-    let fake = served();
-    let client = Client::new(fake.base(), "fake-test-reader");
+    let (fake, client) = start(cx);
     let (holder, cx) = cx.add_window_view(|window, cx| {
-        let hub = WorkHub::ready(client, cx);
-        let inbox = WorkInbox::for_test(hub.clone(), cx);
-        inbox.update(cx, |i, cx| {
-            i.use_repo_of(repo_of);
-            i.set_targets(vec![(Target::Group("w".into()), folders())], folders(), cx)
-        });
-        let live = vec![supraman_ui::patterns::session::LiveSession {
-            name: "fm-w-ra".into(),
-            claude_session_id: "uuid-live".into(),
-            cwd: Default::default(),
-            activity: supraman_ui::marks::Activity::Working,
-            attach: Some("live0001".into()),
-        }];
-        let opening = Opening {
-            target: Target::Group("w".into()),
-            folders: folders(),
-            home: None,
-            hits: HitTargets::default(),
-            link: FleetLink { live: Rc::new(move || live.clone()), opening: Rc::new(|_, _| attach_opening()), open: Rc::new(|id, _, _| SESSIONS_OPENED.with(|a| a.borrow_mut().push(id.to_string()))) },
-            open_link_with: record,
-            repo_of,
-        };
-        let view = cx.new(|cx| {
-            let mut view = WorkView::for_test(opening, hub, cx);
-            cx.observe(&inbox, |_, _, cx| cx.notify()).detach();
-            view.inbox = Some(inbox.clone());
-            view
-        });
+        let (hub, inbox) = hub_and_inbox(client, vec![(Target::Group("w".into()), folders())], cx);
+        let view = view_of(Target::Group("w".into()), folders(), HitTargets::default(), &hub, &inbox, cx);
         Holder { view, inbox, _restore: focus::restore_on_loss(window, cx) }
     });
     cx.update(|window, _| window.activate_window());
     let (view, inbox) = holder.read_with(cx, |h, _| (h.view.clone(), h.inbox.clone()));
     settle(&view, cx);
     Opened { view, fake, inbox, cx }
+}
+
+/// The globals and keys, and Workman served with its client.
+fn start(cx: &mut TestAppContext) -> (FakeWorkman, Client) {
+    cx.update(|cx| {
+        supraman_ui::init_globals(cx, "test");
+        supraman_ui::text::input::bind_keys(cx);
+    });
+    let fake = served();
+    let client = Client::new(fake.base(), "fake-test-reader");
+    (fake, client)
+}
+
+fn hub_and_inbox<T>(client: Client, targets: Vec<(Target, Vec<std::path::PathBuf>)>, cx: &mut Context<T>) -> (Entity<WorkHub>, Entity<WorkInbox>) {
+    let hub = WorkHub::ready(client, cx);
+    let inbox = WorkInbox::for_test(hub.clone(), cx);
+    inbox.update(cx, |i, cx| {
+        i.use_repo_of(repo_of);
+        i.set_targets(targets, folders(), cx)
+    });
+    (hub, inbox)
+}
+
+/// The tab of `target` with one live Supraman session, its keys under `hits`' scope.
+fn view_of<T>(target: Target, folders: Vec<std::path::PathBuf>, hits: HitTargets, hub: &Entity<WorkHub>, inbox: &Entity<WorkInbox>, cx: &mut Context<T>) -> Entity<WorkView> {
+    let live = vec![supraman_ui::patterns::session::LiveSession {
+        name: "fm-w-ra".into(),
+        claude_session_id: "uuid-live".into(),
+        cwd: Default::default(),
+        activity: supraman_ui::marks::Activity::Working,
+        attach: Some("live0001".into()),
+    }];
+    let opening = Opening {
+        target,
+        folders,
+        home: None,
+        hits,
+        link: FleetLink { live: Rc::new(move || live.clone()), opening: Rc::new(|_, _| attach_opening()), open: Rc::new(|id, _, _| SESSIONS_OPENED.with(|a| a.borrow_mut().push(id.to_string()))) },
+        open_link_with: record,
+        repo_of,
+    };
+    cx.new(|cx| {
+        let mut view = WorkView::for_test(opening, hub.clone(), cx);
+        cx.observe(inbox, |_, _, cx| cx.notify()).detach();
+        view.inbox = Some(inbox.clone());
+        view
+    })
 }
 
 fn settle(view: &Entity<WorkView>, cx: &mut VisualTestContext) {

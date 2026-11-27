@@ -186,7 +186,7 @@ impl WorkView {
             .child(fonts::figures(div().flex_none().w(TIME_WIDTH).text_xs().text_color(colors.text_muted)).child(SharedString::from(at)))
             .child(div().flex_none().text_xs().text_color(colors.text_muted).child(SharedString::from(e.kind.clone())))
             .children(reference)
-            .child(clipped(format!("work-activity-sentence-{}", e.seq), sentence(e), false).flex_1())
+            .child(clipped(self.hits.key(&format!("work-activity-sentence-{}", e.seq)), sentence(e), false).flex_1())
             .child(div().flex_none().text_xs().text_color(colors.text_muted).child(SharedString::from(actor(e))))
             .child(hit_target(&self.hits, key))
             .into_any_element()

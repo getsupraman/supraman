@@ -271,7 +271,7 @@ impl WorkView {
             .gap_2()
             .px_3()
             .pt_2()
-            .child(clipped(format!("work-overview-project-title-{qref}"), project.item.title.clone(), false).flex_shrink(1.).text_base().font_weight(FontWeight::SEMIBOLD))
+            .child(clipped(self.hits.key(&format!("work-overview-project-title-{qref}")), project.item.title.clone(), false).flex_shrink(1.).text_base().font_weight(FontWeight::SEMIBOLD))
             .child(div().flex_none().font_family(fonts::MONO).text_xs().text_color(colors.text_muted).child(SharedString::from(qref.clone())))
             .child(div().flex_1())
             .child(

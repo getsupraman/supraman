@@ -117,7 +117,7 @@ impl WorkView {
             .text_sm()
             .child(div().flex_none().h(px(COPY_SIDE)).flex().items_center().font_family(fonts::MONO).child(ref_))
             .child(copy)
-            .child(div().flex_1().min_w_0().child(clamped(format!("work-row-title-{}", item.qualified_ref), title, 2)))
+            .child(div().flex_1().min_w_0().child(clamped(self.hits.key(&format!("work-row-title-{}", item.qualified_ref)), title, 2)))
             .when_some(criteria, |d, criteria| {
                 d.child(fonts::figures(div().flex_none().h(px(COPY_SIDE)).flex().items_center().text_xs().text_color(colors.text_muted)).child(SharedString::from(criteria)))
             })

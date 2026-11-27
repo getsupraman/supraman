@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use gpui::{Context, Pixels, px};
 use serde::{Deserialize, Serialize};
 use supraman_core::store::JsonStore;
+use supraman_ui::hit::HitTargets;
 use supraman_ui::split::SplitPane;
 use supraman_runtime::save_off_thread;
 
@@ -31,12 +32,12 @@ pub(crate) fn path(home: &Path) -> PathBuf {
     home.join("work-layout.json")
 }
 
-pub(crate) fn nav_split() -> SplitPane {
-    SplitPane { id: "work-nav-split".into(), min_first: px(NAV_MIN), min_second: px(LIST_MIN + DETAIL_MIN + 1.), default: px(NAV_DEFAULT) }
+pub(crate) fn nav_split(hits: &HitTargets) -> SplitPane {
+    SplitPane { id: hits.key("work-nav-split").into(), min_first: px(NAV_MIN), min_second: px(LIST_MIN + DETAIL_MIN + 1.), default: px(NAV_DEFAULT) }
 }
 
-pub(crate) fn detail_split() -> SplitPane {
-    SplitPane { id: "work-detail-split".into(), min_first: px(LIST_MIN), min_second: px(DETAIL_MIN), default: px(DETAIL_DEFAULT) }
+pub(crate) fn detail_split(hits: &HitTargets) -> SplitPane {
+    SplitPane { id: hits.key("work-detail-split").into(), min_first: px(LIST_MIN), min_second: px(DETAIL_MIN), default: px(DETAIL_DEFAULT) }
 }
 
 #[derive(Default)]
