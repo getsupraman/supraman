@@ -14,6 +14,7 @@ use crate::text::input::TextInput;
 use crate::icon::Icon;
 use crate::marks::{Activity, Mark};
 use crate::tokens;
+use crate::split::{Axis, SplitPane};
 
 pub const LONG: &str = "A label far longer than the room it is given, cut with an ellipsis";
 pub const PATH: &str = "crates/sample-kit/src/a/deeply/nested/folder/module_file.rs";
@@ -219,10 +220,33 @@ pub fn tabs(g: &Gallery, window: &mut Window, cx: &mut Context<Gallery>) -> AnyE
     div().flex().flex_col().gap(tokens::space::XXL).child(strip).into_any_element()
 }
 
+const SPLIT_MIN: gpui::Pixels = gpui::px(80.);
+
+/// A rows split nested in the second side of a columns split, each keeping its share.
+fn nested_splits(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
+    let colors = cx.theme().colors().clone();
+    let panel = |words: &str| div().size_full().p(tokens::space::L).bg(colors.panel_background).child(words.to_string());
+    let split = |id: &str, axis| SplitPane { id: id.to_string().into(), min_first: SPLIT_MIN, min_second: SPLIT_MIN, axis, hits: g.hits.clone(), ..Default::default() };
+    let [columns, rows] = g.nested;
+    let inner = split("kit-split-rows", Axis::Rows)
+        .render_fraction(panel("Top"), panel("Bottom"), rows, 0.5, |g: &mut Gallery, f, cx| {
+            g.nested[1] = f;
+            cx.notify();
+        }, |_: &mut Gallery, _| {}, cx)
+        .size_full();
+    let outer = split("kit-split-columns", Axis::Columns)
+        .render_fraction(panel("Left"), inner, columns, 0.5, |g: &mut Gallery, f, cx| {
+            g.nested[0] = f;
+            cx.notify();
+        }, |_: &mut Gallery, _| {}, cx)
+        .size_full();
+    div().relative().h(width(16.)).w(width(40.)).border(tokens::stroke::HAIRLINE).border_color(colors.border).child(outer).into_any_element()
+}
+
 pub fn splits(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
     let colors = cx.theme().colors().clone();
     let panel = |words: &str| div().size_full().p(tokens::space::L).bg(colors.panel_background).child(words.to_string());
-    let split = crate::split::SplitPane { id: "kit-split".into(), min_first: gpui::px(80.), min_second: gpui::px(80.), default: gpui::px(200.) };
+    let split = SplitPane { id: "kit-split".into(), min_first: SPLIT_MIN, min_second: SPLIT_MIN, default: gpui::px(200.), hits: g.hits.clone(), ..Default::default() };
     let split = div().relative().h(width(8.)).w(width(40.)).border(tokens::stroke::HAIRLINE).border_color(colors.border).child(
         split
             .render(div().w(g.split).h_full().child(panel("First pane")), div().flex_1().h_full().child(panel("Second pane")), |g: &mut Gallery, w, cx| {
@@ -231,6 +255,7 @@ pub fn splits(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
             }, |_: &mut Gallery, _| {}, cx)
             .size_full(),
     );
+    let nested = nested_splits(g, cx);
     let bar = crate::split::HeightBar { id: "kit-height-bar".into(), min: gpui::px(40.), max: gpui::px(160.), default: gpui::px(80.) };
     let bar = div().w(width(40.)).border(tokens::stroke::HAIRLINE).border_color(colors.border).child(bar.render(panel("A box whose height the bar under it drags"), g.bar, &g.hits, |g: &mut Gallery, h, cx| {
         g.bar = h;
@@ -249,6 +274,7 @@ pub fn splits(g: &Gallery, cx: &mut Context<Gallery>) -> AnyElement {
         .flex_col()
         .gap(tokens::space::XXL)
         .child(group("SplitPane", cx).child(split))
+        .child(group("SplitPane: rows in columns, by fraction", cx).child(nested))
         .child(group("HeightBar", cx).child(bar))
         .child(group("Stack: open, closed, open", cx).child(stack))
         .into_any_element()

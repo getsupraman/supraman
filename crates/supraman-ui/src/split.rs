@@ -2,19 +2,51 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use gpui::{AnyElement, Bounds, ClickEvent, Context, CursorStyle, Div, DragMoveEvent, MouseButton, Pixels, SharedString, Stateful, Window, canvas, div, prelude::*, px};
+use gpui::{AnyElement, Bounds, ClickEvent, Context, CursorStyle, Div, DragMoveEvent, MouseButton, Pixels, Point, SharedString, Size, Stateful, Window, canvas, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
 use crate::hit::{HitTargets, hit_target};
 use crate::tokens;
 
+/// A divider's grab strip, across it, and where it starts before the divider's line.
+const GRIP: Pixels = px(7.);
+const GRIP_BEFORE: Pixels = px(-3.);
+
+/// Which way a [`SplitPane`] lays its two sides: side by side (`Columns`) or one over the other (`Rows`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Axis {
+    #[default]
+    Columns,
+    Rows,
+}
+
+impl Axis {
+    fn along(self, point: Point<Pixels>) -> Pixels {
+        match self {
+            Axis::Columns => point.x,
+            Axis::Rows => point.y,
+        }
+    }
+
+    fn length(self, size: Size<Pixels>) -> Pixels {
+        match self {
+            Axis::Columns => size.width,
+            Axis::Rows => size.height,
+        }
+    }
+}
+
+#[derive(Default)]
 pub struct SplitPane {
-    /// The divider's element id; it also tells two splits' drags apart, so a scoped view gives it [`HitTargets::key`].
+    /// The divider's id under `hits`' scope; it also tells two splits' drags apart.
     pub id: SharedString,
     pub min_first: Pixels,
     pub min_second: Pixels,
-    /// What a double-click on the divider restores.
+    /// What a double-click on the divider restores in px; [`SplitPane::render_fraction`] takes its own.
     pub default: Pixels,
+    pub axis: Axis,
+    /// Scopes `id`; the divider's grab strip paints under `<id>-divider`.
+    pub hits: HitTargets,
 }
 
 /// The drag of a divider: the divider's element id and which divider of its owner it is.
@@ -27,7 +59,7 @@ impl Render for DraggedDivider {
 }
 
 impl SplitPane {
-    /// `on_resize` gets the first panel's width while dragged and on a double-click; `on_resize_end` follows.
+    /// `on_resize` gets the first panel's width (height for `Rows`) while dragged and on a double-click; `on_resize_end` follows.
     pub fn render<V: 'static>(
         &self,
         first: impl IntoElement,
@@ -36,7 +68,7 @@ impl SplitPane {
         on_resize_end: impl Fn(&mut V, &mut Context<V>) + Clone + 'static,
         cx: &mut Context<V>,
     ) -> Div {
-        self.split(first, second, false, on_resize, on_resize_end, cx)
+        self.divided(first.into_any_element(), second.into_any_element(), self.default, |at, _| at, on_resize, on_resize_end, cx)
     }
 
     /// [`SplitPane::render`] for an owner that keeps the second panel's width, `default` included.
@@ -48,43 +80,96 @@ impl SplitPane {
         on_resize_end: impl Fn(&mut V, &mut Context<V>) + Clone + 'static,
         cx: &mut Context<V>,
     ) -> Div {
-        self.split(first, second, true, on_resize, on_resize_end, cx)
+        let second_of = |at: Pixels, total: Pixels| total - at - tokens::stroke::HAIRLINE;
+        self.divided(first.into_any_element(), second.into_any_element(), self.default, second_of, on_resize, on_resize_end, cx)
     }
 
-    fn split<V: 'static>(
+    /// The split sized by the first side's share, `fraction` (0..1), which the owner keeps; the mins hold both
+    /// sides as it resizes. `on_resize` gets the share while dragged and `default` on a double-click.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_fraction<V: 'static>(
         &self,
         first: impl IntoElement,
         second: impl IntoElement,
-        keeps_second: bool,
-        on_resize: impl Fn(&mut V, Pixels, &mut Context<V>) + Clone + 'static,
+        fraction: f32,
+        default: f32,
+        on_resize: impl Fn(&mut V, f32, &mut Context<V>) + Clone + 'static,
         on_resize_end: impl Fn(&mut V, &mut Context<V>) + Clone + 'static,
         cx: &mut Context<V>,
     ) -> Div {
-        let (id, min_first, min_second, default) = (self.id.clone(), self.min_first, self.min_second, self.default);
+        let fraction = fraction.clamp(0., 1.);
+        let (first, second) = (self.share(first, fraction, self.min_first), self.share(second, 1. - fraction, self.min_second));
+        let share_of = |at: Pixels, total: Pixels| {
+            let room = total - tokens::stroke::HAIRLINE;
+            if room > Pixels::ZERO { (at / room).clamp(0., 1.) } else { 0. }
+        };
+        self.divided(first, second, default.clamp(0., 1.), share_of, on_resize, on_resize_end, cx)
+    }
+
+    /// One side of a fraction split: `grow` of the room, never under `min`.
+    fn share(&self, side: impl IntoElement, grow: f32, min: Pixels) -> AnyElement {
+        let mut sized = div().relative().flex().flex_col().flex_shrink(1.).flex_basis(Pixels::ZERO).overflow_hidden();
+        sized.style().flex_grow = Some(grow);
+        let sized = match self.axis {
+            Axis::Columns => sized.min_w(min).min_h_0(),
+            Axis::Rows => sized.min_h(min).min_w_0(),
+        };
+        sized.child(side).into_any_element()
+    }
+
+    /// The two sides and the divider between them; `value` turns the divider's offset and the split's length into what the owner keeps.
+    #[allow(clippy::too_many_arguments)]
+    fn divided<V: 'static, T: Copy + 'static>(
+        &self,
+        first: AnyElement,
+        second: AnyElement,
+        reset_to: T,
+        value: impl Fn(Pixels, Pixels) -> T + 'static,
+        on_resize: impl Fn(&mut V, T, &mut Context<V>) + Clone + 'static,
+        on_resize_end: impl Fn(&mut V, &mut Context<V>) + Clone + 'static,
+        cx: &mut Context<V>,
+    ) -> Div {
+        let (axis, min_first, min_second) = (self.axis, self.min_first, self.min_second);
+        let id: SharedString = self.hits.key(&self.id).into();
         let border = cx.theme().colors().border;
         let (drag, reset, end, reset_end) = (on_resize.clone(), on_resize, on_resize_end.clone(), on_resize_end);
         let dragged = id.clone();
-        div()
-            .flex()
+        let grip = handle_on(axis, id, move |this, cx| end(this, cx), move |this, cx| {
+            reset(this, reset_to, cx);
+            reset_end(this, cx);
+        }, cx)
+        .child(hit_target(&self.hits, format!("{}-divider", self.id)));
+        let (split, line) = match axis {
+            Axis::Columns => (div().flex(), div().w(tokens::stroke::HAIRLINE).h_full()),
+            Axis::Rows => (div().flex().flex_col(), div().h(tokens::stroke::HAIRLINE).w_full()),
+        };
+        split
             .on_drag_move(cx.listener(move |this, e: &DragMoveEvent<DraggedDivider>, _, cx| {
                 if e.drag(cx).0 != dragged {
                     return;
                 }
-                let max = (e.bounds.size.width - min_second).max(min_first);
-                let x = (e.event.position.x - e.bounds.left()).clamp(min_first, max);
-                drag(this, if keeps_second { e.bounds.size.width - x - tokens::stroke::HAIRLINE } else { x }, cx);
+                let total = axis.length(e.bounds.size);
+                let max = (total - min_second).max(min_first);
+                let at = (axis.along(e.event.position) - axis.along(e.bounds.origin)).clamp(min_first, max);
+                drag(this, value(at, total), cx);
             }))
             .child(first)
-            .child(
-                div().relative().w(tokens::stroke::HAIRLINE).h_full().flex_none().bg(border).child(
-                    handle(id, 0, move |this, cx| end(this, cx), move |this, cx| {
-                        reset(this, default, cx);
-                        reset_end(this, cx);
-                    }, cx)
-                    .left(px(-3.)),
-                ),
-            )
+            .child(line.relative().flex_none().bg(border).child(grip))
             .child(second)
+    }
+}
+
+/// A split divider's grab strip across `axis`'s line, absolute in its parent.
+fn handle_on<V: 'static>(
+    axis: Axis,
+    id: SharedString,
+    on_end: impl Fn(&mut V, &mut Context<V>) + 'static,
+    on_reset: impl Fn(&mut V, &mut Context<V>) + 'static,
+    cx: &mut Context<V>,
+) -> Stateful<Div> {
+    match axis {
+        Axis::Columns => handle(id, 0, on_end, on_reset, cx).left(GRIP_BEFORE),
+        Axis::Rows => grip(id, 0, CursorStyle::ResizeUpDown, on_end, on_reset, cx).absolute().left_0().top(GRIP_BEFORE).w_full().h(GRIP),
     }
 }
 
@@ -96,7 +181,7 @@ pub(crate) fn handle<V: 'static>(
     on_reset: impl Fn(&mut V, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
 ) -> Stateful<Div> {
-    grip(id, index, CursorStyle::ResizeLeftRight, on_end, on_reset, cx).absolute().top_0().w(px(7.)).h_full()
+    grip(id, index, CursorStyle::ResizeLeftRight, on_end, on_reset, cx).absolute().top_0().w(GRIP).h_full()
 }
 
 /// A box over a bar that drags the box's height, the bar a short rounded line centred under it.
@@ -208,9 +293,9 @@ impl Stack {
                 }, cx)
                 .absolute()
                 .left_0()
-                .top(px(-3.))
+                .top(GRIP_BEFORE)
                 .w_full()
-                .h(px(7.))
+                .h(GRIP)
                 .child(hit_target(hits, key))
             });
             let probe = state.clone();
@@ -354,7 +439,7 @@ mod tests {
 
     impl Render for Offset {
         fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            let pane = SplitPane { id: "pane".into(), min_first: px(200.), min_second: px(260.), default: px(380.) };
+            let pane = SplitPane { id: "pane".into(), min_first: px(200.), min_second: px(260.), default: px(380.), ..Default::default() };
             let second = div().relative().w(self.width).h_full().child(hit_target(&self.hits, "second".into()));
             let split = pane.render_second(div().flex_1().min_w_0().h_full(), second, |this: &mut Offset, width, cx| {
                 this.width = width;
@@ -435,4 +520,102 @@ mod tests {
         assert!(heights[0] == px(60.) && (heights[2] - px(240.)).abs() < px(1.), "the border above the closed pane too, A held at its min: {heights:?}");
     }
 
+    struct Nested {
+        hits: HitTargets,
+        width: Pixels,
+        height: Pixels,
+    }
+
+    impl Render for Nested {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let rows = SplitPane { id: "rows".into(), min_first: px(80.), min_second: px(100.), axis: Axis::Rows, hits: self.hits.clone(), ..Default::default() };
+            let top = div().flex_none().h(self.height).w_full();
+            let inner = rows.render(top, div().flex_1().min_h_0().w_full(), |this: &mut Nested, height, cx| {
+                this.height = height;
+                cx.notify();
+            }, |_: &mut Nested, _| {}, cx);
+            let columns = SplitPane { id: "columns".into(), min_first: px(120.), min_second: px(150.), hits: self.hits.clone(), ..Default::default() };
+            let left = div().flex_none().w(self.width).h_full();
+            let split = columns.render(left, inner.flex_1().min_w_0().h_full(), |this: &mut Nested, width, cx| {
+                this.width = width;
+                cx.notify();
+            }, |_: &mut Nested, _| {}, cx);
+            div().w(px(600.)).h(px(400.)).child(split.size_full())
+        }
+    }
+
+    fn drag(cx: &mut VisualTestContext, from: gpui::Point<Pixels>, to: gpui::Point<Pixels>) {
+        cx.simulate_mouse_down(from, MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(from + (to - from) * 0.5, MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(to, MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_up(to, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn a_rows_split_inside_a_columns_split_drags_only_its_own_divider_within_its_mins(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::init_globals(cx, "test"));
+        let (view, cx) = cx.add_window_view(|_, _| Nested { hits: HitTargets::default(), width: px(250.), height: px(150.) });
+        cx.run_until_parked();
+        let divider = |key: &str, cx: &mut VisualTestContext| view.read_with(cx, |n, _| n.hits.borrow().get(key).copied()).expect("each divider paints under <id>-divider").bounds.center();
+        let state = |cx: &mut VisualTestContext| view.read_with(cx, |n, _| (n.width, n.height));
+        let start = divider("rows-divider", cx);
+        drag(cx, start, start + point(px(0.), px(40.)));
+        let (width, height) = state(cx);
+        assert_eq!(width, px(250.), "the columns' divider stays");
+        assert!((height - px(190.)).abs() < px(2.), "the rows follow the pointer 40 px down: {height:?}");
+        let start = divider("rows-divider", cx);
+        drag(cx, start, point(start.x, px(395.)));
+        assert_eq!(state(cx).1, px(400.) - px(100.), "held at the second row's min");
+        let start = divider("rows-divider", cx);
+        drag(cx, start, point(start.x, px(2.)));
+        assert_eq!(state(cx).1, px(80.), "held at the first row's min");
+        let start = divider("columns-divider", cx);
+        drag(cx, start, start + point(px(30.), px(0.)));
+        let (width, height) = state(cx);
+        assert_eq!(height, px(80.), "the rows' divider stays");
+        assert!((width - px(280.)).abs() < px(2.), "the columns follow the pointer 30 px right: {width:?}");
+        let start = divider("columns-divider", cx);
+        drag(cx, start, point(px(598.), start.y));
+        assert_eq!(state(cx).0, px(600.) - px(150.), "held at the second column's min");
+    }
+
+    struct Shares {
+        hits: HitTargets,
+        fraction: f32,
+    }
+
+    impl Render for Shares {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let pane = SplitPane { id: "shares".into(), min_first: px(100.), min_second: px(100.), hits: self.hits.clone(), ..Default::default() };
+            let first = div().size_full().child(hit_target(&self.hits, "first".into()));
+            let split = pane.render_fraction(first, div().size_full(), self.fraction, 0.5, |this: &mut Shares, fraction, cx| {
+                this.fraction = fraction;
+                cx.notify();
+            }, |_: &mut Shares, _| {}, cx);
+            div().size_full().child(split.size_full())
+        }
+    }
+
+    #[gpui::test]
+    fn a_split_by_fraction_keeps_its_proportions_as_the_window_resizes(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::init_globals(cx, "test"));
+        let (view, cx) = cx.add_window_view(|_, _| Shares { hits: HitTargets::default(), fraction: 0.5 });
+        cx.simulate_resize(gpui::size(px(801.), px(300.)));
+        cx.run_until_parked();
+        let first = |cx: &mut VisualTestContext| view.read_with(cx, |s, _| s.hits.borrow().get("first").copied()).expect("the first side paints").bounds.size.width;
+        assert!((first(cx) - px(400.)).abs() < px(1.), "an even share: {:?}", first(cx));
+        let start = view.read_with(cx, |s, _| s.hits.borrow().get("shares-divider").copied()).expect("the divider paints").bounds.center();
+        drag(cx, start, point(px(200.), start.y));
+        let fraction = view.read_with(cx, |s, _| s.fraction);
+        assert!((fraction - 0.25).abs() < 0.01, "the share the pointer left: {fraction}");
+        assert!((first(cx) - px(200.)).abs() < px(1.), "laid out so: {:?}", first(cx));
+        cx.simulate_resize(gpui::size(px(1601.), px(300.)));
+        cx.run_until_parked();
+        assert_eq!(view.read_with(cx, |s, _| s.fraction), fraction, "a resize keeps the owner's share");
+        assert!((first(cx) - px(400.)).abs() < px(1.), "the same share of the wider window: {:?}", first(cx));
+        cx.simulate_resize(gpui::size(px(301.), px(300.)));
+        cx.run_until_parked();
+        assert!((first(cx) - px(100.)).abs() < px(1.), "a narrow window holds the first side at its min: {:?}", first(cx));
+    }
 }

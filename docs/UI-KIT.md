@@ -181,6 +181,9 @@ feature hands rows and their content; `hover` in the ratchets is at zero.
 One mechanic, three uses:
 
 - **Resize**: `split::DraggedDivider`, shared by splits, height bars, stacks and table columns.
+  A `SplitPane` splits along its `Axis`: `Columns` side by side or `Rows` one over the other, nested in
+  either, its divider under `<id>-divider`. Its owner keeps a side's px or, with `render_fraction`, the first
+  side's share (0..1, the default a share too), so it keeps its proportions as the window resizes, the mins in px.
 - **Reorder**: `dnd::Sortable<P>` over a list or the tab strip: each item says the `Edge` a payload
   over it lands on (the owner's rule: `lands(from, to)` for an index, `folder_edits::landing` and
   `group_landing` for the sidebar), the insertion line is drawn there in `Roles::drop_border` at

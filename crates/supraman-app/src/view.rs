@@ -1336,7 +1336,7 @@ impl Render for FleetView {
                 cx,
             ))
             .child(
-                SplitPane { id: "divider".into(), min_first: MIN_LEFT_WIDTH, min_second: MIN_RIGHT_WIDTH, default: DEFAULT_LEFT_WIDTH }
+                SplitPane { id: "divider".into(), min_first: MIN_LEFT_WIDTH, min_second: MIN_RIGHT_WIDTH, default: DEFAULT_LEFT_WIDTH, hits: self.hits.clone(), ..Default::default() }
                     .render(
                         self.render_left(cx),
                         self.render_right(window, cx),

@@ -33,11 +33,11 @@ pub(crate) fn path(home: &Path) -> PathBuf {
 }
 
 pub(crate) fn nav_split(hits: &HitTargets) -> SplitPane {
-    SplitPane { id: hits.key("work-nav-split").into(), min_first: px(NAV_MIN), min_second: px(LIST_MIN + DETAIL_MIN + 1.), default: px(NAV_DEFAULT) }
+    SplitPane { id: "work-nav-split".into(), min_first: px(NAV_MIN), min_second: px(LIST_MIN + DETAIL_MIN + 1.), default: px(NAV_DEFAULT), hits: hits.clone(), ..Default::default() }
 }
 
 pub(crate) fn detail_split(hits: &HitTargets) -> SplitPane {
-    SplitPane { id: hits.key("work-detail-split").into(), min_first: px(LIST_MIN), min_second: px(DETAIL_MIN), default: px(DETAIL_DEFAULT) }
+    SplitPane { id: "work-detail-split".into(), min_first: px(LIST_MIN), min_second: px(DETAIL_MIN), default: px(DETAIL_DEFAULT), hits: hits.clone(), ..Default::default() }
 }
 
 #[derive(Default)]
