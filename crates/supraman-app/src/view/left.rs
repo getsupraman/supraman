@@ -32,6 +32,7 @@ pub(super) mod fold;
 pub(super) mod group_field;
 pub(super) mod unlisted;
 pub(super) mod other_schedules;
+pub(super) mod schedule_rows;
 mod work_cards;
 
 const REVEAL_WITHIN: Duration = Duration::from_secs(60);
@@ -46,14 +47,18 @@ pub(super) enum PendingReveal {
 pub(super) enum LeftRow {
     Group(usize),
     Folder(usize, usize),
-    /// A folder's Schedules, under the first row of its path.
+    /// A folder's Schedules heading, under the first row of its path.
     Schedules(usize, usize),
+    /// A row of a Schedules block: the frame's [`schedule_rows::Part`] at this index.
+    Scheduled(usize),
     Session(usize, usize, usize),
     More(usize, usize),
     /// Other sessions' row, after the entries; its sessions are `Session(e, 0, i)` with `e` past them ([`fleet::Tree::node`]).
     Unlisted,
     /// Other schedules: the schedules with no row of their folder, then Task Scheduler's tasks in no folder.
     Others,
+    /// Other schedules' caption over Task Scheduler's tasks in no folder.
+    OthersCaption,
     /// Add Group's new row, its name typed in place.
     NewGroup,
     /// Below the tree: a dragged folder dropped here goes to the top level's end.
@@ -275,14 +280,14 @@ impl FleetView {
                         .children(notices),
                 )
             })
-            .child(self.render_search_box())
+            .child(self.render_search_box(cx))
             .child(body)
             .children(toast)
             .track_focus(&self.sidebar.focus)
             .key_context(group_field::KEY_CONTEXT)
             .on_action(cx.listener(Self::rename_selected))
             .on_key_down(cx.listener(Self::sidebar_key))
-            .child(supraman_ui::focus::Pane::new("sidebar", &self.sidebar.focus).paint(&self.hits))
+            .child(supraman_ui::focus::Pane::new("sidebar", &self.sidebar.focus).paint())
             .into_any_element()
     }
 
@@ -330,6 +335,7 @@ impl FleetView {
     fn left_body(&mut self, tree: &Rc<fleet::Tree>, cx: &mut Context<Self>) -> AnyElement {
         let query = self.search_query(cx);
         self.sidebar.search_marks.clear();
+        self.sidebar.results.shown = !query.is_empty();
         if query.is_empty() {
             self.set_left_rows(tree, cx);
             let list = gpui::list(self.sidebar.left_list.state(), cx.processor(|this: &mut Self, ix: usize, window, cx| {
@@ -354,6 +360,8 @@ impl FleetView {
     /// The sidebar's rows in order: a key each and the tokens its hit keys contain (supraman_ui::list::keyed_list).
     fn set_left_rows(&mut self, tree: &Rc<fleet::Tree>, cx: &gpui::App) {
         let mut rows = Vec::new();
+        let mut block = schedule_rows::Block::default();
+        let others = self.others();
         for (e, entry) in tree.entries.iter().enumerate() {
             let name = &entry.name;
             if entry.group {
@@ -373,8 +381,7 @@ impl FleetView {
                 }
                 let fkey = supraman_core::schedule::folder_key(&folder.path);
                 if tree.schedule_row(&fkey) == Some((e, f)) {
-                    let tokens = ["schedules-row-", "sched-row-", "sched-state-", "sched-error-", "sched-approve-", "sched-run-", "others-row-"].iter().map(|p| format!("{p}{fkey}")).collect();
-                    rows.push((LeftRow::Schedules(e, f), format!("sched:{fkey}"), tokens));
+                    self.folder_schedule_rows(entry, (e, f), &others, &mut rows, &mut block);
                 }
                 session_rows(&mut rows, e, f, folder);
             }
@@ -388,10 +395,10 @@ impl FleetView {
                 session_rows(&mut rows, tree.entries.len(), 0, &node.folders[0]);
             }
         }
-        rows.push((LeftRow::Others, other_schedules::KEY.into(), self.other_schedules_tokens(tree)));
+        self.other_schedule_rows(tree, &others, &mut rows, &mut block);
         rows.push((LeftRow::DropEnd, "drop-end".into(), vec![drag::END.to_string()]));
         self.sidebar.left_list.set_rows(rows.iter().map(|(_, key, tokens)| (SharedString::from(key.clone()), tokens.clone())).collect());
-        self.sidebar.left_rows = Rc::new((tree.clone(), rows.into_iter().map(|(row, ..)| row).collect()));
+        self.sidebar.left_rows = Rc::new((tree.clone(), rows.into_iter().map(|(row, ..)| row).collect(), block.parts));
         if let Some((pending, since)) = &self.sidebar.reveal_pending {
             let shown = match pending {
                 PendingReveal::Row(key) => self.sidebar.left_list.reveal_where(|k| k == key),
@@ -436,7 +443,7 @@ impl FleetView {
     /// How many folder rows of the entry `name` the sidebar holds, in view or not.
     #[cfg(feature = "selftest")]
     pub fn folder_rows(&self, name: &str) -> usize {
-        let (tree, rows) = &*self.sidebar.left_rows;
+        let (tree, rows, _) = &*self.sidebar.left_rows;
         rows.iter().filter(|r| matches!(r, LeftRow::Folder(e, _) if tree.entries[*e].name == name)).count()
     }
 
@@ -447,7 +454,7 @@ impl FleetView {
 
     fn render_left_row(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let rows = self.sidebar.left_rows.clone();
-        let (tree, rows) = (&rows.0, &rows.1);
+        let (tree, parts, rows) = (&rows.0, &rows.2, &rows.1);
         let Some(row) = rows.get(ix) else { return div().into_any_element() };
         match *row {
             LeftRow::Group(e) => {
@@ -456,9 +463,11 @@ impl FleetView {
                 self.render_group_row(entry, open, cx)
             }
             LeftRow::Schedules(e, f) => {
-                let entry = &tree.entries[e];
-                div().flex().flex_col().children(self.render_schedules(entry, &entry.folders[f], folder_level(entry, &entry.folders[f]) + 1, cx)).into_any_element()
+                let (entry, folder) = (&tree.entries[e], &tree.entries[e].folders[f]);
+                let open = !self.sidebar.collapsed.contains(&format!("schedules:{}", supraman_core::schedule::folder_key(&folder.path)));
+                self.render_schedules_row(&entry.name, folder, folder_level(entry, folder) + 1, open, cx)
             }
+            LeftRow::Scheduled(i) => parts.get(i).map_or_else(|| div().into_any_element(), |part| self.render_part(part, cx)),
             LeftRow::Folder(e, f) => {
                 let (entry, folder) = (&tree.entries[e], &tree.entries[e].folders[f]);
                 if folder.excluded {
@@ -475,7 +484,8 @@ impl FleetView {
             }
             LeftRow::More(e, f) => self.render_more_closed(tree.node(e), &tree.node(e).folders[f], cx),
             LeftRow::Unlisted => self.render_unlisted_row(!self.sidebar.collapsed.contains(unlisted::KEY), cx),
-            LeftRow::Others => div().flex().flex_col().children(self.render_other_schedules(tree, cx)).into_any_element(),
+            LeftRow::Others => self.render_other_schedules(tree, cx),
+            LeftRow::OthersCaption => self.render_other_schedules_caption(cx),
             LeftRow::NewGroup => self.render_new_group_row(cx),
             LeftRow::DropEnd => self.render_drop_end(cx),
         }

@@ -17,7 +17,7 @@ use supraman_runtime::nudge::{self, Nudge, Nudged};
 use supraman_core::open::{self, Link};
 use supraman_core::timeline;
 use supraman_ui::hit::{HitTargets, hit_target};
-use supraman_ui::text::input::{InputEvent, TextInput};
+use supraman_ui::text::input::TextInput;
 use supraman_ui::surfaces::hover_card;
 use supraman_ui::icon::Icon;
 use supraman_ui::split::SplitPane;
@@ -331,7 +331,7 @@ impl FleetView {
         Self::detect_shells(cx);
         cx.on_focus_lost(window, |this, window, cx| if !supraman_ui::focus::restore(window, cx) { this.focus.focus(window, cx) }).detach();
         let search = cx.new(|cx| TextInput::new("Search sessions, groups, folders (Ctrl+Shift+E)", None, window, cx));
-        cx.subscribe_in(&search, window, Self::on_search_event).detach();
+        Self::watch_search(&search, window, cx);
         Self {
             cli: Cli::Checking,
             listed: listed::Listed::default(),
@@ -1191,27 +1191,8 @@ impl FleetView {
         self.search.update(cx, |s, cx| s.focus_all(window, cx));
     }
 
-    pub fn search_query(&self, cx: &gpui::App) -> String {
-        self.search.read(cx).text().trim().to_string()
-    }
-
-    fn on_search_event(&mut self, _: &Entity<TextInput>, event: &InputEvent, window: &mut Window, cx: &mut Context<Self>) {
-        match event {
-            InputEvent::Edited => cx.notify(),
-            InputEvent::Cancel if self.dismiss_popup() => cx.notify(),
-            InputEvent::Cancel if !self.search.read(cx).text().is_empty() => self.clear_search(cx),
-            InputEvent::Cancel => self.focus.focus(window, cx),
-            InputEvent::Confirm | InputEvent::ConfirmBack | InputEvent::Refused(_) | InputEvent::Submit | InputEvent::Pressed => {}
-        }
-    }
-
     fn dismiss_popup(&mut self) -> bool {
         self.dialogs.menu.take().is_some()
-    }
-
-    pub fn clear_search(&mut self, cx: &mut Context<Self>) {
-        self.search.update(cx, |s, cx| s.set_text("", cx));
-        cx.notify();
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {

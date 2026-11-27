@@ -5,6 +5,7 @@ use gpui::{Context, Div, KeyDownEvent, MouseButton, MouseDownEvent, SharedString
 use supraman_ui::controls::button::RowKeys;
 use supraman_ui::list::{self, Chrome};
 
+use super::schedule_rows::Part;
 use super::{LeftRow, fold, other_schedules, unlisted};
 use crate::fleet;
 use crate::view::FleetView;
@@ -17,11 +18,18 @@ impl FleetView {
 
     /// [`FleetView::sidebar_row`] over `chrome`'s band and hover.
     pub(in crate::view) fn sidebar_row_with(&self, keys: RowKeys, row: Option<&str>, chrome: Chrome, cx: &mut Context<Self>) -> Stateful<Div> {
-        let selected = row.is_some_and(|r| self.sidebar.left_list.is_selected(r));
-        let el = list::row(&self.hits, keys, sidebar_chrome(chrome, selected, self.sidebar.keys_held), cx);
+        let picks = &self.sidebar.results;
+        let (selected, held) = match picks.shown {
+            true => (row.is_some_and(|r| picks.is_selected(r)), picks.held),
+            false => (row.is_some_and(|r| self.sidebar.left_list.is_selected(r)), self.sidebar.keys_held),
+        };
+        let el = list::row(&self.hits, keys, sidebar_chrome(chrome, selected, held), cx);
         let Some(row) = row.map(|r| SharedString::from(r.to_string())) else { return el };
         el.on_mouse_down(MouseButton::Left, cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-            this.sidebar.left_list.select_key(Some(row.clone()));
+            match this.sidebar.results.shown {
+                true => this.sidebar.results.select(row.clone()),
+                false => this.sidebar.left_list.select_key(Some(row.clone())),
+            }
             cx.notify();
         }))
     }
@@ -42,13 +50,13 @@ impl FleetView {
         if key == list::Key::Activate {
             let at = self.sidebar.left_list.selected_key().and_then(|k| self.sidebar.left_list.index_of(k));
             if let Some(row) = at.and_then(|ix| rows.1.get(ix).copied()) {
-                self.activate_left(&rows.0, row, cx);
+                self.activate_left(&rows.0, &rows.2, row, cx);
             }
             return;
         }
-        self.sidebar.left_list.set_selectable(rows.1.iter().map(|r| !matches!(r, LeftRow::NewGroup | LeftRow::DropEnd)).collect());
+        self.sidebar.left_list.set_selectable(rows.1.iter().map(|r| !matches!(r, LeftRow::NewGroup | LeftRow::DropEnd | LeftRow::OthersCaption)).collect());
         let texts: Vec<String> = match key {
-            list::Key::Typed(_) => rows.1.iter().map(|r| row_text(&rows.0, *r)).collect(),
+            list::Key::Typed(_) => rows.1.iter().map(|r| row_text(&rows.0, &rows.2, *r)).collect(),
             _ => Vec::new(),
         };
         self.sidebar.left_list.key(&key, |ix| texts.get(ix).cloned().unwrap_or_default());
@@ -56,7 +64,7 @@ impl FleetView {
     }
 
     /// Enter on a row: a session opens, a group or folder folds or opens, More shows the closed sessions.
-    fn activate_left(&mut self, tree: &fleet::Tree, row: LeftRow, cx: &mut Context<Self>) {
+    fn activate_left(&mut self, tree: &fleet::Tree, parts: &[Part], row: LeftRow, cx: &mut Context<Self>) {
         match row {
             LeftRow::Group(e) => self.toggle(fold::group(&tree.entries[e].name), cx),
             LeftRow::Folder(e, f) if !tree.entries[e].folders[f].excluded => self.toggle(fold::folder(&tree.entries[e].folders[f].key), cx),
@@ -72,8 +80,13 @@ impl FleetView {
                 cx.notify();
             }
             LeftRow::Unlisted => self.toggle(unlisted::KEY.to_string(), cx),
+            LeftRow::Scheduled(i) => {
+                if let Some(part) = parts.get(i) {
+                    self.activate_part(part, cx);
+                }
+            }
             LeftRow::Others => self.toggle(other_schedules::KEY.to_string(), cx),
-            LeftRow::Folder(..) | LeftRow::NewGroup | LeftRow::DropEnd => {}
+            LeftRow::Folder(..) | LeftRow::NewGroup | LeftRow::DropEnd | LeftRow::OthersCaption => {}
         }
     }
 }
@@ -92,15 +105,16 @@ pub(in crate::view) fn schedule_chrome(pending: bool, cx: &gpui::App) -> Chrome 
 const PENDING_TINT: f32 = 0.08;
 
 /// A row's type-ahead text: its name.
-fn row_text(tree: &fleet::Tree, row: LeftRow) -> String {
+fn row_text(tree: &fleet::Tree, parts: &[Part], row: LeftRow) -> String {
     match row {
         LeftRow::Group(e) => tree.entries[e].name.clone(),
         LeftRow::Folder(e, f) => tree.entries[e].folders[f].name.clone(),
         LeftRow::Session(e, f, i) => fleet::display_name(&tree.node(e).folders[f].sessions[i].session).to_string(),
         LeftRow::Schedules(..) => "Schedules".into(),
+        LeftRow::Scheduled(i) => parts.get(i).map(Part::text).unwrap_or_default(),
         LeftRow::Unlisted => fleet::UNLISTED_TITLE.into(),
         LeftRow::Others => other_schedules::TITLE.into(),
-        LeftRow::More(..) | LeftRow::NewGroup | LeftRow::DropEnd => String::new(),
+        LeftRow::More(..) | LeftRow::NewGroup | LeftRow::DropEnd | LeftRow::OthersCaption => String::new(),
     }
 }
 

@@ -374,6 +374,11 @@ impl<T, A> TreeState<T, A> {
         self.table.focus_handle()
     }
 
+    /// The fill the last frame painted the selected row with ([`TableState::selection_shown`]).
+    pub fn selection_shown(&self) -> Option<gpui::Hsla> {
+        self.table.selection_shown()
+    }
+
     pub fn order(&self) -> Order {
         self.inner.borrow().order
     }

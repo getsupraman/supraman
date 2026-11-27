@@ -1,17 +1,14 @@
-//! A window's panes: each registers its focus handle as it paints, F6 and Shift+F6 step through them, the one
-//! holding the focus wears a 1 px edge in the theme's focus colour, and focus lost with a popup goes back to
-//! the pane that held it; a tab shown in another's place takes the keys ([`Group`]).
+//! A window's panes: each registers its focus handle as it paints, F6 and Shift+F6 step through them, and focus
+//! lost with a popup goes back to the pane that held it; a tab shown in another's place takes the keys ([`Group`]).
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use gpui::{
-    App, BorderStyle, Bounds, Context, FocusHandle, Global, InteractiveElement, IntoElement, KeyBinding, ParentElement, Pixels, SharedString, Styled as _, Subscription,
-    WeakFocusHandle, Window, WindowId, canvas, outline,
+    App, Context, FocusHandle, Global, InteractiveElement, IntoElement, KeyBinding, ParentElement, SharedString, Styled as _, Subscription, WeakFocusHandle, Window, WindowId,
+    canvas,
 };
-use theme::ActiveTheme as _;
 
 use crate::focus_order;
-use crate::hit::{Hit, HitTargets};
 
 mod popup;
 mod visible;
@@ -23,11 +20,6 @@ gpui::actions!(focus, [NextPane, PreviousPane]);
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("f6", NextPane, None), KeyBinding::new("shift-f6", PreviousPane, None)]);
-}
-
-/// The hit key of a pane's painted mark.
-pub fn mark_key(pane: &str) -> String {
-    format!("focus-mark-{pane}")
 }
 
 /// A pane: `region` contains every focusable thing in it; F6 focuses what it last held there, else `entry`.
@@ -55,41 +47,29 @@ impl Pane {
         Self { later: true, ..self }
     }
 
-    /// A modal pane over the element tracking `region` (a tab's Prompt): the panes inside it leave F6's order while it shows;
-    /// it wears no mark, its scrim says where the keys are.
+    /// A modal pane over the element tracking `region` (a tab's Prompt): the panes inside it leave F6's order while it shows.
     pub fn covering(self, region: &FocusHandle) -> Self {
         Self { covers: Some(region.clone()), ..self }
     }
 
-    /// The last child of the pane's `relative` element: registers the pane as it prepaints and paints its mark.
-    pub fn paint(self, hits: &HitTargets) -> impl IntoElement {
-        let (pane, hits) = (self.clone(), hits.clone());
-        canvas(
-            move |_, window, cx| state(window, cx).borrow_mut().register(self),
-            move |bounds, _, window, cx| paint_mark(&pane, bounds, &hits, window, cx),
-        )
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full()
+    /// The last child of the pane's `relative` element: registers the pane as it prepaints and keeps what it holds.
+    pub fn paint(self) -> impl IntoElement {
+        let pane = self.clone();
+        canvas(move |_, window, cx| state(window, cx).borrow_mut().register(self), move |_, _, window, cx| keep_held(&pane, window, cx))
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
     }
 }
 
-fn paint_mark(pane: &Pane, bounds: Bounds<Pixels>, hits: &HitTargets, window: &mut Window, cx: &mut App) {
-    let key = mark_key(&pane.key);
+fn keep_held(pane: &Pane, window: &mut Window, cx: &mut App) {
     if !pane.region.contains_focused(window, cx) {
-        hits.borrow_mut().remove(&key);
         return;
     }
     if let Some(leaf) = window.focused(cx) {
         state(window, cx).borrow_mut().held(&pane.key, leaf);
     }
-    if !window.is_window_active() || pane.covers.is_some() {
-        hits.borrow_mut().remove(&key);
-        return;
-    }
-    window.paint_quad(outline(bounds, cx.theme().colors().border_focused, BorderStyle::Solid));
-    hits.borrow_mut().insert(key, Hit { bounds, visible: window.content_mask().bounds });
 }
 
 /// One of the things a window shows in turn in one place (its tabs): when it is shown in another's place it

@@ -104,7 +104,7 @@ impl Host {
 impl Render for Host {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let popup = self.popup(cx);
-        let pane = div().relative().w(px(200.)).track_focus(&self.pane).child(self.field.clone()).child(crate::focus::Pane::new("left", &self.pane).paint(&self.hits));
+        let pane = div().relative().w(px(200.)).track_focus(&self.pane).child(self.field.clone()).child(crate::focus::Pane::new("left", &self.pane).paint());
         root(div().size_full()).child(pane).children(popup)
     }
 }

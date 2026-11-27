@@ -497,10 +497,10 @@ impl GitView {
         self.toggle_diff_in(None, target, cx);
     }
 
-    /// [`GitView::toggle_diff`] of a file of the worktree at `worktree`, else of the tab's.
+    /// [`GitView::toggle_diff`] of a file of the worktree at `worktree`, else of the tab's; the list it was picked in keeps the keys.
     pub(crate) fn toggle_diff_in(&mut self, worktree: Option<Arc<std::path::Path>>, target: diff::Target, cx: &mut Context<Self>) {
         if self.diff(cx).is_none_or(|d| d.read(cx).target != target || d.read(cx).worktree != worktree) {
-            return self.open_diff_in(worktree, target, cx);
+            return self.show_diff(worktree, target, false, cx);
         }
         self.back_to_graph(cx);
     }
@@ -551,6 +551,11 @@ impl GitView {
 
     /// [`GitView::open_diff`] of a file of the worktree at `worktree`, read-only, else of the tab's.
     pub(crate) fn open_diff_in(&mut self, worktree: Option<Arc<std::path::Path>>, target: diff::Target, cx: &mut Context<Self>) {
+        self.show_diff(worktree, target, true, cx);
+    }
+
+    /// The viewer of `target` in the graph's place, taking the keys on its first frame when `take_keys`.
+    fn show_diff(&mut self, worktree: Option<Arc<std::path::Path>>, target: diff::Target, take_keys: bool, cx: &mut Context<Self>) {
         let Some(tab) = self.repo.clone() else { return };
         self.close_diff(cx);
         let working = worktree.is_none() && matches!(target.of, diff::Of::Unstaged | diff::Of::Staged);
@@ -564,7 +569,7 @@ impl GitView {
         let closed = cx.subscribe(&view, |this: &mut GitView, _, _: &diff::Close, cx| this.back_to_graph(cx));
         let go = cx.subscribe(&view, |this: &mut GitView, _, go: &diff::Go, cx| this.go_file(go.0, cx));
         let picked = cx.subscribe(&view, |this: &mut GitView, _, e: &diff::PickEvent, cx| this.picked_lines(e, cx));
-        self.viewer.update(cx, |v, _| v.show(view, [closed, go, picked]));
+        self.viewer.update(cx, |v, _| v.show(view, [closed, go, picked], take_keys));
         cx.notify();
     }
 
@@ -877,9 +882,9 @@ impl GitView {
             None => self.render_graph(cx),
         };
         let toast = self.toast.render(&self.hits, "git-toast", cx).map(|t| deferred(t).with_priority(supraman_ui::tokens::Layer::OverPrompt.priority()));
-        let table = div().relative().flex_1().min_w_0().h_full().child(first).child(hit_target(&self.hits, GRAPH_PANE.into())).child(pane.paint(&self.hits)).children(toast);
+        let table = div().relative().flex_1().min_w_0().h_full().child(first).child(hit_target(&self.hits, GRAPH_PANE.into())).child(pane.paint()).children(toast);
         let panel = div().relative().flex_shrink(1.).min_w_0().flex().flex_col().w(self.panel_width).h_full().track_focus(&self.panel_focus).child(self.render_panel(cx)).child(hit_target(&self.hits, PANEL_PANE.into()));
-        let panel = panel.child(focus::Pane::new(FOCUS_PANEL, &self.panel_focus).paint(&self.hits));
+        let panel = panel.child(focus::Pane::new(FOCUS_PANEL, &self.panel_focus).paint());
         let split = SplitPane { id: "git-split".into(), min_first: px(GRAPH_MIN), min_second: px(PANEL_MIN), default: PANEL_WIDTH }
             .render_second(table, panel, |this: &mut GitView, width, cx| {
                 this.panel_width = width;

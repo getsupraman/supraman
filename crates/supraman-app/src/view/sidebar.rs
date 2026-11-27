@@ -21,7 +21,7 @@ pub struct Sidebar {
     pub(super) tree_cache: RefCell<Option<CachedTree>>,
     pub(super) left_list: KeyedList,
     pub(super) reveal_pending: Option<(PendingReveal, Instant)>,
-    pub(super) left_rows: Rc<(Rc<Tree>, Vec<LeftRow>)>,
+    pub(super) left_rows: Rc<(Rc<Tree>, Vec<LeftRow>, Vec<super::left::schedule_rows::Part>)>,
     pub(super) collapsed: HashSet<String>,
     pub closed_expanded: HashSet<String>,
     pub(super) search_marks: HashMap<String, crate::search::Marks>,
@@ -31,6 +31,7 @@ pub struct Sidebar {
     /// The sidebar holds the keys, as the rows last painted: its selection is the active fill.
     pub(super) keys_held: bool,
     pub(super) group_edit: Option<left::group_field::GroupEdit>,
+    pub(super) results: super::results::Picks,
 }
 
 pub(super) struct CachedTree {
@@ -52,7 +53,7 @@ impl Sidebar {
             tree_cache: RefCell::new(None),
             left_list: Default::default(),
             reveal_pending: None,
-            left_rows: Rc::new((Rc::new(Tree::default()), Vec::new())),
+            left_rows: Rc::new((Rc::new(Tree::default()), Vec::new(), Vec::new())),
             collapsed: left::unlisted::first_collapsed(),
             closed_expanded: HashSet::new(),
             search_marks: HashMap::new(),
@@ -60,6 +61,7 @@ impl Sidebar {
             subfolders: super::listed::SubfolderWatch::new(cx),
             keys_held: false,
             group_edit: None,
+            results: Default::default(),
         }
     }
 }

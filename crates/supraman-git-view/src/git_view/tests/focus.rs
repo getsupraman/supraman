@@ -46,19 +46,8 @@ fn order(cx: &mut VisualTestContext) -> Vec<String> {
     cx.update(|window, cx| supraman_ui::focus::order(window, cx).into_iter().map(|k| k.to_string()).collect())
 }
 
-/// The panes whose mark a frame drawn now paints.
-fn marked(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<String> {
-    let mut keys: Vec<String> = repaint(view, cx).borrow().keys().filter(|k| k.starts_with("focus-mark-")).cloned().collect();
-    keys.sort();
-    keys
-}
-
-fn mark(pane: &str) -> Vec<String> {
-    vec![supraman_ui::focus::mark_key(pane)]
-}
-
 #[gpui::test]
-fn f6_steps_through_the_ref_panel_graph_right_panel_and_diff_viewer_and_only_the_focused_pane_is_marked(cx: &mut TestAppContext) {
+fn f6_steps_through_the_ref_panel_graph_right_panel_and_diff_viewer(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     std::fs::write(f.dir.join("loose.txt"), "loose\n").unwrap();
     let (view, cx) = open(&f.dir, Opts::default().editor(), cx);
@@ -67,11 +56,11 @@ fn f6_steps_through_the_ref_panel_graph_right_panel_and_diff_viewer_and_only_the
     click(&view, &format!("git-row-{second}"), cx);
     assert_eq!(order(cx), [FOCUS_REFS, FOCUS_GRAPH, FOCUS_PANEL]);
     assert_eq!(holding(cx).as_deref(), Some(FOCUS_GRAPH));
-    assert_eq!(marked(&view, cx), mark(FOCUS_GRAPH), "the graph a click focused wears the mark");
+    assert_eq!(holding(cx).as_deref(), Some(FOCUS_GRAPH), "the graph a click focused holds the keys");
 
     keys(&view, "f6", cx);
     assert_eq!(holding(cx).as_deref(), Some(FOCUS_PANEL), "F6 from the graph: the commit panel");
-    assert_eq!(marked(&view, cx), mark(FOCUS_PANEL), "the mark moves with the focus");
+    assert_eq!(holding(cx).as_deref(), Some(FOCUS_PANEL), "the keys move with F6");
     assert_eq!(shown(&view, cx), (Some(second), Some(selection(&colors, false))), "the graph's selection turns inactive");
     keys(&view, "f6", cx);
     assert_eq!(holding(cx).as_deref(), Some(FOCUS_REFS), "wraps to the ref panel");
@@ -85,7 +74,7 @@ fn f6_steps_through_the_ref_panel_graph_right_panel_and_diff_viewer_and_only_the
     cx.run_until_parked();
     assert_eq!(holding(cx).as_deref(), Some(FOCUS_DIFF), "the viewer takes the keys as it opens");
     assert_eq!(order(cx), [FOCUS_REFS, FOCUS_PANEL, FOCUS_DIFF], "the viewer in the graph's place comes after the right panel");
-    assert_eq!(marked(&view, cx), mark(FOCUS_DIFF));
+    assert_eq!(holding(cx).as_deref(), Some(FOCUS_DIFF));
     keys(&view, "shift-f6", cx);
     assert_eq!(holding(cx).as_deref(), Some(FOCUS_PANEL));
     keys(&view, "f6", cx);
@@ -103,13 +92,13 @@ fn a_menu_opened_from_the_graph_and_closed_by_esc_gives_the_graph_the_keys_back(
     right_click(&view, &format!("git-row-{second}"), cx);
     assert!(!menu(&view, cx).is_empty(), "the row's menu is open");
     assert_eq!(holding(cx), None, "the menu holds the keys");
-    assert!(marked(&view, cx).is_empty(), "no pane is marked while the menu has the keys");
+    assert_eq!(holding(cx), None, "no pane holds the keys while the menu has them");
 
     keys(&view, "escape", cx);
     assert!(menu(&view, cx).is_empty(), "Esc closes the menu");
     let graph = view.read_with(cx, |v, _| v.table.focus_handle().clone());
     assert!(cx.update(|window, _| graph.is_focused(window)), "the graph has the keys again");
-    assert_eq!(marked(&view, cx), mark(FOCUS_GRAPH));
+    assert_eq!(holding(cx).as_deref(), Some(FOCUS_GRAPH));
 }
 
 fn graph_has_keys(view: &Entity<GitView>, cx: &mut VisualTestContext) -> bool {
@@ -160,4 +149,31 @@ fn a_selection_already_there_stays_when_the_graph_takes_the_keys(cx: &mut TestAp
     redraw(&view, cx);
     assert!(graph_has_keys(&view, cx));
     assert_eq!(view.read_with(cx, |v, _| v.table.selected()), Some(second));
+}
+
+#[gpui::test]
+fn a_diff_opened_from_the_commit_panels_tree_leaves_the_keys_in_the_tree(cx: &mut TestAppContext) {
+    let f = Fixture::shared();
+    let (view, cx) = open(&f.dir, Opts::default().editor(), cx);
+    let active = cx.update(|_, cx| selection(cx.theme().colors(), true));
+    view.update(cx, |v, cx| v.set_file_view(FileView::Tree, cx));
+    let root = row_of(&view, f.sha("root"), cx);
+    click(&view, &format!("git-row-{root}"), cx);
+    let tree = view.read_with(cx, |v, cx| v.panel().read(cx).shown_tree());
+    let open_path = |view: &Entity<GitView>, cx: &mut VisualTestContext| view.read_with(cx, |v, cx| v.diff(cx).map(|d| d.read(cx).target.path.clone()));
+    let in_tree = |cx: &mut VisualTestContext| {
+        repaint(&view, cx);
+        (cx.update(|window, _| tree.focus_handle().is_focused(window)), tree.selection_shown())
+    };
+
+    click(&view, "commit-tree-row-a.txt", cx);
+    assert_eq!(open_path(&view, cx).as_deref(), Some("a.txt"), "a click opens the file's diff");
+    assert_eq!(in_tree(cx), (true, Some(active)), "the tree keeps the keys, its row in the active selection");
+
+    keys(&view, "down", cx);
+    assert_eq!(open_path(&view, cx).as_deref(), Some("b.txt"), "Down steps the tree and the diff follows");
+    assert_eq!(in_tree(cx), (true, Some(active)), "the keys stay in the tree");
+
+    keys(&view, "f6", cx);
+    assert_eq!(holding(cx).as_deref(), Some(FOCUS_DIFF), "F6 moves the keys into the viewer");
 }

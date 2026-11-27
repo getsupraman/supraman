@@ -562,7 +562,7 @@ async fn item_page(
     lines.push("Evidence: the report beside the controller's verification; Notes; Activity's 3 events".into());
 
     escape(cx)?;
-    painted(view, &[&supraman_ui::focus::mark_key("work-main")], LOADED_WITHIN, "the list's mark after Esc from the detail", cx).await?;
+    crate::selftest::until_pane(cx, LOADED_WITHIN, "work-main").await?;
     escape(cx)?;
     painted(view, &["work-pill-sw2=doing", "work-row-sw2/1"], LOADED_WITHIN, "the run in the detail after a second Esc", cx).await?;
     if work.read_with(cx, |w, _| w.selected.is_some()) {

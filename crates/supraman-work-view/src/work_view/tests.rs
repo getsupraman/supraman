@@ -476,7 +476,6 @@ fn keys_move_in_the_list_and_into_the_detail(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("enter");
     settle(&view, cx);
     assert_eq!(holding(cx).as_deref(), Some(FOCUS_DETAIL), "Enter gives the detail the keys");
-    bounds(&view, &focus::mark_key(FOCUS_DETAIL), cx);
     cx.simulate_keystrokes("escape");
     settle(&view, cx);
     assert_eq!((holding(cx).as_deref(), view.read_with(cx, |v, _| v.selected.clone())), (Some(FOCUS_MAIN), Some(id(3))), "Esc gives the list the keys back");
@@ -498,7 +497,6 @@ fn f6_steps_through_the_navigator_list_and_detail(cx: &mut TestAppContext) {
         walked.push(holding(cx));
     }
     assert_eq!(walked, [Some(FOCUS_DETAIL.into()), Some(FOCUS_NAV.into()), Some(FOCUS_MAIN.into()), Some(FOCUS_NAV.into())]);
-    assert!(hit(&view, &focus::mark_key(FOCUS_NAV), cx).is_some() && hit(&view, &focus::mark_key(FOCUS_MAIN), cx).is_none(), "the navigator wears the mark, the list not");
 }
 
 #[gpui::test]

@@ -1,4 +1,4 @@
-//! `--selftest` step 7k: the sidebar search driven by Ctrl+Shift+E, keys posted through the window procedure and Esc, its rows painted; which sessions match is `search`'s tests.
+//! `--selftest` step 7k: the sidebar search driven by Ctrl+Shift+E, keys posted through the window procedure and Esc, its rows painted, Up/Down and Enter picking a result; which sessions match is `search`'s tests.
 
 use std::time::{Duration, Instant};
 
@@ -73,5 +73,40 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     post_keys(&["escape"], cx).await?;
     until_focused(view, false, "a second Esc on the empty box giving the keys back to the window", cx).await?;
     out.push("a second Esc gives the keys back".into());
+    out.push(pick_by_keys(view, prefix, &tree_row, cx).await?);
     Ok(out.join("; "))
+}
+
+/// Down and Up move the results' selection while the box keeps the keys and its text; Enter opens the selected as a click does.
+async fn pick_by_keys(view: &Entity<FleetView>, prefix: &str, tree_row: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let keystroke = Keystroke { modifiers: Modifiers { control: true, shift: true, ..Default::default() }, key: "e".into(), key_char: None };
+    cx.update(|window, cx| window.dispatch_event(PlatformInput::KeyDown(KeyDownEvent { keystroke, is_held: false, prefer_character_input: false }), cx))?;
+    until_focused(view, true, "the search box focused again", cx).await?;
+    type_query(view, prefix, cx).await?;
+    let rows = until_app(view, cx, WITHIN, "two result rows", |v, _| Some(v.result_picks().0).filter(|rows| rows.len() >= 2)).await?;
+    let picked = |want: String| move |v: &FleetView, cx: &gpui::App| {
+        let (_, selected, held) = v.result_picks();
+        (selected.as_deref() == Some(want.as_str()) && held && query(v, cx) == prefix).then_some(())
+    };
+    post_keys(&["down"], cx).await?;
+    until_app(view, cx, WITHIN, "Down selecting the first result", picked(rows[0].clone()))
+        .await
+        .map_err(|e| e.context(format!("rows, selected, held: {:?}; the box reads {:?}", view.read_with(cx, |v, _| v.result_picks()), view.read_with(cx, |v, cx| query(v, cx)))))?;
+    post_keys(&["down"], cx).await?;
+    until_app(view, cx, WITHIN, "Down selecting the second", picked(rows[1].clone())).await?;
+    post_keys(&["up"], cx).await?;
+    until_app(view, cx, WITHIN, "Up back to the first", picked(rows[0].clone())).await?;
+    let Some(at) = rows.iter().position(|k| k.starts_with("result-group-") || k.starts_with("result-repo-")) else { bail!("no group or folder among the results {rows:?}") };
+    for _ in 0..at {
+        post_keys(&["down"], cx).await?;
+    }
+    until_app(view, cx, WITHIN, &format!("Down to {}", rows[at]), picked(rows[at].clone())).await?;
+    post_keys(&["enter"], cx).await?;
+    until_app(view, cx, WITHIN, &format!("Enter opening {}: the search cleared and the tree back", rows[at]), |v, cx| {
+        (query(v, cx).is_empty() && v.hits.borrow().contains_key(tree_row)).then_some(())
+    })
+    .await?;
+    post_keys(&["escape"], cx).await?;
+    until_focused(view, false, "Esc on the empty box giving the keys back", cx).await?;
+    Ok(format!("Down, Down, Up select {} with the box keeping the keys and its text; Enter on {} opens it", rows[0], rows[at]))
 }
