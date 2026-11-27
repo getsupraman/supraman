@@ -83,7 +83,7 @@
 "supraman-ui/src/controls/tooltip.rs" = 1
 "supraman-ui/src/dnd.rs" = 3
 "supraman-ui/src/gallery.rs" = 4
-"supraman-ui/src/gallery/sections.rs" = 16
+"supraman-ui/src/gallery/sections.rs" = 15
 "supraman-ui/src/hit.rs" = 1
 "supraman-ui/src/icon.rs" = 1
 "supraman-ui/src/ink.rs" = 1
@@ -96,7 +96,7 @@
 "supraman-ui/src/patterns/inbox_card.rs" = 1
 "supraman-ui/src/patterns/session.rs" = 1
 "supraman-ui/src/scroll/bar.rs" = 5
-"supraman-ui/src/split.rs" = 8
+"supraman-ui/src/split.rs" = 6
 "supraman-ui/src/surfaces/card.rs" = 1
 "supraman-ui/src/surfaces/dialog.rs" = 2
 "supraman-ui/src/surfaces/form.rs" = 1
