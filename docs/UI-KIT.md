@@ -233,7 +233,7 @@ With two or more panels each slot wears a `bar::HEADER` title bar of the owner's
 (`Label`, clipped; the focused panel's in the text colour, the rest muted) and a × (`on_close`), a
 `dnd::source` of the panel's payload; a dock of one is its element alone. Panels and title bars paint
 no border or rule: a divider is the one line between two slices.
-While a payload is dragged, each current slot is a `dnd::DropZone::zoned` target (`<id>-aim-<n>`), whose
+Each current slot is a `dnd::DropZone::zoned` target (`<id>-aim-<n>`; a dock of one's while dragged), whose
 `Zone` is the pointer's edge band a quarter of the slot deep (`dnd::zone_in`), else its centre.
 Over a zone `drop` or `moved` accepts, the dock paints that resulting layout with the dragged panel's
 slot as the ghost (`<id>-ghost`, `dnd::look`), a release hands the owner that layout once, a refused

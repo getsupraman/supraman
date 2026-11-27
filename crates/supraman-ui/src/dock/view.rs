@@ -31,8 +31,8 @@ type OnClose<V, P> = Rc<dyn Fn(&mut V, P, &mut Context<V>)>;
 type OnCentre<V, P, D> = Rc<dyn Fn(&mut V, P, &D, &mut Window, &mut Context<V>)>;
 type PanelOf<P, D> = Rc<dyn Fn(&D, &App) -> Option<P>>;
 
-/// A dock under `id` in `hits`' scope: `<id>-slot-<n>`, `<id>-title-<n>`, `<id>-close-<n>` with `n` the panel's place
-/// in the painted layout's [`Layout::panels`], `<id>-aim-<n>` the current layout's slot as a drop target while a
+/// in the painted layout's [`Layout::panels`], `<id>-aim-<n>` the current layout's slot as a drop target (a dock of one's
+/// only while a payload is dragged), `<id>-split<path>` each split, and `<id>-ghost`.
 /// payload is dragged, `<id>-split<path>` each split, and `<id>-ghost`.
 pub struct Dock<V, P, D> {
     id: SharedString,
@@ -121,7 +121,7 @@ impl<V: 'static, P: Copy + Eq + 'static, D: Payload> Dock<V, P, D> {
         }
         let current = Rc::new(layout.clone());
         let tree = self.tree(&shown, &mut Vec::new(), &mut slots, &current, cx);
-        let aims = carrying.then(|| self.aims(&current, cx));
+        let aims = (carrying || layout.len() > 1).then(|| self.aims(&current, cx));
         div().relative().flex().size_full().min_w_0().min_h_0().bg(tokens::roles(cx).surface).child(tree).children(aims).into_any_element()
     }
 
