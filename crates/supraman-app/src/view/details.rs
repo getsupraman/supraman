@@ -253,7 +253,7 @@ impl FleetView {
     }
 
     /// Every menu item but the Details of this page.
-    fn action_buttons(&self, page: &DetailsPage, items: Vec<MenuItem>, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    fn action_buttons(&self, page: &DetailsPage, items: Vec<MenuItem>, hits: &supraman_ui::hit::HitTargets, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let muted = cx.theme().colors().text_muted;
         let page_key = page.key();
         let mut out = Vec::new();
@@ -263,7 +263,7 @@ impl FleetView {
             }
             let action = item.action.clone();
             out.push(
-                button::Button::new(&self.hits, format!("details-{page_key}-{}", item.key)).label(item.label.clone())
+                button::Button::new(hits, format!("details-{page_key}-{}", item.key)).label(item.label.clone())
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         cx.stop_propagation();
                         this.run_action(action.clone(), window, cx);
@@ -275,7 +275,7 @@ impl FleetView {
     }
 
     /// `None` once its group or folder is gone.
-    pub(super) fn render_details_page(&self, page: &DetailsPage, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(super) fn render_details_page(&self, page: &DetailsPage, hits: &supraman_ui::hit::HitTargets, cx: &mut Context<Self>) -> Option<AnyElement> {
         let page_key = page.key();
         let mut opener = None;
         let (title, pill, sections, items) = match &page.target {
@@ -287,7 +287,7 @@ impl FleetView {
                 let on_open = move |_: &mut gpui::Window, cx: &mut gpui::App| {
                     fleet.update(cx, |this, cx| this.open_session(&sid, cx)).ok();
                 };
-                let open = session::open(&self.hits, format!("details-{page_key}-open"), &view.open.opening(), button::Fill::Solid, on_open, cx);
+                let open = session::open(hits, format!("details-{page_key}-open"), &view.open.opening(), button::Fill::Solid, on_open, cx);
                 opener = Some(open.into_any_element());
                 (view.title, Some(view.pill), view.sections, view.actions)
             }
@@ -298,7 +298,7 @@ impl FleetView {
             }
             MenuTarget::Schedule { .. } | MenuTarget::Schedules { .. } | MenuTarget::OtherSchedule(_) => return None,
         };
-        let actions = opener.into_iter().chain(self.action_buttons(page, items, cx)).collect();
+        let actions = opener.into_iter().chain(self.action_buttons(page, items, hits, cx)).collect();
         let entry = match &page.target {
             MenuTarget::Session { entry, .. } => entry.clone(),
             _ => String::new(),
@@ -308,7 +308,7 @@ impl FleetView {
         });
         let key = format!("details-{page_key}");
         let page = details::Page { key: &key, title, pill, sections: &sections, actions, scroll: &page.scroll, on_link: Some(on_link), top: None, over: None, bar: None };
-        Some(details::render(page, &self.hits, cx))
+        Some(details::render(page, hits, cx))
     }
 }
 

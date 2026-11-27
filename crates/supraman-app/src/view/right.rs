@@ -1,6 +1,8 @@
 //! The right pane: the tab strip with its new-shell split button, and the active tab's content.
 
 pub(in crate::view) mod tab_menu;
+#[cfg(test)]
+mod tests;
 
 use gpui::Focusable as _;
 
@@ -57,7 +59,8 @@ impl FleetView {
             cx,
         );
 
-        let content = self.render_tab_content(cx);
+        let hits = self.hits.clone();
+        let content = self.render_tab_content(&hits, cx);
         div()
             .flex()
             .flex_col()
@@ -65,23 +68,15 @@ impl FleetView {
             .h_full()
             .min_w_0()
             .child(bar)
-            .child(self.content_area(content, cx))
+            .child(self.content_area(content, &hits, cx))
             .into_any_element()
     }
 
-    /// The tab's content under [`FleetView::focus`]: a pane of its own unless its tab lays out panes.
-    fn content_area(&mut self, content: AnyElement, cx: &mut Context<Self>) -> gpui::Div {
+    /// The tab's content under [`FleetView::focus`], its keys under `hits`' scope.
+    fn content_area(&mut self, content: AnyElement, hits: &HitTargets, cx: &mut Context<Self>) -> gpui::Div {
         let tab = self.active.and_then(|id| self.tab(id));
-        let pane = match tab.map(|t| (&t.kind, t.terminal.is_some())) {
-            None | Some((TabKind::Git(_) | TabKind::Work(_), _)) => None,
-            Some((TabKind::Details(_), _)) => Some("details"),
-            Some((TabKind::Schedule(_), _)) => Some("schedule"),
-            Some((TabKind::Start(_), _)) => Some("start"),
-            Some((_, true)) => Some("terminal"),
-            Some(_) => Some("tab"),
-        };
-        let area = div().relative().flex_1().min_h_0().track_focus(&self.focus).child(content).children(self.pane_toast.render(&self.hits, "pane-toast", cx));
-        let area = area.children(pane.map(|key| supraman_ui::focus::Pane::new(key, &self.focus).paint()));
+        let toast = self.pane_toast.render(hits, "pane-toast", cx).map(IntoElement::into_any_element);
+        let area = area(std::iter::once(content).chain(toast), tab.and_then(pane_of), &self.focus, hits);
         area.children(tab.map(|t| self.tab_keys(t, cx).paint()))
     }
 
@@ -97,7 +92,7 @@ impl FleetView {
         supraman_ui::focus::Group::new(format!("tab-{id}"), &self.focus, &entry).while_shown(move |cx| fleet.upgrade().is_some_and(|f| f.read(cx).active == Some(id)))
     }
 
-    fn render_tab_content(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_tab_content(&mut self, hits: &HitTargets, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let active = self.active.and_then(|id| self.tab(id));
         let status = cx.theme().status().clone();
@@ -105,10 +100,10 @@ impl FleetView {
             Some(Tab { kind: TabKind::Work(view), .. }) => view.clone().into_any_element(),
             Some(Tab { kind: TabKind::Git(view), .. }) => view.clone().into_any_element(),
             Some(Tab { kind: TabKind::Schedule(page), .. }) => self
-                .render_schedule_page(page, cx)
+                .render_schedule_page(page, hits, cx)
                 .unwrap_or_else(|| placeholder(format!("Schedule {} is gone.", page.id), cx)),
-            Some(Tab { kind: TabKind::Details(page), .. }) => self.render_details_page(page, cx).unwrap_or_else(|| placeholder("Its group or folder is gone.".into(), cx)),
-            Some(Tab { id, kind: TabKind::Start(page), .. }) => self.render_start_page(*id, page, cx).unwrap_or_else(|| placeholder(format!("{} is no longer listed.", page.entry), cx)),
+            Some(Tab { kind: TabKind::Details(page), .. }) => self.render_details_page(page, hits, cx).unwrap_or_else(|| placeholder("Its group or folder is gone.".into(), cx)),
+            Some(Tab { id, kind: TabKind::Start(page), .. }) => self.render_start_page(*id, page, hits, cx).unwrap_or_else(|| placeholder(format!("{} is no longer listed.", page.entry), cx)),
             Some(Tab { id: tab_id, terminal: Some(terminal), detach, find, .. }) => div()
                 .size_full()
                 .flex()
@@ -127,14 +122,14 @@ impl FleetView {
                             ))),
                     )
                 })
-                .children(self.render_schedule_ask(*tab_id, cx))
-                .when_some(find.as_ref(), |d, find| d.child(self.find_bar(*tab_id, find, cx)))
+                .children(self.render_schedule_ask(*tab_id, hits, cx))
+                .when_some(find.as_ref(), |d, find| d.child(self.find_bar(*tab_id, find, hits, cx)))
                 .child(
                     div()
                         .relative()
                         .flex_1()
                         .min_h_0()
-                        .child(hit_target(&self.hits, format!("terminal-{tab_id}")))
+                        .child(hit_target(hits, format!("terminal-{tab_id}")))
                         .on_scroll({
                             let terminal = terminal.clone();
                             cx.listener(move |this, e: &ScrollEvent, _, cx| {
@@ -150,11 +145,11 @@ impl FleetView {
                             })
                         })
                         .child(term_element::terminal_grid(terminal.clone(), self.term_font(), self.term_cursor()))
-                        .children(self.link_hint(*tab_id, terminal, cx))
-                        .child(self.terminal_drop(*tab_id, cx)),
+                        .children(self.link_hint(*tab_id, terminal, hits, cx))
+                        .child(self.terminal_drop(*tab_id, hits, cx)),
                 )
                 .into_any_element(),
-            Some(Tab { id, kind: TabKind::Saved(saved), .. }) => self.saved_placeholder(*id, saved, cx),
+            Some(Tab { id, kind: TabKind::Saved(saved), .. }) => self.saved_placeholder(*id, saved, hits, cx),
             Some(Tab { error: Some(error), .. }) => placeholder(format!("Cannot start the terminal: {error}"), cx),
             Some(_) => placeholder("starting…".into(), cx),
             None => placeholder(
@@ -163,6 +158,24 @@ impl FleetView {
             ),
         }
     }
+}
+
+/// The content pane a tab registers, unless its tab lays out panes of its own.
+fn pane_of(tab: &Tab) -> Option<&'static str> {
+    match (&tab.kind, tab.terminal.is_some()) {
+        (TabKind::Git(_) | TabKind::Work(_), _) => None,
+        (TabKind::Details(_), _) => Some("details"),
+        (TabKind::Schedule(_), _) => Some("schedule"),
+        (TabKind::Start(_), _) => Some("start"),
+        (_, true) => Some("terminal"),
+        _ => Some("tab"),
+    }
+}
+
+/// `children` in the region `focus` tracks, registered as the pane `pane` under `hits`' scope.
+fn area(children: impl IntoIterator<Item = AnyElement>, pane: Option<&str>, focus: &gpui::FocusHandle, hits: &HitTargets) -> gpui::Div {
+    let area = div().relative().flex_1().min_h_0().track_focus(focus).children(children);
+    area.children(pane.map(|key| supraman_ui::focus::Pane::new(hits.key(key), focus).paint()))
 }
 
 impl FleetView {

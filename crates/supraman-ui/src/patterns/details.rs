@@ -176,7 +176,7 @@ fn render_section<V: 'static>(page: &str, section: &Section, on_link: Option<OnL
         out = out.child(match line {
             Line::Row(label, value) => labelled(label, &colors).child(div().flex_1().min_w_0().child(TextView::new(SharedString::from(format!("{key}-row-{i}")), value.clone()))).into_any_element(),
             Line::Path(label, path) => labelled(label, &colors)
-                .child(path_label(format!("{key}-path-{i}"), path, crate::themes::secondary(&colors), colors.text).flex_1())
+                .child(path_label(hits.key(&format!("{key}-path-{i}")), path, crate::themes::secondary(&colors), colors.text).flex_1())
                 .into_any_element(),
             Line::Link { label, value, target } => link_line(label, value, target, format!("{key}-link-{i}"), on_link.clone(), hits, cx),
             Line::Text(t) => div().text_size(tokens::text::BODY).child(TextView::new(SharedString::from(format!("{key}-text-{i}")), t.clone())).into_any_element(),

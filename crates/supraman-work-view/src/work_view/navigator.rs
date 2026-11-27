@@ -59,7 +59,7 @@ impl WorkView {
             .px_3()
             .pt_2()
             .pb_1()
-            .child(clipped("work-nav-name", self.name(), false).flex_1().text_sm().font_weight(FontWeight::SEMIBOLD))
+            .child(clipped(self.hits.key("work-nav-name"), self.name(), false).flex_1().text_sm().font_weight(FontWeight::SEMIBOLD))
             .child(
                 button::Button::new(&self.hits, "work-nav-shut").icon(Icon::ChevronLeft.svg(14., colors.icon_muted)).icon_only(tokens::control::SMALL.height)
                     .tooltip(supraman_ui::controls::tooltip::Tooltip::text("Hide the navigator"))
@@ -102,7 +102,7 @@ impl WorkView {
                 .gap_2()
                 .px_3()
                 .pt_1()
-                .child(clipped(format!("work-project-title-{qref}"), project.item.title.clone(), false).flex_1().text_sm().font_weight(FontWeight::SEMIBOLD))
+                .child(clipped(self.hits.key(&format!("work-project-title-{qref}")), project.item.title.clone(), false).flex_1().text_sm().font_weight(FontWeight::SEMIBOLD))
                 .child(div().flex_none().font_family(supraman_ui::fonts::MONO).text_xs().text_color(colors.text_muted).child(SharedString::from(qref.clone())))
                 .child(hit_target(&self.hits, format!("work-project-{qref}"))),
         );
@@ -157,7 +157,7 @@ impl WorkView {
                     .items_center()
                     .gap_2()
                     .text_sm()
-                    .child(clipped(format!("work-nav-run-title-{qref}"), run.item.title.clone(), false).flex_1().when(on, |d| d.text_color(colors.text_accent)))
+                    .child(clipped(self.hits.key(&format!("work-nav-run-title-{qref}")), run.item.title.clone(), false).flex_1().when(on, |d| d.text_color(colors.text_accent)))
                     .child(supraman_ui::fonts::figures(div().flex_none().text_xs().text_color(colors.text_muted)).child(SharedString::from(done_total(r)))),
             )
             .child(progress_line(&parts, r.counted(), colors.border))
