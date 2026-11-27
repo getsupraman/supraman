@@ -149,7 +149,7 @@ pub(crate) fn git_class(dirs: &Dirs, path: &Path) -> Option<Refresh> {
     let common = below(&dirs.common_dir, path)?;
     let parts: Vec<&str> = common.split('/').collect();
     match parts.as_slice() {
-        ["HEAD" | "packed-refs"] | ["logs", "HEAD"] | ["refs", ..] | ["worktrees", _, "HEAD"] => Some(Refresh::Graph),
+        ["HEAD" | "packed-refs"] | ["logs", "HEAD"] | ["refs", ..] | ["reftable", ..] | ["worktrees", _, "HEAD"] | ["worktrees", _, "reftable", ..] => Some(Refresh::Graph),
         _ => None,
     }
 }
