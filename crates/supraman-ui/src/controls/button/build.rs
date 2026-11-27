@@ -377,7 +377,7 @@ fn turning(svg: Svg, key: &str) -> AnyElement {
 
 impl RenderOnce for Button {
     fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        self.open = crate::popup::is_open(&self.key, window, cx);
+        self.open = crate::popup::is_open(&self.hits.key(&self.key), window, cx);
         self.build(cx)
     }
 }

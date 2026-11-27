@@ -107,7 +107,7 @@ pub(crate) fn link_line(window: &mut Window, left: Pixels, right: Pixels, bounds
     let (mid, half) = (snap(bounds.center().y, scale), stroke_width(scale) / 2.);
     let line = Bounds::from_corners(point(left, mid - half), point(right.max(left), mid + half));
     window.paint_quad(fill(line, colour));
-    hits.borrow_mut().insert(key, Hit { bounds: line, visible: window.content_mask().bounds });
+    hits.insert(&key, Hit { bounds: line, visible: window.content_mask().bounds });
 }
 
 fn line(window: &mut Window, bounds: Bounds<Pixels>, colour: Hsla, dashed: bool, draw: impl FnOnce(&mut PathBuilder, Pixels)) {

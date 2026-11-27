@@ -98,7 +98,7 @@ impl RefPanel {
     /// Whether `at` is on the strip icon of the open overlay, whose own click closes it.
     fn on_own_icon(&self, at: Point<Pixels>) -> bool {
         let Some(section) = self.overlay() else { return false };
-        self.hits.borrow().get(&format!("{LIST}-strip-{}", section.key())).is_some_and(|hit| hit.bounds.contains(&at))
+        self.hits.get(&format!("{LIST}-strip-{}", section.key())).is_some_and(|hit| hit.bounds.contains(&at))
     }
 
     pub(super) fn render_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {

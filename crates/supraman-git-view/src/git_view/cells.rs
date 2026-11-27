@@ -104,7 +104,7 @@ fn pill_look(rest: Hsla, hover: Hsla) -> supraman_ui::state::Look {
 pub(crate) fn pill(key: impl Into<String>, face: Face, colour: usize, palette: &Palette, hits: &HitTargets) -> Div {
     let key = key.into();
     let (text, hover) = (palette.text, pill_fill(colour, true, palette));
-    let name = clipped(key.clone(), face.name, false).min_w(px(NAME_MIN)).flex_shrink(BODY_SHRINK).child(hit_target(hits, format!("{key}-text")));
+    let name = clipped(hits.key(&key), face.name, false).min_w(px(NAME_MIN)).flex_shrink(BODY_SHRINK).child(hit_target(hits, format!("{key}-text")));
     let (gap, pad) = (px(PILL_GAP), px(PILL_PAD));
     let least = px(NAME_MIN + if face.head { PILL_ICON + PILL_GAP } else { 0. });
     div()
@@ -117,7 +117,7 @@ pub(crate) fn pill(key: impl Into<String>, face: Face, colour: usize, palette: &
         .px(pad)
         .rounded(tokens::radius::S)
         .map(|d| pill_look(pill_fill(colour, false, palette), hover).paint(d, None))
-        .child(supraman_ui::popup::open_fill(key.clone()).radius(supraman_ui::tokens::radius::S).fill(hover))
+        .child(supraman_ui::popup::open_fill(hits.key(&key)).radius(supraman_ui::tokens::radius::S).fill(hover))
         .text_color(text)
         .text_xs()
         .child(
@@ -169,9 +169,9 @@ fn icons(key: &str, icons: Vec<Icon>, colour: Hsla, hits: &HitTargets) -> Div {
 }
 
 /// A pill of row `ix`'s group `group`: its menu, double-click checkout, drag and drop.
-pub(crate) fn acting(pill: Div, key: String, ix: usize, group: &RefGroup, at: usize, sha: SharedString, cx: &mut Context<GitView>) -> Stateful<Div> {
+pub(crate) fn acting(pill: Div, key: String, ix: usize, group: &RefGroup, at: usize, sha: SharedString, hits: &HitTargets, cx: &mut Context<GitView>) -> Stateful<Div> {
     let dragged = DraggedPill { group: group.clone(), sha };
-    let act = format!("{key}-act");
+    let act = hits.key(&format!("{key}-act"));
     let pill = pill.id(SharedString::from(act.clone()))
         .on_mouse_down(MouseButton::Right, cx.listener(move |this, e: &MouseDownEvent, _, cx| {
             cx.stop_propagation();
@@ -214,7 +214,7 @@ pub(crate) fn refs(ix: usize, row: &GraphRow, view: RefCellView, selected: bool,
         let shown = if selected { shown.opacity(dim) } else { shown.opacity(0.).group_hover(group, move |s| s.opacity(dim)) };
         return cell.child(shown.relative().child(hit_target(hits, format!("git-ghost-{ix}")))).into_any_element();
     }
-    let shown = acting(shown.relative().child(hit_target(hits, format!("git-pill-{ix}"))), format!("git-pill-{ix}"), ix, first, 0, row.sha.clone(), cx);
+    let shown = acting(shown.relative().child(hit_target(hits, format!("git-pill-{ix}"))), format!("git-pill-{ix}"), ix, first, 0, row.sha.clone(), hits, cx);
     let shown = if view.list.is_empty() { shown } else { shown.child(deferred(list(ix, row, &view.list, colour, palette, hits, cx)).with_priority(supraman_ui::tokens::Layer::Float.priority())) };
     cell = cell.child(shown).when(view.more > 0, |d| {
         let more = SharedString::from(format!("+{}", view.more));
@@ -255,7 +255,7 @@ fn list(ix: usize, row: &GraphRow, groups: &[RefGroup], colour: usize, palette: 
                 .rounded_b(bottom)
                 .map(|d| pill_look(palette.pill_solid(colour), hover).paint(d, None))
                 .child(hit_target(hits, key.clone()));
-            acting(shown, key, ix, g, i, row.sha.clone(), cx)
+            acting(shown, key, ix, g, i, row.sha.clone(), hits, cx)
         }))
         .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
             this.over_list = if *hovered { Some(ix) } else { this.over_list.filter(|r| *r != ix) };
@@ -278,8 +278,8 @@ pub(crate) fn message(ix: usize, row: &GraphRow, wip: Option<&str>, palette: &Pa
         .size_full()
         .line_height(px(LINE))
         .overflow_hidden()
-        .child(clipped(format!("git-msg-{ix}"), summary, false).flex_shrink(1.).text_color(colour).child(hit_target(hits, format!("git-text-{ix}"))))
-        .when(!body.is_empty(), |d| d.child(clipped(format!("git-body-{ix}"), body, false).flex_shrink(BODY_SHRINK).text_color(palette.muted)));
+        .child(clipped(hits.key(&format!("git-msg-{ix}")), summary, false).flex_shrink(1.).text_color(colour).child(hit_target(hits, format!("git-text-{ix}"))))
+        .when(!body.is_empty(), |d| d.child(clipped(hits.key(&format!("git-body-{ix}")), body, false).flex_shrink(BODY_SHRINK).text_color(palette.muted)));
     div().relative().size_full().child(bar).child(text).into_any_element()
 }
 

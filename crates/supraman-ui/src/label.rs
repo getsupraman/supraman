@@ -198,7 +198,10 @@ impl Label {
 
     fn words_element(&mut self) -> Option<AnyElement> {
         let words = match (self.words.take()?, self.key.take()) {
-            (Words::Text(text), Some((key, middle))) => crate::clipped::clipped(key, text, middle).flex_shrink(1.).into_any_element(),
+            (Words::Text(text), Some((key, middle))) => {
+                let key = self.hit.as_ref().map_or_else(|| key.clone(), |(hits, _)| hits.key(&key).into());
+                crate::clipped::clipped(key, text, middle).flex_shrink(1.).into_any_element()
+            }
             (Words::Text(text), None) => div().whitespace_nowrap().child(text).into_any_element(),
             (Words::Element(el), _) => el,
         };

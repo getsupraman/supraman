@@ -294,7 +294,7 @@ impl Header<'_> {
             .id(group.clone())
             .group(group)
             .relative()
-            .child(crate::popup::open_fill(format!("tab-{id}")))
+            .child(crate::popup::open_fill(hits.key(&format!("tab-{id}"))))
             .flex()
             .flex_none()
             .w(self.width)

@@ -163,10 +163,11 @@ impl<A> ContextMenu<A> {
     }
 
     /// Focuses the menu as it first prepaints, before its list, so the frame that first shows it holds the focus; records it in the window's registry.
-    fn take_focus(&self, cx: &mut App) -> impl IntoElement + use<A> {
+    fn take_focus(&self, hits: &HitTargets, cx: &mut App) -> impl IntoElement + use<A> {
         let focus = self.focus.get_or_init(|| cx.focus_handle()).clone();
         let ask = !self.asked.replace(true);
         let (popup, nav) = (self.popup.clone(), self.nav.clone());
+        popup.under(hits);
         canvas(
             move |_, window, cx| {
                 popup.shown(window, cx);
@@ -213,7 +214,7 @@ impl<A: Clone + 'static> ContextMenu<A> {
             return div().into_any_element();
         }
         let colors = cx.theme().colors().clone();
-        let taken = self.take_focus(cx);
+        let taken = self.take_focus(hits, cx);
         let focus = self.focus.get().cloned().expect("take_focus made it");
         let items = Rc::new(self.items.clone());
         let (nav, keys_items, keys_acts) = (self.nav.clone(), items.clone(), acts.clone());

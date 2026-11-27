@@ -70,6 +70,10 @@ second control.
 
 The kit is built from eight mechanisms. Every control is a composition of them plus appearance.
 
+Every key a view writes into a window-wide registry (hit keys, popup anchors, focus panes, divider drags, cut
+labels, drags) lies under the scope of the `HitTargets` handle its host gave it (`scoped(name)`, `key(k)`), so two
+views painted in one window never share one; the empty scope's keys are the keys as written.
+
 ### 4.1 Interaction state
 
 One state vector per interactive element, kept by the kit, not by gpui paint styles alone:
@@ -90,7 +94,7 @@ press stay gpui's paint.
 ### 4.2 Anchors and popups
 
 Every popup has an **anchor**: the key of the element it belongs to, and a position (pointer, or the
-anchor's bounds). `Popup::open(anchor, …)` records it; the anchor's element reads `open` from the
+anchor's bounds). `Popup::open(anchor, …)` records it, under the scope of the handle the popup paints with (`Popup::under`); the anchor's element reads `open` from the
 window's popup registry while it paints. One registry per window: one popup open at a time per layer,
 outside click and Esc close it, focus returns to what held it (§4.3).
 

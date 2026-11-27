@@ -4,7 +4,7 @@ use gpui::{AnyElement, ClickEvent, Context, Div, SharedString, Window, div, prel
 use supraman_gitman::ChangeKind;
 use supraman_ui::controls::{button, pill};
 use supraman_ui::clipped::path_label;
-use supraman_ui::hit::hit_target;
+use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
 use supraman_ui::patterns::placeholder::placeholder;
 use supraman_ui::controls::segmented::{Segment, segmented};
@@ -17,9 +17,9 @@ use super::image::{self, Picture};
 use super::{CloseDiff, Content, DiffView, FileStep, FirstFile, Go, KEY_CONTEXT, LastFile, Layout, Mode, NextChange, NextFile, PreviousChange, PreviousFile, Sizes, TooLarge};
 use crate::git_view::details::{kind_word, mark_icon};
 
-fn path(key: &str, path: &str, cx: &Context<DiffView>) -> Div {
+fn path(hits: &HitTargets, key: &str, path: &str, cx: &Context<DiffView>) -> Div {
     let colors = cx.theme().colors();
-    path_label(format!("{key}-dir"), path, colors.text_muted, colors.text)
+    path_label(hits.key(&format!("{key}-dir")), path, colors.text_muted, colors.text)
 }
 
 /// `Before: … After: …`, `Added: …` or `Deleted: …`.
@@ -65,8 +65,8 @@ impl DiffView {
             .border_b(tokens::stroke::HAIRLINE)
             .border_color(colors.border_variant)
             .children(mark)
-            .when(renamed, |d| d.child(path("diff-old-path", self.target.old_path(), cx)).child(Icon::Renamed.svg(tokens::icon::S, colors.text_muted)))
-            .child(path("diff-path", &self.target.path, cx).flex_1())
+            .when(renamed, |d| d.child(path(&self.hits, "diff-old-path", self.target.old_path(), cx)).child(Icon::Renamed.svg(tokens::icon::S, colors.text_muted)))
+            .child(path(&self.hits, "diff-path", &self.target.path, cx).flex_1())
             .children(self.target.side_word().map(|word| pill::tag(cx).id("diff-side").child(word)))
             .child(div().flex_none().text_xs().text_color(colors.text_muted).child(encoding))
             .child(close)

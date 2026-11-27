@@ -96,7 +96,7 @@ fn badges(counts: &WipCounts, key: String, hits: &HitTargets, cx: &App) -> Div {
 /// A row's name, painted under `<list>-name-<path>`.
 fn name(list: &str, row: &Row<'_, Mark, WipCounts>, colour: Hsla, hits: &HitTargets) -> Stateful<Div> {
     let kind = if matches!(row.item, Item::File(_)) { "file" } else { "folder" };
-    clipped(format!("{list}-{kind}-{}", row.path), row.name.clone(), false).text_color(colour).child(hit_target(hits, format!("{list}-name-{}", row.path)))
+    clipped(hits.key(&format!("{list}-{kind}-{}", row.path)), row.name.clone(), false).text_color(colour).child(hit_target(hits, format!("{list}-name-{}", row.path)))
 }
 
 /// A folder's name muted, its badges only while it is closed, and a file's bright.
@@ -111,7 +111,7 @@ fn tree_row(list: &str, row: Row<'_, Mark, WipCounts>, hits: &HitTargets, cx: &A
 /// A Path row: the mark, the folder part muted and the file name bright.
 fn path_row(list: &str, path: &str, kind: ChangeKind, hits: &HitTargets, cx: &App) -> Div {
     let mark = div().flex().flex_none().children(mark(&Some(kind), format!("{list}-mark-{path}"), hits, cx)).into_any_element();
-    let path = path_label(format!("{list}-dir-{path}"), path, secondary(cx.theme().colors()), cx.theme().colors().text).flex_1();
+    let path = path_label(hits.key(&format!("{list}-dir-{path}")), path, secondary(cx.theme().colors()), cx.theme().colors().text).flex_1();
     div().flex().items_center().w_full().min_w_0().child(Label::element(path).mark(LabelMark::Element(mark)).slot(px(LEAD)).gap(supraman_ui::tokens::space::S).flex_1())
 }
 

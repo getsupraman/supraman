@@ -100,6 +100,6 @@ impl Chrome {
 
 /// A list row under `keys` (its element id, hover group and hit key), its [`Chrome`] painted under what the owner adds.
 pub fn row(hits: &HitTargets, keys: RowKeys, chrome: Chrome, cx: &App) -> Stateful<Div> {
-    let fill = chrome.fill(keys.hit.clone(), keys.group.clone(), cx);
+    let fill = chrome.fill(hits.key(&keys.hit), keys.group.clone(), cx);
     div().id(keys.id).group(keys.group).relative().when(!chrome.still, |d| d.cursor_pointer()).child(fill).child(hit_target(hits, keys.hit.to_string()))
 }

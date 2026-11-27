@@ -274,7 +274,7 @@ impl DiffView {
             .child(body)
             .children(self.picks.as_ref().and_then(|p| p.band.filter(|_| p.menu.is_some())).map(|band| {
                 let open = supraman_ui::tokens::roles(cx).open.opacity(BAND_OPACITY);
-                gpui::anchored().position(band.origin).child(div().w(band.size.width).h(band.size.height).relative().child(supraman_ui::popup::open_fill(LINES).fill(open)))
+                gpui::anchored().position(band.origin).child(div().w(band.size.width).h(band.size.height).relative().child(supraman_ui::popup::open_fill(self.hits.key(LINES)).fill(open)))
             }))
             .into_any_element()
     }

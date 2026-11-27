@@ -24,11 +24,12 @@ pub(crate) struct Opts {
     size: (f32, f32),
     hidden: bool,
     aside: bool,
+    scope: Option<&'static str>,
 }
 
 impl Default for Opts {
     fn default() -> Opts {
-        Opts { home: None, live: None, following: false, background: false, editor: false, size: (1200., 800.), hidden: false, aside: false }
+        Opts { home: None, live: None, following: false, background: false, editor: false, size: (1200., 800.), hidden: false, aside: false, scope: None }
     }
 }
 
@@ -60,6 +61,11 @@ impl Opts {
 
     pub(crate) fn size(self, width: f32, height: f32) -> Opts {
         Opts { size: (width, height), ..self }
+    }
+
+    /// Its keys under `name`, as a panel of a dock paints them ([`HitTargets::scoped`]).
+    pub(crate) fn scope(self, name: &'static str) -> Opts {
+        Opts { scope: Some(name), ..self }
     }
 
     /// With a pane of the window's own beside the tab, [`ASIDE`] wide, as the app's sidebar is: [`aside`] reads its keys.
@@ -134,8 +140,8 @@ pub(crate) fn open<'a>(folder: &Path, opts: Opts, cx: &'a mut TestAppContext) ->
     (view, cx)
 }
 
-/// A Git tab of `folder` as it opens, loaded or not.
-pub(crate) fn open_unchecked<'a>(folder: &Path, opts: Opts, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
+/// The window's globals and keys once, the editor and the background as `opts` ask.
+pub(crate) fn init(opts: &Opts, cx: &mut TestAppContext) {
     cx.update(|cx| {
         if !cx.has_global::<supraman_term::terminal_settings::TerminalConfig>() {
             supraman_ui::init_globals(cx, "test");
@@ -149,10 +155,15 @@ pub(crate) fn open_unchecked<'a>(folder: &Path, opts: Opts, cx: &'a mut TestAppC
             background::start_for_test(QUIET, cx);
         }
     });
-    let Opts { home, live, following, size, hidden, aside, .. } = opts;
+}
+
+/// A Git tab of `folder` as it opens, loaded or not.
+pub(crate) fn open_unchecked<'a>(folder: &Path, opts: Opts, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
+    init(&opts, cx);
+    let Opts { home, live, following, size, hidden, aside, scope, .. } = opts;
     let folder = folder.to_path_buf();
     let (holder, cx) = cx.add_window_view(|window, cx| {
-        let hits = HitTargets::default();
+        let hits = scope.map_or_else(HitTargets::default, |s| HitTargets::default().scoped(s));
         let view = match live {
             Some(live) if following => GitView::open_following(folder, home, hits, live, cx),
             Some(live) => GitView::open_with(folder, home, hits, Arc::new(live), cx),
