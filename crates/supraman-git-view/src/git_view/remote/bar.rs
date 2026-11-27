@@ -93,8 +93,9 @@ impl GitView {
         let remote = self.remote.read(cx);
         let choice = remote.pull_choice();
         let caption = caption(choice);
-        let push_tip = match remote.current().and_then(|c| remote.upstream(c)) {
-            Some((r, b)) => format!("Push to {r}/{b}"),
+        let push_tip = match remote.current().and_then(|c| Some(c).zip(remote.upstream(c))) {
+            Some((c, (r, b))) if b != c => format!("Push {c}; it tracks {r}/{b}, a branch of another name"),
+            Some((_, (r, b))) => format!("Push to {r}/{b}"),
             None => "Push, choosing its upstream first".into(),
         };
         let strip = self.write_strip(cx);

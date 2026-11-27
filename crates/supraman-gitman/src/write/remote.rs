@@ -314,6 +314,46 @@ pub fn pull(s: &Session, mode: PullMode, prune: bool, t: &Transfer) -> Result<Pu
     Err(GitError::Failed { args: call.label(), code: out.code, stderr: [text(&out.stdout), text(&out.stderr)].join("\n").trim().to_string() }.into())
 }
 
+/// Where a push of a branch goes by git's own rules; see [`push_target`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PushTarget {
+    /// No remote to push to: ask for an upstream.
+    NoUpstream,
+    To { remote: String, branch: String },
+    /// `push.default=simple` with an upstream of another name on `remote`: `branch` is the local name, `upstream` the upstream's.
+    Mismatch { remote: String, branch: String, upstream: String },
+}
+
+/// git's words for `push.default=nothing`.
+pub const PUSH_NOTHING: &str = "You didn't specify any refspecs to push, and push.default is \"nothing\".";
+
+/// `local`'s push target: the remote by `pushRemote`, `remote.pushDefault`, then the upstream's; the branch by `push.default`.
+pub fn push_target(s: &Session, local: &str) -> Result<PushTarget, WriteError> {
+    let upstream = upstream_of(s, local)?.filter(|u| u.remote != ".");
+    let named = match config(s, &format!("branch.{local}.pushRemote"))? {
+        Some(remote) => Some(remote),
+        None => config(s, "remote.pushDefault")?,
+    };
+    let Some(remote) = named.or_else(|| upstream.as_ref().map(|u| u.remote.clone())) else { return Ok(PushTarget::NoUpstream) };
+    let tracked = upstream.is_some();
+    let on_remote = upstream.filter(|u| u.remote == remote).map(|u| u.branch);
+    let to = |branch: &str| Ok(PushTarget::To { remote: remote.clone(), branch: branch.to_string() });
+    match config(s, "push.default")?.as_deref() {
+        Some("nothing") => Err(WriteError::Refused(PUSH_NOTHING)),
+        Some("current") => to(local),
+        Some("upstream" | "tracking") => match on_remote {
+            Some(branch) => to(&branch),
+            None if !tracked => Ok(PushTarget::NoUpstream),
+            None => Err(WriteError::Remote(format!("You are pushing to remote '{remote}', which is not the upstream of your current branch '{local}', without telling me what to push to update which remote branch."))),
+        },
+        // `matching` pushes this one branch as `simple` does.
+        _ => match on_remote {
+            Some(upstream) if upstream != local => Ok(PushTarget::Mismatch { remote, branch: local.to_string(), upstream }),
+            _ => to(local),
+        },
+    }
+}
+
 /// How a push treats a remote branch that moved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Force {

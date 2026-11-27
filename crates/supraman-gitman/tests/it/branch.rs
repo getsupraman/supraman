@@ -267,7 +267,7 @@ fn a_worktree_is_added_on_a_branch_a_new_branch_or_a_tag_and_refused_a_used_fold
     add(&fresh, "origin/main", Some("fresh")).unwrap();
     assert_eq!(head(&f, &fresh), "fresh");
     assert_eq!(sha(&f, "fresh"), sha(&f, "origin/main"), "the new branch starts at the reference");
-    assert_eq!(f.git(&["config", "branch.fresh.merge"]), "refs/heads/main", "a new branch off a remote branch tracks it");
+    assert!(!run_git(&f.git, &f.dir, &["config", "--get", "branch.fresh.merge"], &[], None).success(), "a new branch of another name has no upstream");
 
     let tagged = place.join("v1");
     add(&tagged, "v1", None).unwrap();

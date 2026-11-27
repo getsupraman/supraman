@@ -423,7 +423,7 @@ pub fn abandon(s: &Session, away: &Away) -> Result<Autostash, WriteError> {
     go_back(s, away)
 }
 
-/// A new worktree at `folder` checking out `reference`, or `new_branch` made there; a reference that is no local branch is checked out detached.
+/// A new worktree at `folder` checking out `reference`, or `new_branch` made there, tracking only a remote branch of its name; a reference that is no local branch is checked out detached.
 /// Refused for a folder that holds anything, a bad or taken name, and in git's words for a branch checked out elsewhere; not undoable.
 /// A failure removes what git made of the worktree and the new branch.
 pub fn add_worktree(s: &Session, folder: &Path, reference: &str, new_branch: Option<&str>) -> Result<(), WriteError> {
@@ -437,7 +437,8 @@ pub fn add_worktree(s: &Session, folder: &Path, reference: &str, new_branch: Opt
         if s.verify(&format!("refs/heads/{name}"))?.is_some() {
             return Err(WriteError::Refused(BRANCH_EXISTS));
         }
-        args.extend(["-b", name]);
+        let tracks = reference.strip_suffix(name).is_some_and(|remote| remote.ends_with('/')) && s.verify(&format!("refs/remotes/{reference}"))?.is_some();
+        args.extend([if tracks { "--track" } else { "--no-track" }, "-b", name]);
     } else if s.verify(&format!("refs/heads/{reference}"))?.is_none() {
         args.push("--detach");
     }
