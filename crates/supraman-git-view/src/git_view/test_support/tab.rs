@@ -93,7 +93,7 @@ impl<V: Render> Render for Holder<V> {
         if let Some(aside) = &self.aside {
             let keys = aside.keys.clone();
             let pane = div().id("aside").relative().flex_none().w(px(ASIDE)).h_full().track_focus(&aside.focus).on_key_down(move |e, _, _| keys.borrow_mut().push(e.keystroke.key.clone()));
-            let pane = pane.child(supraman_ui::focus::Pane::new("aside", &aside.focus).paint(&HitTargets::default()));
+            let pane = pane.child(supraman_ui::focus::Pane::new("aside", &aside.focus).paint());
             return root.flex().child(pane).child(div().flex_1().min_w_0().h_full().child(self.view.clone()));
         }
         let Some((area, entry, shown)) = &self.tab else { return root.child(self.view.clone()) };

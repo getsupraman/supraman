@@ -81,7 +81,7 @@ impl FleetView {
             Some(_) => Some("tab"),
         };
         let area = div().relative().flex_1().min_h_0().track_focus(&self.focus).child(content).children(self.pane_toast.render(&self.hits, "pane-toast", cx));
-        let area = area.children(pane.map(|key| supraman_ui::focus::Pane::new(key, &self.focus).paint(&self.hits)));
+        let area = area.children(pane.map(|key| supraman_ui::focus::Pane::new(key, &self.focus).paint()));
         area.children(tab.map(|t| self.tab_keys(t, cx).paint()))
     }
 

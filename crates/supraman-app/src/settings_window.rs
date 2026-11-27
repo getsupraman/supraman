@@ -445,7 +445,7 @@ impl Render for SettingsView {
             Some(page) => (page.title, (page.render)(self, cx)),
             None => ("", Vec::new()),
         };
-        let nav = nav.child(supraman_ui::focus::Pane::new("settings-pages", &self.nav).paint(&self.hits));
+        let nav = nav.child(supraman_ui::focus::Pane::new("settings-pages", &self.nav).paint());
         let content = supraman_ui::scroll::area("settings-page")
             .flex()
             .flex_col()
@@ -462,7 +462,7 @@ impl Render for SettingsView {
                 )
             })
             .children(rows);
-        let page = self.members.order().on(div()).relative().flex().flex_1().min_w_0().track_focus(&self.focus).child(content).child(supraman_ui::focus::Pane::new("settings-page", &self.focus).paint(&self.hits));
+        let page = self.members.order().on(div()).relative().flex().flex_1().min_w_0().track_focus(&self.focus).child(content).child(supraman_ui::focus::Pane::new("settings-page", &self.focus).paint());
 
         supraman_ui::focus::root(div())
             .size_full()

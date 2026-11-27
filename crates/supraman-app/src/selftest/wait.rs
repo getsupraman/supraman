@@ -45,6 +45,14 @@ pub(crate) async fn until_every<T>(
     }
 }
 
+/// The main window's pane `pane` holds the keys.
+pub(crate) async fn until_pane(cx: &mut AsyncWindowContext, within: Duration, pane: &str) -> anyhow::Result<()> {
+    until_with(cx, within, &format!("the {pane} pane holding the keys"), |cx| {
+        cx.update(|window, cx| supraman_ui::focus::focused(window, cx)).ok().flatten().filter(|held| held == pane).map(|_| ())
+    })
+    .await
+}
+
 /// The main window drawn once more from now: a hit key forgotten before it is back only if that frame painted it.
 pub(crate) async fn drawn(cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let main = cx.window_handle();

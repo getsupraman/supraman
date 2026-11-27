@@ -30,7 +30,7 @@ impl Render for Asking {
             .on_mouse_down(MouseButton::Left, cx.listener(|this, _: &MouseDownEvent, _, _| this.behind.push("click".into())))
             .child(div().id("inside").size_4().track_focus(&self.inside))
             .child(hit_target(&self.hits, "behind".into()))
-            .child(Pane::new("pane", &self.pane).paint(&self.hits))
+            .child(Pane::new("pane", &self.pane).paint())
             .children(std::mem::take(&mut self.close_once_open).then(|| closer(cx.weak_entity())));
         let dialog = self.confirm.as_ref().map(|c| {
             self.dialog.ask(&self.hits, "confirm", c, |this: &mut Asking, answer, _, cx| {
@@ -203,22 +203,15 @@ fn a_question_closed_before_a_frame_showed_its_focus_gives_the_keys_back(cx: &mu
 }
 
 #[gpui::test]
-fn a_tabs_prompt_holds_the_keys_as_f6s_pane_but_wears_no_pane_mark(cx: &mut TestAppContext) {
+fn a_tabs_prompt_holds_the_keys_as_f6s_pane(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
-    let marks = |view: &Entity<Asking>, cx: &mut VisualTestContext| {
-        view.update(cx, |v, cx| {
-            v.hits.borrow_mut().clear();
-            cx.notify();
-        });
+    let pane = |cx: &mut VisualTestContext| {
         cx.run_until_parked();
-        let mut keys: Vec<String> = view.read_with(cx, |v, _| v.hits.borrow().keys().filter(|k| k.starts_with("focus-mark-")).cloned().collect());
-        keys.sort();
-        keys
+        cx.update(|window, cx| focus::focused(window, cx).map(|k| k.to_string()))
     };
-    assert_eq!(marks(&view, cx), [focus::mark_key("pane")], "an ordinary pane holding the keys wears the mark");
+    assert_eq!(pane(cx).as_deref(), Some("pane"), "an ordinary pane holds the keys");
     view.update(cx, |v, _| v.dialog = Dialog::in_tab(v.pane.clone()));
     ask(&view, three(), cx);
     assert_eq!(holding(&view, cx).as_deref(), Some("yes"), "the prompt holds the keys");
-    assert_eq!(cx.update(|window, cx| focus::focused(window, cx).map(|k| k.to_string())).as_deref(), Some(PANE), "F6's pane is the prompt");
-    assert!(marks(&view, cx).is_empty(), "neither the prompt nor the pane it covers is marked: its scrim says where the keys are");
+    assert_eq!(pane(cx).as_deref(), Some(PANE), "F6's pane is the prompt");
 }

@@ -103,7 +103,8 @@ paints `popup::open_fill` as its first child; the `open` fill is `tokens::roles`
 
 The focus model has three levels, and only one place changes focus:
 
-1. **Window → pane** (`focus::Pane`, F6): exists, stays.
+1. **Window → pane** (`focus::Pane`, F6): a pane paints no edge of its own; the selection colour
+   (`selection` while its list holds the keys, `selection_inactive` else) and the caret show the pane that holds them.
 2. **Pane → scope**: a form, a dialog, a popup is a *scope*. Tab and Shift+Tab cycle within the
    innermost scope (`focus_order`, exists); a modal scope traps the focus (`dialog` does, popups will).
 3. **Scope → control**: the control holding the keys.

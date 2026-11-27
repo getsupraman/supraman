@@ -796,13 +796,13 @@ impl WorkView {
     fn render_main(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let Page::Run(run) = self.page.clone() else {
             let page = if self.page == Page::Activity { self.render_activity_page(cx) } else { self.render_overview(cx) };
-            let pane = focus::Pane::new(FOCUS_MAIN, &self.panes.main).paint(&self.hits);
+            let pane = focus::Pane::new(FOCUS_MAIN, &self.panes.main).paint();
             return div().relative().size_full().track_focus(&self.panes.main).child(page).child(hit_target(&self.hits, "work-page".into())).child(pane).into_any_element();
         };
         let list = div().relative().flex_grow(1.).flex_basis(px(layout::LIST_MIN)).min_w_0().h_full().track_focus(&self.panes.main).child(self.render_run_page(&run, self.keys_in.1, cx));
-        let list = list.child(focus::Pane::new(FOCUS_MAIN, &self.panes.main).paint(&self.hits));
+        let list = list.child(focus::Pane::new(FOCUS_MAIN, &self.panes.main).paint());
         let detail = div().flex_shrink(1.).min_w_0().w(self.layout.detail()).h_full().relative().border_l(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border).track_focus(&self.panes.detail).child(self.render_detail(cx));
-        let detail = detail.child(hit_target(&self.hits, "work-detail-column".into())).child(focus::Pane::new(FOCUS_DETAIL, &self.panes.detail).paint(&self.hits));
+        let detail = detail.child(hit_target(&self.hits, "work-detail-column".into())).child(focus::Pane::new(FOCUS_DETAIL, &self.panes.detail).paint());
         layout::detail_split()
             .render_second(list, detail, |this: &mut WorkView, width, cx| {
                 this.layout.set_detail(width);
@@ -819,7 +819,7 @@ impl WorkView {
             return div().flex().size_full().child(strip).child(div().flex_1().min_w_0().h_full().child(main)).into_any_element();
         }
         let nav = div().relative().flex_shrink(0.5).min_w_0().overflow_hidden().w(self.layout.nav()).h_full().track_focus(&self.panes.nav).child(self.render_navigator(cx));
-        let nav = nav.child(focus::Pane::new(FOCUS_NAV, &self.panes.nav).paint(&self.hits));
+        let nav = nav.child(focus::Pane::new(FOCUS_NAV, &self.panes.nav).paint());
         let rest = div().flex_grow(1.).flex_basis(px(layout::LIST_MIN + layout::DETAIL_MIN + 1.)).min_w_0().h_full().child(main);
         layout::nav_split()
             .render(nav, rest, |this: &mut WorkView, width, cx| {

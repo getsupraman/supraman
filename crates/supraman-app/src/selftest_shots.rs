@@ -807,7 +807,7 @@ async fn git_prompt(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowCo
     crate::selftest::click(view, "git-ref-ask-cancel", cx).await
 }
 
-/// A click on a commit row gives the graph the keys: the pane wears its 1 px mark in the focus colour.
+/// A click on a commit row gives the graph the keys: its selected row in the active selection fill.
 async fn git_focus(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let row = crate::selftest::until(view, cx, Duration::from_secs(10), "the top pill's commit row", |v| {
         let hits = v.hits.borrow();
@@ -818,16 +818,13 @@ async fn git_focus(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowCon
     .await?;
     view.read_with(cx, |v, _| v.hits.borrow_mut().remove("commit-sha"));
     crate::selftest::click(view, &row, cx).await?;
-    let mark = supraman_ui::focus::mark_key("git-graph");
-    crate::selftest::until(view, cx, Duration::from_secs(10), "the graph's focus mark and the commit read", |v| {
-        let hits = v.hits.borrow();
-        (hits.contains_key(&mark) && hits.contains_key("commit-sha")).then_some(())
-    })
-    .await
-    .map_err(|e| {
-        let active = cx.update(|window, _| window.is_window_active()).unwrap_or_default();
-        e.context(format!("the main window active: {active}"))
-    })?;
+    crate::selftest::until_pane(cx, Duration::from_secs(10), "git-graph").await?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the commit read", |v| v.hits.borrow().contains_key("commit-sha").then_some(()))
+        .await
+        .map_err(|e| {
+            let active = cx.update(|window, _| window.is_window_active()).unwrap_or_default();
+            e.context(format!("the main window active: {active}"))
+        })?;
     crate::selftest::drawn(cx).await?;
     let shot = capture(out.join("supraman-git-focus.png"), None, cx).await?;
     println!("shot: {}", shot.display());

@@ -877,9 +877,9 @@ impl GitView {
             None => self.render_graph(cx),
         };
         let toast = self.toast.render(&self.hits, "git-toast", cx).map(|t| deferred(t).with_priority(supraman_ui::tokens::Layer::OverPrompt.priority()));
-        let table = div().relative().flex_1().min_w_0().h_full().child(first).child(hit_target(&self.hits, GRAPH_PANE.into())).child(pane.paint(&self.hits)).children(toast);
+        let table = div().relative().flex_1().min_w_0().h_full().child(first).child(hit_target(&self.hits, GRAPH_PANE.into())).child(pane.paint()).children(toast);
         let panel = div().relative().flex_shrink(1.).min_w_0().flex().flex_col().w(self.panel_width).h_full().track_focus(&self.panel_focus).child(self.render_panel(cx)).child(hit_target(&self.hits, PANEL_PANE.into()));
-        let panel = panel.child(focus::Pane::new(FOCUS_PANEL, &self.panel_focus).paint(&self.hits));
+        let panel = panel.child(focus::Pane::new(FOCUS_PANEL, &self.panel_focus).paint());
         let split = SplitPane { id: "git-split".into(), min_first: px(GRAPH_MIN), min_second: px(PANEL_MIN), default: PANEL_WIDTH }
             .render_second(table, panel, |this: &mut GitView, width, cx| {
                 this.panel_width = width;

@@ -302,6 +302,6 @@ impl Render for RefPanel {
             None => focus::Pane::new(crate::git_view::FOCUS_REFS, &self.focus),
         };
         let panel = div().relative().size_full().flex().flex_col().bg(bg).text_sm().track_focus(&self.focus).child(bar).child(self.list(cx));
-        panel.child(pane.paint(&self.hits)).children(menu)
+        panel.child(pane.paint()).children(menu)
     }
 }

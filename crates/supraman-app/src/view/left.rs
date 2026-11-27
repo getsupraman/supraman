@@ -282,7 +282,7 @@ impl FleetView {
             .key_context(group_field::KEY_CONTEXT)
             .on_action(cx.listener(Self::rename_selected))
             .on_key_down(cx.listener(Self::sidebar_key))
-            .child(supraman_ui::focus::Pane::new("sidebar", &self.sidebar.focus).paint(&self.hits))
+            .child(supraman_ui::focus::Pane::new("sidebar", &self.sidebar.focus).paint())
             .into_any_element()
     }
 

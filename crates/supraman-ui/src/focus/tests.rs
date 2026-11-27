@@ -2,7 +2,6 @@ use gpui::{Context, Entity, FocusHandle, TestAppContext, VisualTestContext, Wind
 
 use super::*;
 use crate::focus_order::stepped;
-use crate::hit::HitTargets;
 
 #[test]
 fn stepping_goes_forward_and_back_wrapping_and_from_none_to_the_first_or_last() {
@@ -27,7 +26,6 @@ struct Window3 {
     base: FocusHandle,
     middle_shown: bool,
     popup: Option<FocusHandle>,
-    hits: HitTargets,
     _restore: Option<gpui::Subscription>,
 }
 
@@ -38,7 +36,7 @@ impl Render for Window3 {
         let pane = |i: usize, this: &Self| {
             let el = div().id(KEYS[i]).relative().w(px(100.)).h_full().track_focus(&this.panes[i]);
             let el = if i == 2 { el.child(div().id("inner").size_4().track_focus(&this.inner)) } else { el };
-            el.child(Pane::new(KEYS[i], &this.panes[i]).paint(&this.hits))
+            el.child(Pane::new(KEYS[i], &this.panes[i]).paint())
         };
         let mut row = root(div().flex().size_full().track_focus(&self.base)).child(pane(0, self));
         if self.middle_shown {
@@ -54,7 +52,7 @@ fn open(cx: &mut TestAppContext) -> (Entity<Window3>, &mut VisualTestContext) {
         let restore = restore_on_loss(window, cx);
         let base = cx.focus_handle();
         base.focus(window, cx);
-        Window3 { panes: [cx.focus_handle(), cx.focus_handle(), cx.focus_handle()], inner: cx.focus_handle(), base, middle_shown: true, popup: None, hits: HitTargets::default(), _restore: Some(restore) }
+        Window3 { panes: [cx.focus_handle(), cx.focus_handle(), cx.focus_handle()], inner: cx.focus_handle(), base, middle_shown: true, popup: None, _restore: Some(restore) }
     });
     cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
@@ -65,13 +63,6 @@ fn holding(cx: &mut VisualTestContext) -> Option<String> {
     cx.update(|window, cx| focused(window, cx).map(|k| k.to_string()))
 }
 
-fn marks(view: &Entity<Window3>, cx: &mut VisualTestContext) -> Vec<String> {
-    cx.run_until_parked();
-    let hits = view.read_with(cx, |v, _| v.hits.clone());
-    let mut marked: Vec<String> = KEYS.iter().map(|k| mark_key(k)).filter(|k| hits.borrow().contains_key(k)).collect();
-    marked.sort();
-    marked
-}
 
 #[gpui::test]
 fn f6_walks_the_shown_panes_and_wraps_and_shift_f6_walks_back(cx: &mut TestAppContext) {
@@ -104,14 +95,14 @@ fn shift_f6_with_none_focused_goes_to_the_last(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn only_the_pane_holding_the_focus_wears_the_mark(cx: &mut TestAppContext) {
+fn the_pane_holding_the_focus_is_the_one_containing_it(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
-    assert!(marks(&view, cx).is_empty(), "nothing focused, nothing marked");
+    assert_eq!(holding(cx), None, "nothing focused, no pane");
     cx.simulate_keystrokes("f6 f6");
-    assert_eq!(marks(&view, cx), [mark_key("middle")]);
+    assert_eq!(holding(cx).as_deref(), Some("middle"));
     let inner = view.read_with(cx, |v, _| v.inner.clone());
     cx.update(|window, cx| window.focus(&inner, cx));
-    assert_eq!(marks(&view, cx), [mark_key("right")], "focus inside a pane marks it");
+    assert_eq!(holding(cx).as_deref(), Some("right"), "focus inside a pane is that pane's");
 }
 
 #[gpui::test]
@@ -149,7 +140,6 @@ struct Tabs {
     fields: [FocusHandle; 2],
     shown: usize,
     popup: Option<FocusHandle>,
-    hits: HitTargets,
     /// Each tab's content a pane under one key, as every Git tab's graph is `git-graph`.
     shared_pane: bool,
     /// What the window would show when a group takes the keys, as the app's active tab.
@@ -161,9 +151,9 @@ impl Render for Tabs {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let tab = self.shown;
         let field = div().id("field").size_4().track_focus(&self.fields[tab]);
-        let content = div().id(KEYS[tab]).relative().size_full().track_focus(&self.entries[tab]).child(field).children(self.shared_pane.then(|| Pane::new("content", &self.entries[tab]).paint(&self.hits)));
+        let content = div().id(KEYS[tab]).relative().size_full().track_focus(&self.entries[tab]).child(field).children(self.shared_pane.then(|| Pane::new("content", &self.entries[tab]).paint()));
         let area = div().id("area").relative().w(px(200.)).h_full().track_focus(&self.area).child(content).child(self.group(tab).paint());
-        let sidebar = div().id("sidebar").relative().w(px(100.)).h_full().track_focus(&self.sidebar).child(Pane::new("sidebar", &self.sidebar).paint(&self.hits));
+        let sidebar = div().id("sidebar").relative().w(px(100.)).h_full().track_focus(&self.sidebar).child(Pane::new("sidebar", &self.sidebar).paint());
         root(div().flex().size_full()).child(sidebar).child(area).children(self.popup.as_ref().map(|p| div().id("popup").size_4().track_focus(p)))
     }
 }
@@ -181,7 +171,7 @@ fn open_tabs(cx: &mut TestAppContext) -> (Entity<Tabs>, &mut VisualTestContext) 
         let area = cx.focus_handle();
         area.focus(window, cx);
         let (entries, fields) = ([cx.focus_handle(), cx.focus_handle()], [cx.focus_handle(), cx.focus_handle()]);
-        Tabs { sidebar: cx.focus_handle(), area, entries, fields, shown: 0, popup: None, hits: HitTargets::default(), shared_pane: false, active: Default::default(), _restore: restore_on_loss(window, cx) }
+        Tabs { sidebar: cx.focus_handle(), area, entries, fields, shown: 0, popup: None, shared_pane: false, active: Default::default(), _restore: restore_on_loss(window, cx) }
     });
     cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
