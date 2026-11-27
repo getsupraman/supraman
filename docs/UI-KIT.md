@@ -209,6 +209,24 @@ written once.
 hit target, toggles on click, Space and Enter, and carries the focus ring. Same for `Radio` and
 `Switch` if they are ever needed.
 
+### 4.9 Dock
+
+A tab's dock holds up to four panels; `dock::layout` is its model, pure and total, with no gpui:
+
+- `Layout<P>`: a `Leaf(P)` or a `Split { axis, ratio, first, second }` (`ratio` the first side's share),
+  depth ≤ 2 with alternating axes, so at most four leaves; in quarters each half keeps its own ratio.
+  A panel is an opaque `P: Copy + Eq`, in a layout once. A new split's ratio is `RATIO` (0.5).
+- `add(p)`: the menu's rule: one panel → left|right (new right), two → the second half splits across
+  (new second), three → refused (`ADD_MAX`). A drop may make four (`MAX`).
+- `drop(target, Zone, p)`: `Left`/`Right`/`Top`/`Bottom` split the target's slot along that edge where
+  depth and the alternating axes allow; `Centre` is `Dropped::Owner` and never changes the layout.
+- `remove(p)`: the sibling takes the split's whole room and keeps its own ratio; the removed split's
+  ratio goes with it. `moved(p, target, zone)`: remove then drop, `None` when nothing moves.
+- `rects(width, height)`: each slot's `Rect`; `panels()` in the tree's order.
+
+Every refusal (depth, capacity, an id already there, a missing target) is `None`. The view over
+`split::SplitPane` comes next.
+
 ## 5. Surfaces: where a question or a small form appears
 
 A Git tab question or small form has two meanings:
