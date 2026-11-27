@@ -139,7 +139,7 @@ fn read_status(repo: &Repo, git_dir: &std::path::Path, optional_locks: bool) -> 
 }
 
 /// The paths of `ls-files --resolve-undo -z`'s `mode sha stage\tpath` records; git clears them as the next operation, or a reset, starts.
-fn resolve_undo(out: &[u8]) -> BTreeSet<String> {
+pub(crate) fn resolve_undo(out: &[u8]) -> BTreeSet<String> {
     nul_records(out).map(text).filter_map(|r| Some(r.split_once('\t')?.1.to_string())).collect()
 }
 

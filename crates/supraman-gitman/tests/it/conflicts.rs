@@ -235,3 +235,35 @@ fn a_deleted_side_taken_and_a_rebase_s_resolved_file_are_read_too() {
     write(&f, |s| conflicts::mark_resolved(s, None, false)).unwrap();
     assert_eq!(resolved(&f), paths(&["c.txt"]));
 }
+
+/// `wt` (on `side`) stops merging `moved`, which renamed `lines.txt` to `moved.txt` and changed its last line, while `side` changed that line too.
+fn rename_conflict(f: &Fixture) {
+    let commit = |message: &str| f.at(&f.worktree, &["commit", "-q", "--no-verify", "-m", message]);
+    let lines = |last: &str| format!("first\nsecond\nthird\nfourth\nfifth\nsixth\n{last}\n");
+    std::fs::write(f.worktree.join("lines.txt"), lines("last")).unwrap();
+    f.at(&f.worktree, &["add", "lines.txt"]);
+    commit("Lines");
+    f.at(&f.worktree, &["checkout", "-q", "-b", "moved"]);
+    f.at(&f.worktree, &["mv", "lines.txt", "moved.txt"]);
+    std::fs::write(f.worktree.join("moved.txt"), lines("moved")).unwrap();
+    f.at(&f.worktree, &["add", "moved.txt"]);
+    commit("Move lines");
+    f.at(&f.worktree, &["checkout", "-q", "side"]);
+    std::fs::write(f.worktree.join("lines.txt"), lines("side")).unwrap();
+    f.at(&f.worktree, &["commit", "-q", "--no-verify", "-am", "Side's lines"]);
+    let merge = supraman_gitman::fixture::run_git(&f.git, &f.worktree, &["merge", "-q", "--no-ff", "--no-verify", "--no-edit", "moved"], &[], None);
+    assert!(!merge.success(), "the merge stops on a conflict");
+}
+
+#[test]
+fn mark_conflicted_puts_back_the_stages_git_wrote_for_a_renamed_file() {
+    let f = Fixture::copy();
+    rename_conflict(&f);
+    let at_conflict = f.at(&f.worktree, &["ls-files", "-s"]);
+    assert!(f.at(&f.worktree, &["ls-files", "-u"]).contains("moved.txt"), "{at_conflict}");
+    std::fs::write(f.worktree.join("moved.txt"), b"resolved\n").unwrap();
+    write(&f, |s| conflicts::mark_resolved(s, None, false)).unwrap();
+    assert_eq!(f.at(&f.worktree, &["ls-files", "-u"]), "", "resolved");
+    write(&f, |s| conflicts::mark_conflicted(s, &paths(&["moved.txt"]))).unwrap();
+    assert_eq!(f.at(&f.worktree, &["ls-files", "-s"]), at_conflict);
+}
