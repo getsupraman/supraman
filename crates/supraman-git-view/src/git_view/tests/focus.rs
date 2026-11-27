@@ -151,3 +151,29 @@ fn a_selection_already_there_stays_when_the_graph_takes_the_keys(cx: &mut TestAp
     assert_eq!(view.read_with(cx, |v, _| v.table.selected()), Some(second));
 }
 
+#[gpui::test]
+fn a_diff_opened_from_the_commit_panels_tree_leaves_the_keys_in_the_tree(cx: &mut TestAppContext) {
+    let f = Fixture::shared();
+    let (view, cx) = open(&f.dir, Opts::default().editor(), cx);
+    let active = cx.update(|_, cx| selection(cx.theme().colors(), true));
+    view.update(cx, |v, cx| v.set_file_view(FileView::Tree, cx));
+    let root = row_of(&view, f.sha("root"), cx);
+    click(&view, &format!("git-row-{root}"), cx);
+    let tree = view.read_with(cx, |v, cx| v.panel().read(cx).shown_tree());
+    let open_path = |view: &Entity<GitView>, cx: &mut VisualTestContext| view.read_with(cx, |v, cx| v.diff(cx).map(|d| d.read(cx).target.path.clone()));
+    let in_tree = |cx: &mut VisualTestContext| {
+        repaint(&view, cx);
+        (cx.update(|window, _| tree.focus_handle().is_focused(window)), tree.selection_shown())
+    };
+
+    click(&view, "commit-tree-row-a.txt", cx);
+    assert_eq!(open_path(&view, cx).as_deref(), Some("a.txt"), "a click opens the file's diff");
+    assert_eq!(in_tree(cx), (true, Some(active)), "the tree keeps the keys, its row in the active selection");
+
+    keys(&view, "down", cx);
+    assert_eq!(open_path(&view, cx).as_deref(), Some("b.txt"), "Down steps the tree and the diff follows");
+    assert_eq!(in_tree(cx), (true, Some(active)), "the keys stay in the tree");
+
+    keys(&view, "f6", cx);
+    assert_eq!(holding(cx).as_deref(), Some(FOCUS_DIFF), "F6 moves the keys into the viewer");
+}

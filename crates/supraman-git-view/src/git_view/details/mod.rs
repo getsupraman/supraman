@@ -441,6 +441,12 @@ impl CommitPanel {
         self.token
     }
 
+    /// The tree on show.
+    #[cfg(test)]
+    pub(crate) fn shown_tree(&self) -> TreeState<Mark, WipCounts> {
+        self.tree().0.clone()
+    }
+
     /// The selected path of the tree on show.
     #[cfg(test)]
     pub(crate) fn selected_file(&self) -> Option<SharedString> {

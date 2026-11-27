@@ -18,9 +18,9 @@ impl Viewer {
         self.open.as_ref().map(|(d, _)| d)
     }
 
-    pub(crate) fn show(&mut self, view: Entity<DiffView>, subscriptions: [Subscription; 3]) {
+    pub(crate) fn show(&mut self, view: Entity<DiffView>, subscriptions: [Subscription; 3], take_keys: bool) {
         self.open = Some((view, subscriptions));
-        self.focus = true;
+        self.focus = take_keys;
     }
 
     /// Closes the viewer, its mode (but a conflict's) and layout kept for the next; whether one was open.

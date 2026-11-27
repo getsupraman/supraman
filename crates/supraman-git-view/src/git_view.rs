@@ -497,10 +497,10 @@ impl GitView {
         self.toggle_diff_in(None, target, cx);
     }
 
-    /// [`GitView::toggle_diff`] of a file of the worktree at `worktree`, else of the tab's.
+    /// [`GitView::toggle_diff`] of a file of the worktree at `worktree`, else of the tab's; the list it was picked in keeps the keys.
     pub(crate) fn toggle_diff_in(&mut self, worktree: Option<Arc<std::path::Path>>, target: diff::Target, cx: &mut Context<Self>) {
         if self.diff(cx).is_none_or(|d| d.read(cx).target != target || d.read(cx).worktree != worktree) {
-            return self.open_diff_in(worktree, target, cx);
+            return self.show_diff(worktree, target, false, cx);
         }
         self.back_to_graph(cx);
     }
@@ -551,6 +551,11 @@ impl GitView {
 
     /// [`GitView::open_diff`] of a file of the worktree at `worktree`, read-only, else of the tab's.
     pub(crate) fn open_diff_in(&mut self, worktree: Option<Arc<std::path::Path>>, target: diff::Target, cx: &mut Context<Self>) {
+        self.show_diff(worktree, target, true, cx);
+    }
+
+    /// The viewer of `target` in the graph's place, taking the keys on its first frame when `take_keys`.
+    fn show_diff(&mut self, worktree: Option<Arc<std::path::Path>>, target: diff::Target, take_keys: bool, cx: &mut Context<Self>) {
         let Some(tab) = self.repo.clone() else { return };
         self.close_diff(cx);
         let working = worktree.is_none() && matches!(target.of, diff::Of::Unstaged | diff::Of::Staged);
@@ -564,7 +569,7 @@ impl GitView {
         let closed = cx.subscribe(&view, |this: &mut GitView, _, _: &diff::Close, cx| this.back_to_graph(cx));
         let go = cx.subscribe(&view, |this: &mut GitView, _, go: &diff::Go, cx| this.go_file(go.0, cx));
         let picked = cx.subscribe(&view, |this: &mut GitView, _, e: &diff::PickEvent, cx| this.picked_lines(e, cx));
-        self.viewer.update(cx, |v, _| v.show(view, [closed, go, picked]));
+        self.viewer.update(cx, |v, _| v.show(view, [closed, go, picked], take_keys));
         cx.notify();
     }
 
