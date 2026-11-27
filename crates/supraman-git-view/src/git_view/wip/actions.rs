@@ -30,6 +30,8 @@ pub(crate) enum Ask {
 /// What a step's or a mark resolved's job left for [`WipPanel::written`].
 pub(crate) enum Kept {
     Stepped(Rebased),
+    /// A commit's; a merge into another branch it concluded put that checkout's stash back.
+    Committed(Autostash),
     Marked(Marked),
 }
 
@@ -217,16 +219,18 @@ impl WipPanel {
         let Some(c) = &self.composer else { return };
         let (summary, description) = c.texts(cx);
         let (amend, no_verify) = (c.amend, self.skips_hooks());
+        let merging = self.shown().is_some_and(|shown| shown.state == supraman_gitman::OperationState::Merge);
         match act {
             Act::Commit => {
                 let message = wip::message(&summary, &description);
                 let doing = Doing::Commit { summary: summary.trim().to_string(), amend };
-                self.request(doing, LockSet::commit(), move |s| {
+                let job = self.writes.keeping(Kept::Committed, move |s| {
                     if stage_all {
                         stage_everything(s)?;
                     }
                     wip::commit(s, &message, amend, no_verify)
-                }, cx);
+                });
+                self.request(doing, if merging { LockSet::checkout() } else { LockSet::commit() }, job, cx);
             }
             Act::ContinueRebase => self.step(Step::ContinueRebase, stage_all, cx),
             Act::SkipCommit => self.ask(Ask::Step(Step::SkipCommit), cx),
@@ -253,6 +257,7 @@ impl WipPanel {
             _ => None,
         };
         match (step, outcome) {
+            (Step::AbortMerge, Some(Rebased::Done { autostash, .. })) => Some(kept_words(&autostash)),
             (Step::AbortMerge, _) | (_, None) => Some(None),
             (Step::Continue(seq) | Step::Skip(seq) | Step::Abort(seq), Some(Rebased::Conflicted)) => Some(Some(format!("The {} stopped on another conflict", noun(seq)))),
             (_, Some(Rebased::Conflicted)) => Some(Some(ANOTHER_CONFLICT.into())),
@@ -285,7 +290,11 @@ impl WipPanel {
                 if let Some(c) = &mut self.composer {
                     c.clear(cx);
                 }
-                Some(format!("{} \"{summary}\"", if *amend { "Amended" } else { "Committed" }))
+                let kept = match self.writes.kept() {
+                    Some(Kept::Committed(autostash)) => kept_words(&autostash),
+                    _ => None,
+                };
+                Some(kept.unwrap_or_else(|| format!("{} \"{summary}\"", if *amend { "Amended" } else { "Committed" })))
             }
             (Doing::Discard(n), Ok(())) => Some(format!("Discarded the changes to {}", count(*n, "file", "files"))),
             (Doing::DiscardAll, Ok(())) => Some("Discarded all changes".into()),

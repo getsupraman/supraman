@@ -223,7 +223,7 @@ fn an_entry_gitman_cannot_undo_stops_the_walk_and_says_what_can_be() {
     let p = preview(&f);
     let Some(Undo::Cannot(message)) = &p.undo else { panic!("{p:?}") };
     assert!(message.starts_with("merge topic"), "{message}");
-    assert_eq!(p.undo_tooltip(), format!("Cannot undo {message}: only commits, checkouts, resets, discards, branch deletes and GitMan's rebases can be undone"));
+    assert_eq!(p.undo_tooltip(), format!("Cannot undo {message}: only commits, checkouts, resets, discards, branch deletes, GitMan's rebases and merges into or rebases of another branch can be undone"));
     assert!(!p.can_undo());
     assert!(matches!(Fixture::undo(&f.repo()), Err(Refused::Cannot(_))));
     write(&f, |s| journal::discard(s, &["a.txt".to_string()]));

@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use super::branch::{self, MergeAway};
 use super::journal::{self, Action, Kind};
 use super::conflicts::{self, Sequence};
 use super::rebase::{self, Autostash, Rebased};
@@ -168,9 +169,12 @@ pub fn message(summary: &str, description: &str) -> String {
 }
 
 /// Commits what is staged, or with `amend` replaces HEAD; recorded for Undo unless it concludes a merge.
-pub fn commit(s: &Session, message: &str, amend: bool, no_verify: bool) -> Result<(), WriteError> {
+/// A merge into another branch it concludes goes back to the checkout before ([`MergeAway::conclude`]): what became of its stash.
+pub fn commit(s: &Session, message: &str, amend: bool, no_verify: bool) -> Result<Autostash, WriteError> {
     let args: &[&str] = if amend { &["--amend"] } else { &[] };
-    run_commit(s, message, args, no_verify)
+    let away = if amend { None } else { MergeAway::waiting(s)? };
+    run_commit(s, message, args, no_verify)?;
+    away.map_or(Ok(Autostash::None), |away| away.conclude(s))
 }
 
 /// Replaces HEAD's message only, what is staged left staged; HEAD's new sha.
@@ -225,9 +229,11 @@ pub fn step(s: &Session, step: Step) -> Result<Rebased, WriteError> {
         Step::SkipCommit => rebase::skip(s),
         Step::AbortRebase => rebase::abort(s),
         Step::AbortMerge => {
-            s.output(&Call::new(&["merge", "--abort"]))?;
-            let head = s.rev("HEAD")?;
-            Ok(Rebased::Done { head, autostash: Autostash::None })
+            let autostash = match MergeAway::waiting(s)? {
+                Some(waiting) => branch::abandon(s, &waiting.away)?,
+                None => s.output(&Call::new(&["merge", "--abort"])).map(|_| Autostash::None)?,
+            };
+            Ok(Rebased::Done { head: s.rev("HEAD")?, autostash })
         }
         Step::Continue(sequence) => conflicts::sequence_step(s, sequence, "--continue"),
         Step::Skip(sequence) => conflicts::sequence_step(s, sequence, "--skip"),

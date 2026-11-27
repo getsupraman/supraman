@@ -335,7 +335,7 @@ pub fn fast_forward(s: &Session, branch: &str, to: &str) -> Result<(), WriteErro
 }
 
 /// What a merge into a branch other than HEAD's checked out away from, while its conflicts wait.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Away {
     pub back: String,
     pub autostash: Option<Autostashed>,
@@ -383,12 +383,75 @@ pub fn merge(s: &Session, source: &str, into: &str) -> Result<Merged, WriteError
         let kept = put_back(s, stashed.as_ref());
         return Err(GitError::Failed { args: "checkout".into(), code: out.code, stderr: [text(&out.stderr).trim().to_string()].into_iter().chain(kept).collect::<Vec<_>>().join("\n") }.into());
     }
-    let merged = merge_here(s, source, Some(Away { back, autostash: stashed }))?;
-    if let Merged::Done(_) = merged {
-        let to = s.rev(&format!("refs/heads/{into}"))?;
-        journal::record(s, Action::Elsewhere { what: format!("merge \"{source}\" into \"{into}\""), branch: into.to_string(), from: into_sha, to }, None)?;
+    let away = Away { back, autostash: stashed };
+    let merged = merge_here(s, source, Some(away.clone()))?;
+    let marker = MergeAway { source: source.to_string(), into: into.to_string(), from: into_sha, merge_head: String::new(), away };
+    match &merged {
+        Merged::Done(_) => marker.record(s)?,
+        Merged::Conflicted { .. } => MergeAway { merge_head: s.rev("MERGE_HEAD")?, ..marker }.keep(s)?,
+        Merged::UpToDate => {}
     }
     Ok(merged)
+}
+
+/// The file in the checkout's git dir that holds a [`MergeAway`] while its conflicts wait.
+pub const MERGE_MARKER: &str = "gitman-merge-away";
+
+/// A merge into another branch stopped on conflicts: `into` at `from` before it, `merge_head` git's `MERGE_HEAD`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MergeAway {
+    pub source: String,
+    pub into: String,
+    pub from: String,
+    pub merge_head: String,
+    pub away: Away,
+}
+
+impl MergeAway {
+    fn path(s: &Session) -> PathBuf {
+        s.writer().dirs().git_dir.join(MERGE_MARKER)
+    }
+
+    fn keep(&self, s: &Session) -> Result<(), WriteError> {
+        let path = Self::path(s);
+        let json = serde_json::to_string(self).map_err(|e| WriteError::Journal(e.to_string()))?;
+        supraman_core::fs::write_atomic(&path, json).map_err(WriteError::io("write", &path))
+    }
+
+    /// The marker of the merge under way, while it is still that merge on `into`.
+    pub fn waiting(s: &Session) -> Result<Option<MergeAway>, WriteError> {
+        let Ok(json) = std::fs::read_to_string(Self::path(s)) else { return Ok(None) };
+        let Ok(marker) = serde_json::from_str::<MergeAway>(&json) else { return Ok(None) };
+        if !conflicted(s) || s.verify("MERGE_HEAD")?.as_deref() != Some(marker.merge_head.as_str()) || current(s)?.as_deref() != Some(marker.into.as_str()) {
+            return Ok(None);
+        }
+        Ok(Some(marker))
+    }
+
+    fn forget(s: &Session) -> Result<(), WriteError> {
+        let path = Self::path(s);
+        match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(WriteError::io("remove", &path)(e)),
+            _ => Ok(()),
+        }
+    }
+
+    fn words(&self) -> String {
+        format!("merge \"{}\" into \"{}\"", self.source, self.into)
+    }
+
+    fn record(&self, s: &Session) -> Result<(), WriteError> {
+        let to = s.rev(&format!("refs/heads/{}", self.into))?;
+        journal::record(s, Action::Elsewhere { what: self.words(), branch: self.into.clone(), from: self.from.clone(), to }, None)
+    }
+
+    /// After the merge's commit: the checkout before back, its stash popped, the merge recorded for Undo.
+    pub fn conclude(&self, s: &Session) -> Result<Autostash, WriteError> {
+        Self::forget(s)?;
+        let autostash = go_back(s, &self.away)?;
+        self.record(s)?;
+        Ok(autostash)
+    }
 }
 
 fn merge_here(s: &Session, source: &str, away: Option<Away>) -> Result<Merged, WriteError> {
@@ -400,6 +463,7 @@ fn merge_here(s: &Session, source: &str, away: Option<Away>) -> Result<Merged, W
         let failed: WriteError = GitError::Failed { args: "merge".into(), code: out.code, stderr: format!("{}\n{}", text(&out.stderr).trim(), text(&out.stdout).trim()).trim().to_string() }.into();
         if let Some(away) = away {
             go_back(s, &away)?;
+            journal::record(s, Action::Aborted { what: format!("merge \"{source}\"") }, None)?;
         }
         return Err(failed);
     }
@@ -417,10 +481,14 @@ pub(crate) fn go_back(s: &Session, away: &Away) -> Result<Autostash, WriteError>
     Ok(pop(s, away.autostash.as_ref()))
 }
 
-/// A conflicted merge into another branch given up: `merge --abort`, the checkout before back, its stash popped.
+/// A conflicted merge into another branch given up: `merge --abort`, the checkout before back, its stash popped, and Undo's walk past both.
 pub fn abandon(s: &Session, away: &Away) -> Result<Autostash, WriteError> {
+    let words = MergeAway::waiting(s)?.map(|m| m.words());
     s.output(&Call::new(&["merge", "--abort"]))?;
-    go_back(s, away)
+    MergeAway::forget(s)?;
+    let autostash = go_back(s, away)?;
+    journal::record(s, Action::Aborted { what: words.unwrap_or_else(|| "merge".into()) }, None)?;
+    Ok(autostash)
 }
 
 /// A new worktree at `folder` checking out `reference`, or `new_branch` made there, tracking only a remote branch of its name; a reference that is no local branch is checked out detached.

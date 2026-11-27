@@ -6,6 +6,7 @@ use supraman_gitman::fixture::{Fixture, run_git};
 use supraman_gitman::write::branch::{self, Merged};
 use supraman_gitman::write::journal::{self, Done, Kind, Refused, Undo};
 use supraman_gitman::write::rebase::{self, Autostash, Rebased};
+use supraman_gitman::write::wip::{self, Step};
 use supraman_gitman::write::{LockSet, Session, WriteError, Writer};
 use supraman_gitman::Repo;
 
@@ -172,4 +173,75 @@ fn a_rebase_of_another_branch_continued_after_its_conflict_goes_back_and_is_undo
     assert_eq!((state(&f).head, std::fs::read(f.worktree.join("b.txt")).unwrap()), (before.head.clone(), b"mine\n".to_vec()), "side checked out again with its changes");
     assert_eq!(Fixture::undo(&wt).unwrap().toast, "Undid rebase \"d\" onto \"side\"");
     assert_eq!((tip(&f, "d"), state(&f)), (from, before));
+}
+
+#[test]
+fn a_rebase_of_another_branch_aborted_after_its_conflict_leaves_undo_as_it_was() {
+    let f = Fixture::copy();
+    f.at(&f.worktree, &["checkout", "-q", "-b", "d"]);
+    std::fs::write(f.worktree.join("a.txt"), b"d\n").unwrap();
+    f.at(&f.worktree, &["commit", "-q", "--no-verify", "-am", "D's a.txt"]);
+    f.at(&f.worktree, &["checkout", "-q", "side"]);
+    commit_on(&f, &f.worktree, "a.txt", "side's a.txt");
+    let wt = dirty_side(&f);
+    let (before, earlier) = (state(&f), undo_tooltip(&wt));
+    assert_eq!(write(&wt, LockSet::rebase(), |s| rebase::onto(s, "d", "side")), Rebased::Conflicted);
+    write(&wt, LockSet::rebase(), rebase::abort);
+    assert_eq!(state(&f), before);
+    assert_eq!(undo_tooltip(&wt), earlier, "the checkouts of d are not Undo's next step");
+    assert_eq!(Fixture::undo(&wt).unwrap().toast, earlier.replacen("Undo", "Undid", 1), "Undo runs what it offered before, no checkout");
+}
+
+/// `c1` and `c2` off `side`, each changing a.txt its own way, `wt` back on a dirty `side`.
+fn merge_conflict_away(f: &Fixture) -> Repo {
+    f.at(&f.worktree, &["checkout", "-q", "-b", "c1"]);
+    commit_on(f, &f.worktree, "a.txt", "C1");
+    f.at(&f.worktree, &["checkout", "-q", "-b", "c2", "side"]);
+    commit_on(f, &f.worktree, "a.txt", "C2");
+    f.at(&f.worktree, &["checkout", "-q", "side"]);
+    dirty_side(f)
+}
+
+#[test]
+fn a_merge_into_another_branch_committed_after_its_conflict_goes_back_and_is_undone() {
+    let f = Fixture::copy();
+    let wt = merge_conflict_away(&f);
+    let (before, earlier, from) = (state(&f), undo_tooltip(&wt), tip(&f, "c2"));
+    assert!(matches!(write(&wt, LockSet::checkout(), |s| branch::merge(s, "c1", "c2")), Merged::Conflicted { away: Some(_) }));
+    std::fs::write(f.worktree.join("a.txt"), b"both\n").unwrap();
+    f.at(&f.worktree, &["add", "a.txt"]);
+    let autostash = write(&f.side(), LockSet::checkout(), |s| wip::commit(s, "Merge c1 into c2\n", false, true));
+    assert_eq!(autostash, Autostash::Popped);
+    let after = state(&f);
+    assert_eq!((after.head.as_str(), after.status.as_str(), &after.files), (before.head.as_str(), before.status.as_str(), &before.files), "side checked out again with its changes");
+    assert_eq!(f.at(&f.dir, &["rev-parse", "c2^1"]), from, "c2 got the merge");
+    assert_eq!(undo_tooltip(&wt), "Undo merge \"c1\" into \"c2\"");
+    assert_eq!(Fixture::undo(&wt).unwrap().toast, "Undid merge \"c1\" into \"c2\"");
+    assert_eq!((tip(&f, "c2"), state(&f)), (from, before));
+    assert_eq!(undo_tooltip(&wt), earlier, "the checkouts it made are not Undo's next step");
+}
+
+#[test]
+fn a_merge_into_another_branch_aborted_after_its_conflict_goes_back_and_leaves_undo_as_it_was() {
+    let f = Fixture::copy();
+    let wt = merge_conflict_away(&f);
+    let (before, earlier) = (state(&f), undo_tooltip(&wt));
+    assert!(matches!(write(&wt, LockSet::checkout(), |s| branch::merge(s, "c1", "c2")), Merged::Conflicted { away: Some(_) }));
+    let Rebased::Done { autostash, .. } = write(&f.side(), LockSet::checkout(), |s| wip::step(s, Step::AbortMerge)) else { panic!("aborted") };
+    assert_eq!(autostash, Autostash::Popped);
+    assert_eq!(state(&f), before, "side checked out again with its changes");
+    assert_eq!(undo_tooltip(&wt), earlier);
+}
+
+#[test]
+fn a_merge_on_heads_branch_committed_after_its_conflict_stays_there() {
+    let f = Fixture::copy();
+    let wt = merge_conflict_away(&f);
+    f.at(&f.worktree, &["stash", "push", "-q"]);
+    f.at(&f.worktree, &["checkout", "-q", "c2"]);
+    assert!(matches!(write(&wt, LockSet::checkout(), |s| branch::merge(s, "c1", "c2")), Merged::Conflicted { away: None }));
+    std::fs::write(f.worktree.join("a.txt"), b"both\n").unwrap();
+    f.at(&f.worktree, &["add", "a.txt"]);
+    assert_eq!(write(&wt, LockSet::checkout(), |s| wip::commit(s, "Merge c1 into c2\n", false, true)), Autostash::None);
+    assert_eq!(state(&f).head, format!("refs/heads/c2 {}", tip(&f, "c2")));
 }
