@@ -168,7 +168,7 @@ pub(crate) fn painted(picture: &Picture, key: String, hits: &HitTargets, cells: 
         |_, _, _| {},
         move |bounds, _, window, _| {
             let area = fitted(bounds, width, height);
-            hits.borrow_mut().insert(key, Hit { bounds: area, visible: window.content_mask().bounds });
+            hits.insert(&key, Hit { bounds: area, visible: window.content_mask().bounds });
             checkerboard(area, cells.0, cells.1, window);
             if let Err(e) = window.paint_image(area, area, Corners::default(), image, 0, false) {
                 log::warn!("diff view: painting an image: {e:#}");

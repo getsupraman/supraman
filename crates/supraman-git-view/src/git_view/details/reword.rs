@@ -414,7 +414,7 @@ impl CommitPanel {
         let cancel = button::Button::new(&self.hits, CANCEL_KEY).label(cancel_words).fill(button::Fill::Outline).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_amend(cx)));
         let muted = cx.theme().colors().text_muted;
         let rebases = match field.target {
-            Target::Older { above, .. } => Some(supraman_ui::clipped::clipped(REBASES_KEY, rebases_words(above), false).text_color(muted).child(hit_target(&self.hits, REBASES_KEY.into()))),
+            Target::Older { above, .. } => Some(supraman_ui::clipped::clipped(self.hits.key(REBASES_KEY), rebases_words(above), false).text_color(muted).child(hit_target(&self.hits, REBASES_KEY.into()))),
             _ => None,
         };
         let count = summary_count(&self.hits, &field.summary, "commit-amend-counter", cx);

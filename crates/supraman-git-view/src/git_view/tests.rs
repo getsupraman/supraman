@@ -4,6 +4,7 @@ mod forms;
 mod paint;
 mod prompt;
 mod stream;
+mod two_views;
 mod write_cancel;
 
 use gpui::{Modifiers, TestAppContext, VisualTestContext};

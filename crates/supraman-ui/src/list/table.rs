@@ -459,7 +459,7 @@ impl<V: 'static> Table<V> {
         div()
             .id(SharedString::from(key.clone()))
             .relative()
-            .child(crate::popup::open_fill(key.clone()))
+            .child(crate::popup::open_fill(self.hits.key(&key)))
             .child(hit_target(&self.hits, key))
             .flex()
             .flex_none()
@@ -481,7 +481,7 @@ impl<V: 'static> Table<V> {
     }
 
     fn follow_drag(&self, cx: &mut Context<V>) -> impl Fn(&DragMoveEvent<DraggedDivider>, &mut Window, &mut App) + 'static {
-        let prefix = format!("{}-divider-", self.id);
+        let prefix = format!("{}-divider-", self.hits.key(&self.id));
         let (state, columns, preferred) = (self.state.clone(), self.columns.clone(), self.widths.clone());
         cx.listener(move |_: &mut V, e: &DragMoveEvent<DraggedDivider>, _, cx| {
             let dragged = e.drag(cx);
@@ -500,7 +500,7 @@ impl<V: 'static> Table<V> {
         let (columns, preferred, state) = (self.columns.clone(), self.widths.clone(), self.state.clone());
         let (ended, ending) = (preferred.clone(), state.clone());
         handle(
-            key.clone().into(),
+            self.hits.key(&key).into(),
             i,
             move |this, cx| {
                 let kept = keep(&ending, &ended, i);
@@ -566,7 +566,7 @@ impl<V: 'static> Table<V> {
                     })
                     .collect();
                 let (state, on_select, on_click) = (state.clone(), on_select.clone(), on_click.clone());
-                let fill = chrome.selected(selected == Some(ix)).band(background).fill(key.clone(), group.clone(), cx).child(hit_target(&hits, fill_key));
+                let fill = chrome.selected(selected == Some(ix)).band(background).fill(hits.key(&key), group.clone(), cx).child(hit_target(&hits, fill_key));
                 out.push(
                     div()
                         .id(SharedString::from(key.clone()))

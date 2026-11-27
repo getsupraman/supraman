@@ -187,7 +187,6 @@ impl Element for Scrollbar {
         let always = self.mode.unwrap_or_else(|| super::mode(cx)) == Scrollbars::Always;
         self.settle(&state, offset, always, window, cx);
         if let Some((hits, key)) = &self.hit {
-            let mut hits = hits.borrow_mut();
             for part in ["thumb", "thumb-shown", "track"] {
                 hits.remove(&format!("{key}-{part}"));
             }
@@ -201,9 +200,8 @@ impl Element for Scrollbar {
         if let Some((hits, key)) = &self.hit {
             let visible = window.content_mask().bounds;
             let bounds = Bounds::new(point(track_bounds.left(), thumb.top), size(TRACK, thumb.length));
-            let mut hits = hits.borrow_mut();
-            hits.insert(format!("{key}-thumb"), Hit { bounds, visible });
-            hits.insert(format!("{key}-track"), Hit { bounds: track_bounds, visible });
+            hits.insert(&format!("{key}-thumb"), Hit { bounds, visible });
+            hits.insert(&format!("{key}-track"), Hit { bounds: track_bounds, visible });
         }
         Prepainted { state, shown: Some(Shown { viewport, thumb, area, track }) }
     }
@@ -224,7 +222,7 @@ impl Element for Scrollbar {
             window.paint_quad(fill(bounds, color.opacity(bar.opacity)).corner_radii(width / 2.));
             window.set_cursor_style(CursorStyle::Arrow, &shown.track);
             if let Some((hits, key)) = &self.hit {
-                hits.borrow_mut().insert(format!("{key}-thumb-shown"), Hit { bounds, visible: window.content_mask().bounds });
+                hits.insert(&format!("{key}-thumb-shown"), Hit { bounds, visible: window.content_mask().bounds });
             }
         }
         self.listen(shown, &state, window);

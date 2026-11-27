@@ -284,7 +284,7 @@ impl WorktreePanel {
     fn header(&self, shown: &Shown, cx: &mut Context<Self>) -> Div {
         let colors = cx.theme().colors().clone();
         let folder = supraman_core::paths::normalize(&shown.path);
-        let path = div().relative().flex().min_w_0().child(path_label("worktree-path-dir", &folder, secondary(&colors), colors.text)).child(hit_target(&self.hits, "worktree-path".into()));
+        let path = div().relative().flex().min_w_0().child(path_label(self.hits.key("worktree-path-dir"), &folder, secondary(&colors), colors.text)).child(hit_target(&self.hits, "worktree-path".into()));
         let said = &shown.said;
         let palette = Palette::of(cx.theme());
         let counts = div().relative().flex_none().text_color(colors.text_muted).child(SharedString::from(said.counts.clone())).child(hit_target(&self.hits, "worktree-counts".into()));

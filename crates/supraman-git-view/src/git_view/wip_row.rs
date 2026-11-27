@@ -35,7 +35,7 @@ impl GitView {
         let Some(input) = input else { return cells::message(ix, row, Some(counts.as_str()), palette, &self.hits) };
         let focused = input.read(cx).is_focused(window);
         let selected = self.selected(cx) == Some(Selected::Wip);
-        let shown = if focused { input.into_any_element() } else { still_field(input.read(cx).text(), palette, cx).into_any_element() };
+        let shown = if focused { input.into_any_element() } else { still_field(input.read(cx).text(), palette, &self.hits, cx).into_any_element() };
         let order = self.wip_panel.read(cx).message_order(true, cx).unwrap_or_default();
         let field = div()
             .relative()
@@ -135,9 +135,9 @@ pub(super) fn conflict_node(n: u32, key: String, hits: &HitTargets, palette: &Pa
 }
 
 /// The field while it does not hold the keys: the summary from its start, cut with an ellipsis, `// WIP` muted while empty.
-fn still_field(summary: &str, palette: &Palette, cx: &App) -> Div {
+fn still_field(summary: &str, palette: &Palette, hits: &HitTargets, cx: &App) -> Div {
     let (text, colour) = if summary.is_empty() { ("// WIP", palette.muted) } else { (summary, palette.text) };
-    input::quiet_frame(false, cx).w_full().text_color(colour).child(clipped(STILL_KEY, text.to_string(), false))
+    input::quiet_frame(false, cx).w_full().text_color(colour).child(clipped(hits.key(STILL_KEY), text.to_string(), false))
 }
 
 #[cfg(test)]

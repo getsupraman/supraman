@@ -170,7 +170,7 @@ impl Dialog {
         let (key, cancel, escape) = (panel.key, panel.cancel.clone(), panel.cancel);
         let body = crate::scroll::area(SharedString::from(format!("{key}-body"))).flex_1().min_h_0().child(panel.body);
         let marker = focus::popup(std::iter::once(region.clone()).chain(order.handles().to_vec()));
-        let pane = self.tab.as_ref().map(|tab| Pane::new(PANE, &region).entry(first.as_ref().unwrap_or(&region)).covering(tab).paint());
+        let pane = self.tab.as_ref().map(|tab| Pane::new(hits.key(PANE), &region).entry(first.as_ref().unwrap_or(&region)).covering(tab).paint());
         let colors = cx.theme().colors().clone();
         let card = order
             .on(div().id(SharedString::from(format!("{key}-dialog"))))

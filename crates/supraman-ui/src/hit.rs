@@ -1,6 +1,10 @@
 //! The selftests' click targets: every clickable element records where it was painted under a key.
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    collections::HashMap,
+    rc::Rc,
+};
 
 use gpui::{Bounds, IntoElement, Pixels, Styled as _, canvas, px};
 
@@ -24,8 +28,56 @@ impl Hit {
 }
 
 /// [`Hit`]s keyed by the same string as their element id, as of the last painted frame. The selftest
-/// clicks through these.
-pub type HitTargets = Rc<RefCell<HashMap<String, Hit>>>;
+/// clicks through these. A handle carries a scope: every key a view records or looks up through it, and every
+/// key it names in another window-wide registry ([`HitTargets::key`]), is prefixed with it, so two views painted
+/// in one window never share a key; the empty scope's keys are the keys as given.
+#[derive(Clone, Default)]
+pub struct HitTargets {
+    map: Rc<RefCell<HashMap<String, Hit>>>,
+    scope: Rc<str>,
+}
+
+impl HitTargets {
+    /// A handle on the same window's hits whose keys lie under `name` within this one's scope.
+    pub fn scoped(&self, name: &str) -> Self {
+        Self { map: self.map.clone(), scope: format!("{}{name}/", self.scope).into() }
+    }
+
+    /// The prefix this handle puts before every key.
+    pub fn scope(&self) -> &str {
+        &self.scope
+    }
+
+    /// `key` as the window's registries hold it: hits, focus panes, split ids, popup anchors, cut labels, drags.
+    pub fn key(&self, key: &str) -> String {
+        format!("{}{key}", self.scope)
+    }
+
+    pub fn insert(&self, key: &str, hit: Hit) {
+        self.map.borrow_mut().insert(self.key(key), hit);
+    }
+
+    pub fn remove(&self, key: &str) {
+        self.map.borrow_mut().remove(&self.key(key));
+    }
+
+    pub fn get(&self, key: &str) -> Option<Hit> {
+        self.map.borrow().get(&self.key(key)).copied()
+    }
+
+    pub fn contains(&self, key: &str) -> bool {
+        self.map.borrow().contains_key(&self.key(key))
+    }
+
+    /// Every view's hits in the window, under their full keys.
+    pub fn borrow(&self) -> Ref<'_, HashMap<String, Hit>> {
+        self.map.borrow()
+    }
+
+    pub fn borrow_mut(&self) -> RefMut<'_, HashMap<String, Hit>> {
+        self.map.borrow_mut()
+    }
+}
 
 /// An invisible overlay that records its parent's painted bounds and clip under `key`.
 pub fn hit_target(hits: &HitTargets, key: String) -> impl IntoElement {
@@ -33,7 +85,7 @@ pub fn hit_target(hits: &HitTargets, key: String) -> impl IntoElement {
     canvas(
         move |bounds, window, _| {
             let visible = window.content_mask().bounds;
-            hits.borrow_mut().insert(key, Hit { bounds, visible });
+            hits.insert(&key, Hit { bounds, visible });
         },
         |_, _, _, _| {},
     )

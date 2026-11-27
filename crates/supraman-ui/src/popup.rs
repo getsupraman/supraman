@@ -9,7 +9,7 @@ use std::{
 
 use gpui::{App, Global, Hsla, IntoElement, Pixels, SharedString, Styled as _, Window, WindowId, canvas, fill};
 
-use crate::tokens::Layer;
+use crate::{hit::HitTargets, tokens::Layer};
 
 /// A popup's hold on its anchor, kept by the popup: dropped, the anchor is no longer open.
 #[derive(Clone)]
@@ -17,6 +17,8 @@ pub struct Popup(Rc<Open>);
 
 struct Open {
     anchor: Option<SharedString>,
+    /// The anchor under its owner's scope, as [`is_open`] is asked it.
+    key: RefCell<Option<SharedString>>,
     layer: Layer,
     displaced: Cell<bool>,
 }
@@ -24,11 +26,16 @@ struct Open {
 impl Popup {
     /// A popup of `layer` belonging to the element painted under `anchor` (`None`: to no element).
     pub fn open(anchor: Option<SharedString>, layer: Layer) -> Self {
-        Self(Rc::new(Open { anchor, layer, displaced: Cell::new(false) }))
+        Self(Rc::new(Open { key: RefCell::new(anchor.clone()), anchor, layer, displaced: Cell::new(false) }))
     }
 
     pub fn anchor(&self) -> Option<&SharedString> {
         self.0.anchor.as_ref()
+    }
+
+    /// Its anchor as painted through `hits`, its owner's handle ([`HitTargets::key`]).
+    pub fn under(&self, hits: &HitTargets) {
+        *self.0.key.borrow_mut() = self.0.anchor.as_ref().map(|a| hits.key(a).into());
     }
 
     /// Records it as its layer's one popup as it paints; another of its layer is displaced and should close.
@@ -54,7 +61,7 @@ impl Popup {
 
 /// Whether a popup belonging to the element under `anchor` is open in this window.
 pub fn is_open(anchor: &str, window: &Window, cx: &mut App) -> bool {
-    registry(window, cx).borrow().values().filter_map(Weak::upgrade).any(|o| !o.displaced.get() && o.anchor.as_deref() == Some(anchor))
+    registry(window, cx).borrow().values().filter_map(Weak::upgrade).any(|o| !o.displaced.get() && o.key.borrow().as_deref() == Some(anchor))
 }
 
 /// The open fill of a row or pill that builds its own element: the first child of its `relative` element, painted

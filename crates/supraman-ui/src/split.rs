@@ -9,7 +9,7 @@ use crate::hit::{HitTargets, hit_target};
 use crate::tokens;
 
 pub struct SplitPane {
-    /// The divider's element id; it also tells two splits' drags apart.
+    /// The divider's element id; it also tells two splits' drags apart, so a scoped view gives it [`HitTargets::key`].
     pub id: SharedString,
     pub min_first: Pixels,
     pub min_second: Pixels,
@@ -123,8 +123,8 @@ impl HeightBar {
         let (id, min, max, default) = (self.id.clone(), self.min, self.max.max(self.min), self.default);
         let (line, lit) = (cx.theme().colors().border, cx.theme().colors().border_selected);
         let (drag, reset, end, reset_end) = (on_resize.clone(), on_resize, on_resize_end.clone(), on_resize_end);
-        let dragged = id.clone();
-        let bar = grip(id.clone(), 0, CursorStyle::ResizeUpDown, move |this, cx| end(this, cx), move |this, cx| {
+        let dragged: SharedString = hits.key(&id).into();
+        let bar = grip(dragged.clone(), 0, CursorStyle::ResizeUpDown, move |this, cx| end(this, cx), move |this, cx| {
             reset(this, default.clamp(min, max), cx);
             reset_end(this, cx);
         }, cx)
@@ -185,7 +185,7 @@ impl Stack {
         state.0.borrow_mut().resize(panes.len(), None);
         let weights = weights(&given);
         let (id, min, measured) = (self.id.clone(), self.min, state.clone());
-        let dragged = format!("{id}-divider-");
+        let dragged = format!("{}-divider-", hits.key(&id));
         let drag = on_resize.clone();
         let column = div().flex().flex_col().size_full().min_h_0().overflow_hidden().on_drag_move(cx.listener(move |this, e: &DragMoveEvent<DraggedDivider>, _, cx| {
             let divider = e.drag(cx);
@@ -202,7 +202,7 @@ impl Stack {
             let border = (i > 0).then(|| {
                 let (reset, end, reset_end) = (on_resize.clone(), on_resize_end.clone(), on_resize_end.clone());
                 let key = format!("{id}-divider-{i}");
-                grip(key.clone().into(), i, CursorStyle::ResizeUpDown, move |this, cx| end(this, cx), move |this, cx| {
+                grip(hits.key(&key).into(), i, CursorStyle::ResizeUpDown, move |this, cx| end(this, cx), move |this, cx| {
                     reset(this, vec![Pixels::ZERO; count], cx);
                     reset_end(this, cx);
                 }, cx)

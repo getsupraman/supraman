@@ -119,7 +119,7 @@ impl RefPanel {
         let key = format!("{list}-name-{}", row.path);
         let label = highlighted(key.clone(), entry.label(), &entry.marks(&self.filter()), cx).relative().flex_shrink(1.).text_color(text).child(hit_target(&self.hits, key.clone()));
         let content = match Self::after(entry) {
-            Some(after) => div().flex().flex_1().min_w_0().child(clipped::pair(format!("{key}-line"), entry.label(), label, after, muted).flex_1()),
+            Some(after) => div().flex().flex_1().min_w_0().child(clipped::pair(self.hits.key(&format!("{key}-line")), entry.label(), label, after, muted).flex_1()),
             None => div().flex().flex_1().min_w_0().items_center().child(label),
         };
         let track = Self::track(entry).map(|t| div().flex_none().px_1().text_xs().text_color(muted).child(t).into_any_element());
@@ -206,7 +206,7 @@ impl RefPanel {
         let chevron = if open { Icon::ChevronDown } else { Icon::ChevronRight };
         let key = section.key();
         button::ghost(&self.hits, format!("{LIST}-row-{key}"), cx)
-            .child(supraman_ui::popup::open_fill(format!("{LIST}-row-{key}")))
+            .child(supraman_ui::popup::open_fill(self.hits.key(&format!("{LIST}-row-{key}"))))
             .flex()
             .items_center()
             .h(px(ROW))
@@ -298,8 +298,8 @@ impl Render for RefPanel {
         let bar = self.bar(window, cx);
         let menu = self.render_menu(cx);
         let pane = match Section::ALL.into_iter().find(|s| self.shows(*s)) {
-            Some(first) => focus::Pane::new(crate::git_view::FOCUS_REFS, &self.focus).entry(self.tree.get(first).focus_handle()),
-            None => focus::Pane::new(crate::git_view::FOCUS_REFS, &self.focus),
+            Some(first) => focus::Pane::new(self.hits.key(crate::git_view::FOCUS_REFS), &self.focus).entry(self.tree.get(first).focus_handle()),
+            None => focus::Pane::new(self.hits.key(crate::git_view::FOCUS_REFS), &self.focus),
         };
         let panel = div().relative().size_full().flex().flex_col().bg(bg).text_sm().track_focus(&self.focus).child(bar).child(self.list(cx));
         panel.child(pane.paint()).children(menu)
