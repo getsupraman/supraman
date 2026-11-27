@@ -29,7 +29,7 @@ pub(super) fn expanded() -> HashSet<String> {
 impl crate::view::FleetView {
     /// How many session rows of the entry `name` the sidebar holds, in view or not.
     pub fn session_rows(&self, name: &str) -> usize {
-        let (tree, rows) = &*self.sidebar.left_rows;
+        let (tree, rows, _) = &*self.sidebar.left_rows;
         rows.iter().filter(|r| matches!(r, super::LeftRow::Session(e, ..) if tree.entries.get(*e).is_some_and(|e| e.name == name))).count()
     }
 }
