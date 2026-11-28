@@ -237,3 +237,28 @@ fn a_divider_drag_and_a_close_reach_the_owner(cx: &mut TestAppContext) {
     cx.simulate_click(close, Modifiers::none());
     assert_eq!(host.read_with(cx, |h, _| h.closed.clone()), [2]);
 }
+
+#[gpui::test]
+fn a_payload_let_go_on_a_zone_no_move_reached_since_its_aims_painted_lands_by_where_it_is_let_go(cx: &mut TestAppContext) {
+    let (host, cx) = open(Layout::Leaf(1), cx);
+    for (zone, centred) in [(Zone::Centre, true), (Zone::Left, false)] {
+        host.update(cx, |h, cx| {
+            h.layout = Layout::Leaf(1);
+            h.laid.clear();
+            h.centred.clear();
+            cx.notify();
+        });
+        repaint(&host, cx);
+        let start = hit(&host, "outside", cx).expect("the source").center();
+        press(cx, start);
+        repaint(&host, cx);
+        let aim = hit(&host, "dock-aim-0", cx).expect("the dock of one's slot is a target while a panel is dragged");
+        release(cx, inside(aim, zone));
+        let (laid, got) = host.read_with(cx, |h, _| (h.laid.clone(), h.centred.clone()));
+        if centred {
+            assert_eq!((laid, got), (vec![], vec![(1, 3)]), "the centre's own drop");
+        } else {
+            assert_eq!(laid, [Layout::Leaf(1).drop(1, Zone::Left, 3).map(|d| match d { Dropped::Layout(l) => l, Dropped::Owner => unreachable!() }).unwrap()], "the left edge's layout");
+        }
+    }
+}

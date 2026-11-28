@@ -40,7 +40,7 @@ impl FleetView {
             .tooltip(Tooltip::text("New shell of…"))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_shell_menu(cx)));
         let new_tab = button::ButtonSplit::new(plus, shells).into_any_element();
-        let bar = tab_strip(
+        let bar = tab_strip_taking_panels(
             &self.hits,
             headers,
             Some(new_tab),
@@ -53,6 +53,7 @@ impl FleetView {
                 cx.notify();
             },
             |this: &mut Self, id, at, cx| this.open_tab_menu(id, at, cx),
+            |this: &mut Self, panel, at, cx| this.panel_to_strip(panel, at, cx),
             window,
             cx,
         );
@@ -91,11 +92,7 @@ impl FleetView {
         let Some(active) = self.active else {
             return placeholder("Click [attach] on a live session to open it here, or + for a shell.".into(), cx);
         };
-        if let Some(dock) = self.render_dock(active, hits, cx) {
-            return dock;
-        }
-        let focus = self.focus.clone();
-        self.render_panel(active, hits, &focus, cx)
+        self.render_dock(active, hits, cx)
     }
 
     /// A panel's content under `hits`' scope, its terminal's caret following `focus`.

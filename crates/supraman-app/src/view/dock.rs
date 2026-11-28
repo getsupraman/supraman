@@ -6,7 +6,9 @@ use supraman_ui::dock::layout::Layout;
 use supraman_ui::dock::view::{Dock, Panel};
 use supraman_ui::hit::HitTargets;
 use supraman_ui::icon::Icon;
+use supraman_ui::tabs::DraggedTab;
 
+use super::panel_drop::{dragged, placed};
 use super::{FleetView, PanelKey, Tab, TabKind};
 
 /// A tab of two or more panels; a tab of one has none.
@@ -20,19 +22,6 @@ pub struct TabDock {
 #[derive(Default)]
 pub struct Docks {
     docks: Vec<TabDock>,
-}
-
-/// A panel's title bar as it drags.
-#[derive(Clone)]
-pub struct DraggedPanel {
-    pub panel: u64,
-    pub title: SharedString,
-}
-
-impl supraman_ui::dnd::Payload for DraggedPanel {
-    fn title(&self) -> SharedString {
-        self.title.clone()
-    }
 }
 
 impl Docks {
@@ -96,6 +85,32 @@ impl Docks {
         true
     }
 
+    /// Whether `layout` lays out exactly `panels` as `tab`'s dock.
+    pub fn fits(&self, tab: u64, layout: &Layout<u64>, panels: &[u64]) -> bool {
+        let (mut want, mut now) = (panels.to_vec(), layout.panels());
+        want.sort_unstable();
+        now.sort_unstable();
+        !self.is_inner(tab) && want == now && layout.is_valid()
+    }
+
+    /// `panel`, in no dock, placed in `tab`'s as `layout` lays it out, and focused; false when it does not fit.
+    pub fn place(&mut self, tab: u64, layout: Layout<u64>, panel: u64, mut handle: impl FnMut() -> FocusHandle) -> bool {
+        let mut want = self.panels(tab);
+        want.push(panel);
+        if tab == panel || self.holding(panel).is_some() || !self.fits(tab, &layout, &want) {
+            return false;
+        }
+        match self.docks.iter_mut().find(|d| d.tab == tab) {
+            Some(dock) => {
+                dock.layout = layout;
+                dock.focus.push((panel, handle()));
+                dock.focused = panel;
+            }
+            None => self.docks.push(TabDock { tab, layout, focused: panel, focus: vec![(tab, handle()), (panel, handle())] }),
+        }
+        true
+    }
+
     /// A divider's drag or a move inside the dock; a layout of other panels is refused.
     pub fn set_layout(&mut self, tab: u64, layout: Layout<u64>) -> bool {
         let Some(dock) = self.docks.iter_mut().find(|d| d.tab == tab) else { return false };
@@ -147,6 +162,19 @@ impl FleetView {
         let at = |id: Option<&u64>, tabs: &[Tab]| id.and_then(|id| tabs.iter().position(|t| t.id == *id));
         if let (Some(from), Some(to)) = (at(ids.get(from), &self.tabs), at(ids.get(to), &self.tabs)) {
             supraman_ui::tabs::reorder(&mut self.tabs, from, to);
+        }
+    }
+
+    /// `id`'s entry moved to just before `before`'s, else last.
+    pub(super) fn place_header(&mut self, id: u64, before: Option<u64>) {
+        match before {
+            Some(before) => self.place_before(id, before),
+            None => {
+                if let Some(at) = self.tabs.iter().position(|t| t.id == id) {
+                    let tab = self.tabs.remove(at);
+                    self.tabs.push(tab);
+                }
+            }
         }
     }
 
@@ -252,29 +280,40 @@ impl FleetView {
         }
     }
 
-    /// The active tab's dock through the kit: each panel under its scope `p<id>`, in its own focus region.
-    pub(super) fn render_dock(&mut self, tab: u64, hits: &HitTargets, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let dock = self.docks.of(tab)?;
-        let (layout, focused) = (dock.layout.clone(), dock.focused);
-        let mut panels = Vec::new();
-        for p in layout.panels() {
-            let scope = hits.scoped(&format!("p{p}"));
-            let focus = self.panel_focus(p);
-            let element = self.render_panel(p, &scope, &focus, cx);
-            let Some(t) = self.tab(p) else { continue };
-            let (icon, words) = (panel_icon(t), SharedString::from(t.label()));
-            let element = self.panel_frame(p, element, &scope, &focus, cx);
-            panels.push((p, Panel { element, icon, words: words.clone(), payload: DraggedPanel { panel: p, title: words } }));
-        }
-        let dock = Dock::new(hits, format!("dock-{tab}"), |d: &DraggedPanel, _| Some(d.panel))
+    /// The active tab's dock through the kit, a tab of one its panel alone until a payload is dragged: each docked panel
+    /// under its scope `p<id>`, in its own focus region.
+    pub(super) fn render_dock(&mut self, tab: u64, hits: &HitTargets, cx: &mut Context<Self>) -> AnyElement {
+        let (layout, focused) = self.docks.of(tab).map_or((Layout::Leaf(tab), tab), |d| (d.layout.clone(), d.focused));
+        let panels = match layout {
+            Layout::Leaf(_) => {
+                let focus = self.focus.clone();
+                let element = self.render_panel(tab, hits, &focus, cx);
+                vec![(tab, self.dock_panel(tab, tab, element))]
+            }
+            Layout::Split { .. } => layout.panels().into_iter().filter_map(|p| {
+                let scope = hits.scoped(&format!("p{p}"));
+                let focus = self.panel_focus(p);
+                let element = self.render_panel(p, &scope, &focus, cx);
+                let element = self.panel_frame(p, element, &scope, &focus, cx);
+                self.tab(p).is_some().then(|| (p, self.dock_panel(tab, p, element)))
+            }).collect(),
+        };
+        let sizes: Vec<(u64, usize)> = self.headers().map(|t| (t.id, self.docks.panels(t.id).len())).collect();
+        let panel_of = move |d: &DraggedTab, _: &App| {
+            let panels = sizes.iter().find(|(id, _)| *id == d.id).map_or(1, |(_, n)| *n);
+            placed(dragged(d, panels))
+        };
+        let dock = Dock::new(hits, format!("dock-{tab}"), panel_of)
             .focused(Some(focused))
-            .on_layout(move |this: &mut Self, layout, cx| {
-                if this.docks.set_layout(tab, layout) {
-                    cx.notify();
-                }
-            })
-            .on_close(|this: &mut Self, panel, cx| this.close_panel(panel, cx));
-        Some(dock.render(&layout, panels, cx))
+            .on_layout(move |this: &mut Self, layout, cx| this.lay_out_dock(tab, layout, cx))
+            .on_close(|this: &mut Self, panel, cx| this.close_panel(panel, cx))
+            .on_centre(|this: &mut Self, target, d: &DraggedTab, _, cx| this.centre_drop(target, d, cx));
+        dock.render(&layout, panels, cx)
+    }
+
+    fn dock_panel(&self, tab: u64, p: u64, element: AnyElement) -> Panel<DraggedTab> {
+        let (icon, words) = self.tab(p).map_or((Icon::Terminal, SharedString::default()), |t| (panel_icon(t), SharedString::from(t.label())));
+        Panel { element, icon, words: words.clone(), payload: DraggedTab { id: p, title: words, dock: Some(tab) } }
     }
 
     /// A docked panel's region: a click focuses it, its pane registers under its scope, and it keeps its view's minimum size.

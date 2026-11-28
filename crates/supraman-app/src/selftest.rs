@@ -1023,6 +1023,9 @@ async fn window_steps(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> 
     let tab_keys = step("7f", crate::selftest_tab_keys::run(view, cx)).await?;
     println!("step 7f: {tab_keys}");
 
+    let panels = step("7f+", crate::selftest_panel_drag::run(view, cx)).await?;
+    println!("step 7f+: {panels}");
+
     let shells = step("7s", crate::selftest_shells::run(view, &home(), cx)).await?;
     println!("step 7s: {shells}");
 

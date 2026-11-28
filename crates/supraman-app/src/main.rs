@@ -53,6 +53,8 @@ mod selftest_notices;
 #[cfg(feature = "selftest")]
 mod selftest_overflow;
 #[cfg(feature = "selftest")]
+mod selftest_panel_drag;
+#[cfg(feature = "selftest")]
 mod selftest_refresh;
 #[cfg(feature = "selftest")]
 mod selftest_reopen;
