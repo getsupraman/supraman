@@ -117,6 +117,7 @@ pub(crate) struct RefPanel {
     filter: Option<(Entity<TextInput>, Subscription)>,
     width: Pixels,
     shut: bool,
+    narrow: bool,
     focus_filter: bool,
     built: bool,
     /// The folders to close when the tree is first built.
@@ -146,6 +147,7 @@ impl RefPanel {
             filter: None,
             width: DEFAULT_WIDTH,
             shut: false,
+            narrow: false,
             focus_filter: false,
             built: false,
             collapsed: Vec::new(),
@@ -297,11 +299,27 @@ impl RefPanel {
         cx.notify();
     }
 
+    /// The user's collapsed state, kept in the layout.
     pub(crate) fn shut(&self) -> bool {
         self.shut
     }
 
+    /// Collapsed as painted: the user's, or a tab too narrow for it.
+    pub(crate) fn shown_shut(&self) -> bool {
+        self.shut || self.narrow
+    }
+
+    pub(crate) fn set_narrow(&mut self, narrow: bool, cx: &mut Context<Self>) {
+        if self.narrow != narrow {
+            self.narrow = narrow;
+            cx.notify();
+        }
+    }
+
     pub(crate) fn toggle_shut(&mut self, cx: &mut Context<Self>) {
+        if self.narrow {
+            return;
+        }
         self.shut = !self.shut;
         self.overlay = None;
         cx.emit(RefEvent::Layout);

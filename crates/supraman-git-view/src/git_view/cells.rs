@@ -304,8 +304,8 @@ pub(crate) fn figure_text<E: Styled>(element: E, palette: &Palette) -> E {
 }
 
 fn figures(text: String, palette: &Palette, key: String, hits: &HitTargets) -> AnyElement {
-    let line = figure_text(div(), palette).relative().whitespace_nowrap().line_height(px(LINE)).child(SharedString::from(text)).child(hit_target(hits, key));
-    div().h_full().flex().items_center().child(line).into_any_element()
+    let line = figure_text(div(), palette).relative().min_w_0().line_height(px(LINE)).child(clipped(hits.key(&key), text, false).child(hit_target(hits, key)));
+    div().h_full().min_w_0().flex().items_center().child(line).into_any_element()
 }
 
 pub(crate) fn date(ix: usize, row: &GraphRow, palette: &Palette, hits: &HitTargets) -> AnyElement {

@@ -61,7 +61,7 @@
 "supraman-git-view/src/git_view/wip/compose.rs" = 1
 "supraman-git-view/src/git_view/wip_row.rs" = 1
 "supraman-git-view/src/git_view/worktree_rows.rs" = 1
-"supraman-work-view/src/work_view.rs" = 8
+"supraman-work-view/src/work_view.rs" = 6
 "supraman-work-view/src/work_view/actions.rs" = 2
 "supraman-work-view/src/work_view/activity.rs" = 2
 "supraman-work-view/src/work_view/detail.rs" = 2

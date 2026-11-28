@@ -13,7 +13,7 @@ use supraman_ui::label::{Label, LabelMark};
 use supraman_ui::tokens;
 
 /// The shut navigator's strip.
-const SHUT_WIDTH: gpui::Pixels = gpui::px(28.);
+pub(super) const SHUT_WIDTH: gpui::Pixels = gpui::px(28.);
 
 /// A navigator row's chrome: selected while the navigator's selection is on it, active while the navigator holds the keys.
 pub(crate) fn nav_chrome(selected: bool, focused: bool) -> supraman_ui::list::Chrome {
@@ -178,6 +178,7 @@ impl WorkView {
             .child(
                 button::Button::new(&self.hits, "work-nav-open").icon(Icon::ChevronRight.svg(14., colors.icon_muted)).icon_only(tokens::control::SMALL.height)
                     .tooltip(supraman_ui::controls::tooltip::Tooltip::text("Show the navigator"))
+                    .dimmed(self.nav_narrow().then_some("The tab is too narrow for the navigator"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_nav(cx))),
             )
             .into_any_element()

@@ -181,12 +181,13 @@ fn opened() -> Vec<Link> {
 struct Holder {
     view: Entity<WorkView>,
     inbox: Entity<WorkInbox>,
+    size: (f32, f32),
     _restore: gpui::Subscription,
 }
 
 impl Render for Holder {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        focus::root(div().w(px(1500.)).h(px(900.))).child(self.view.clone())
+        focus::root(div().w(px(self.size.0)).h(px(self.size.1))).child(self.view.clone())
     }
 }
 
@@ -194,11 +195,11 @@ fn holding(cx: &mut VisualTestContext) -> Option<String> {
     cx.update(|window, cx| focus::focused(window, cx).map(|k| k.to_string()))
 }
 
-struct Opened<'a> {
-    view: Entity<WorkView>,
+pub(super) struct Opened<'a> {
+    pub(super) view: Entity<WorkView>,
     fake: FakeWorkman,
     inbox: Entity<WorkInbox>,
-    cx: &'a mut VisualTestContext,
+    pub(super) cx: &'a mut VisualTestContext,
 }
 
 fn folders() -> Vec<std::path::PathBuf> {
@@ -207,11 +208,16 @@ fn folders() -> Vec<std::path::PathBuf> {
 
 /// The tab of group `w` (folders alpha and beta bound to pa and pb), with its Inbox and one live Supraman session.
 fn open(cx: &mut TestAppContext) -> Opened<'_> {
+    open_sized((1500., 900.), cx)
+}
+
+/// [`open`] with the tab `size` wide and high.
+pub(super) fn open_sized(size: (f32, f32), cx: &mut TestAppContext) -> Opened<'_> {
     let (fake, client) = start(cx);
     let (holder, cx) = cx.add_window_view(|window, cx| {
         let (hub, inbox) = hub_and_inbox(client, vec![(Target::Group("w".into()), folders())], cx);
         let view = view_of(Target::Group("w".into()), folders(), HitTargets::default(), &hub, &inbox, cx);
-        Holder { view, inbox, _restore: focus::restore_on_loss(window, cx) }
+        Holder { view, inbox, size, _restore: focus::restore_on_loss(window, cx) }
     });
     cx.update(|window, _| window.activate_window());
     let (view, inbox) = holder.read_with(cx, |h, _| (h.view.clone(), h.inbox.clone()));
@@ -266,7 +272,16 @@ fn view_of<T>(target: Target, folders: Vec<std::path::PathBuf>, hits: HitTargets
     })
 }
 
-fn settle(view: &Entity<WorkView>, cx: &mut VisualTestContext) {
+/// The holder's tab laid out at `size` from the next frame.
+pub(super) fn resize(size: (f32, f32), cx: &mut VisualTestContext) {
+    let holder = cx.update(|window, _| window.root::<Holder>()).flatten().expect("the Work tab's holder");
+    holder.update(cx, |h, cx| {
+        h.size = size;
+        cx.notify();
+    });
+}
+
+pub(super) fn settle(view: &Entity<WorkView>, cx: &mut VisualTestContext) {
     for _ in 0..3 {
         cx.run_until_parked();
         view.update(cx, |v, cx| {
@@ -282,7 +297,7 @@ fn hit(view: &Entity<WorkView>, key: &str, cx: &mut VisualTestContext) -> Option
     view.read_with(cx, |v, _| v.hits.borrow().get(key).map(|h| h.bounds))
 }
 
-fn bounds(view: &Entity<WorkView>, key: &str, cx: &mut VisualTestContext) -> Bounds<Pixels> {
+pub(super) fn bounds(view: &Entity<WorkView>, key: &str, cx: &mut VisualTestContext) -> Bounds<Pixels> {
     let painted: Vec<String> = view.read_with(cx, |v, _| v.hits.borrow().keys().filter(|k| k.starts_with("work-")).cloned().collect());
     hit(view, key, cx).unwrap_or_else(|| panic!("{key} is painted; painted: {painted:?}"))
 }

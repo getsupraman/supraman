@@ -4,7 +4,7 @@ use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use gpui::{
     AnyElement, App, ClickEvent, Context, Div, DragMoveEvent, FocusHandle, Hsla, KeyBinding, KeyDownEvent, Pixels, ScrollStrategy, SharedString,
-    Stateful, UniformListScrollHandle, Window, canvas, div, prelude::*, px, rems, uniform_list,
+    Stateful, UniformListScrollHandle, Window, div, prelude::*, px, rems, uniform_list,
 };
 use theme::ActiveTheme as _;
 
@@ -621,23 +621,14 @@ fn visible_end(scroll: &UniformListScrollHandle, row_height: Pixels) -> Option<u
     Some(((top + viewport) / row_height).ceil() as usize)
 }
 
-/// Records the table's width for the next frame's [`fit`], and asks for that frame when it changed.
+/// Records the table's width for the next frame's [`fit`].
 fn width_probe(state: TableState) -> impl IntoElement {
-    canvas(
-        move |bounds, window, cx| {
-            let mut inner = state.inner.borrow_mut();
-            if inner.width != bounds.size.width {
-                inner.width = bounds.size.width;
-                // gpui drops a refresh asked for while it draws
-                window.defer(cx, |window, _| window.refresh());
-            }
-        },
-        |_, _, _, _| {},
-    )
-    .absolute()
-    .top_0()
-    .left_0()
-    .size_full()
+    crate::measure::probe(None, move |size| {
+        let mut inner = state.inner.borrow_mut();
+        let changed = inner.width != size.width;
+        inner.width = size.width;
+        changed
+    })
 }
 
 /// The header's captions: the theme's secondary shade, a step under the rows' `text_xs`.

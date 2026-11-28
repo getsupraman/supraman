@@ -19,6 +19,7 @@ pub mod label;
 pub mod list;
 pub mod marks;
 pub mod matcher;
+pub mod measure;
 pub mod patterns;
 pub mod popup;
 #[cfg(test)]
