@@ -104,8 +104,16 @@ impl FleetView {
         let active = self.tab(id);
         let status = cx.theme().status().clone();
         match active {
-            Some(Tab { kind: TabKind::Work(view), .. }) => view.clone().into_any_element(),
-            Some(Tab { kind: TabKind::Git(view), .. }) => view.clone().into_any_element(),
+            Some(Tab { kind: TabKind::Work(view), .. }) => {
+                let view = view.clone();
+                view.update(cx, |v, _| v.set_hits(hits));
+                view.into_any_element()
+            }
+            Some(Tab { kind: TabKind::Git(view), .. }) => {
+                let view = view.clone();
+                view.update(cx, |v, _| v.set_hits(hits));
+                view.into_any_element()
+            }
             Some(Tab { kind: TabKind::Schedule(page), .. }) => self
                 .render_schedule_page(page, hits, cx)
                 .unwrap_or_else(|| placeholder(format!("Schedule {} is gone.", page.id), cx)),

@@ -34,23 +34,35 @@ impl Hit {
 #[derive(Clone, Default)]
 pub struct HitTargets {
     map: Rc<RefCell<HashMap<String, Hit>>>,
-    scope: Rc<str>,
+    scope: Rc<RefCell<Rc<str>>>,
 }
 
 impl HitTargets {
     /// A handle on the same window's hits whose keys lie under `name` within this one's scope.
     pub fn scoped(&self, name: &str) -> Self {
-        Self { map: self.map.clone(), scope: format!("{}{name}/", self.scope).into() }
+        Self { map: self.map.clone(), scope: Rc::new(RefCell::new(format!("{}{name}/", self.scope()).into())) }
     }
 
     /// The prefix this handle puts before every key.
-    pub fn scope(&self) -> &str {
-        &self.scope
+    pub fn scope(&self) -> Rc<str> {
+        self.scope.borrow().clone()
+    }
+
+    /// A handle on the same hits and scope whose clones, apart from this one's, move together by [`HitTargets::rescope`].
+    pub fn own(&self) -> Self {
+        Self { map: self.map.clone(), scope: Rc::new(RefCell::new(self.scope())) }
+    }
+
+    /// This handle and every clone of it take `to`'s scope: a view painted in another place of its window.
+    pub fn rescope(&self, to: &HitTargets) {
+        if *self.scope.borrow() != *to.scope.borrow() {
+            *self.scope.borrow_mut() = to.scope();
+        }
     }
 
     /// `key` as the window's registries hold it: hits, focus panes, split ids, popup anchors, cut labels, drags.
     pub fn key(&self, key: &str) -> String {
-        format!("{}{key}", self.scope)
+        format!("{}{key}", self.scope.borrow())
     }
 
     pub fn insert(&self, key: &str, hit: Hit) {
@@ -103,6 +115,17 @@ mod tests {
 
     fn rect(x: f32, y: f32, w: f32, h: f32) -> Bounds<Pixels> {
         Bounds::new(point(px(x), px(y)), size(px(w), px(h)))
+    }
+
+    #[test]
+    fn an_own_handle_and_its_clones_rescope_together_and_leave_the_handle_they_came_from() {
+        let root = HitTargets::default();
+        let own = root.own();
+        let child = own.clone();
+        own.rescope(&root.scoped("p2"));
+        assert_eq!((child.key("x"), own.key("x"), root.key("x")), ("p2/x".to_string(), "p2/x".to_string(), "x".to_string()));
+        child.rescope(&root);
+        assert_eq!(own.key("x"), "x");
     }
 
     #[test]

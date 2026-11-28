@@ -243,6 +243,13 @@ impl EventEmitter<GitEvent> for GitView {}
 impl EventEmitter<OpenGit> for GitView {}
 
 impl GitView {
+    /// The view and every part of it record their keys under `hits`' scope from now on: where its host paints it.
+    pub fn set_hits(&mut self, hits: &HitTargets) {
+        self.hits.rescope(hits);
+    }
+}
+
+impl GitView {
     #[cfg(any(test, feature = "test-support"))]
     pub fn open(folder: PathBuf, home: Option<PathBuf>, hits: HitTargets, cx: &mut App) -> Entity<GitView> {
         GitView::open_with(folder, home, hits, Arc::new(|_: &std::path::Path| Vec::new()), cx)
@@ -250,6 +257,7 @@ impl GitView {
 
     /// `occupancy`: the live sessions working in it.
     pub fn open_with(folder: PathBuf, home: Option<PathBuf>, hits: HitTargets, occupancy: Arc<dyn Occupancy>, cx: &mut App) -> Entity<GitView> {
+        let hits = hits.own();
         cx.new(|cx| {
             let focus = cx.focus_handle();
             let gate = cx.new(|_| WriteGate::new(occupancy).in_tab(focus.clone()));

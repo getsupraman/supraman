@@ -157,7 +157,7 @@ impl FleetView {
             | MenuAction::SetPaused { .. }
             | MenuAction::History { .. }
             | MenuAction::RemoveSchedule { .. }) => self.run_schedule_action(schedule, window, cx),
-            tab @ (MenuAction::OpenGit(_) | MenuAction::OpenWorkman { .. } | MenuAction::CloseTab(_) | MenuAction::CloseOtherTabs(_) | MenuAction::CloseTabsRight(_) | MenuAction::ReopenClosed) => {
+            tab @ (MenuAction::OpenGit(_) | MenuAction::OpenWorkman { .. } | MenuAction::AddPanel { .. } | MenuAction::CloseTab(_) | MenuAction::CloseOtherTabs(_) | MenuAction::CloseTabsRight(_) | MenuAction::ReopenClosed) => {
                 self.run_tab_action(tab, cx);
             }
             folders @ (MenuAction::AddFolder(_) | MenuAction::AddGroup | MenuAction::RenameGroup(_) | MenuAction::RemoveFolder { .. } | MenuAction::RemoveGroup(_) | MenuAction::ShowSubfolders { .. } | MenuAction::ExcludeFolder { .. } | MenuAction::IncludeFolder { .. }) => {

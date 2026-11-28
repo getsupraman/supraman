@@ -71,8 +71,12 @@ impl Docks {
         std::mem::replace(&mut dock.focused, panel) != panel
     }
 
+    /// Whether `tab`'s dock takes one more panel by the layout's rule.
+    pub fn has_room(&self, tab: u64) -> bool {
+        self.of(tab).is_none_or(|d| d.layout.add(u64::MAX).is_some())
+    }
+
     /// `panel`, in no dock, added to `tab`'s by the layout's rule and focused; false when refused.
-    #[cfg_attr(not(test), allow(dead_code, reason = "the dock's menu and drag units add panels"))]
     pub fn add(&mut self, tab: u64, panel: u64, mut handle: impl FnMut() -> FocusHandle) -> bool {
         if tab == panel || self.holding(panel).is_some() || self.is_inner(tab) {
             return false;
@@ -154,7 +158,6 @@ impl FleetView {
     }
 
     /// `panel`, a tab of one, joins `tab`'s dock focused; false when the layout refuses it.
-    #[cfg_attr(not(test), allow(dead_code, reason = "the dock's menu and drag units add panels"))]
     pub fn add_panel(&mut self, tab: u64, panel: u64, cx: &mut Context<Self>) -> bool {
         if self.tab(tab).is_none() || self.tab(panel).is_none() || self.docks.of(panel).is_some() || !self.docks.add(tab, panel, || cx.focus_handle()) {
             return false;
@@ -167,7 +170,6 @@ impl FleetView {
     }
 
     /// `panel` out of its dock, a tab of its own after the tab it leaves.
-    #[cfg_attr(not(test), allow(dead_code, reason = "the panel drag's unit takes panels out"))]
     pub fn remove_panel(&mut self, panel: u64, cx: &mut Context<Self>) -> bool {
         let Some((was, now)) = self.docks.remove(panel) else { return false };
         if was == panel {
@@ -329,4 +331,4 @@ fn panel_icon(tab: &Tab) -> Icon {
 }
 
 #[cfg(test)]
-mod tests;
+pub(in crate::view) mod tests;

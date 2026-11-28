@@ -11,6 +11,9 @@ use crate::view::menu::{ContextMenu, MenuAction, MenuItem};
 use crate::view::{FleetView, Tab, TabKind};
 use crate::work_view::{Binding, Target};
 
+mod add;
+use add::{add_details_item, add_git_item, add_work_item, with_adds};
+
 /// Where a tab's folder stands in git.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Repo {
@@ -124,16 +127,24 @@ impl FleetView {
         let holding = folder.as_deref().and_then(|f| self.entry_and_folder(f)).map(|(_, row)| row);
         let work = if holding.is_some() { Work::Reading } else { Work::NotListed };
         let title = tab.label();
-        let items = with_workman(self.tab_menu_items(id, folder.as_deref(), &repo, cx), folder.as_deref(), &work);
+        let (dock, details) = (self.dock_facts(id, cx), self.tab_details(tab, folder.as_deref()));
+        let adds = [add_git_item(folder.as_deref(), &repo, &dock), add_work_item(folder.as_deref(), &work, &dock), add_details_item(folder.as_deref(), details.as_ref(), &dock)];
+        let items = with_adds(with_workman(self.tab_menu_items(id, folder.as_deref(), &repo, cx), folder.as_deref(), &work), adds);
         self.dialogs.menu = Some(ContextMenu::new(title, position, items).anchored(format!("tab-{id}")));
         cx.notify();
         let Some(folder) = folder else { return };
         if repo == Repo::Reading {
             let at = folder.clone();
-            let read = cx.background_executor().spawn(async move { open_git_item(Some(&at), &repo_top(&at).map_or(Repo::Outside, Repo::Top)) });
+            let read = cx.background_executor().spawn(async move { repo_top(&at).map_or(Repo::Outside, Repo::Top) });
+            let folder = folder.clone();
             cx.spawn(async move |this, cx| {
-                let item = read.await;
-                this.update(cx, |this, cx| this.replace_tab_menu_item(id, position, item, cx)).ok();
+                let repo = read.await;
+                this.update(cx, |this, cx| {
+                    let add = add_git_item(Some(&folder), &repo, &this.dock_facts(id, cx));
+                    this.replace_tab_menu_item(id, position, open_git_item(Some(&folder), &repo), cx);
+                    this.replace_tab_menu_item(id, position, add, cx);
+                })
+                .ok();
             })
             .detach();
         }
@@ -150,8 +161,12 @@ impl FleetView {
                 Binding::Unbound => Work::Unbound,
                 Binding::Unavailable(why) => Work::Unavailable(why),
             };
-            let item = workman_item(Some(&folder), &work);
-            this.update(cx, |this, cx| this.replace_tab_menu_item(id, position, item, cx)).ok();
+            this.update(cx, |this, cx| {
+                let add = add_work_item(Some(&folder), &work, &this.dock_facts(id, cx));
+                this.replace_tab_menu_item(id, position, workman_item(Some(&folder), &work), cx);
+                this.replace_tab_menu_item(id, position, add, cx);
+            })
+            .ok();
         })
         .detach();
     }
@@ -208,6 +223,7 @@ impl FleetView {
                     view.clone().update(cx, |view, cx| view.show_project(project, cx));
                 }
             }
+            MenuAction::AddPanel { tab, added } => self.add_to_tab(tab, added, cx),
             MenuAction::CloseTab(id) => self.close_tab(id, cx),
             MenuAction::CloseOtherTabs(id) => {
                 self.activate_tab(id, cx);
