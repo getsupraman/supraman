@@ -181,6 +181,7 @@ impl RefPanel {
         let expand = button::Button::new(&self.hits, format!("{LIST}-expand")).icon(Icon::ChevronRight.svg(14., muted)).icon_only(tokens::bar::ICON_BUTTON).tone(button::Tone::Neutral)
             .rounded(tokens::radius::FULL)
             .tooltip(Tooltip::text("Expand the ref panel (Ctrl+J)"))
+            .dimmed(self.narrow.then_some("The tab is too narrow for the ref panel"))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_shut(cx)));
         let counts = self.counts();
         let sections = Section::ALL.into_iter().zip(counts).map(|(section, count)| {
@@ -290,7 +291,7 @@ impl Render for RefPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _stall = stall::section("render: ref panel");
         let bg: Hsla = cx.theme().colors().panel_background;
-        if self.shut {
+        if self.shown_shut() {
             let overlay = self.render_overlay(window, cx);
             let menu = self.render_menu(cx);
             return div().relative().h_full().bg(bg).text_sm().child(self.strip(cx)).children(overlay).children(menu);

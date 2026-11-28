@@ -16,6 +16,8 @@ pub(crate) const NAV_DEFAULT: f32 = 250.;
 pub(crate) const LIST_MIN: f32 = 300.;
 pub(crate) const DETAIL_MIN: f32 = 320.;
 pub(crate) const DETAIL_DEFAULT: f32 = 520.;
+/// The list's and the detail's least heights while the detail is under the list.
+pub(crate) const STACKED_MIN: Pixels = px(150.);
 const LOST: &str = "Work tabs open at their default widths until the file is fixed or removed";
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,7 +35,9 @@ pub(crate) fn path(home: &Path) -> PathBuf {
 }
 
 pub(crate) fn nav_split(hits: &HitTargets) -> SplitPane {
-    SplitPane { id: "work-nav-split".into(), min_first: px(NAV_MIN), min_second: px(LIST_MIN + DETAIL_MIN + 1.), default: px(NAV_DEFAULT), hits: hits.clone(), ..Default::default() }
+    let rest = detail_split(hits);
+    let min_second = rest.min_first + supraman_ui::tokens::stroke::HAIRLINE + rest.min_second;
+    SplitPane { id: "work-nav-split".into(), min_first: px(NAV_MIN), min_second, default: px(NAV_DEFAULT), hits: hits.clone(), ..Default::default() }
 }
 
 pub(crate) fn detail_split(hits: &HitTargets) -> SplitPane {
@@ -97,6 +101,9 @@ impl Layout {
 
 impl WorkView {
     pub(crate) fn toggle_nav(&mut self, cx: &mut Context<Self>) {
+        if self.nav_narrow() {
+            return;
+        }
         self.layout.sizes.nav_shut = !self.layout.sizes.nav_shut;
         self.layout.keep(cx);
         cx.notify();

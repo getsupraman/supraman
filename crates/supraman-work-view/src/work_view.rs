@@ -10,6 +10,7 @@ pub mod inbox_card;
 mod item;
 mod keys;
 mod layout;
+mod narrow;
 mod navigator;
 pub(crate) mod overview;
 mod projects;
@@ -278,6 +279,7 @@ pub struct WorkView {
     focus: FocusHandle,
     pub(crate) panes: Panes,
     pub(crate) layout: layout::Layout,
+    narrow: narrow::Narrow,
     link: FleetLink,
     pub(crate) open_link_with: fn(&Link, &mut App),
     inbox: Option<Entity<WorkInbox>>,
@@ -363,6 +365,7 @@ impl WorkView {
             focus: cx.focus_handle(),
             panes: Panes { nav: cx.focus_handle(), main: cx.focus_handle(), detail: cx.focus_handle() },
             layout: layout::Layout::default(),
+            narrow: narrow::Narrow::default(),
             link,
             open_link_with,
             inbox: None,
@@ -784,6 +787,7 @@ impl Render for WorkView {
             .flex()
             .bg(colors.editor_background)
             .text_color(colors.text)
+            .child(self.width_probe(cx))
             .child(body)
             .children(self.render_palette())
             .children(self.toast.render(&self.hits, "work-toast", cx))
@@ -799,28 +803,22 @@ impl WorkView {
             let pane = focus::Pane::new(self.hits.key(FOCUS_MAIN), &self.panes.main).paint();
             return div().relative().size_full().track_focus(&self.panes.main).child(page).child(hit_target(&self.hits, "work-page".into())).child(pane).into_any_element();
         };
-        let list = div().relative().flex_grow(1.).flex_basis(px(layout::LIST_MIN)).min_w_0().h_full().track_focus(&self.panes.main).child(self.render_run_page(&run, self.keys_in.1, cx));
+        let list = div().relative().min_w_0().track_focus(&self.panes.main).child(self.render_run_page(&run, self.keys_in.1, cx));
         let list = list.child(focus::Pane::new(self.hits.key(FOCUS_MAIN), &self.panes.main).paint());
-        let detail = div().flex_shrink(1.).min_w_0().w(self.layout.detail()).h_full().relative().border_l(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border).track_focus(&self.panes.detail).child(self.render_detail(cx));
+        let detail = div().flex_shrink(1.).min_w_0().relative().border_l(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border).track_focus(&self.panes.detail).child(self.render_detail(cx));
         let detail = detail.child(hit_target(&self.hits, "work-detail-column".into())).child(focus::Pane::new(self.hits.key(FOCUS_DETAIL), &self.panes.detail).paint());
-        layout::detail_split(&self.hits)
-            .render_second(list, detail, |this: &mut WorkView, width, cx| {
-                this.layout.set_detail(width);
-                cx.notify();
-            }, |this: &mut WorkView, cx| this.layout.keep(cx), cx)
-            .size_full()
-            .into_any_element()
+        self.list_and_detail(list, detail, cx)
     }
 
     fn render_columns(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let main = self.render_main(cx);
-        if self.layout.nav_shut() {
+        if self.nav_shown_shut() {
             let strip = div().flex_none().h_full().border_r(tokens::stroke::HAIRLINE).border_color(cx.theme().colors().border).child(self.render_nav_strip(cx));
             return div().flex().size_full().child(strip).child(div().flex_1().min_w_0().h_full().child(main)).into_any_element();
         }
         let nav = div().relative().flex_shrink(0.5).min_w_0().overflow_hidden().w(self.layout.nav()).h_full().track_focus(&self.panes.nav).child(self.render_navigator(cx));
         let nav = nav.child(focus::Pane::new(self.hits.key(FOCUS_NAV), &self.panes.nav).paint());
-        let rest = div().flex_grow(1.).flex_basis(px(layout::LIST_MIN + layout::DETAIL_MIN + 1.)).min_w_0().h_full().child(main);
+        let rest = div().flex_grow(1.).flex_basis(layout::nav_split(&self.hits).min_second).min_w_0().h_full().child(main);
         layout::nav_split(&self.hits)
             .render(nav, rest, |this: &mut WorkView, width, cx| {
                 this.layout.set_nav(width);

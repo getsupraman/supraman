@@ -75,7 +75,8 @@ impl GitView {
     fn remote_button(&self, key: &'static str, icon: Icon, caption: SharedString, why_not: Option<String>, tooltip: String, cx: &mut Context<Self>) -> button::Button {
         let colors = cx.theme().colors();
         let fg = if why_not.is_none() { colors.text } else { colors.text_muted };
-        let button = button::Button::toolbar(&self.hits, key).icon(icon.svg(14., fg)).text_color(fg).child(caption);
+        let button = button::Button::toolbar(&self.hits, key).icon(icon.svg(14., fg)).text_color(fg);
+        let button = if self.compact_toolbar() { button } else { button.child(caption) };
         if let Some(why) = why_not {
             return button.dimmed(Some(why));
         }

@@ -16,6 +16,7 @@ mod keys;
 pub(crate) mod layout;
 mod live;
 mod load;
+mod narrow;
 mod pages;
 pub mod probe;
 mod prompt;
@@ -86,6 +87,10 @@ const PANEL_WIDTH: Pixels = px(380.);
 pub(crate) const TOOLBAR: Pixels = px(35.);
 const GRAPH_MIN: f32 = 320.;
 const PANEL_MIN: f32 = 260.;
+/// The graph's and the commit panel's least heights while the panel is under the graph.
+const STACKED_MIN: Pixels = px(130.);
+/// The toolbar's width with every button's words.
+const TOOLBAR_FULL: Pixels = px(400.);
 /// The ref panel shrinks this much faster than the graph and the commit panel beside it.
 const REFS_SHRINK: f32 = 1000.;
 /// The hit keys of the ref panel's, the graph's and the commit panel's places.
@@ -142,6 +147,11 @@ fn columns(graph_max: Option<Pixels>) -> Vec<Column> {
     ]
 }
 
+/// The graph beside the commit panel; its id also names the split while the panel is under the graph.
+fn graph_split(hits: &HitTargets) -> SplitPane {
+    SplitPane { id: "git-split".into(), min_first: px(GRAPH_MIN), min_second: px(PANEL_MIN), default: PANEL_WIDTH, hits: hits.clone(), ..Default::default() }
+}
+
 /// What is selected, for the commit details beside the graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Selected {
@@ -188,6 +198,7 @@ pub struct GitView {
     wip_panel: Entity<WipPanel>,
     worktree_panel: Entity<WorktreePanel>,
     panel_width: Pixels,
+    narrow: narrow::Narrow,
     ref_panel: Entity<RefPanel>,
     seek: Option<seek::Seek>,
     /// Why a pick or a key selected nothing, over the graph.
@@ -279,6 +290,7 @@ impl GitView {
                 wip_panel,
                 worktree_panel,
                 panel_width: PANEL_WIDTH,
+                narrow: narrow::Narrow::default(),
                 ref_panel,
                 seek: None,
                 toast: ToastSlot::default(),
@@ -747,9 +759,10 @@ impl GitView {
         if self.own_graph {
             return;
         }
-        let lanes = self.graph_max.unwrap_or(px(graph::MAX_FIT));
+        let fit = px(graph::MAX_FIT);
+        let lanes = self.graph_max.unwrap_or(fit);
         if let Some(width) = self.widths.get_mut(1) {
-            *width = (*width).max(lanes.min(px(graph::MAX_FIT))).min(lanes).max(px(graph::MIN_WIDTH));
+            *width = (*width).max(lanes.min(fit)).min(lanes).max(px(graph::MIN_WIDTH));
         }
     }
 
@@ -882,29 +895,27 @@ impl GitView {
             None => self.render_graph(cx),
         };
         let toast = self.toast.render(&self.hits, "git-toast", cx).map(|t| deferred(t).with_priority(supraman_ui::tokens::Layer::OverPrompt.priority()));
-        let table = div().relative().flex_1().min_w_0().h_full().child(first).child(hit_target(&self.hits, GRAPH_PANE.into())).child(pane.paint()).children(toast);
-        let panel = div().relative().flex_shrink(1.).min_w_0().flex().flex_col().w(self.panel_width).h_full().track_focus(&self.panel_focus).child(self.render_panel(cx)).child(hit_target(&self.hits, PANEL_PANE.into()));
+        let table = div().relative().min_w_0().child(first).child(hit_target(&self.hits, GRAPH_PANE.into())).child(pane.paint()).children(toast);
+        let panel = div().relative().flex_shrink(1.).min_w_0().flex().flex_col().track_focus(&self.panel_focus).child(self.render_panel(cx)).child(hit_target(&self.hits, PANEL_PANE.into()));
         let panel = panel.child(focus::Pane::new(self.hits.key(FOCUS_PANEL), &self.panel_focus).paint());
-        let split = SplitPane { id: "git-split".into(), min_first: px(GRAPH_MIN), min_second: px(PANEL_MIN), default: PANEL_WIDTH, hits: self.hits.clone(), ..Default::default() }
-            .render_second(table, panel, |this: &mut GitView, width, cx| {
-                this.panel_width = width;
-                cx.notify();
-            }, |this: &mut GitView, cx| this.keep_layout(cx), cx)
-            .size_full();
-        self.with_refs(split.into_any_element(), cx)
+        let split = self.graph_and_panel(table, panel, cx);
+        self.with_refs(split, cx)
     }
 
     /// `rest` right of the ref panel, which in a narrow tab gives its width before the graph and commit panel do.
     fn with_refs(&mut self, rest: AnyElement, cx: &mut Context<Self>) -> AnyElement {
+        let narrow = !self.refs_fit();
+        self.ref_panel.update(cx, |p, cx| p.set_narrow(narrow, cx));
         let refs = self.ref_panel.read(cx);
-        let (shut, width) = (refs.shut(), refs.width());
+        let (shut, width) = (refs.shown_shut(), refs.width());
         let panel = self.ref_panel.clone();
         if shut {
             let border = cx.theme().colors().border;
             let strip = div().flex_none().h_full().border_r(tokens::stroke::HAIRLINE).border_color(border).child(panel);
             return div().flex().size_full().child(strip).child(div().flex_1().min_w_0().h_full().child(rest)).into_any_element();
         }
-        let rest_min = px(GRAPH_MIN + PANEL_MIN + 1.);
+        let beside = graph_split(&self.hits);
+        let rest_min = beside.min_first + beside.min_second + tokens::stroke::HAIRLINE;
         let left = div().relative().flex_shrink(REFS_SHRINK).min_w_0().overflow_hidden().w(width).h_full().child(panel).child(hit_target(&self.hits, REFS_PANE.into()));
         let rest = div().flex_grow(1.).flex_basis(rest_min).min_w_0().h_full().child(rest);
         SplitPane { id: "refpanel-split".into(), min_first: ref_panel::MIN_WIDTH, min_second: rest_min, default: ref_panel::DEFAULT_WIDTH, hits: self.hits.clone(), ..Default::default() }
@@ -1000,6 +1011,7 @@ impl Render for GitView {
             .text_sm()
             .flex()
             .flex_col()
+            .child(self.width_probe(cx))
             .child(self.toolbar(cx))
             .child(
                 div()
