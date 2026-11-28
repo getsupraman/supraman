@@ -14,7 +14,8 @@ pub const ADD_MAX: usize = 3;
 pub const DEPTH: usize = 2;
 
 /// A dock's panels: a leaf, or a split whose `ratio` is `first`'s share of its room along `axis`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Layout<P> {
     Leaf(P),
     Split { axis: Axis, ratio: f32, first: Box<Layout<P>>, second: Box<Layout<P>> },
@@ -88,6 +89,14 @@ impl<P: Copy + Eq> Layout<P> {
                 first.collect(out);
                 second.collect(out);
             }
+        }
+    }
+
+    /// The same splits over `f` of each panel.
+    pub fn map<Q>(&self, f: &impl Fn(P) -> Q) -> Layout<Q> {
+        match self {
+            Layout::Leaf(p) => Layout::Leaf(f(*p)),
+            Layout::Split { axis, ratio, first, second } => Layout::Split { axis: *axis, ratio: *ratio, first: Box::new(first.map(f)), second: Box::new(second.map(f)) },
         }
     }
 

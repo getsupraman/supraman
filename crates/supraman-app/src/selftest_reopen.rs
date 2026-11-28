@@ -75,6 +75,7 @@ fn kinds(saved: &SavedTabs) -> Vec<&'static str> {
             SavedTab::Attach { .. } => "attach",
             SavedTab::Work { .. } => "work",
             SavedTab::Git { .. } => "git",
+            SavedTab::Dock { .. } => "dock",
         })
         .collect()
 }

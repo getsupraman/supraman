@@ -111,6 +111,16 @@ impl Docks {
         true
     }
 
+    /// A reopened dock: `layout` over panels in no dock, `tab` and `focused` among them; false when it does not fit.
+    pub fn restore(&mut self, tab: u64, layout: Layout<u64>, focused: u64, mut handle: impl FnMut() -> FocusHandle) -> bool {
+        let panels = layout.panels();
+        if panels.len() < 2 || !layout.is_valid() || !panels.contains(&tab) || !panels.contains(&focused) || panels.iter().any(|p| self.holding(*p).is_some()) {
+            return false;
+        }
+        self.docks.push(TabDock { tab, layout, focused, focus: panels.into_iter().map(|p| (p, handle())).collect() });
+        true
+    }
+
     /// A divider's drag or a move inside the dock; a layout of other panels is refused.
     pub fn set_layout(&mut self, tab: u64, layout: Layout<u64>) -> bool {
         let Some(dock) = self.docks.iter_mut().find(|d| d.tab == tab) else { return false };

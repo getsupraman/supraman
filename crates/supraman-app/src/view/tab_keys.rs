@@ -121,10 +121,12 @@ impl FleetView {
         }
     }
 
-    /// Called before a tab closes, by its × or a chord; a tab already detaching was remembered by the close that began it.
-    pub(super) fn remember_closed(&mut self, id: u64, cx: &mut gpui::App) {
-        let closing = self.tab(id).filter(|tab| !matches!(tab.detach, Detach::Detaching | Detach::Pending));
-        if let Some(saved) = closing.and_then(|tab| self.saved_tab(tab, cx)) {
+    /// Called before a panel closes, by its × or a chord, `whole` its tab's dock with it; a panel already detaching was
+    /// remembered by the close that began it.
+    pub(super) fn remember_closed(&mut self, id: u64, whole: bool, cx: &mut gpui::App) {
+        let closing = |tab: &super::Tab| !matches!(tab.detach, Detach::Detaching | Detach::Pending);
+        let saved = if whole { self.saved_entry(id, closing, cx) } else { self.tab(id).filter(|t| closing(t)).and_then(|t| self.saved_tab(t, cx)) };
+        if let Some(saved) = saved {
             self.tab_keys.update(cx, |keys, _| keys.push(saved));
         }
     }
