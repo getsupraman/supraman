@@ -152,8 +152,7 @@ impl FleetView {
                 tab.title = title;
                 tab.cwd = Some(cwd.clone());
                 let id = tab.id;
-                self.active = Some(id);
-                cx.notify();
+                self.activate_tab(id, cx);
                 id
             }
             None => self.push_tab(title, TabKind::Shell, Some(cwd.clone()), cx),
