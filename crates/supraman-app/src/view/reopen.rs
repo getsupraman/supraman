@@ -13,7 +13,7 @@ use crate::{fleet, tab_card};
 
 const SAVE_FAILED: &str = "Cannot save the open tabs";
 
-type Planned = (Vec<(String, Result<Reopen, String>)>, Option<usize>, Option<String>);
+pub(super) type Planned = (Vec<(String, Result<Reopen, String>)>, Option<usize>, Option<String>);
 
 impl FleetView {
     pub(super) fn tabs_writer(home: Option<PathBuf>, cx: &mut Context<Self>) -> futures::channel::mpsc::UnboundedSender<SavedTabs> {
@@ -51,13 +51,22 @@ impl FleetView {
     pub fn saved_tabs(&self, cx: &App) -> SavedTabs {
         let mut saved = SavedTabs::default();
         for tab in self.headers().filter(|t| !t.exited) {
-            let Some(one) = self.saved_tab(tab, cx) else { continue };
+            let Some(one) = self.saved_entry(tab.id, |t| !t.exited, cx) else { continue };
             if self.active == Some(tab.id) {
                 saved.active = Some(saved.tabs.len());
             }
             saved.tabs.push(one);
         }
         saved
+    }
+
+    /// The strip's tab `tab` as one entry: its dock whole, of the panels `keep` keeps.
+    pub(super) fn saved_entry(&self, tab: u64, keep: impl Fn(&Tab) -> bool, cx: &App) -> Option<SavedTab> {
+        let one = |p: u64| self.tab(p).filter(|t| keep(t)).and_then(|t| self.saved_tab(t, cx));
+        match self.docks.of(tab) {
+            Some(dock) => saved_tabs::dock(&dock.layout, dock.tab, dock.focused, one),
+            None => one(tab),
+        }
     }
 
     pub(super) fn saved_tab(&self, tab: &Tab, cx: &App) -> Option<SavedTab> {
@@ -129,7 +138,7 @@ impl FleetView {
         .detach();
     }
 
-    fn apply_reopen(&mut self, planned: Option<Planned>, cx: &mut Context<Self>) {
+    pub(super) fn apply_reopen(&mut self, planned: Option<Planned>, cx: &mut Context<Self>) {
         self.saving.tabs_reopening = false;
         self.saving.tabs_restored = true;
         let Some((plans, active, notice)) = planned else {
@@ -142,11 +151,12 @@ impl FleetView {
         for (i, (title, plan)) in plans.into_iter().enumerate() {
             match plan {
                 Ok(reopen) => {
-                    let id = self.open_reopened(reopen, cx);
+                    let (id, ids, lost) = self.open_entry(reopen, cx);
                     if active == Some(i) {
-                        active_id = Some(id);
+                        active_id = id;
                     }
-                    opened.push(id);
+                    opened.extend(ids);
+                    gone.extend(lost);
                 }
                 Err(why) => gone.push(format!("{title} ({why})")),
             }
@@ -182,14 +192,48 @@ impl FleetView {
             let Some((title, plan)) = planned.await else { return };
             this.update(cx, |this, cx| match plan {
                 Ok(reopen) => {
-                    let id = this.open_reopened(reopen, cx);
-                    this.activate_tab(id, cx);
+                    let (id, _, lost) = this.open_entry(reopen, cx);
+                    if let Some(id) = id {
+                        this.show_panel(this.docks.focused(id), cx);
+                    }
+                    if !lost.is_empty() {
+                        this.pane_toast.show_why(format!("Not reopened: {}", lost.join("; ")), |v: &mut Self| &mut v.pane_toast, cx);
+                    }
                 }
                 Err(why) => this.pane_toast.show_why(format!("{title} not reopened: {why}"), |v: &mut Self| &mut v.pane_toast, cx),
             })
             .ok();
         })
         .detach();
+    }
+
+    /// A planned entry opened: the strip's tab it is, every panel it opened (that tab's first) and the panels not reopened.
+    fn open_entry(&mut self, reopen: Reopen, cx: &mut Context<Self>) -> (Option<u64>, Vec<u64>, Vec<String>) {
+        let Reopen::Dock { panels, layout, focused } = reopen else {
+            let id = self.open_reopened(reopen, cx);
+            return (Some(id), vec![id], Vec::new());
+        };
+        let mut lost = Vec::new();
+        let ids: Vec<Option<u64>> = panels
+            .into_iter()
+            .map(|(title, plan)| match plan {
+                Ok(reopen) => Some(self.open_reopened(reopen, cx)),
+                Err(why) => {
+                    lost.push(format!("{title} ({why})"));
+                    None
+                }
+            })
+            .collect();
+        let mut opened: Vec<u64> = ids.iter().flatten().copied().collect();
+        let docked = saved_tabs::docked(&layout, focused, &ids).filter(|(tab, layout, focused)| self.docks.restore(*tab, layout.clone(), *focused, || cx.focus_handle()));
+        let tab = match docked {
+            Some((tab, ..)) => {
+                opened.sort_by_key(|id| *id != tab);
+                Some(tab)
+            }
+            None => opened.first().copied(),
+        };
+        (tab, opened, lost)
     }
 
     fn open_reopened(&mut self, reopen: Reopen, cx: &mut Context<Self>) -> u64 {
@@ -202,6 +246,7 @@ impl FleetView {
             Reopen::Resume { title, session } => self.resume_titled(title, &session, cx),
             Reopen::Work { target } => self.open_work(target, cx),
             Reopen::Git { title, folder } => self.open_git(folder, title, cx),
+            Reopen::Dock { .. } => self.open_entry(reopen, cx).0.unwrap_or_default(),
             Reopen::Placeholder(saved) => {
                 let session = saved.session();
                 let id = self.push_tab(saved.title().to_string(), TabKind::Saved(saved.clone()), saved.cwd().map(Path::to_path_buf), cx);
@@ -315,6 +360,6 @@ pub(super) fn kind_of(saved: &SavedTab) -> Option<tab_card::Kind> {
     match saved {
         SavedTab::Claude { .. } => Some(tab_card::Kind::Hand),
         SavedTab::Attach { .. } => Some(tab_card::Kind::Attach),
-        SavedTab::Shell { .. } | SavedTab::Work { .. } | SavedTab::Git { .. } => None,
+        SavedTab::Shell { .. } | SavedTab::Work { .. } | SavedTab::Git { .. } | SavedTab::Dock { .. } => None,
     }
 }

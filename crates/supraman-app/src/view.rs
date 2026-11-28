@@ -807,12 +807,19 @@ impl FleetView {
 
     /// The tab and every panel of its dock; a panel in another's dock alone.
     pub fn close_tab(&mut self, id: u64, cx: &mut Context<Self>) {
-        let panels = if self.docks.is_inner(id) { vec![id] } else { self.docks.panels(id) };
-        panels.into_iter().for_each(|p| self.close_panel(p, cx));
+        if self.docks.is_inner(id) {
+            return self.close_panel(id, cx);
+        }
+        self.remember_closed(id, true, cx);
+        self.docks.panels(id).into_iter().for_each(|p| self.drop_panel(p, cx));
     }
 
     pub fn close_panel(&mut self, id: u64, cx: &mut Context<Self>) {
-        self.remember_closed(id, cx);
+        self.remember_closed(id, false, cx);
+        self.drop_panel(id, cx);
+    }
+
+    fn drop_panel(&mut self, id: u64, cx: &mut Context<Self>) {
         let Some(tab) = self.tab_mut(id) else {
             return;
         };

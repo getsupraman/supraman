@@ -4,11 +4,12 @@ use supraman_claude::{Kind, Session, is_session_id};
 use supraman_core::FM_PREFIX;
 use supraman_core::fs::{load_json_or_notice, write_atomic};
 use serde::{Deserialize, Serialize};
+use supraman_ui::dock::layout::Layout;
 
 use crate::fleet;
 use crate::work_view::Target;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SavedTab {
     /// `shell` is what the tab ran; without it the tab reopens with the default shell.
@@ -23,15 +24,22 @@ pub enum SavedTab {
     Attach { title: String, cwd: PathBuf, id: String, session_id: Option<String>, name: String },
     Work { title: String, target: Target },
     Git { title: String, folder: PathBuf },
+    /// A tab of two or more panels, its own first; `layout` and `focused` index `panels`.
+    Dock { panels: Vec<SavedTab>, layout: Layout<usize>, focused: usize },
 }
 
 impl SavedTab {
     /// A hand tab's session as the newest of its `continued-in` chain (`newest`), where a resume or attach finds it.
     pub fn followed(self, newest: impl Fn(&str) -> String) -> Self {
+        self.follow(&newest)
+    }
+
+    fn follow(self, newest: &dyn Fn(&str) -> String) -> Self {
         match self {
             SavedTab::Claude { title, cwd, session_id: Some(sid), name } if is_session_id(&sid) => {
                 SavedTab::Claude { title, cwd, session_id: Some(newest(&sid)), name }
             }
+            SavedTab::Dock { panels, layout, focused } => SavedTab::Dock { panels: panels.into_iter().map(|p| p.follow(newest)).collect(), layout, focused },
             other => other,
         }
     }
@@ -39,13 +47,14 @@ impl SavedTab {
     pub fn title(&self) -> &str {
         match self {
             SavedTab::Shell { title, .. } | SavedTab::Claude { title, .. } | SavedTab::Attach { title, .. } | SavedTab::Work { title, .. } | SavedTab::Git { title, .. } => title,
+            SavedTab::Dock { panels, .. } => panels.first().map_or("", SavedTab::title),
         }
     }
 
     pub fn cwd(&self) -> Option<&Path> {
         match self {
             SavedTab::Shell { cwd, .. } | SavedTab::Claude { cwd, .. } | SavedTab::Attach { cwd, .. } | SavedTab::Git { folder: cwd, .. } => Some(cwd),
-            SavedTab::Work { .. } => None,
+            SavedTab::Work { .. } | SavedTab::Dock { .. } => None,
         }
     }
 
@@ -78,7 +87,7 @@ pub struct SavedShell {
     pub args: Vec<String>,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SavedTabs {
     pub tabs: Vec<SavedTab>,
     /// Index into `tabs`.
@@ -99,7 +108,7 @@ pub fn save(home: &Path, tabs: &SavedTabs) -> Result<(), String> {
     write_atomic(&path, text).map_err(|e| format!("Cannot save the open tabs to {}: {e}", path.display()))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Reopen {
     Shell { title: String, cwd: PathBuf, shell: Option<SavedShell> },
     Attach { title: String, session: Session },
@@ -108,6 +117,8 @@ pub enum Reopen {
     Placeholder(SavedTab),
     Work { target: Target },
     Git { title: String, folder: PathBuf },
+    /// Each panel's own plan with its title, laid out as saved.
+    Dock { panels: Vec<(String, Result<Reopen, String>)>, layout: Layout<usize>, focused: usize },
 }
 
 pub struct World<'a> {
@@ -136,6 +147,13 @@ pub fn plan(saved: &SavedTab, world: &World) -> Result<Reopen, String> {
         SavedTab::Work { target, .. } if world.targets.contains(target) => Ok(Reopen::Work { target: target.clone() }),
         SavedTab::Work { target, .. } => Err(format!("{} is no longer listed", target.name())),
         SavedTab::Git { title, folder } => Ok(Reopen::Git { title: title.clone(), folder: folder.clone() }),
+        SavedTab::Dock { panels, layout, focused } => {
+            let planned = |p: &SavedTab| match p {
+                SavedTab::Dock { .. } => Err("a dock holds no dock".to_string()),
+                p => plan(p, world),
+            };
+            Ok(Reopen::Dock { panels: panels.iter().map(|p| (p.title().to_string(), planned(p))).collect(), layout: layout.clone(), focused: *focused })
+        }
         SavedTab::Claude { title, .. } => {
             let session = saved.session().ok_or_else(|| "it has no conversation to resume".to_string())?;
             let live = world.sessions.iter().find(|s| s.session_id == session.session_id && fleet::is_alive(&s.health(world.now)));
@@ -160,6 +178,48 @@ pub fn plan(saved: &SavedTab, world: &World) -> Result<Reopen, String> {
             Ok(Reopen::Placeholder(saved.clone()))
         }
     }
+}
+
+/// `tab`'s dock as one entry, its own panel first: a panel `saved` leaves out closes up, and a dock left with one
+/// panel is that panel.
+pub fn dock(layout: &Layout<u64>, tab: u64, focused: u64, saved: impl Fn(u64) -> Option<SavedTab>) -> Option<SavedTab> {
+    let mut order = layout.panels();
+    order.sort_by_key(|p| *p != tab);
+    let (mut layout, mut panels, mut kept) = (layout.clone(), Vec::new(), Vec::new());
+    for p in order {
+        match saved(p) {
+            Some(one) => {
+                panels.push(one);
+                kept.push(p);
+            }
+            None => layout = layout.remove(p)?,
+        }
+    }
+    if panels.len() < 2 {
+        return panels.pop();
+    }
+    let index = |p: u64| kept.iter().position(|k| *k == p);
+    Some(SavedTab::Dock { layout: layout.map(&|p| index(p).unwrap_or_default()), focused: index(focused).unwrap_or_default(), panels })
+}
+
+/// A saved dock over the ids its panels reopened as (`None`: not reopened), its own panel at 0: the tab, its layout
+/// with the failures closed up, and the focused panel; `None` when fewer than two came back or they do not lay out.
+pub fn docked(layout: &Layout<usize>, focused: usize, ids: &[Option<u64>]) -> Option<(u64, Layout<u64>, u64)> {
+    let mut indices = layout.panels();
+    indices.sort_unstable();
+    if !layout.is_valid() || !indices.iter().copied().eq(0..ids.len()) {
+        return None;
+    }
+    let mut layout = layout.clone();
+    for (i, _) in ids.iter().enumerate().filter(|(_, id)| id.is_none()) {
+        layout = layout.remove(i)?;
+    }
+    let layout = layout.map(&|i| ids[i].unwrap_or_default());
+    if matches!(layout, Layout::Leaf(_)) || !layout.is_valid() {
+        return None;
+    }
+    let tab = ids[0].unwrap_or_else(|| layout.panels()[0]);
+    Some((tab, layout, ids.get(focused).copied().flatten().unwrap_or(tab)))
 }
 
 #[cfg(test)]
@@ -191,6 +251,108 @@ mod tests {
             pid,
             started_at: None,
         }
+    }
+
+    fn panel(id: u64) -> SavedTab {
+        SavedTab::Git { title: format!("Git · {id}"), folder: format!("C:/r{id}").into() }
+    }
+
+    /// Every layout a dock reaches by the menu's add and the edge drops, each split given a ratio of its own.
+    fn reachable() -> Vec<Layout<u64>> {
+        use supraman_ui::dock::layout::{Dropped, Zone};
+        let mut all = vec![Layout::Leaf(1)];
+        let mut at = 0;
+        while at < all.len() {
+            let (from, next) = (all[at].clone(), all[at].len() as u64 + 1);
+            let mut grown: Vec<Layout<u64>> = from.add(next).into_iter().collect();
+            for target in from.panels() {
+                for zone in [Zone::Left, Zone::Right, Zone::Top, Zone::Bottom] {
+                    if let Some(Dropped::Layout(l)) = from.drop(target, zone, next) {
+                        grown.push(l);
+                    }
+                }
+            }
+            for l in grown {
+                if !all.contains(&l) {
+                    all.push(l);
+                }
+            }
+            at += 1;
+        }
+        all.into_iter()
+            .filter(|l| l.len() > 1)
+            .map(|l| [(&[][..], 0.3), (&[0][..], 0.7), (&[1][..], 0.6)].iter().fold(l, |l, (path, r)| l.with_ratio(path, *r).unwrap_or(l)))
+            .collect()
+    }
+
+    #[test]
+    fn a_dock_of_every_reachable_layout_round_trips_with_its_ratios_and_focused_panel() {
+        let layouts = reachable();
+        assert!(layouts.iter().any(|l| l.len() == 4) && layouts.iter().any(|l| matches!(l, Layout::Split { axis: supraman_ui::dock::layout::Axis::Rows, .. })), "quarters and rows reached");
+        let home = tempfile::tempdir().unwrap();
+        for layout in layouts {
+            let panels = layout.panels();
+            let (tab, focused) = (panels[panels.len() - 1], panels[0]);
+            let entry = dock(&layout, tab, focused, |p| Some(panel(p))).expect("a dock of saved panels");
+            let tabs = SavedTabs { tabs: vec![panel(9), entry], active: Some(1) };
+            save(home.path(), &tabs).unwrap();
+            let (back, notice) = load(home.path());
+            assert_eq!((&back, notice), (&tabs, None), "{layout:?}");
+            let SavedTab::Dock { panels: saved, layout: by_index, focused: at } = &back.tabs[1] else { panic!("a dock entry") };
+            assert_eq!(saved[0], panel(tab), "the tab's own panel first");
+            let ids: Vec<Option<u64>> = saved.iter().map(|p| p.title().strip_prefix("Git · ").and_then(|n| n.parse().ok())).collect();
+            assert_eq!(docked(by_index, *at, &ids), Some((tab, layout.clone(), focused)), "the same slots, ratios and focus");
+        }
+    }
+
+    #[test]
+    fn an_old_file_without_docks_reads_and_writes_flat_as_before() {
+        let old = r#"{"tabs":[{"kind":"git","title":"Git · repo","folder":"C:/r"},{"kind":"shell","title":"pwsh 1","cwd":"C:/a"}],"active":1}"#;
+        let tabs: SavedTabs = serde_json::from_str(old).unwrap();
+        assert!(tabs.tabs.iter().all(|t| !matches!(t, SavedTab::Dock { .. })));
+        assert_eq!(serde_json::to_string(&tabs).unwrap(), old, "flat tabs keep today's shape");
+    }
+
+    #[test]
+    fn a_saved_dock_leaves_out_unsaved_panels_and_one_left_is_a_plain_tab() {
+        let three = Layout::Leaf(1).add(2).unwrap().add(3).unwrap().with_ratio(&[], 0.25).unwrap();
+        let no_details = |p: u64| (p != 2).then(|| panel(p));
+        let Some(SavedTab::Dock { panels, layout, focused }) = dock(&three, 1, 3, no_details) else { panic!("two panels are a dock") };
+        assert_eq!((panels, focused), (vec![panel(1), panel(3)], 1));
+        assert_eq!(layout, Layout::Leaf(1).add(2).unwrap().with_ratio(&[], 0.25).unwrap().map(&|p: u64| p as usize - 1), "closed up, the ratio kept");
+        let Some(SavedTab::Dock { panels, .. }) = dock(&three, 2, 2, no_details) else { panic!() };
+        assert_eq!(panels[0], panel(1), "the tab's own unsaved: the next panel is the tab");
+        assert_eq!(dock(&three, 1, 1, |p| (p == 3).then(|| panel(p))), Some(panel(3)), "one left: a plain tab");
+        assert_eq!(dock(&three, 1, 1, |_| None), None);
+    }
+
+    #[test]
+    fn a_dock_whose_panels_fail_reopens_with_the_rest_closed_up() {
+        let three = Layout::Leaf(0usize).add(1).unwrap().add(2).unwrap().with_ratio(&[], 0.3).unwrap();
+        let back = |ids: &[Option<u64>], focused| docked(&three, focused, ids);
+        assert_eq!(back(&[Some(10), Some(11), Some(12)], 2), Some((10, three.map(&|i| 10 + i as u64), 12)));
+        let rest = Layout::Leaf(10).add(12).unwrap().with_ratio(&[], 0.3).unwrap();
+        assert_eq!(back(&[Some(10), None, Some(12)], 1), Some((10, rest, 10)), "the failed panel closes up; its focus goes to the tab");
+        let Some((tab, layout, focused)) = back(&[None, Some(11), Some(12)], 2) else { panic!("two came back") };
+        assert_eq!((tab, layout.panels(), focused), (11, vec![11, 12], 12), "the tab's own failed: the first left is the tab");
+        assert_eq!(back(&[None, Some(11), None], 1), None, "one left: a plain tab");
+        assert_eq!(back(&[None, None, None], 0), None);
+        assert_eq!(back(&[Some(10), Some(10), Some(12)], 0), None, "two panels reopened as one: flat");
+        assert_eq!(docked(&three, 0, &[Some(1), Some(2)]), None, "a layout over other indices: flat");
+    }
+
+    #[test]
+    fn a_dock_plans_each_panel_and_a_dock_inside_one_fails() {
+        let has = |_: &str, _: &Path| false;
+        let world = world(&[], &[], false, &has);
+        let gone = SavedTab::Git { title: "Git · x".into(), folder: "C:/gone".into() };
+        let inner = SavedTab::Dock { panels: vec![panel(1), panel(2)], layout: Layout::Leaf(0).add(1).unwrap(), focused: 0 };
+        let saved = SavedTab::Dock { panels: vec![panel(1), gone, inner], layout: Layout::Leaf(0).add(1).unwrap().add(2).unwrap(), focused: 1 };
+        let Ok(Reopen::Dock { panels, layout, focused }) = plan(&saved, &world) else { panic!("a dock plans") };
+        assert_eq!((layout.len(), focused), (3, 1));
+        assert_eq!(panels[0], ("Git · 1".into(), Ok(Reopen::Git { title: "Git · 1".into(), folder: "C:/r1".into() })));
+        assert!(panels[1].1.as_ref().is_err_and(|e| e.contains("is gone")));
+        assert_eq!(panels[2].1, Err("a dock holds no dock".into()));
     }
 
     #[test]
