@@ -3,12 +3,13 @@
 //! the `drop_over` look, or [`DropZone::zoned`] by the pointer's [`Zone`] in it). A resize is `split`'s divider.
 
 use std::any::{Any, TypeId};
+use std::cell::Cell;
 use std::marker::PhantomData;
 use std::rc::Rc;
 
 use gpui::{
     AnyWeakEntity, App, AppContext as _, Axis, Bounds, Context, Div, DragMoveEvent, Global, InteractiveElement, IntoElement, ParentElement, Pixels, Point, Render, SharedString,
-    StatefulInteractiveElement, Styled, Subscription, Window, div, point, prelude::FluentBuilder, px,
+    StatefulInteractiveElement, Styled, Subscription, Window, canvas, div, point, prelude::FluentBuilder, px,
 };
 use theme::ActiveTheme as _;
 
@@ -261,13 +262,20 @@ impl<E: InteractiveElement + Styled> DropZone<E> {
     }
 
     /// A target by the pointer's [`Zone`] in it, with no look of its own: `accepts` says which zones take a payload, read
-    /// with [`zone_over`] while it hovers one; let go there, `on_drop` gets the zone, once.
-    pub fn zoned<P: Clone + 'static>(self, accepts: impl Fn(&P, Zone, &Window, &App) -> bool + 'static, on_drop: impl Fn(&P, Zone, &mut Window, &mut App) + 'static) -> Self {
+    /// with [`zone_over`] while it hovers one; let go there, `on_drop` gets the zone, once, also when no move came over it
+    /// since it was painted.
+    pub fn zoned<P: Clone + 'static>(self, accepts: impl Fn(&P, Zone, &Window, &App) -> bool + 'static, on_drop: impl Fn(&P, Zone, &mut Window, &mut App) + 'static) -> Self
+    where
+        E: ParentElement,
+    {
         let Some(key) = self.key.clone() else { return self };
         let accepts = Rc::new(accepts);
         let (moved, dropped, takes) = (key.clone(), key, accepts.clone());
+        let painted = Rc::new(Cell::new(None::<Bounds<Pixels>>));
+        let kept = painted.clone();
         let el = self
             .el
+            .child(canvas(move |b, _, _| kept.set(Some(b)), |_, _, _, _| {}).absolute().size_full())
             .on_drag_move::<P>(move |e: &DragMoveEvent<P>, window, cx| {
                 let at = e.event.position;
                 let zone = e.bounds.contains(&at).then(|| zone_in(e.bounds, at)).filter(|z| accepts(e.drag(cx), *z, window, cx));
@@ -281,7 +289,9 @@ impl<E: InteractiveElement + Styled> DropZone<E> {
             })
             .on_drop::<P>(move |p, window, cx| {
                 let drag = cx.default_global::<Drag>();
-                let Some(zone) = drag.zone.take_if(|(k, ..)| *k == dropped).map(|(_, z, _)| z) else { return };
+                let at = window.mouse_position();
+                let under = || painted.get().filter(|b| b.contains(&at)).map(|b| zone_in(b, at));
+                let Some(zone) = drag.zone.take_if(|(k, ..)| *k == dropped).map(|(_, z, _)| z).or_else(under) else { return };
                 if takes(p, zone, window, cx) {
                     on_drop(p, zone, window, cx);
                 }
