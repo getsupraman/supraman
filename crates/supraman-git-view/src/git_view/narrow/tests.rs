@@ -93,3 +93,17 @@ fn narrow_the_ref_panel_shows_its_strip_first_and_the_panel_stays_beside_the_gra
     assert!(!hits.borrow().contains_key(REFS_PANE), "the strip");
     assert!(panel.left() >= graph.right() && graph.size.width >= px(crate::git_view::GRAPH_MIN), "beside: {graph:?} {panel:?}");
 }
+
+#[gpui::test]
+fn narrow_the_commit_panel_under_the_graph_shows_its_toolbar(cx: &mut TestAppContext) {
+    let f = Fixture::shared();
+    let (view, cx) = test_support::open(&f.dir, Opts::default().size(320., 720.), cx);
+    settle(&view, cx);
+    test_support::click(&view, "git-row-3", cx);
+    settle(&view, cx);
+    let hits = test_support::repaint(&view, cx);
+    for key in ["commit-sort", "commit-view-path", "commit-view-tree", "commit-all-files"] {
+        let hit = hits.borrow().get(key).copied().unwrap_or_else(|| panic!("{key} is painted"));
+        assert!(hit.fully_visible() && hit.bounds.right() <= px(321.), "{key} shown whole: {hit:?}");
+    }
+}

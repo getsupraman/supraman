@@ -8,7 +8,8 @@ use supraman_ui::tokens::stroke::HAIRLINE;
 
 use super::{GitView, PANEL_WIDTH, STACKED_MIN, TOOLBAR, TOOLBAR_FULL, graph_split, ref_panel};
 
-const STACKED_SHARE: f32 = 0.55;
+/// The graph's share while stacked: the commit panel under it needs its details, message and files' toolbar.
+const STACKED_SHARE: f32 = 0.4;
 
 /// The ref panel's strip beside a graph at its least width, over the toolbar and both stacked halves.
 pub fn min_size() -> Size<Pixels> {
