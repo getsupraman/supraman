@@ -11,11 +11,11 @@ use super::Docks;
 use crate::git_view::GitView;
 use crate::view::{FleetView, TabKind};
 
-const WITHIN: Duration = Duration::from_secs(30);
+pub(in crate::view) const WITHIN: Duration = Duration::from_secs(30);
 /// F12's escape sequence: a key the terminal writes itself and the Git view takes no action for.
 const F12: &[u8] = b"\x1b[24~";
 
-fn window(cx: &mut TestAppContext) -> (Entity<FleetView>, &mut VisualTestContext) {
+pub(in crate::view) fn window(cx: &mut TestAppContext) -> (Entity<FleetView>, &mut VisualTestContext) {
     cx.executor().allow_parking();
     cx.update(|cx| {
         supraman_editor::init(supraman_ui::fonts::MONO, 13., cx);
@@ -29,7 +29,7 @@ fn window(cx: &mut TestAppContext) -> (Entity<FleetView>, &mut VisualTestContext
     (view, cx)
 }
 
-fn draw(view: &Entity<FleetView>, cx: &mut VisualTestContext) {
+pub(in crate::view) fn draw(view: &Entity<FleetView>, cx: &mut VisualTestContext) {
     for _ in 0..2 {
         view.update(cx, |_, cx| cx.notify());
         cx.run_until_parked();
@@ -38,7 +38,7 @@ fn draw(view: &Entity<FleetView>, cx: &mut VisualTestContext) {
 }
 
 /// A shell tab whose display-only terminal logs what it writes to its PTY.
-fn shell(view: &Entity<FleetView>, cx: &mut VisualTestContext) -> (u64, Entity<Terminal>) {
+pub(in crate::view) fn shell(view: &Entity<FleetView>, cx: &mut VisualTestContext) -> (u64, Entity<Terminal>) {
     view.update(cx, |v, cx| {
         let id = v.push_tab(format!("shell {}", v.next_tab_id), TabKind::Shell, None, cx);
         let terminal = cx.new(|cx| TerminalBuilder::new_display_only(CursorShape::Bar, AlternateScroll::On, None, cx.background_executor(), PathStyle::local()).subscribe(cx));
@@ -47,7 +47,7 @@ fn shell(view: &Entity<FleetView>, cx: &mut VisualTestContext) -> (u64, Entity<T
     })
 }
 
-fn git_panel(view: &Entity<FleetView>, f: &Fixture, cx: &mut VisualTestContext) -> (u64, Entity<GitView>) {
+pub(in crate::view) fn git_panel(view: &Entity<FleetView>, f: &Fixture, cx: &mut VisualTestContext) -> (u64, Entity<GitView>) {
     view.update(cx, |v, cx| {
         let id = v.open_git(f.dir.clone(), "Git · repo".into(), cx);
         let Some(TabKind::Git(git)) = v.tab(id).map(|t| &t.kind) else { panic!("a Git panel") };
@@ -55,7 +55,7 @@ fn git_panel(view: &Entity<FleetView>, f: &Fixture, cx: &mut VisualTestContext) 
     })
 }
 
-fn keys(view: &Entity<FleetView>, cx: &mut VisualTestContext) -> Vec<String> {
+pub(in crate::view) fn keys(view: &Entity<FleetView>, cx: &mut VisualTestContext) -> Vec<String> {
     view.read_with(cx, |v, _| v.hits.borrow().keys().cloned().collect())
 }
 
@@ -69,7 +69,7 @@ fn written(terminal: &Entity<Terminal>, cx: &mut VisualTestContext) -> Vec<u8> {
     terminal.update(cx, |t, _| t.take_pty_write_log()).concat()
 }
 
-fn loaded(view: &Entity<FleetView>, git: &Entity<GitView>, cx: &mut VisualTestContext) {
+pub(in crate::view) fn loaded(view: &Entity<FleetView>, git: &Entity<GitView>, cx: &mut VisualTestContext) {
     eventually(WITHIN, "the Git panel's first load", polled(Duration::from_millis(20)), || {
         draw(view, cx);
         git.read_with(cx, |g, cx| !g.probe(cx).rows.is_empty()).then_some(())

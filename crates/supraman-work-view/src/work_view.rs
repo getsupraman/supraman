@@ -322,6 +322,11 @@ pub struct Opening {
 }
 
 impl WorkView {
+    /// The view and every part of it record their keys under `hits`' scope from now on: where its host paints it.
+    pub fn set_hits(&mut self, hits: &HitTargets) {
+        self.hits.rescope(hits);
+    }
+
     pub fn open<T: 'static>(opening: Opening, cx: &mut Context<T>) -> Entity<WorkView> {
         let hub = WorkHub::shared(opening.home.clone(), cx);
         let inbox = WorkInbox::shared(opening.home.clone(), cx);
@@ -336,6 +341,7 @@ impl WorkView {
     fn new(opening: Opening, hub: Entity<WorkHub>, cx: &mut Context<Self>) -> Self {
         cx.subscribe(&hub, Self::on_hub).detach();
         let Opening { target, folders, home, hits, link, open_link_with, repo_of } = opening;
+        let hits = hits.own();
         let mut view = WorkView {
             target,
             folders,

@@ -45,6 +45,8 @@ pub enum MenuAction {
     OpenGit(PathBuf),
     /// The Work tab of `target` on `project` ([`super::tab_menu`]).
     OpenWorkman { target: Target, project: String },
+    /// `added`'s panel placed in tab `tab`'s dock, moved there from wherever it shows ([`super::tab_menu`]).
+    AddPanel { tab: u64, added: Added },
     CloseTab(u64),
     CloseOtherTabs(u64),
     CloseTabsRight(u64),
@@ -58,6 +60,15 @@ pub enum MenuAction {
     ShowSubfolders { pos: Pos, path: PathBuf, show: bool },
     ExcludeFolder { parent: Pos, path: PathBuf },
     IncludeFolder { parent: Pos, path: PathBuf },
+}
+
+/// A panel a tab's menu adds from the tab's folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Added {
+    /// The repository whose top this is.
+    Git(PathBuf),
+    Work { target: Target, project: String },
+    Details(MenuTarget),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
