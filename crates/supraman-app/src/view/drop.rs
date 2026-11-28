@@ -1,10 +1,13 @@
-//! A tab or a session row dropped on a terminal pastes that session's SendMessage name there.
+//! A tab or a session row dropped on a terminal pastes that session's SendMessage name there; a tab through its dock's
+//! centre (`panel_drop`).
 
 use supraman_ui::dnd::DropZone;
-use supraman_ui::tabs::{DraggedSession, DraggedTab};
+use supraman_ui::tabs::DraggedSession;
 use gpui::{Context, Div, SharedString, div, prelude::*};
 
+use super::panel_drop::{Dragged, Kind, Rule, panel_drop};
 use super::{FleetView, Tab, TabKind, manage::send_name_of};
+use supraman_ui::dnd::Zone;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Source<'a> {
@@ -47,15 +50,8 @@ impl FleetView {
         let own = self.tab(tab_id).and_then(|t| self.tab_session_id(t));
         let overlay = div().absolute().top_0().right_0().bottom_0().left_0();
         DropZone::new(hits.key(&format!("terminal-drop-{tab_id}")), overlay)
-            .take::<DraggedTab>(
-                move |tab, _, _| tab.id != tab_id,
-                cx.listener(move |this, dragged: &DraggedTab, _, cx| {
-                    let session = this.tab(dragged.id).and_then(|t| this.tab_session_id(t));
-                    this.drop_on_terminal(tab_id, Source::Tab(dragged.id, session.as_deref()), dragged.title.clone(), cx);
-                }),
-            )
             .take::<DraggedSession>(
-                move |row, _, _| own.as_deref() != Some(row.session_id.as_str()),
+                move |row, _, _| own.as_deref() != Some(row.session_id.as_str()) && panel_drop(tab_id, Kind::Terminal, Zone::Centre, Dragged::Session(&row.session_id)) == Rule::Paste,
                 cx.listener(move |this, dragged: &DraggedSession, _, cx| {
                     this.drop_on_terminal(tab_id, Source::Session(&dragged.session_id), dragged.title.clone(), cx);
                 }),
@@ -63,7 +59,7 @@ impl FleetView {
             .element()
     }
 
-    fn drop_on_terminal(&mut self, target: u64, source: Source, title: SharedString, cx: &mut Context<Self>) {
+    pub(super) fn drop_on_terminal(&mut self, target: u64, source: Source, title: SharedString, cx: &mut Context<Self>) {
         let own = self.tab(target).and_then(|t| self.tab_session_id(t));
         match dropped(target, own.as_deref(), source) {
             Dropped::Nothing => {}

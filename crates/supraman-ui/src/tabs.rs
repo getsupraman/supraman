@@ -17,9 +17,9 @@ pub use fit::{CLOSE_ON_HOVER_BELOW, TAB_MAX, TAB_MIN, cut, max_scroll, revealed,
 pub use list::{LIST, TabEntry};
 
 use crate::controls::button;
-use crate::dnd::{self, Sortable, lands};
+use crate::dnd::{self, Edge as Side, Sortable, lands};
 #[cfg(test)]
-use crate::dnd::{Edge as Side, lands as landing};
+use crate::dnd::lands as landing;
 use crate::hit::{HitTargets, hit_target};
 use crate::icon::Icon;
 use crate::list::palette::{Palette, PaletteEvent};
@@ -44,11 +44,13 @@ pub struct TabHeader {
     pub tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
 }
 
-/// The payload of a tab being dragged, from any strip; other drop targets take it by its `id`.
+/// The payload of a tab being dragged from any strip, or of a panel out of the dock of the tab `dock`; other drop
+/// targets take it by its `id`.
 #[derive(Clone)]
 pub struct DraggedTab {
     pub id: u64,
     pub title: SharedString,
+    pub dock: Option<u64>,
 }
 
 /// The payload of a session row being dragged, by the session's `session_id`.
@@ -145,6 +147,50 @@ pub fn tab_strip<V: 'static>(
     window: &mut Window,
     cx: &mut Context<V>,
 ) -> Div {
+    let inserted = |_: &mut V, _, _, _: &mut Context<V>| {};
+    let on = Handlers { activate: &on_activate, close: &on_close, moved: &on_move, menu: &on_menu, inserted: &inserted };
+    strip(hits, tabs, trailing, active, close_icon, on, window, cx)
+}
+
+/// [`tab_strip`] that also takes a panel out of a dock (a [`DraggedTab`] with its `dock`): let go on a tab, it calls
+/// `on_insert(panel, at)`, `at` the strip's place it lands in, before that tab or after it by the pointer's half.
+#[allow(clippy::too_many_arguments)]
+pub fn tab_strip_taking_panels<V: 'static>(
+    hits: &HitTargets,
+    tabs: Vec<TabHeader>,
+    trailing: Option<AnyElement>,
+    active: Option<u64>,
+    close_icon: impl Fn() -> Svg,
+    on_activate: impl Fn(&mut V, u64, &mut Context<V>) + Clone + 'static,
+    on_close: impl Fn(&mut V, u64, &mut Context<V>) + Clone + 'static,
+    on_move: impl Fn(&mut V, usize, usize, &mut Context<V>) + Clone + 'static,
+    on_menu: impl Fn(&mut V, u64, Point<Pixels>, &mut Context<V>) + Clone + 'static,
+    on_insert: impl Fn(&mut V, u64, usize, &mut Context<V>) + Clone + 'static,
+    window: &mut Window,
+    cx: &mut Context<V>,
+) -> Div {
+    let on = Handlers { activate: &on_activate, close: &on_close, moved: &on_move, menu: &on_menu, inserted: &on_insert };
+    strip(hits, tabs, trailing, active, close_icon, on, window, cx)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn strip<V: 'static, A, C, M, U, I>(
+    hits: &HitTargets,
+    tabs: Vec<TabHeader>,
+    trailing: Option<AnyElement>,
+    active: Option<u64>,
+    close_icon: impl Fn() -> Svg,
+    on: Handlers<'_, A, C, M, U, I>,
+    window: &mut Window,
+    cx: &mut Context<V>,
+) -> Div
+where
+    A: Fn(&mut V, u64, &mut Context<V>) + Clone + 'static,
+    C: Fn(&mut V, u64, &mut Context<V>) + Clone + 'static,
+    M: Fn(&mut V, usize, usize, &mut Context<V>) + Clone + 'static,
+    U: Fn(&mut V, u64, Point<Pixels>, &mut Context<V>) + Clone + 'static,
+    I: Fn(&mut V, u64, usize, &mut Context<V>) + Clone + 'static,
+{
     let colors = cx.theme().colors();
     let (bar, border) = (colors.tab_bar_background, colors.border);
     let strip = window.use_keyed_state(STRIP, cx, |_, _| Strip::default());
@@ -161,7 +207,7 @@ pub fn tab_strip<V: 'static>(
     let mut row = div().id("tab-strip-scroll").size_full().flex().overflow_x_scroll().track_scroll(&strip.read(cx).scroll);
     for (ix, tab) in tabs.into_iter().enumerate() {
         let header = Header { ix, active, width, ids: &ids, strip: &strip };
-        let handlers = Handlers { activate: &on_activate, close: &on_close, moved: &on_move, menu: &on_menu };
+        let handlers = Handlers { activate: on.activate, close: on.close, moved: on.moved, menu: on.menu, inserted: on.inserted };
         row = row.child(header.render(hits, tab, &close_icon, handlers, cx));
     }
     div()
@@ -173,7 +219,7 @@ pub fn tab_strip<V: 'static>(
         .border_b(tokens::stroke::HAIRLINE)
         .border_color(border)
         .child(area(viewport(hits, &strip, row, fit, bar, cx), trailing, &strip, fit, cx))
-        .child(list_button(hits, entries, &strip, on_activate, cx))
+        .child(list_button(hits, entries, &strip, on.activate.clone(), cx))
 }
 
 /// The tabs' viewport, `room` wide, and the trailing element right after the last tab; it measures both.
@@ -252,11 +298,12 @@ fn sortable() -> Sortable<DraggedTab> {
     Sortable::new(STRIP, Axis::Horizontal)
 }
 
-struct Handlers<'a, A, C, M, U> {
+struct Handlers<'a, A, C, M, U, I> {
     activate: &'a A,
     close: &'a C,
     moved: &'a M,
     menu: &'a U,
+    inserted: &'a I,
 }
 
 struct Header<'a> {
@@ -268,8 +315,9 @@ struct Header<'a> {
 }
 
 impl Header<'_> {
-    fn render<V: 'static, A, C, M, U>(self, hits: &HitTargets, tab: TabHeader, close_icon: &impl Fn() -> Svg, on: Handlers<'_, A, C, M, U>, cx: &mut Context<V>) -> AnyElement
+    fn render<V: 'static, A, C, M, U, I>(self, hits: &HitTargets, tab: TabHeader, close_icon: &impl Fn() -> Svg, on: Handlers<'_, A, C, M, U, I>, cx: &mut Context<V>) -> AnyElement
     where
+        I: Fn(&mut V, u64, usize, &mut Context<V>) + Clone + 'static,
         A: Fn(&mut V, u64, &mut Context<V>) + Clone + 'static,
         C: Fn(&mut V, u64, &mut Context<V>) + Clone + 'static,
         M: Fn(&mut V, usize, usize, &mut Context<V>) + Clone + 'static,
@@ -280,7 +328,7 @@ impl Header<'_> {
         let is_active = self.active == Some(id);
         let group = SharedString::from(format!("tab-{id}"));
         let (close, middle, activate, menu) = (on.close.clone(), on.close.clone(), on.activate.clone(), on.menu.clone());
-        let (moved, over_ids, drop_ids) = (on.moved.clone(), self.ids.clone(), self.ids.clone());
+        let (moved, inserted, over_ids, drop_ids) = (on.moved.clone(), on.inserted.clone(), self.ids.clone(), self.ids.clone());
         let clicked = self.strip.clone();
         let close_button = button::Button::new(hits, format!("close-tab-{id}"))
             .icon(close_icon())
@@ -333,14 +381,25 @@ impl Header<'_> {
                 cx.notify();
             }));
         let key = format!("tab-{id}");
-        let lands = move |d: &DraggedTab, _: &App| over_ids.iter().position(|&t| t == d.id).and_then(|from| lands(from, ix));
-        let dropped = cx.listener(move |this, d: &DraggedTab, _, cx| {
-            if let Some(from) = drop_ids.iter().position(|&t| t == d.id) {
-                moved(this, from, ix, cx);
+        let lands = move |d: &DraggedTab, half: Side, _: &App| strip_lands(&over_ids, ix, d, half);
+        let dropped = cx.listener(move |this, (d, edge): &(DraggedTab, Side), _, cx| match d.dock {
+            Some(_) => inserted(this, d.id, if *edge == Side::After { ix + 1 } else { ix }, cx),
+            None => {
+                if let Some(from) = drop_ids.iter().position(|&t| t == d.id) {
+                    moved(this, from, ix, cx);
+                }
             }
         });
-        let header = sortable().item(header, key.clone(), lands, dropped, cx);
-        dnd::source(header, key, DraggedTab { id, title: tab.title }, cx).into_any_element()
+        let header = sortable().item_at(header, key.clone(), lands, move |d, edge, window, cx| dropped(&(d.clone(), edge), window, cx), cx);
+        dnd::source(header, key, DraggedTab { id, title: tab.title, dock: None }, cx).into_any_element()
+    }
+}
+
+/// Where a dragged tab over the strip's tab `ix` lands: one of its own by [`lands`], a dock's panel on the pointer's half.
+fn strip_lands(ids: &[u64], ix: usize, d: &DraggedTab, half: Side) -> Option<Side> {
+    match d.dock {
+        Some(_) => Some(half),
+        None => ids.iter().position(|&t| t == d.id).and_then(|from| lands(from, ix)),
     }
 }
 

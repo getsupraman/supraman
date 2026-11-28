@@ -120,6 +120,8 @@ struct Scroll {
 struct Drag {
     source: Option<(SharedString, TypeId, AnyWeakEntity)>,
     over: Option<(SharedString, SharedString, Option<Edge>)>,
+    /// The half of the item under `over` the pointer is in.
+    half: Option<Edge>,
     /// The drop zones painted `drop_over` since the pointer last moved.
     lit: Vec<SharedString>,
     /// The zoned target the pointer is over, the zone it accepts there and the payload.
@@ -316,27 +318,47 @@ impl<P: Payload> Sortable<P> {
     where
         E: InteractiveElement + ParentElement + Styled + FluentBuilder,
     {
+        self.item_at(el, key, move |p, _, cx| lands(p, cx), move |p, _, window, cx| on_drop(p, window, cx), cx)
+    }
+
+    /// [`Sortable::item`] whose `lands` also gets the half of the item the pointer is in, and whose `on_drop` the edge landed.
+    pub fn item_at<E>(&self, el: E, key: impl Into<SharedString>, lands: impl Fn(&P, Edge, &App) -> Option<Edge> + 'static, on_drop: impl Fn(&P, Edge, &mut Window, &mut App) + 'static, cx: &App) -> E
+    where
+        E: InteractiveElement + ParentElement + Styled + FluentBuilder,
+    {
         let key = key.into();
         let line = self.over(cx).filter(|(k, _)| *k == key).and_then(|(_, edge)| edge).map(|edge| self.line(edge, cx));
-        let (id, moved) = (self.id.clone(), key.clone());
+        let (id, moved, axis) = (self.id.clone(), key.clone(), self.axis);
+        let (dropped_id, dropped_key) = (id.clone(), key);
         let lands = Rc::new(lands);
         let dropped = lands.clone();
         el.relative()
             .children(line)
             .on_drag_move::<P>(move |e: &DragMoveEvent<P>, window, cx| {
-                let inside = e.bounds.contains(&e.event.position);
-                let now = inside.then(|| (id.clone(), moved.clone(), lands(e.drag(cx), cx)));
+                let at = e.event.position;
+                let inside = e.bounds.contains(&at);
+                let half = match axis {
+                    Axis::Horizontal if at.x >= e.bounds.center().x => Edge::After,
+                    Axis::Vertical if at.y >= e.bounds.center().y => Edge::After,
+                    _ => Edge::Before,
+                };
+                let now = inside.then(|| (id.clone(), moved.clone(), lands(e.drag(cx), half, cx)));
                 let drag = cx.default_global::<Drag>();
                 let was = drag.over.as_ref().is_some_and(|(i, k, _)| *i == id && *k == moved);
+                if inside {
+                    drag.half = Some(half);
+                }
                 if (inside || was) && drag.over != now {
                     drag.over = now;
                     window.refresh();
                 }
             })
             .on_drop::<P>(move |p, window, cx| {
-                cx.default_global::<Drag>().over = None;
-                if dropped(p, cx).is_some() {
-                    on_drop(p, window, cx);
+                let drag = cx.default_global::<Drag>();
+                let over = drag.over.take().is_some_and(|(i, k, _)| i == dropped_id && k == dropped_key);
+                let half = drag.half.take().filter(|_| over).unwrap_or(Edge::Before);
+                if let Some(edge) = dropped(p, half, cx) {
+                    on_drop(p, edge, window, cx);
                 }
             })
     }
