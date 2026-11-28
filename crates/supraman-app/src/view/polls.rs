@@ -35,8 +35,8 @@ pub struct Polls {
 }
 
 impl Polls {
-    /// Starts the poll; the transcript scan waits on the returned [`Nudged`].
-    pub(super) fn start(home: Option<PathBuf>, hands: Option<Arc<Mutex<Hands>>>, cx: &mut Context<FleetView>) -> (Self, Nudged) {
+    /// Starts the poll while `poll`; the transcript scan waits on the returned [`Nudged`].
+    pub(super) fn start(home: Option<PathBuf>, hands: Option<Arc<Mutex<Hands>>>, poll: bool, cx: &mut Context<FleetView>) -> (Self, Nudged) {
         let injected: Arc<Mutex<Vec<Session>>> = Arc::default();
         let folder_writes: Arc<AtomicU64> = Arc::default();
         let (poll_nudge, woken) = nudge::nudge();
@@ -52,7 +52,9 @@ impl Polls {
             hands,
         };
         timeline::phase("window", Duration::ZERO);
-        FleetView::start_polling(poller, woken, cx);
+        if poll {
+            FleetView::start_polling(poller, woken, cx);
+        }
         let (transcripts_nudge, transcripts_nudged) = nudge::nudge();
         let polls = Self {
             #[cfg(feature = "selftest")]

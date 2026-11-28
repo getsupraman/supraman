@@ -47,10 +47,10 @@ impl FleetView {
         tx
     }
 
-    /// The open tabs as the next start reopens them: exited ones are left out.
+    /// The open tabs as the next start reopens them, each by its own panel: exited ones are left out.
     pub fn saved_tabs(&self, cx: &App) -> SavedTabs {
         let mut saved = SavedTabs::default();
-        for tab in self.tabs.iter().filter(|t| !t.exited) {
+        for tab in self.headers().filter(|t| !t.exited) {
             let Some(one) = self.saved_tab(tab, cx) else { continue };
             if self.active == Some(tab.id) {
                 saved.active = Some(saved.tabs.len());

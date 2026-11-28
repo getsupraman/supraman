@@ -166,8 +166,9 @@ impl FleetView {
     }
 
     fn tab_menu_items(&self, id: u64, folder: Option<&Path>, repo: &Repo, cx: &Context<Self>) -> Vec<MenuItem> {
-        let at = self.tabs.iter().position(|t| t.id == id).unwrap_or_default();
-        let facts = TabFacts { id, folder, repo, others: self.tabs.len() > 1, right: at + 1 < self.tabs.len(), reopenable: self.tab_keys.read(cx).has_closed() };
+        let ids = self.header_ids();
+        let at = ids.iter().position(|t| *t == id).unwrap_or_default();
+        let facts = TabFacts { id, folder, repo, others: ids.len() > 1, right: at + 1 < ids.len(), reopenable: self.tab_keys.read(cx).has_closed() };
         tab_items(facts, self.tab(id).and_then(|tab| self.tab_session_items(tab, cx)))
     }
 
@@ -195,7 +196,7 @@ impl FleetView {
     }
 
     pub(in crate::view) fn run_tab_action(&mut self, action: MenuAction, cx: &mut Context<Self>) {
-        let ids = |this: &Self, keep: &dyn Fn(usize, u64) -> bool| -> Vec<u64> { this.tabs.iter().enumerate().filter(|(i, t)| keep(*i, t.id)).map(|(_, t)| t.id).collect() };
+        let ids = |this: &Self, keep: &dyn Fn(usize, u64) -> bool| -> Vec<u64> { this.header_ids().into_iter().enumerate().filter(|(i, t)| keep(*i, *t)).map(|(_, t)| t).collect() };
         match action {
             MenuAction::OpenGit(top) => {
                 let title = crate::view::git_tab::title(&top);
@@ -213,7 +214,7 @@ impl FleetView {
                 ids(self, &|_, t| t != id).into_iter().for_each(|t| self.close_tab(t, cx));
             }
             MenuAction::CloseTabsRight(id) => {
-                let Some(at) = self.tabs.iter().position(|t| t.id == id) else { return };
+                let Some(at) = self.header_ids().iter().position(|t| *t == id) else { return };
                 ids(self, &|i, _| i > at).into_iter().for_each(|t| self.close_tab(t, cx));
             }
             MenuAction::ReopenClosed => self.reopen_closed(cx),

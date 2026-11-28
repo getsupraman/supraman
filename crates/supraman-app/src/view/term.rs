@@ -218,7 +218,7 @@ impl FleetView {
             InputEvent::ConfirmBack => self.step_find(tab_id, &terminal, -1, cx),
             InputEvent::Cancel => {
                 self.close_find(tab_id, &terminal, cx);
-                self.focus.focus(window, cx);
+                self.panel_focus(tab_id).focus(window, cx);
             }
             InputEvent::Refused(_) | InputEvent::Submit | InputEvent::Pressed => {}
         }
@@ -348,11 +348,11 @@ impl FleetView {
 
     /// A shown terminal holds the keys in an active window: its grid's input handler takes typed text.
     pub fn terminal_holds_keys(&self, window: &Window) -> bool {
-        self.active_terminal().is_some() && self.focus.is_focused(window) && window.is_window_active()
+        self.active_terminal().is_some() && self.shown_panel().is_some_and(|p| self.panel_focus(p).is_focused(window)) && window.is_window_active()
     }
 
-    pub(super) fn term_cursor(&self) -> term_element::Cursor {
-        term_element::Cursor { focus: self.focus.clone(), blink: self.term_look.blink.clone() }
+    pub(super) fn term_cursor(&self, focus: &gpui::FocusHandle) -> term_element::Cursor {
+        term_element::Cursor { focus: focus.clone(), blink: self.term_look.blink.clone() }
     }
 
     /// A tab's terminal's event; the tab's watchers wake on each one acted on.

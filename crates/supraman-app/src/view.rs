@@ -10,10 +10,10 @@ use futures::FutureExt as _;
 use supraman_claude::{ClaudeVersion, Session, now_ms};
 use supraman_core::{Event, FM_PREFIX, Settings};
 use supraman_term::{
-    MouseInputMode, Terminal, TerminalBuilder, TerminalMode,
+    MouseInputMode, TerminalBuilder, TerminalMode,
     terminal_settings::{AlternateScroll, CursorShape},
 };
-use supraman_runtime::nudge::{self, Nudge, Nudged};
+use supraman_runtime::nudge::{self, Nudged};
 use supraman_core::open::{self, Link};
 use supraman_core::timeline;
 use supraman_ui::hit::{HitTargets, hit_target};
@@ -40,11 +40,13 @@ use crate::stars::Stars;
 use crate::upkeep::{self, Report};
 use crate::tab_card;
 use crate::transcripts_load::TranscriptsLoad;
-use crate::work_view::{WorkHub, WorkInbox, WorkView};
+use crate::work_view::{WorkHub, WorkInbox};
 use crate::workman_setup;
 use supraman_workman::status::WorkmanStatus;
 
+mod build;
 mod delete;
+mod dock;
 pub(crate) mod details;
 mod dialogs;
 mod drop;
@@ -78,6 +80,9 @@ mod startup;
 pub(crate) mod start;
 pub(crate) mod tab_keys;
 mod tab_saving;
+mod tabs;
+pub use tabs::{Detach, PanelKey, Tab, TabKind};
+use tabs::stale_tabs;
 mod polled;
 mod term;
 mod term_look;
@@ -138,102 +143,6 @@ pub enum Cli {
     Failed(String),
 }
 
-pub enum TabKind {
-    Attach { session_id: String },
-    Shell,
-    Work(Entity<WorkView>),
-    Git(Entity<crate::git_view::GitView>),
-    Schedule(schedules::SchedulePage),
-    Details(details::DetailsPage),
-    Start(start::StartPage),
-    /// Reopened from the last run, waiting for a click on Resume.
-    Saved(crate::saved_tabs::SavedTab),
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Detach {
-    None,
-    Pending,
-    Detaching,
-    /// The tab and its process stay: nothing is killed that could hold the session.
-    Failed,
-}
-
-pub struct Tab {
-    pub id: u64,
-    pub title: String,
-    pub kind: TabKind,
-    pub terminal: Option<Entity<Terminal>>,
-    pub error: Option<String>,
-    pub exited: bool,
-    pub detach: Detach,
-    pub cwd: Option<PathBuf>,
-    /// The branch at `cwd`, read off the UI thread ([`FleetView::read_tab_branches`]).
-    pub branch: Option<String>,
-    pub find: Option<term::Find>,
-    pub program_title: Option<String>,
-    pub session: Option<String>,
-    pub hand: bool,
-    pub workman: Option<String>,
-    pub hand_key: Option<String>,
-    pub restart_to: Option<String>,
-    pub opened_at: i64,
-    pub claude: Option<String>,
-    /// The full uuid it was launched or attached with, and that session's name.
-    pub launched_session: Option<String>,
-    pub session_name: Option<String>,
-    pub asks_schedule: Option<start::AsksSchedule>,
-    pub started: Option<crate::saved_tabs::SavedShell>,
-    watchers: Vec<Nudge>,
-}
-
-impl Tab {
-    pub fn new(id: u64, title: String, kind: TabKind, cwd: Option<PathBuf>) -> Self {
-        Self {
-            id,
-            title,
-            kind,
-            terminal: None,
-            error: None,
-            exited: false,
-            detach: Detach::None,
-            cwd,
-            branch: None,
-            find: None,
-            program_title: None,
-            session: None,
-            hand: false,
-            workman: None,
-            hand_key: None,
-            restart_to: None,
-            opened_at: now_ms(),
-            claude: None,
-            launched_session: None,
-            session_name: None,
-            asks_schedule: None,
-            started: None,
-            watchers: Vec::new(),
-        }
-    }
-
-    fn wake_watchers(&self) {
-        self.watchers.iter().for_each(Nudge::wake);
-    }
-
-    pub fn label(&self) -> String {
-        let mut title = self.program_title.clone().unwrap_or_else(|| self.title.clone());
-        if self.exited {
-            title.push_str(" (exited)");
-        }
-        match self.detach {
-            Detach::Pending | Detach::Detaching => title.push_str(" (detaching…)"),
-            Detach::Failed => title.push_str(" (detach failed)"),
-            Detach::None => {}
-        }
-        title
-    }
-}
-
 pub struct FleetView {
     pub cli: Cli,
     pub listed: listed::Listed,
@@ -283,6 +192,7 @@ pub struct FleetView {
     pub dialogs: dialogs::Dialogs,
     pub scheduling: schedule_state::ScheduleState,
     pub(crate) tab_keys: Entity<tab_keys::TabKeyState>,
+    pub docks: dock::Docks,
 }
 
 
@@ -308,80 +218,6 @@ struct Refresh {
 }
 
 impl FleetView {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let focus = cx.focus_handle();
-        focus.focus(window, cx);
-        Self::ask_before_close(window, cx);
-        let home = supraman_core::home_from_env();
-        let defaults = Settings::default();
-        let hands = home.as_deref().map(|home| Self::open_hands(home, cx));
-        let (polls, transcripts_nudged) = polls::Polls::start(home.clone(), hands.clone(), cx);
-        Self::load_settings(home.clone(), cx);
-        Self::load_stores(home.clone(), cx);
-        let term_look = term_look::TermLook::new(&defaults.terminal, cx);
-        let (workman_recheck, recheck) = nudge::nudge();
-        Self::watch_workman(home.clone(), recheck, cx);
-        let work_inbox = WorkInbox::shared(home.clone(), cx);
-        Self::observe_inbox(&work_inbox, cx);
-        let scheduling = schedule_state::ScheduleState::new();
-        let claude_dir = claude_dir_or(CLAUDE_DIR_OVERRIDE.get().map(PathBuf::as_path));
-        Self::watch_transcripts(claude_dir.clone(), home.as_deref().map(|h| h.join(TRANSCRIPTS_CACHE)), transcripts_nudged, cx);
-        let updates = crate::updates::Updates::start(home.clone(), |v: &mut Self| &mut v.updates, cx);
-        let tabs_writes = Self::tabs_writer(home.clone(), cx);
-        Self::detect_shells(cx);
-        cx.on_focus_lost(window, |this, window, cx| if !supraman_ui::focus::restore(window, cx) { this.focus.focus(window, cx) }).detach();
-        let search = cx.new(|cx| TextInput::new("Search sessions, groups, folders (Ctrl+Shift+E)", None, window, cx));
-        Self::watch_search(&search, window, cx);
-        Self {
-            cli: Cli::Checking,
-            listed: listed::Listed::default(),
-            sessions: Vec::new(),
-            show_stopped: false,
-            own_prefix: None,
-            tabs: Vec::new(),
-            active: None,
-            next_tab_id: 1,
-            shell_args: vec!["-NoLogo".into()],
-            focus,
-            probe: Default::default(),
-            hits: HitTargets::default(),
-            window: window.window_handle(),
-            home,
-            plugin_dir: None,
-            setup_notices: Vec::new(),
-            settings_window: None,
-            writes: writes::Writes::default(),
-            occupancy: occupancy::Live::default(),
-            work_inbox,
-            open_with: |path| open::open(path.as_os_str()),
-            open_link_with: startup::open_link,
-            workman: WorkmanStatus::Checking,
-            hand_notices: Vec::new(),
-            transcripts: TranscriptsLoad::new(claude_dir.is_some()),
-            loaded: false,
-            action_error: None,
-            stars: Stars::default(),
-            claude_command: "claude".into(),
-            search,
-            toast: ToastSlot::default(),
-            pane_toast: ToastSlot::default(),
-            updates,
-            claude_dir,
-            painted_sessions: false,
-            saving: tab_saving::TabSaving::new(tabs_writes),
-            sidebar: sidebar::Sidebar::new(cx),
-            term_look,
-            workman_state: workman_state::WorkmanState::new(workman_recheck),
-            lifecycle: lifecycle::Lifecycle::new(hands),
-            polls,
-            polled: polled::Polled::new(),
-            listing: listing::Listing::default(),
-            dialogs: dialogs::Dialogs::default(),
-            scheduling,
-            tab_keys: cx.new(|_| tab_keys::TabKeyState::new(defaults.window.tab_keys())),
-        }
-    }
-
     /// The closed sessions a transcript scan found, without the ones a known session continues; their stars move on.
     fn set_closed(&mut self, closed: Vec<Session>, continued: StdHashMap<String, String>, cx: &mut Context<Self>) {
         let save = self.stars.follow(&continued);
@@ -769,25 +605,6 @@ impl FleetView {
         }
     }
 
-    fn active_terminal(&self) -> Option<Entity<Terminal>> {
-        self.active.and_then(|id| self.tab(id)).and_then(|t| t.terminal.clone())
-    }
-
-    pub fn tab(&self, id: u64) -> Option<&Tab> {
-        self.tabs.iter().find(|t| t.id == id)
-    }
-
-    fn tab_mut(&mut self, id: u64) -> Option<&mut Tab> {
-        self.tabs.iter_mut().find(|t| t.id == id)
-    }
-
-    pub fn activate_tab(&mut self, id: u64, cx: &mut Context<Self>) {
-        if self.tab(id).is_some() {
-            self.active = Some(id);
-            cx.notify();
-        }
-    }
-
     pub fn resolve_tabs(&mut self, cx: &mut Context<Self>) {
         if self.saving.tabs_resolving {
             self.saving.tabs_again = true;
@@ -831,30 +648,6 @@ impl FleetView {
             .ok();
         })
         .detach();
-    }
-
-    pub fn tab_runs(tab: &Tab, session: &Session) -> bool {
-        match &tab.kind {
-            TabKind::Attach { session_id } => *session_id == session.id,
-            TabKind::Shell => tab.claude.as_deref() == Some(session.session_id.as_str()),
-            TabKind::Saved(saved) => saved.session().is_some_and(|s| s.session_id == session.session_id),
-            TabKind::Work(_) | TabKind::Git(_) | TabKind::Schedule(_) | TabKind::Details(_) | TabKind::Start(_) => false,
-        }
-    }
-
-    pub fn is_marked(&self, session: &Session) -> bool {
-        self.active.and_then(|id| self.tab(id)).is_some_and(|t| Self::tab_runs(t, session))
-    }
-
-    pub fn session_tab(&self, session: &Session) -> Option<u64> {
-        self.tabs.iter().find(|t| Self::tab_runs(t, session)).map(|t| t.id)
-    }
-
-    fn cycle_tab(&mut self, step: isize, cx: &mut Context<Self>) {
-        let at = self.active.and_then(|id| self.tabs.iter().position(|t| t.id == id));
-        if let Some(next) = supraman_ui::tabs::cycled(self.tabs.len(), at, step) {
-            self.activate_tab(self.tabs[next].id, cx);
-        }
     }
 
     #[cfg(feature = "selftest")]
@@ -1011,7 +804,13 @@ impl FleetView {
         cx.notify();
     }
 
+    /// The tab and every panel of its dock; a panel in another's dock alone.
     pub fn close_tab(&mut self, id: u64, cx: &mut Context<Self>) {
+        let panels = if self.docks.is_inner(id) { vec![id] } else { self.docks.panels(id) };
+        panels.into_iter().for_each(|p| self.close_panel(p, cx));
+    }
+
+    pub fn close_panel(&mut self, id: u64, cx: &mut Context<Self>) {
         self.remember_closed(id, cx);
         let Some(tab) = self.tab_mut(id) else {
             return;
@@ -1083,6 +882,8 @@ impl FleetView {
     }
 
     fn remove_tab(&mut self, id: u64, cx: &mut Context<Self>) {
+        let header = self.header_ids().iter().position(|t| *t == id);
+        self.undock_removed(id);
         let Some(index) = self.tabs.iter().position(|t| t.id == id) else {
             return;
         };
@@ -1092,10 +893,8 @@ impl FleetView {
             terminal.update(cx, |t, _| t.release_pty_resources());
         }
         if self.active == Some(id) {
-            self.active = self
-                .tabs
-                .get(index.min(self.tabs.len().saturating_sub(1)))
-                .map(|t| t.id);
+            let ids = self.header_ids();
+            self.active = header.and_then(|at| ids.get(at.min(ids.len().saturating_sub(1)))).copied();
         }
         if self.quit_step(cx) {
             self.close_for_quit(cx);
@@ -1165,7 +964,7 @@ impl FleetView {
             .map(|t| t.id)
             .collect();
         for id in ids {
-            self.close_tab(id, cx);
+            self.close_panel(id, cx);
         }
         let close = self.lifecycle.quitting && self.quit_step(cx);
         if close {
@@ -1210,14 +1009,15 @@ impl FleetView {
             cx.stop_propagation();
             return;
         }
+        let panel = self.focused_panel(window, cx);
         if k.key == "escape"
-            && let Some(Tab { kind: TabKind::Work(work), .. }) = self.active.and_then(|id| self.tab(id))
+            && let Some(Tab { kind: TabKind::Work(work), .. }) = panel.and_then(|id| self.tab(id))
             && work.update(cx, |work, cx| work.escape(cx))
         {
             cx.stop_propagation();
             return;
         }
-        let terminal = self.active.and_then(|id| self.tab(id)).and_then(|t| t.terminal.clone());
+        let terminal = panel.and_then(|id| self.tab(id)).and_then(|t| t.terminal.clone());
         if k.key == "f5" && !k.modifiers.modified() && terminal.is_none() {
             self.refresh_now(cx);
             cx.stop_propagation();
@@ -1226,14 +1026,14 @@ impl FleetView {
         let Some(terminal) = terminal else {
             return;
         };
-        if let Some(id) = self.active
+        if let Some(id) = panel
             && self.terminal_key(id, &terminal, k, window, cx)
         {
             cx.stop_propagation();
             return;
         }
         // the grid registers its input handler on this focus (term_element); a typed character comes through it
-        let shown = self.focus.is_focused(window);
+        let shown = panel.is_some_and(|p| self.panel_focus(p).is_focused(window));
         let taken = terminal.update(cx, |terminal, _| terminal.key_down(event, shown));
         self.term_look.blink.update(cx, |b, cx| b.pause(cx));
         // the cursor is lit at once after a key, also when the program echoes nothing
@@ -1255,14 +1055,6 @@ fn any_exit(executor: &gpui::BackgroundExecutor, pids: Vec<u32>, timeout: Durati
             futures::future::pending::<()>().await;
         }
     }
-}
-
-fn stale_tabs(tabs: &[Tab], elsewhere: &[(String, Option<String>)]) -> Vec<u64> {
-    tabs.iter()
-        .filter(|t| t.hand && !t.exited)
-        .filter(|t| t.hand_key.as_ref().is_some_and(|k| elsewhere.iter().any(|(n, _)| n == k)))
-        .map(|t| t.id)
-        .collect()
 }
 
 fn held_line(why: &str) -> String {
@@ -1307,7 +1099,7 @@ impl Render for FleetView {
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| this.focus_search(window, cx)))
             .on_key_down(cx.listener(Self::key_down))
             .on_modifiers_changed(cx.listener(|this, _: &ModifiersChangedEvent, window, cx| {
-                if let Some(terminal) = this.active.and_then(|id| this.tab(id)).and_then(|t| t.terminal.clone()) {
+                if let Some(terminal) = this.focused_panel(window, cx).and_then(|id| this.tab(id)).and_then(|t| t.terminal.clone()) {
                     terminal.update(cx, |t, cx| {
                         t.refresh_hovered_word(window, cx);
                         cx.notify();
@@ -1489,59 +1281,6 @@ mod tests {
         ] {
             assert_eq!(link_target(&MaybeNavigationTarget::Url(uri.into())), Err(supraman_core::open::refused(scheme)), "{uri}");
         }
-    }
-
-    #[test]
-    fn a_tab_runs_its_attached_id_or_the_claude_found_under_its_shell() {
-        let session = Session {
-            id: "abcd0001".into(),
-            session_id: "abcd0001-0000".into(),
-            name: "s".into(),
-            cwd: PathBuf::from(r"C:\demo"),
-            kind: supraman_claude::Kind::Interactive,
-            state: None,
-            status: None,
-            waiting_for: None,
-            pid: Some(5),
-            started_at: None,
-        };
-        let tab = |kind, claude: Option<&str>| Tab { claude: claude.map(String::from), ..Tab::new(1, "t".into(), kind, None) };
-        assert!(FleetView::tab_runs(&tab(TabKind::Attach { session_id: "abcd0001".into() }, None), &session));
-        assert!(!FleetView::tab_runs(&tab(TabKind::Attach { session_id: "ffff0001".into() }, None), &session));
-        assert!(FleetView::tab_runs(&tab(TabKind::Shell, Some("abcd0001-0000")), &session));
-        assert!(!FleetView::tab_runs(&tab(TabKind::Shell, Some("abcd0001-ffff")), &session), "/clear gave the tab a new session");
-        let placeholder = |sid: &str| {
-            let saved = crate::saved_tabs::SavedTab::Claude { title: "c".into(), cwd: r"C:\demo".into(), session_id: Some(sid.into()), name: "s".into() };
-            tab(TabKind::Saved(saved), None)
-        };
-        let full = Session { session_id: "abcd0001-0000-4000-8000-000000000001".into(), ..session.clone() };
-        assert!(FleetView::tab_runs(&placeholder(&full.session_id), &full), "the row opens its placeholder, not a second tab");
-        assert!(!FleetView::tab_runs(&placeholder("abcd0001-0000-4000-8000-000000000002"), &full));
-        assert!(!FleetView::tab_runs(&tab(TabKind::Shell, None), &session), "a shell without claude runs nothing");
-    }
-
-    #[test]
-    fn only_open_hand_tabs_holding_a_token_from_elsewhere_restart() {
-        let tab = |id, hand, key: Option<&str>, exited| Tab {
-            hand,
-            hand_key: key.map(String::from),
-            exited,
-            ..Tab::new(id, format!("t{id}"), TabKind::Shell, None)
-        };
-        let tabs = [
-            tab(1, true, Some("hand-a-1"), false),
-            tab(2, true, Some("hand-a-2"), false),
-            tab(3, true, Some("hand-a-3"), true),
-            tab(4, false, Some("hand-a-4"), false),
-            tab(5, true, None, false),
-        ];
-        let elsewhere = [
-            ("hand-a-1".to_string(), Some("https://old.example".to_string())),
-            ("hand-a-3".to_string(), None),
-            ("hand-a-4".to_string(), None),
-        ];
-        assert_eq!(stale_tabs(&tabs, &elsewhere), [1], "2 is current, 3 exited, 4 is no hand tab, 5 runs plain");
-        assert!(stale_tabs(&tabs, &[]).is_empty());
     }
 
     #[test]

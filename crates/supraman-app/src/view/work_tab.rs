@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use gpui::Context;
 
-use super::{FleetView, Tab, TabKind, occupancy};
+use super::{FleetView, PanelKey, Tab, TabKind, occupancy};
 use crate::fleet::{EntryNode, Open};
 use crate::work_view::{self, FleetLink, Target, WorkView};
 
@@ -51,10 +51,8 @@ impl FleetView {
     }
 
     pub fn open_work(&mut self, target: Target, cx: &mut Context<Self>) -> u64 {
-        let open = self.tabs.iter().find(|t| matches!(&t.kind, TabKind::Work(v) if v.read(cx).target == target));
-        if let Some(id) = open.map(|t| t.id) {
-            self.active = Some(id);
-            cx.notify();
+        if let Some(id) = self.find_panel(&PanelKey::Work(target.clone()), cx) {
+            self.show_panel(id, cx);
             return id;
         }
         let id = self.next_tab_id;

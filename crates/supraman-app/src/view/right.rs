@@ -4,18 +4,16 @@ pub(in crate::view) mod tab_menu;
 #[cfg(test)]
 mod tests;
 
-use gpui::Focusable as _;
-
 use super::*;
 
 impl FleetView {
     pub(super) fn render_right(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        self.follow_dock_focus(window, cx);
         self.show_git_tabs(cx);
         let _stall = supraman_runtime::stall::section("render: right");
         let colors = cx.theme().colors().clone();
         let headers = self
-            .tabs
-            .iter()
+            .headers()
             .map(|tab| {
                 let title = tab.label();
                 let card = self.tab_card(tab, title.clone());
@@ -51,7 +49,7 @@ impl FleetView {
             |this: &mut Self, id, cx| this.activate_tab(id, cx),
             |this: &mut Self, id, cx| this.close_tab(id, cx),
             |this: &mut Self, from, to, cx| {
-                supraman_ui::tabs::reorder(&mut this.tabs, from, to);
+                this.reorder_tabs(from, to);
                 cx.notify();
             },
             |this: &mut Self, id, at, cx| this.open_tab_menu(id, at, cx),
@@ -75,26 +73,35 @@ impl FleetView {
     /// The tab's content under [`FleetView::focus`], its keys under `hits`' scope.
     fn content_area(&mut self, content: AnyElement, hits: &HitTargets, cx: &mut Context<Self>) -> gpui::Div {
         let tab = self.active.and_then(|id| self.tab(id));
+        let docked = tab.is_some_and(|t| self.docks.of(t.id).is_some());
         let toast = self.pane_toast.render(hits, "pane-toast", cx).map(IntoElement::into_any_element);
-        let area = area(std::iter::once(content).chain(toast), tab.and_then(pane_of), &self.focus, hits);
+        let area = area(std::iter::once(content).chain(toast), tab.filter(|_| !docked).and_then(pane_of), &self.focus, hits);
         area.children(tab.map(|t| self.tab_keys(t, cx).paint()))
     }
 
-    /// The shown tab takes the keys: what it held when last shown, else its view's own (the Git and Work tabs
-    /// hand them to the graph and the list), else the content area's.
+    /// The shown tab takes the keys: what it held when last shown, else its focused panel's (the Git and Work views
+    /// hand them to the graph and the list), else the panel's region.
     fn tab_keys(&self, tab: &Tab, cx: &Context<Self>) -> supraman_ui::focus::Group {
-        let entry = match &tab.kind {
-            TabKind::Git(view) => view.focus_handle(cx),
-            TabKind::Work(view) => view.focus_handle(cx),
-            _ => self.focus.clone(),
-        };
+        let entry = self.panel_entry(self.docks.focused(tab.id), cx);
         let (fleet, id) = (cx.weak_entity(), tab.id);
         supraman_ui::focus::Group::new(format!("tab-{id}"), &self.focus, &entry).while_shown(move |cx| fleet.upgrade().is_some_and(|f| f.read(cx).active == Some(id)))
     }
 
     fn render_tab_content(&mut self, hits: &HitTargets, cx: &mut Context<Self>) -> AnyElement {
+        let Some(active) = self.active else {
+            return placeholder("Click [attach] on a live session to open it here, or + for a shell.".into(), cx);
+        };
+        if let Some(dock) = self.render_dock(active, hits, cx) {
+            return dock;
+        }
+        let focus = self.focus.clone();
+        self.render_panel(active, hits, &focus, cx)
+    }
+
+    /// A panel's content under `hits`' scope, its terminal's caret following `focus`.
+    pub(super) fn render_panel(&mut self, id: u64, hits: &HitTargets, focus: &gpui::FocusHandle, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
-        let active = self.active.and_then(|id| self.tab(id));
+        let active = self.tab(id);
         let status = cx.theme().status().clone();
         match active {
             Some(Tab { kind: TabKind::Work(view), .. }) => view.clone().into_any_element(),
@@ -144,7 +151,7 @@ impl FleetView {
                                 cx.notify();
                             })
                         })
-                        .child(term_element::terminal_grid(terminal.clone(), self.term_font(), self.term_cursor()))
+                        .child(term_element::terminal_grid(terminal.clone(), self.term_font(), self.term_cursor(focus)))
                         .children(self.link_hint(*tab_id, terminal, hits, cx))
                         .child(self.terminal_drop(*tab_id, hits, cx)),
                 )
@@ -152,16 +159,13 @@ impl FleetView {
             Some(Tab { id, kind: TabKind::Saved(saved), .. }) => self.saved_placeholder(*id, saved, hits, cx),
             Some(Tab { error: Some(error), .. }) => placeholder(format!("Cannot start the terminal: {error}"), cx),
             Some(_) => placeholder("starting…".into(), cx),
-            None => placeholder(
-                "Click [attach] on a live session to open it here, or + for a shell.".into(),
-                cx,
-            ),
+            None => placeholder("Click [attach] on a live session to open it here, or + for a shell.".into(), cx),
         }
     }
 }
 
 /// The content pane a tab registers, unless its tab lays out panes of its own.
-fn pane_of(tab: &Tab) -> Option<&'static str> {
+pub(super) fn pane_of(tab: &Tab) -> Option<&'static str> {
     match (&tab.kind, tab.terminal.is_some()) {
         (TabKind::Git(_) | TabKind::Work(_), _) => None,
         (TabKind::Details(_), _) => Some("details"),
