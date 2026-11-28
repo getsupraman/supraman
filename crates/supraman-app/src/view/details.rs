@@ -71,8 +71,8 @@ impl FleetView {
 
     pub fn open_details(&mut self, target: MenuTarget, cx: &mut Context<Self>) -> Option<u64> {
         self.dialogs.menu = None;
-        if let Some((tab, _)) = self.details_page(&target) {
-            self.activate_tab(tab, cx);
+        if let Some(tab) = self.find_panel(&super::PanelKey::details(&target), cx) {
+            self.show_panel(tab, cx);
             return Some(tab);
         }
         let (title, cwd, seen, folder) = match &target {

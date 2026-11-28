@@ -2,13 +2,14 @@
 
 use std::path::PathBuf;
 
-use gpui::{Context, Entity};
+use gpui::{App, Context, Entity};
 use supraman_claude::{Session, now_ms};
 use supraman_runtime::nudge::Nudge;
 use supraman_term::Terminal;
 
 use super::{FleetView, schedules, details, start, term};
-use crate::work_view::WorkView;
+use super::menu::MenuTarget;
+use crate::work_view::{Target, WorkView};
 
 pub enum TabKind {
     Attach { session_id: String },
@@ -59,7 +60,45 @@ pub struct Tab {
     pub(in crate::view) watchers: Vec<Nudge>,
 }
 
+/// What a panel shows; a key lives in at most one panel of the window.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PanelKey {
+    /// A terminal that runs no claude the window knows of, by its panel.
+    Terminal(u64),
+    Attach(String),
+    /// A shell running claude's session of this id.
+    Claude(String),
+    /// A repo by its folder's [`supraman_core::paths::path_key`].
+    Git(String),
+    Work(Target),
+    /// A session's by its id alone.
+    Details(MenuTarget),
+    Schedule { folder_key: String, id: String },
+    /// A Start page or a saved tab's placeholder, by its panel.
+    Own(u64),
+}
+
+impl PanelKey {
+    pub fn details(target: &MenuTarget) -> PanelKey {
+        PanelKey::Details(match target {
+            MenuTarget::Session { session_id, .. } => MenuTarget::Session { entry: String::new(), place: String::new(), session_id: session_id.clone() },
+            other => other.clone(),
+        })
+    }
+}
+
 impl Tab {
+    pub fn key(&self, cx: &App) -> PanelKey {
+        match &self.kind {
+            TabKind::Attach { session_id } => PanelKey::Attach(session_id.clone()),
+            TabKind::Shell => self.claude.clone().map_or(PanelKey::Terminal(self.id), PanelKey::Claude),
+            TabKind::Git(view) => PanelKey::Git(supraman_core::paths::path_key(&view.read(cx).folder)),
+            TabKind::Work(view) => PanelKey::Work(view.read(cx).target.clone()),
+            TabKind::Details(page) => PanelKey::details(&page.target),
+            TabKind::Schedule(page) => PanelKey::Schedule { folder_key: page.folder_key.clone(), id: page.id.clone() },
+            TabKind::Start(_) | TabKind::Saved(_) => PanelKey::Own(self.id),
+        }
+    }
     pub fn new(id: u64, title: String, kind: TabKind, cwd: Option<PathBuf>) -> Self {
         Self {
             id,
@@ -108,7 +147,7 @@ impl Tab {
 
 impl FleetView {
     pub(in crate::view) fn active_terminal(&self) -> Option<Entity<Terminal>> {
-        self.active.and_then(|id| self.tab(id)).and_then(|t| t.terminal.clone())
+        self.shown_panel().and_then(|id| self.tab(id)).and_then(|t| t.terminal.clone())
     }
 
     pub fn tab(&self, id: u64) -> Option<&Tab> {
@@ -119,8 +158,11 @@ impl FleetView {
         self.tabs.iter_mut().find(|t| t.id == id)
     }
 
+    /// The tab `id` shows in: a panel in another's dock is shown and focused there.
     pub fn activate_tab(&mut self, id: u64, cx: &mut Context<Self>) {
-        if self.tab(id).is_some() {
+        if self.docks.is_inner(id) {
+            self.show_panel(id, cx);
+        } else if self.tab(id).is_some() {
             self.active = Some(id);
             cx.notify();
         }
@@ -136,7 +178,7 @@ impl FleetView {
     }
 
     pub fn is_marked(&self, session: &Session) -> bool {
-        self.active.and_then(|id| self.tab(id)).is_some_and(|t| Self::tab_runs(t, session))
+        self.active.is_some_and(|tab| self.docks.panels(tab).into_iter().filter_map(|p| self.tab(p)).any(|t| Self::tab_runs(t, session)))
     }
 
     pub fn session_tab(&self, session: &Session) -> Option<u64> {
@@ -144,9 +186,10 @@ impl FleetView {
     }
 
     pub(in crate::view) fn cycle_tab(&mut self, step: isize, cx: &mut Context<Self>) {
-        let at = self.active.and_then(|id| self.tabs.iter().position(|t| t.id == id));
-        if let Some(next) = supraman_ui::tabs::cycled(self.tabs.len(), at, step) {
-            self.activate_tab(self.tabs[next].id, cx);
+        let ids = self.header_ids();
+        let at = self.active.and_then(|id| ids.iter().position(|t| *t == id));
+        if let Some(next) = supraman_ui::tabs::cycled(ids.len(), at, step) {
+            self.activate_tab(ids[next], cx);
         }
     }
 }

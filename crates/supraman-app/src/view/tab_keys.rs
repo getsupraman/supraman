@@ -95,7 +95,8 @@ impl FleetView {
             cx.propagate();
             return;
         }
-        let at = self.active.and_then(|id| self.tabs.iter().position(|t| t.id == id));
+        let ids = self.header_ids();
+        let at = self.active.and_then(|id| ids.iter().position(|t| *t == id));
         match chord.0 {
             TabKey::Next => self.cycle_tab(1, cx),
             TabKey::Previous => self.cycle_tab(-1, cx),
@@ -107,13 +108,13 @@ impl FleetView {
             }
             TabKey::Reopen => self.reopen_closed(cx),
             TabKey::Nth(n) => {
-                if let Some(i) = tabs::nth(self.tabs.len(), n) {
-                    self.activate_tab(self.tabs[i].id, cx);
+                if let Some(i) = tabs::nth(ids.len(), n) {
+                    self.activate_tab(ids[i], cx);
                 }
             }
             TabKey::Move(step) => {
-                if let Some((from, to)) = at.and_then(|at| Some((at, tabs::moved(self.tabs.len(), at, step)?))) {
-                    tabs::reorder(&mut self.tabs, from, to);
+                if let Some((from, to)) = at.and_then(|at| Some((at, tabs::moved(ids.len(), at, step)?))) {
+                    self.reorder_tabs(from, to);
                     cx.notify();
                 }
             }

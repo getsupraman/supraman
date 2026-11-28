@@ -228,8 +228,9 @@ impl FleetView {
     pub fn open_schedule(&mut self, folder_key: &str, id: &str, at: At, cx: &mut Context<Self>) -> Option<u64> {
         let row = self.schedule_row(folder_key, id)?.clone();
         self.dialogs.menu = None;
-        let tab = match self.schedule_page(folder_key, id) {
-            Some((tab, _)) => tab,
+        let key = super::PanelKey::Schedule { folder_key: folder_key.to_string(), id: id.to_string() };
+        let tab = match self.find_panel(&key, cx) {
+            Some(tab) => tab,
             None => {
                 let page = SchedulePage { folder_key: folder_key.to_string(), id: id.to_string(), scroll: ScrollHandle::new(), dry_run: None, dry_running: false };
                 let tab = self.next_tab_id;
@@ -249,8 +250,7 @@ impl FleetView {
         {
             page.scroll.scroll_to_item(ix);
         }
-        self.active = Some(tab);
-        cx.notify();
+        self.show_panel(tab, cx);
         Some(tab)
     }
 

@@ -8,7 +8,7 @@ use supraman_core::paths::path_key;
 use supraman_git_view::occupancy::LiveSession;
 
 use super::menu::MenuTarget;
-use super::{FleetView, Tab, TabKind};
+use super::{FleetView, PanelKey, Tab, TabKind};
 use crate::fleet::{Open, SessionRow};
 use crate::git_view::branch::OpenGit;
 use crate::git_view::{AgentMenu, GitView, OpenAgent, PageAction, SessionPage, SessionPages};
@@ -16,8 +16,8 @@ use crate::row_details::OnDisk;
 
 /// The open Git tab of `folder`, else a new one from `make`, pushed last; true when it is new.
 pub(crate) fn open_or_focus(tabs: &mut Vec<Tab>, next_id: &mut u64, folder: &Path, title: String, cx: &mut App, make: impl FnOnce(&mut App) -> Entity<GitView>) -> (u64, bool) {
-    let key = path_key(folder);
-    if let Some(tab) = tabs.iter().find(|t| matches!(&t.kind, TabKind::Git(v) if path_key(&v.read(cx).folder) == key)) {
+    let key = PanelKey::Git(path_key(folder));
+    if let Some(tab) = tabs.iter().find(|t| t.key(cx) == key) {
         return (tab.id, false);
     }
     let id = *next_id;
@@ -31,7 +31,7 @@ impl FleetView {
     pub(super) fn show_git_tabs(&self, cx: &mut Context<Self>) {
         for tab in &self.tabs {
             if let TabKind::Git(view) = &tab.kind {
-                let shown = self.active == Some(tab.id);
+                let shown = self.active == Some(self.docks.tab_of(tab.id));
                 view.update(cx, |v, cx| v.set_shown(shown, cx));
             }
         }
@@ -39,6 +39,10 @@ impl FleetView {
 
     /// `Git · <repo>` for `folder`, at its repo's layout.
     pub fn open_git(&mut self, folder: PathBuf, title: String, cx: &mut Context<Self>) -> u64 {
+        if let Some(id) = self.find_panel(&PanelKey::Git(path_key(&folder)), cx) {
+            self.show_panel(id, cx);
+            return id;
+        }
         let (home, hits, live) = (self.home.clone(), self.hits.clone(), self.occupancy.clone());
         let make = |cx: &mut App| GitView::open_following(folder.clone(), home, hits, live, cx);
         let (id, new) = open_or_focus(&mut self.tabs, &mut self.next_tab_id, &folder, title, cx, make);

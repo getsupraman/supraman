@@ -52,6 +52,8 @@ windows = { version = "0.62", optional = true, features = ["Win32_Foundation", "
 embed-resource = "3.0"
 
 [dev-dependencies]
+supraman-core = { path = "../supraman-core", features = ["test-support"] }
+supraman-term = { path = "../supraman-term", features = ["test-support"] }
 supraman-git-view = { path = "../supraman-git-view", features = ["test-support"] }
 gpui = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c", default-features = false, features = ["test-support"] }
 supraman-gitman = { path = "../supraman-gitman", features = ["test-support"] }

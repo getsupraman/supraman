@@ -44,7 +44,9 @@ use crate::work_view::{WorkHub, WorkInbox};
 use crate::workman_setup;
 use supraman_workman::status::WorkmanStatus;
 
+mod build;
 mod delete;
+mod dock;
 pub(crate) mod details;
 mod dialogs;
 mod drop;
@@ -79,7 +81,7 @@ pub(crate) mod start;
 pub(crate) mod tab_keys;
 mod tab_saving;
 mod tabs;
-pub use tabs::{Detach, Tab, TabKind};
+pub use tabs::{Detach, PanelKey, Tab, TabKind};
 use tabs::stale_tabs;
 mod polled;
 mod term;
@@ -190,6 +192,7 @@ pub struct FleetView {
     pub dialogs: dialogs::Dialogs,
     pub scheduling: schedule_state::ScheduleState,
     pub(crate) tab_keys: Entity<tab_keys::TabKeyState>,
+    pub docks: dock::Docks,
 }
 
 
@@ -215,80 +218,6 @@ struct Refresh {
 }
 
 impl FleetView {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let focus = cx.focus_handle();
-        focus.focus(window, cx);
-        Self::ask_before_close(window, cx);
-        let home = supraman_core::home_from_env();
-        let defaults = Settings::default();
-        let hands = home.as_deref().map(|home| Self::open_hands(home, cx));
-        let (polls, transcripts_nudged) = polls::Polls::start(home.clone(), hands.clone(), cx);
-        Self::load_settings(home.clone(), cx);
-        Self::load_stores(home.clone(), cx);
-        let term_look = term_look::TermLook::new(&defaults.terminal, cx);
-        let (workman_recheck, recheck) = nudge::nudge();
-        Self::watch_workman(home.clone(), recheck, cx);
-        let work_inbox = WorkInbox::shared(home.clone(), cx);
-        Self::observe_inbox(&work_inbox, cx);
-        let scheduling = schedule_state::ScheduleState::new();
-        let claude_dir = claude_dir_or(CLAUDE_DIR_OVERRIDE.get().map(PathBuf::as_path));
-        Self::watch_transcripts(claude_dir.clone(), home.as_deref().map(|h| h.join(TRANSCRIPTS_CACHE)), transcripts_nudged, cx);
-        let updates = crate::updates::Updates::start(home.clone(), |v: &mut Self| &mut v.updates, cx);
-        let tabs_writes = Self::tabs_writer(home.clone(), cx);
-        Self::detect_shells(cx);
-        cx.on_focus_lost(window, |this, window, cx| if !supraman_ui::focus::restore(window, cx) { this.focus.focus(window, cx) }).detach();
-        let search = cx.new(|cx| TextInput::new("Search sessions, groups, folders (Ctrl+Shift+E)", None, window, cx));
-        Self::watch_search(&search, window, cx);
-        Self {
-            cli: Cli::Checking,
-            listed: listed::Listed::default(),
-            sessions: Vec::new(),
-            show_stopped: false,
-            own_prefix: None,
-            tabs: Vec::new(),
-            active: None,
-            next_tab_id: 1,
-            shell_args: vec!["-NoLogo".into()],
-            focus,
-            probe: Default::default(),
-            hits: HitTargets::default(),
-            window: window.window_handle(),
-            home,
-            plugin_dir: None,
-            setup_notices: Vec::new(),
-            settings_window: None,
-            writes: writes::Writes::default(),
-            occupancy: occupancy::Live::default(),
-            work_inbox,
-            open_with: |path| open::open(path.as_os_str()),
-            open_link_with: startup::open_link,
-            workman: WorkmanStatus::Checking,
-            hand_notices: Vec::new(),
-            transcripts: TranscriptsLoad::new(claude_dir.is_some()),
-            loaded: false,
-            action_error: None,
-            stars: Stars::default(),
-            claude_command: "claude".into(),
-            search,
-            toast: ToastSlot::default(),
-            pane_toast: ToastSlot::default(),
-            updates,
-            claude_dir,
-            painted_sessions: false,
-            saving: tab_saving::TabSaving::new(tabs_writes),
-            sidebar: sidebar::Sidebar::new(cx),
-            term_look,
-            workman_state: workman_state::WorkmanState::new(workman_recheck),
-            lifecycle: lifecycle::Lifecycle::new(hands),
-            polls,
-            polled: polled::Polled::new(),
-            listing: listing::Listing::default(),
-            dialogs: dialogs::Dialogs::default(),
-            scheduling,
-            tab_keys: cx.new(|_| tab_keys::TabKeyState::new(defaults.window.tab_keys())),
-        }
-    }
-
     /// The closed sessions a transcript scan found, without the ones a known session continues; their stars move on.
     fn set_closed(&mut self, closed: Vec<Session>, continued: StdHashMap<String, String>, cx: &mut Context<Self>) {
         let save = self.stars.follow(&continued);
@@ -875,7 +804,13 @@ impl FleetView {
         cx.notify();
     }
 
+    /// The tab and every panel of its dock; a panel in another's dock alone.
     pub fn close_tab(&mut self, id: u64, cx: &mut Context<Self>) {
+        let panels = if self.docks.is_inner(id) { vec![id] } else { self.docks.panels(id) };
+        panels.into_iter().for_each(|p| self.close_panel(p, cx));
+    }
+
+    pub fn close_panel(&mut self, id: u64, cx: &mut Context<Self>) {
         self.remember_closed(id, cx);
         let Some(tab) = self.tab_mut(id) else {
             return;
@@ -947,6 +882,8 @@ impl FleetView {
     }
 
     fn remove_tab(&mut self, id: u64, cx: &mut Context<Self>) {
+        let header = self.header_ids().iter().position(|t| *t == id);
+        self.undock_removed(id);
         let Some(index) = self.tabs.iter().position(|t| t.id == id) else {
             return;
         };
@@ -956,10 +893,8 @@ impl FleetView {
             terminal.update(cx, |t, _| t.release_pty_resources());
         }
         if self.active == Some(id) {
-            self.active = self
-                .tabs
-                .get(index.min(self.tabs.len().saturating_sub(1)))
-                .map(|t| t.id);
+            let ids = self.header_ids();
+            self.active = header.and_then(|at| ids.get(at.min(ids.len().saturating_sub(1)))).copied();
         }
         if self.quit_step(cx) {
             self.close_for_quit(cx);
@@ -1029,7 +964,7 @@ impl FleetView {
             .map(|t| t.id)
             .collect();
         for id in ids {
-            self.close_tab(id, cx);
+            self.close_panel(id, cx);
         }
         let close = self.lifecycle.quitting && self.quit_step(cx);
         if close {
@@ -1074,14 +1009,15 @@ impl FleetView {
             cx.stop_propagation();
             return;
         }
+        let panel = self.focused_panel(window, cx);
         if k.key == "escape"
-            && let Some(Tab { kind: TabKind::Work(work), .. }) = self.active.and_then(|id| self.tab(id))
+            && let Some(Tab { kind: TabKind::Work(work), .. }) = panel.and_then(|id| self.tab(id))
             && work.update(cx, |work, cx| work.escape(cx))
         {
             cx.stop_propagation();
             return;
         }
-        let terminal = self.active.and_then(|id| self.tab(id)).and_then(|t| t.terminal.clone());
+        let terminal = panel.and_then(|id| self.tab(id)).and_then(|t| t.terminal.clone());
         if k.key == "f5" && !k.modifiers.modified() && terminal.is_none() {
             self.refresh_now(cx);
             cx.stop_propagation();
@@ -1090,14 +1026,14 @@ impl FleetView {
         let Some(terminal) = terminal else {
             return;
         };
-        if let Some(id) = self.active
+        if let Some(id) = panel
             && self.terminal_key(id, &terminal, k, window, cx)
         {
             cx.stop_propagation();
             return;
         }
         // the grid registers its input handler on this focus (term_element); a typed character comes through it
-        let shown = self.focus.is_focused(window);
+        let shown = panel.is_some_and(|p| self.panel_focus(p).is_focused(window));
         let taken = terminal.update(cx, |terminal, _| terminal.key_down(event, shown));
         self.term_look.blink.update(cx, |b, cx| b.pause(cx));
         // the cursor is lit at once after a key, also when the program echoes nothing
@@ -1163,7 +1099,7 @@ impl Render for FleetView {
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| this.focus_search(window, cx)))
             .on_key_down(cx.listener(Self::key_down))
             .on_modifiers_changed(cx.listener(|this, _: &ModifiersChangedEvent, window, cx| {
-                if let Some(terminal) = this.active.and_then(|id| this.tab(id)).and_then(|t| t.terminal.clone()) {
+                if let Some(terminal) = this.focused_panel(window, cx).and_then(|id| this.tab(id)).and_then(|t| t.terminal.clone()) {
                     terminal.update(cx, |t, cx| {
                         t.refresh_hovered_word(window, cx);
                         cx.notify();
